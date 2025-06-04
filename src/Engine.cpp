@@ -1,20 +1,12 @@
 #include "ElixirCore/ScriptsLoader.hpp"
-
 #include "Engine.hpp"
-#include "glad.h"
 
-#include "DefaultScene.hpp"
-#include "LoadingScene.hpp"
+#include <glad/glad.h>
 
 #include "ElixirCore/AssetsManager.hpp"
-#include "ElixirCore/Keyboard.hpp"
-#include "ElixirCore/Mouse.hpp"
-
 #include "CameraManager.hpp"
-#include "ElixirCore/DebugTextHolder.hpp"
 #include "ElixirCore/Physics.hpp"
 #include "ElixirCore/WindowsManager.hpp"
-
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
@@ -22,7 +14,10 @@
 #include "Renderer.hpp"
 #include "ElixirCore/SceneManager.hpp"
 #include "ElixirCore/ShaderManager.hpp"
+#include "ElixirCore/Application.hpp"
+#include "ElixirCore/Logger.hpp"
 #define IMGUI_ENABLE_DOCKING
+
 
 bool Engine::run()
 {
@@ -38,116 +33,100 @@ bool Engine::run()
 
     float lastFrame = 0.0f;
     float deltaTime = 0.0f;
+	// glEnable(GL_DEPTH_TEST);
+	// glDisable(GL_DEPTH_TEST);
 
     while (window::WindowsManager::instance().getCurrentWindow()->isWindowOpened())
     {
-        const float currentFrame = glfwGetTime();
-        deltaTime = currentFrame - lastFrame;
-        lastFrame = currentFrame;
+    	glEnable(GL_DEPTH_TEST);
+    	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glfwPollEvents();
+    	const float currentFrame = window::MainWindow::getTime();
+    	deltaTime = currentFrame - lastFrame;
+    	lastFrame = currentFrame;
 
-        // physics::PhysicsController::instance().simulate(deltaTime);
-        CameraManager::getInstance().getActiveCamera()->update(deltaTime);
-        SceneManager::instance().updateCurrentScene(deltaTime);
+    	window::MainWindow::pollEvents();
 
-        Renderer::instance().beginFrame();
-        Renderer::instance().endFrame();
+    	physics::PhysicsController::instance().simulate(deltaTime);
+    	CameraManager::getInstance().getActiveCamera()->update(deltaTime);
+    	SceneManager::instance().updateCurrentScene(deltaTime);
 
-        Editor::instance().update();
+    	Renderer::instance().beginFrame();
+    	Renderer::instance().endFrame();
+    	glDisable(GL_DEPTH_TEST);
 
-        glfwSwapBuffers(window::WindowsManager::instance().getCurrentWindow()->getOpenGLWindow());
+    	ImGui_ImplOpenGL3_NewFrame();
+    	ImGui_ImplGlfw_NewFrame();
+
+    	ImGui::NewFrame();
+    	Editor::instance().update();
+    	ImGui::Render();
+
+    	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    	if (const ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+    	{
+    		GLFWwindow* backup_current_context = glfwGetCurrentContext();
+    		ImGui::UpdatePlatformWindows();
+    		ImGui::RenderPlatformWindowsDefault();
+    		glfwMakeContextCurrent(backup_current_context);
+    	}
+
+    	window::WindowsManager::instance().getCurrentWindow()->swapBuffers();
     }
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
-    glfwTerminate();
+
+    elix::Application::instance().shutdown();
 
     return true;
 }
 
 void Engine::init()
 {
-    initOpenGL();
+	elix::Application::instance().init();
+
+	int bufferWidth, bufferHeight;
+	glfwGetFramebufferSize(window::WindowsManager::instance().getCurrentWindow()->getOpenGLWindow(), &bufferWidth, &bufferHeight);
+
+	window::MainWindow::setViewport(0, 0, bufferWidth, bufferHeight);
+
+    Renderer::instance().initFrameBuffer(window::WindowsManager::instance().getCurrentWindow()->getWidth(), window::WindowsManager::instance().getCurrentWindow()->getHeight());
+
     initImgui();
     CameraManager::getInstance().setActiveCamera(CameraManager::getInstance().createCamera());
-    // physics::PhysicsController::instance().init();
+    physics::PhysicsController::instance().init();
 
-    AssetsManager::instance().preLoadPathsForAllModels();
-    AssetsManager::instance().preLoadPathsForAllTextures();
-    AssetsManager::instance().preLoadPathsForAllMaterials();
     ShaderManager::instance().preLoadShaders();
 
-    auto loadingScene = new LoadingScene();
-    loadingScene->create();
-    SceneManager::instance().addScene(loadingScene);
-    SceneManager::instance().addScene(new DefaultScene());
-    SceneManager::instance().setCurrentScene(loadingScene);
-
-    void* library = ScriptsLoader::instance().loadLibrary("../libTestGame.so");
-
-    ScriptsLoader::instance().getFunction("initScripts", library);
-
-    ScriptsLoader::instance().library = library;
-
-    using InitFunc = const char**(*)(int*);
-
-    InitFunc function = (InitFunc)ScriptsLoader::instance().getFunction("initScripts", library);
-
-    int count = 0;
-    const char** scripts = function(&count);
-
-    for (int i = 0; i < count; ++i) {
-        std::string scriptName = scripts[i];
-        std::cout << scriptName << std::endl;
-    }
-}
-
-void Engine::initOpenGL()
-{
-    if (!glfwInit())
-        throw std::runtime_error("Engine::init(): Failed to initialize glfw");
-
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GL_TRUE);
-
-    window::WindowsManager::instance().setCurrentWindow(window::WindowsManager::instance().createWindow());
-
-    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
-        throw std::runtime_error("Engine::init(): Failed to initialize GLAD");
-
-    auto mainWindow = window::WindowsManager::instance().getCurrentWindow();
-    glfwSetKeyCallback(mainWindow->getOpenGLWindow(), input::KeysManager::keyCallback);
-    glfwSetMouseButtonCallback(mainWindow->getOpenGLWindow(), input::MouseManager::mouseButtonCallback);
-    glfwSetCursorPosCallback(mainWindow->getOpenGLWindow(), input::MouseManager::mouseCallback);
-    glfwSetInputMode(mainWindow->getOpenGLWindow(), GLFW_CURSOR, GLFW_CURSOR_NORMAL); //GLFW_CURSOR_NORMAL | GLFW_CURSOR_DISABLED
-
-    int bufferWidth, bufferHeight;
-    glfwGetFramebufferSize(mainWindow->getOpenGLWindow(), &bufferWidth, &bufferHeight);
-    Renderer::instance().initFrameBuffer(mainWindow->getWidth(), mainWindow->getHeight());
-    glViewport(0, 0, bufferWidth, bufferHeight);
-
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    Renderer::instance().initShadows();
 }
 
 void Engine::initImgui()
 {
+	if (!window::WindowsManager::instance().getCurrentWindow())
+		return;
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
     ImGui_ImplGlfw_InitForOpenGL(window::WindowsManager::instance().getCurrentWindow()->getOpenGLWindow(), true);
     ImGui_ImplOpenGL3_Init("#version 330");
     ImGui::StyleColorsDark();
 
     ImGuiStyle& style = ImGui::GetStyle();
+
+	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+	{
+		style.WindowRounding = 0.0f;
+		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+	}
+
     style.Alpha = 1.0;
     style.WindowRounding = 3;
     style.GrabRounding = 1;
@@ -188,33 +167,4 @@ void Engine::initImgui()
     style.Colors[ImGuiCol_PlotHistogram] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
     style.Colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
     style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.00f, 1.00f, 1.00f, 0.22f);
-
-}
-
-void Engine::glCheckError(const char *file, const int line)
-{
-    GLenum errorCode;
-
-    while ((errorCode = glGetError()) != GL_NO_ERROR)
-    {
-        std::string error;
-
-        switch (errorCode)
-        {
-            case GL_INVALID_ENUM:                  error = "INVALID_ENUM"; break;
-            case GL_INVALID_VALUE:                 error = "INVALID_VALUE"; break;
-            case GL_INVALID_OPERATION:             error = "INVALID_OPERATION"; break;
-            case GL_STACK_OVERFLOW:                error = "STACK_OVERFLOW"; break;
-            case GL_STACK_UNDERFLOW:               error = "STACK_UNDERFLOW"; break;
-            case GL_OUT_OF_MEMORY:                 error = "OUT_OF_MEMORY"; break;
-            case GL_INVALID_FRAMEBUFFER_OPERATION: error = "INVALID_FRAMEBUFFER_OPERATION"; break;
-            default:                               error = "UNDEFINED_ERROR"; break;
-        }
-
-        const std::string errorText = error + " | " + file + " (" + std::to_string(line) + ")";
-
-        std::cout << errorText << std::endl;
-
-        debug::DebugTextHolder::instance().addText(errorText);
-    }
 }

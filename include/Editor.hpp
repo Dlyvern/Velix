@@ -13,10 +13,20 @@ public:
     static Editor& instance();
     void update();
     ~Editor();
+
 private:
 
-    void* m_gameLibrary{nullptr};
+    enum class State
+    {
+        Start,
+        Editor
+    };
 
+
+    State m_state{State::Start};
+
+
+    void* m_gameLibrary{nullptr};
 
 
     struct DraggingInfo final
@@ -25,11 +35,16 @@ private:
         std::string name;
     };
 
+    void showStart();
+
+    void showEditor();
+
+    void showMenuBar();
+
     void showViewPort();
     void showDebugInfo();
     void showObjectInfo();
     void showProperties();
-    void showMaterialInfo();
     void showAllObjectsInTheScene();
     void showAssetsInfo();
     void showGuizmosInfo();

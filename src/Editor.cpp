@@ -1,22 +1,28 @@
 #include "Editor.hpp"
 
-#include <glad.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <imgui_internal.h>
 #include <unordered_set>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
+#include <ElixirCore/LightManager.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <cstdlib>
+#include "ElixirCore/LightComponent.hpp"
 
 #include "ElixirCore/AnimatorComponent.hpp"
 #include "ElixirCore/AssetsManager.hpp"
 #include "CameraManager.hpp"
-#include "DebugLine.hpp"
 #include "ElixirCore/Mouse.hpp"
 #include "ElixirCore/Keyboard.hpp"
 #include "ElixirCore/Raycasting.hpp"
 #include "Renderer.hpp"
+#include "UIInputText.hpp"
+#include "UILight.hpp"
+#include "UIMaterial.hpp"
+#include "UIMesh.hpp"
+#include "UITransform.hpp"
 #include "ElixirCore/ScriptsLoader.hpp"
 #include "ElixirCore/RigidbodyComponent.hpp"
 #include "ElixirCore/SceneManager.hpp"
@@ -24,6 +30,12 @@
 #include "ElixirCore/StaticMeshComponent.hpp"
 #include "ElixirCore/WindowsManager.hpp"
 #include "ElixirCore/Utilities.hpp"
+
+#include <unistd.h>
+#include <pwd.h>
+#include <ElixirCore/Logger.hpp>
+
+#include "ProjectManager.hpp"
 
 void BeginDockSpace()
 {
@@ -72,7 +84,7 @@ void BeginDockSpace()
         ImGui::DockBuilderDockWindow("Properties", dockIdRight);
         ImGui::DockBuilderDockWindow("Assets", dockIdBottom);
         ImGui::DockBuilderDockWindow("Benchmark", dockIdLeftBottom);
-        // ImGui::DockBuilderDockWindow("Scene View", dockIdCenter);
+        ImGui::DockBuilderDockWindow("Scene View", dockIdCenter);
 
         ImGui::DockBuilderFinish(dockSpaceId);
     }
@@ -147,123 +159,275 @@ void Editor::updateInput()
     if (input::Keyboard.isKeyReleased(input::KeyCode::R))
         m_transformMode = TransformMode::Rotate;
 
-    if (input::Mouse.isLeftButtonPressed())
-    {
-        if (ImGuiIO& io = ImGui::GetIO(); !io.WantCaptureMouse && !ImGuizmo::IsUsing())
-        {
-            glm::vec2 mouseNDC;
-
-            auto* camera = CameraManager::getInstance().getActiveCamera();
-            double xpos, ypos;
-            glfwGetCursorPos(window->getOpenGLWindow(), &xpos, &ypos);
-
-            float x = (2.0f * xpos) / static_cast<float>(window->getWidth()) - 1.0f;
-            float y = 1.0f - (2.0f * ypos) / static_cast<float>(window->getHeight());
-
-            mouseNDC = glm::vec2(x, y);
-
-            float aspectRatio = static_cast<float>(window->getWidth()) / static_cast<float>(window->getHeight());
-
-            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 100.0f);
-            glm::mat4 view = camera->getViewMatrix();
-
-            glm::vec4 rayClip(mouseNDC.x, mouseNDC.y, -1.0f, 1.0f);
-            glm::vec4 rayEye = glm::inverse(projection) * rayClip;
-            rayEye = glm::vec4(rayEye.x, rayEye.y, -1.0f, 0.0f);
-
-            glm::vec3 rayWorld = glm::normalize(glm::vec3(glm::inverse(view) * rayEye));
-
-            glm::vec3 origin = glm::vec3(glm::inverse(view)[3]);
-
-            // physics::raycasting::Ray ray{};
-            // physics::raycasting::RaycastingResult result;
-            //
-            // ray.maxDistance = 1000.0f;
-            // ray.direction = rayWorld;
-            // ray.origin = origin;
-            //
-            // if (physics::raycasting::shoot(ray, result))
-            // {
-            //     const auto* actor = result.hit.block.actor;
-            //
-            //     auto* gameObject = static_cast<GameObject*>(actor->userData);
-            //
-            //     m_selectedGameObject = gameObject;
-            // }
-        }
-    }
-
-    if (m_selectedGameObject)
-    {
-        ImGuizmo::SetOrthographic(false);
-        ImGuizmo::SetDrawlist();
-        ImGuizmo::SetRect(0, 0, ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y);
-        ImGuizmo::BeginFrame();
-
-        glm::mat4 modelMatrix = m_selectedGameObject->getTransformMatrix();
-
-        const auto* window = window::WindowsManager::instance().getCurrentWindow();
-
-        float aspectRatio = static_cast<float>(window->getWidth()) / static_cast<float>(window->getHeight());
-
-        glm::mat4 viewMatrix = CameraManager::getInstance().getActiveCamera()->getViewMatrix();
-        glm::mat4 projMatrix = CameraManager::getInstance().getActiveCamera()->getProjectionMatrix(aspectRatio);
-
-        static ImGuizmo::MODE currentGizmoMode = ImGuizmo::WORLD;
-
-        ImGuizmo::OPERATION op = ImGuizmo::TRANSLATE;
-
-        switch (m_transformMode)
-        {
-            case TransformMode::Translate: op = ImGuizmo::TRANSLATE; break;
-            case TransformMode::Rotate:    op = ImGuizmo::ROTATE;    break;
-            case TransformMode::Scale:     op = ImGuizmo::SCALE;     break;
-        }
-
-        ImGuizmo::Manipulate(glm::value_ptr(viewMatrix), glm::value_ptr(projMatrix),
-                             op, currentGizmoMode,
-                             glm::value_ptr(modelMatrix));
-
-        if (ImGuizmo::IsUsing())
-        {
-            glm::vec3 translation, rotation, scale;
-            ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(modelMatrix),
-                                                  glm::value_ptr(translation),
-                                                  glm::value_ptr(rotation),
-                                                  glm::value_ptr(scale));
-            m_selectedGameObject->setPosition(translation);
-            m_selectedGameObject->setRotation(rotation);
-            m_selectedGameObject->setScale(scale);
-        }
-    }
+    // if (input::Mouse.isLeftButtonPressed())
+    // {
+    //     if (ImGuiIO& io = ImGui::GetIO(); !io.WantCaptureMouse && !ImGuizmo::IsUsing())
+    //     {
+    //         glm::vec2 mouseNDC;
+    //
+    //         auto* camera = CameraManager::getInstance().getActiveCamera();
+    //         double xpos, ypos;
+    //         glfwGetCursorPos(window->getOpenGLWindow(), &xpos, &ypos);
+    //
+    //         float x = (2.0f * xpos) / static_cast<float>(window->getWidth()) - 1.0f;
+    //         float y = 1.0f - (2.0f * ypos) / static_cast<float>(window->getHeight());
+    //
+    //         mouseNDC = glm::vec2(x, y);
+    //
+    //         float aspectRatio = static_cast<float>(window->getWidth()) / static_cast<float>(window->getHeight());
+    //
+    //         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 100.0f);
+    //         glm::mat4 view = camera->getViewMatrix();
+    //
+    //         glm::vec4 rayClip(mouseNDC.x, mouseNDC.y, -1.0f, 1.0f);
+    //         glm::vec4 rayEye = glm::inverse(projection) * rayClip;
+    //         rayEye = glm::vec4(rayEye.x, rayEye.y, -1.0f, 0.0f);
+    //
+    //         glm::vec3 rayWorld = glm::normalize(glm::vec3(glm::inverse(view) * rayEye));
+    //
+    //         glm::vec3 origin = glm::vec3(glm::inverse(view)[3]);
+    //
+    //         physics::raycasting::Ray ray{};
+    //         physics::raycasting::RaycastingResult result;
+    //
+    //         ray.maxDistance = 1000.0f;
+    //         ray.direction = rayWorld;
+    //         ray.origin = origin;
+    //
+    //         if (physics::raycasting::shoot(ray, result))
+    //         {
+    //             const auto* actor = result.hit.block.actor;
+    //
+    //             auto* gameObject = static_cast<GameObject*>(actor->userData);
+    //
+    //             m_selectedGameObject = gameObject;
+    //         }
+    //     }
+    // }
+    //
+    // if (m_selectedGameObject)
+    // {
+    //     ImGuizmo::SetOrthographic(false);
+    //     ImGuizmo::SetDrawlist();
+    //     ImGuizmo::SetRect(0, 0, ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y);
+    //     ImGuizmo::BeginFrame();
+    //
+    //     glm::mat4 modelMatrix = m_selectedGameObject->getTransformMatrix();
+    //
+    //     const auto* window = window::WindowsManager::instance().getCurrentWindow();
+    //
+    //     float aspectRatio = static_cast<float>(window->getWidth()) / static_cast<float>(window->getHeight());
+    //
+    //     glm::mat4 viewMatrix = CameraManager::getInstance().getActiveCamera()->getViewMatrix();
+    //     glm::mat4 projMatrix = CameraManager::getInstance().getActiveCamera()->getProjectionMatrix(aspectRatio);
+    //
+    //     static ImGuizmo::MODE currentGizmoMode = ImGuizmo::WORLD;
+    //
+    //     ImGuizmo::OPERATION op = ImGuizmo::TRANSLATE;
+    //
+    //     switch (m_transformMode)
+    //     {
+    //         case TransformMode::Translate: op = ImGuizmo::TRANSLATE; break;
+    //         case TransformMode::Rotate:    op = ImGuizmo::ROTATE;    break;
+    //         case TransformMode::Scale:     op = ImGuizmo::SCALE;     break;
+    //     }
+    //
+    //     ImGuizmo::Manipulate(glm::value_ptr(viewMatrix), glm::value_ptr(projMatrix),
+    //                          op, currentGizmoMode,
+    //                          glm::value_ptr(modelMatrix));
+    //
+    //     if (ImGuizmo::IsUsing())
+    //     {
+    //         glm::vec3 translation, rotation, scale;
+    //         ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(modelMatrix),
+    //                                               glm::value_ptr(translation),
+    //                                               glm::value_ptr(rotation),
+    //                                               glm::value_ptr(scale));
+    //         m_selectedGameObject->setPosition(translation);
+    //         m_selectedGameObject->setRotation(rotation);
+    //         m_selectedGameObject->setScale(scale);
+    //     }
+    // }
 
 }
 
 void Editor::update()
 {
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
+    if (m_state == State::Editor) {
+        showEditor();
+        return;
+    }
 
-    ImGui::NewFrame();
 
-    if (!m_gameLibrary)
-        m_gameLibrary = ScriptsLoader::instance().loadLibrary("../libTestGame.so");
+    showStart();
+}
 
-    updateInput();
-    BeginDockSpace();
-    // showViewPort();
-    showDebugInfo();
+std::string getHome()
+{
+    return (std::getenv("HOME") + std::string("/Documents/ElixirProjects"));
+}
 
-    ImGui::Render();
+void Editor::showStart()
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 displaySize = io.DisplaySize;
 
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(displaySize);
 
-    if (const ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus |
+                             ImGuiWindowFlags_NoNavFocus |
+                             ImGuiWindowFlags_NoDecoration;
+
+    ImGui::Begin("Start", nullptr, flags);
+
+    static bool showRecentProjects = false;
+
+    if (ImGui::Button("Recent projects"))
+        showRecentProjects = true;
+
+    if (showRecentProjects)
     {
-        GLFWwindow* backup_current_context = glfwGetCurrentContext();
-        ImGui::UpdatePlatformWindows();
-        ImGui::RenderPlatformWindowsDefault();
-        glfwMakeContextCurrent(backup_current_context);
+        ImGui::OpenPopup("Recent projects");
+        showRecentProjects = false;
+    }
+
+    if (ImGui::BeginPopupModal("Recent projects", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        std::filesystem::path directory{getHome()};
+
+        for (const auto& entry : std::filesystem::directory_iterator(directory))
+        {
+            if (entry.is_directory())
+            {
+                if (ImGui::Button(entry.path().filename().string().c_str()))
+                {
+                    auto project = new Project();
+
+                    if (!ProjectManager::instance().loadConfigInProject(entry.path().string() + "/Project.elixirproject", project))
+                    {
+                        LOG_ERROR("Failed to load project");
+                        delete project;
+                        continue;
+                    }
+
+                    if (!ProjectManager::instance().loadProject(project))
+                    {
+                        LOG_ERROR("Failed to load project");
+                        delete project;
+                        continue;
+                    }
+
+                    ProjectManager::instance().setCurrentProject(project);
+
+                    m_state = State::Editor;
+
+                    ImGui::CloseCurrentPopup();
+                    showRecentProjects = false;
+
+                    break;
+                }
+            }
+        }
+
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+
+    static bool showCreatePopup = false;
+
+    if (ImGui::Button("Create a new project"))
+        showCreatePopup = true;
+
+    if (showCreatePopup)
+    {
+        ImGui::OpenPopup("Create New Project");
+        showCreatePopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("Create New Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        static char projectName[128] = "MyGame";
+        static char location[512] = "";
+
+#if defined(_WIN32)
+        if (strlen(location) == 0)
+            strcpy(location, (std::getenv("USERPROFILE") + std::string("\\Documents\\ElixirProjects")).c_str());
+#else
+        if (strlen(location) == 0)
+            strcpy(location, (std::getenv("HOME") + std::string("/Documents/ElixirProjects")).c_str());
+#endif
+
+        ImGui::InputText("Project Name", projectName, IM_ARRAYSIZE(projectName));
+        ImGui::InputText("Location", location, IM_ARRAYSIZE(location));
+
+        if (ImGui::Button("Create"))
+        {
+            const std::string projectDir = std::string(location) + "/" + projectName;
+
+            const auto project = ProjectManager::instance().createProject(projectName, projectDir);
+
+            if (!project)
+            {
+                LOG_ERROR("Failed to create project");
+                ImGui::End();
+                return;
+            }
+
+            if (!ProjectManager::instance().loadProject(project))
+            {
+                LOG_ERROR("Failed to load project");
+                ImGui::End();
+                return;
+            }
+
+            ProjectManager::instance().setCurrentProject(project);
+
+            m_state = State::Editor;
+
+            ImGui::CloseCurrentPopup();
+            showCreatePopup = false;
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel"))
+        {
+            ImGui::CloseCurrentPopup();
+            showCreatePopup = false;
+        }
+
+        ImGui::EndPopup();
+    }
+
+    ImGui::End();
+}
+
+void Editor::showEditor()
+{
+    updateInput();
+    showMenuBar();
+    BeginDockSpace();
+    showViewPort();
+    showDebugInfo();
+}
+
+void Editor::showMenuBar()
+{
+    if (ImGui::BeginMainMenuBar()) {
+        if (ImGui::BeginMenu("File")) {
+            ImGui::MenuItem("New Project");
+            ImGui::MenuItem("Open Project");
+            ImGui::MenuItem("Save Scene");
+            ImGui::EndMenu();
+        }
+        ImGui::EndMainMenuBar();
     }
 }
 
@@ -273,31 +437,95 @@ void Editor::showViewPort()
              ImGuiWindowFlags_NoTitleBar |
              ImGuiWindowFlags_NoCollapse |
              ImGuiWindowFlags_NoMove |
-             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui::Text("MousePos: %.1f, %.1f", io.MousePos.x, io.MousePos.y);
-    ImGui::Text("MouseDown: %s", io.MouseDown[0] ? "true" : "false");
-    ImGui::Text("Input: %s", io.WantCaptureMouse ? "true" : "false");
-    ImGui::Text("ImGuizmo IsOver: %s, IsUsing: %s",
-                ImGuizmo::IsOver() ? "true" : "false",
-                ImGuizmo::IsUsing() ? "true" : "false");
+             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse /*| ImGuiWindowFlags_MenuBar*/);
+
+    // ImGuiIO& io = ImGui::GetIO();
+    // ImGui::Text("MousePos: %.1f, %.1f", io.MousePos.x, io.MousePos.y);
+    // ImGui::Text("MouseDown: %s", io.MouseDown[0] ? "true" : "false");
+    // ImGui::Text("Input: %s", io.WantCaptureMouse ? "true" : "false");
+    // ImGui::Text("ImGuizmo IsOver: %s, IsUsing: %s",
+    //             ImGuizmo::IsOver() ? "true" : "false",
+    //             ImGuizmo::IsUsing() ? "true" : "false");
 
     const float windowWidth = ImGui::GetContentRegionAvail().x;
     const float windowHeight = ImGui::GetContentRegionAvail().y;
     const ImVec2 cursorPosition = ImGui::GetCursorScreenPos();
     const ImVec2 contentSize = ImGui::GetContentRegionAvail();
 
-    Renderer::instance().rescaleBuffer(contentSize.x, contentSize.y);
-    glViewport(0, 0, static_cast<int>(contentSize.x), static_cast<int>(contentSize.y));
+
+    ImGuiIO& io = ImGui::GetIO();
+    float dpiScale = io.DisplayFramebufferScale.x;
+    int fbWidth = (int)(contentSize.x * dpiScale);
+    int fbHeight = (int)(contentSize.y * dpiScale);
+
+    Renderer::instance().rescaleBuffer(fbWidth, fbHeight);
+    window::MainWindow::setViewport(0, 0, static_cast<int>(contentSize.x), static_cast<int>(contentSize.y));
 
     auto fboTexture = Renderer::instance().getFrameBufferTexture();
     ImGui::Image((ImTextureID)(intptr_t)fboTexture, contentSize, ImVec2(0, 1), ImVec2(1, 0));
 
+
     ImGui::SetCursorScreenPos(cursorPosition);
     ImGui::InvisibleButton("GizmoInputCatcher", contentSize,
-        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 
     ImGui::SetItemAllowOverlap();
+
+
+    if (ImGui::BeginDragDropTarget())
+    {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+        {
+            const auto* const info = static_cast<DraggingInfo*>(payload->Data);
+
+            if (!info)
+            {
+                ImGui::End();
+                return;
+            }
+
+            std::filesystem::path path(info->name);
+
+            //TODO Replace this shit somehow
+            if (path.extension() == ".fbx" || path.extension() == ".obj")
+            {
+                ImVec2 mousePos = ImGui::GetMousePos();
+
+                float localX = mousePos.x - cursorPosition.x;
+                float localY = mousePos.y - cursorPosition.y;
+
+                if (localX >= 0 && localY >= 0 && localX < windowWidth && localY < windowHeight)
+                {
+                    float x = (2.0f * localX) / windowWidth - 1.0f;
+                    float y = 1.0f - (2.0f * localY) / windowHeight;
+
+                    std::cout << "X: " << x << std::endl;
+                    std::cout << "Y: " << y << std::endl;
+
+                    glm::vec2 mouseNDC(x, y);
+                }
+
+                auto newGameObject = std::make_shared<GameObject>("test");
+                newGameObject->setPosition({0.0f, 0.0f, 0.0f});
+                newGameObject->setRotation({0.0f, 0.0f, 0.0f});
+                newGameObject->setScale({1.0f, 1.0f, 1.0f});
+                newGameObject->addComponent<RigidbodyComponent>(newGameObject);
+
+                if (auto staticModel = AssetsManager::instance().getStaticModelByName(path.filename()))
+                    newGameObject->addComponent<StaticMeshComponent>(staticModel);
+                else if (auto skinnedModel = AssetsManager::instance().getSkinnedModelByName(path.filename()))
+                {
+                    newGameObject->addComponent<SkeletalMeshComponent>(skinnedModel);
+                    physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);
+                }
+
+                SceneManager::instance().getCurrentScene()->addGameObject(newGameObject);
+            }
+
+            std::cout << "Dropped asset into scene: " << info->name << std::endl;
+        }
+        ImGui::EndDragDropTarget();
+    }
 
     if (m_selectedGameObject)
     {
@@ -376,76 +604,26 @@ void Editor::showViewPort()
                 glm::vec3 rayWorld = glm::normalize(glm::vec3(glm::inverse(view) * rayEye));
                 glm::vec3 origin = glm::vec3(glm::inverse(view)[3]);
 
-                // physics::raycasting::Ray ray{};
-                // ray.maxDistance = 1000.0f;
-                // ray.direction = rayWorld;
-                // ray.origin = origin;
-                //
-                // physics::raycasting::RaycastingResult result;
-                //
-                // if (physics::raycasting::shoot(ray, result))
-                // {
-                //     auto* actor = result.hit.block.actor;
-                //     auto* gameObject = static_cast<GameObject*>(actor->userData);
-                //
-                //     if (gameObject)
-                //         m_selectedGameObject = gameObject;
-                // }
+                physics::raycasting::Ray ray{};
+                ray.maxDistance = 1000.0f;
+                ray.direction = rayWorld;
+                ray.origin = origin;
+
+                physics::raycasting::RaycastingResult result;
+
+                if (physics::raycasting::shoot(ray, result))
+                {
+                    auto* actor = result.hit.block.actor;
+                    auto* gameObject = static_cast<GameObject*>(actor->userData);
+
+                    if (gameObject)
+                        m_selectedGameObject = gameObject;
+                }
             }
         }
     }
 
     ImGui::End();
-
-    // if (m_selectedGameObject)
-    // {
-    //     ImGuizmo::BeginFrame();
-    //     ImGuizmo::SetOrthographic(false);
-    //     ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
-    //     ImGuizmo::SetRect(cursorPosition.x, cursorPosition.y, windowWidth, windowHeight);
-    //     glm::mat4 modelMatrix = m_selectedGameObject->getTransformMatrix();
-    //
-    //     float aspectRatio = windowWidth / windowHeight;
-    //
-    //     glm::mat4 viewMatrix = CameraManager::getInstance().getActiveCamera()->getViewMatrix();
-    //     glm::mat4 projMatrix = CameraManager::getInstance().getActiveCamera()->getProjectionMatrix(aspectRatio);
-    //
-    //     ImGuizmo::OPERATION operation{ImGuizmo::TRANSLATE};
-    //
-    //     switch (m_transformMode)
-    //     {
-    //         case TransformMode::Translate: operation = ImGuizmo::TRANSLATE; break;
-    //         case TransformMode::Rotate:    operation = ImGuizmo::ROTATE;    break;
-    //         case TransformMode::Scale:     operation = ImGuizmo::SCALE;     break;
-    //     }
-    //
-    //     ImGuizmo::Manipulate(
-    //         glm::value_ptr(viewMatrix),
-    //         glm::value_ptr(projMatrix),
-    //         operation,
-    //         ImGuizmo::WORLD,
-    //         glm::value_ptr(modelMatrix),
-    //         nullptr,
-    //         nullptr,
-    //         nullptr
-    //     );
-    //
-    //     if (ImGuizmo::IsUsing())
-    //     {
-    //         glm::vec3 translation, rotation, scale;
-    //         ImGuizmo::DecomposeMatrixToComponents(
-    //             glm::value_ptr(modelMatrix),
-    //             glm::value_ptr(translation),
-    //             glm::value_ptr(rotation),
-    //             glm::value_ptr(scale)
-    //         );
-    //
-    //         m_selectedGameObject->setPosition(translation);
-    //         m_selectedGameObject->setRotation(rotation);
-    //         m_selectedGameObject->setScale(scale);
-    //     }
-    // }
-
 }
 
 
@@ -453,6 +631,9 @@ Editor::~Editor() = default;
 
 void Editor::showAllObjectsInTheScene()
 {
+    if (!SceneManager::instance().getCurrentScene())
+        return;
+
     const auto& objects = SceneManager::instance().getCurrentScene()->getGameObjects();
 
     ImGui::Begin("Scene hierarchy");
@@ -478,17 +659,12 @@ void Editor::showAllObjectsInTheScene()
     }
 
     ImGui::End();
-
-    ImGui::Begin("Benchmark");
-    ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-    ImGui::Text("RAM usage: %s", std::to_string(utilities::getRamUsage()).c_str());
-    ImGui::End();
 }
 
 void Editor::showAssetsInfo()
 {
-    static GLitch::Texture folderTexture = AssetsManager::instance().loadTexture(filesystem::getTexturesFolderPath().string() + "/folder.png");
-    static GLitch::Texture fileTexture = AssetsManager::instance().loadTexture(filesystem::getTexturesFolderPath().string() + "/file.png");
+    static elix::Texture folderTexture = AssetsManager::instance().loadTexture(filesystem::getTexturesFolderPath().string() + "/folder.png");
+    static elix::Texture fileTexture = AssetsManager::instance().loadTexture(filesystem::getTexturesFolderPath().string() + "/file.png");
 
     if (!folderTexture.isBaked())
         folderTexture.bake();
@@ -671,106 +847,77 @@ void Editor::showDebugInfo()
     showAllObjectsInTheScene();
     showProperties();
     showAssetsInfo();
-}
 
-    // ImGui::GetWindowDrawList()->AddImage(
-    //     (ImTextureID)(intptr_t)fboTexture,
-    //     ImVec2(pos.x, pos.y),
-    //     ImVec2(pos.x + windowWidth, pos.y + windowHeight),
-    //     ImVec2(0, 1), ImVec2(1, 0)
-    // );
+    ImGui::Begin("Benchmark");
+    ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+    ImGui::Text("RAM usage: %s", std::to_string(utilities::getRamUsage()).c_str());
 
-    // ImGui::SetCursorScreenPos(cursorPosition);
-    // if (ImGui::InvisibleButton("SceneDropArea", contentSize, ImGuiButtonFlags_AllowOverlap))
-    // {
-    //     std::cout << "Left button pressed" << std::endl;
-    // }
-
-
-    // ImGuizmo::SetOrthographic(false);
-    // ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
-    // ImGuizmo::SetRect(cursorPosition.x, cursorPosition.y, windowWidth, windowHeight);
-    // ImGui::SetCursorScreenPos(cursorPosition);
-    // ImGuizmo::Enable(true);
-
-    // showGuizmosInfo();
-
-    // if (ImGui::BeginDragDropTarget())
-    // {
-    //     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
-    //     {
-    //         const auto* const info = static_cast<DraggingInfo*>(payload->Data);
-    //
-    //         if (!info)
-    //         {
-    //             ImGui::End();
-    //             return;
-    //         }
-    //
-    //         std::filesystem::path path(info->name);
-    //
-    //         //TODO Replace this shit somehow
-    //         if (path.extension() == ".fbx" || path.extension() == ".obj")
-    //         {
-    //             ImVec2 mousePos = ImGui::GetMousePos();
-    //
-    //             float localX = mousePos.x - cursorPosition.x;
-    //             float localY = mousePos.y - cursorPosition.y;
-    //
-    //             if (localX >= 0 && localY >= 0 && localX < windowWidth && localY < windowHeight)
-    //             {
-    //                 float x = (2.0f * localX) / windowWidth - 1.0f;
-    //                 float y = 1.0f - (2.0f * localY) / windowHeight;
-    //
-    //                 std::cout << "X: " << x << std::endl;
-    //                 std::cout << "Y: " << y << std::endl;
-    //
-    //                 glm::vec2 mouseNDC(x, y);
-    //             }
-    //
-    //             auto newGameObject = std::make_shared<GameObject>("test");
-    //             newGameObject->setPosition({0.0f, 0.0f, 0.0f});
-    //             newGameObject->setRotation({0.0f, 0.0f, 0.0f});
-    //             newGameObject->setScale({1.0f, 1.0f, 1.0f});
-    //             newGameObject->addComponent<RigidbodyComponent>(newGameObject);
-    //
-    //             if (auto staticModel = AssetsManager::instance().getStaticModelByName(path.filename()))
-    //                 newGameObject->addComponent<StaticMeshComponent>(staticModel);
-    //             else if (auto skinnedModel = AssetsManager::instance().getSkinnedModelByName(path.filename()))
-    //             {
-    //                 newGameObject->addComponent<SkeletalMeshComponent>(skinnedModel);
-    //                 physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);
-    //             }
-    //
-    //             SceneManager::instance().getCurrentScene()->addGameObject(newGameObject);
-    //         }
-    //
-    //         std::cout << "Dropped asset into scene: " << info->name << std::endl;
-    //     }
-    //     ImGui::EndDragDropTarget();
-    // }
-
-
-void Editor::showMaterialInfo()
-{
-    if (!m_selectedMaterial)
-        return;
-
-    glm::vec3 color = m_selectedMaterial->getBaseColor();
-
-    if (ImGui::ColorEdit3("Base Color##", &color.x))
-        m_selectedMaterial->setBaseColor(color);
-
-    ImGui::SeparatorText("Textures");
-
-    using TexType = GLitch::Texture::TextureType;
-
-    for (const auto& textureType : {TexType::Diffuse, TexType::Normal, TexType::Metallic, TexType::Roughness, TexType::AO})
+    if (ImGui::Button("Build project"))
     {
-        GLitch::Texture* tex = m_selectedMaterial->getTexture(textureType);
-        ImGui::Text("%s: %s", utilities::fromTypeToString(textureType).c_str(), tex ? tex->getName().c_str() : "(none)");
+        const auto project = ProjectManager::instance().getCurrentProject();
+
+        if (!project)
+            return;
+
+        const std::string command = "cmake -S " + project->getSourceDir() + " -B " + project->getBuildDir() + " && cmake --build " + project->getBuildDir();
+
+        if (const int result = std::system(command.c_str()); result == 0)
+        {
+            void* const library = ScriptsLoader::instance().loadLibrary(project->getBuildDir() + "libGameLib.so");
+
+            if (library)
+            {
+                ScriptsLoader::instance().library = library;
+
+                using GetScriptsRegisterFunc = ScriptsRegister* (*)();
+
+                auto getFunction = (GetScriptsRegisterFunc)ScriptsLoader::instance().getFunction("getScriptsRegister", ScriptsLoader::instance().library);
+
+                if (!getFunction)
+                {
+                    LOG_ERROR("Could not get function 'getScriptsRegister'");
+                    return;
+                }
+
+                ScriptsRegister* s = getFunction();
+
+                using InitFunc = const char**(*)(int*);
+
+                InitFunc function = (InitFunc)ScriptsLoader::instance().getFunction("initScripts", library);
+
+                if (!function)
+                {
+                    LOG_ERROR("Could not get function 'initScripts'");
+                    return;
+                }
+
+                int count = 0;
+                const char** scripts = function(&count);
+
+                for (int i = 0; i < count; ++i)
+                {
+                    std::string scriptName = scripts[i];
+
+                    auto script = s->createScript(scriptName);
+
+                    if (!script)
+                        LOG_ERROR("Could not find script");
+                    else
+                    {
+                        script->onStart();
+                        script->onUpdate(0.0f);
+                    }
+
+                    LOG_INFO("Script loaded: " + scriptName);
+                }
+            }
+        }
     }
+
+    ImGui::End();
+
 }
+
 
 void Editor::showObjectInfo()
 {
@@ -780,31 +927,18 @@ void Editor::showObjectInfo()
         return;
     }
 
-    static char nameBuffer[128];
-    strncpy(nameBuffer, m_selectedGameObject->getName().c_str(), sizeof(nameBuffer));
-    nameBuffer[sizeof(nameBuffer) - 1] = '\0';
+    std::string objectName = m_selectedGameObject->getName();
 
-    if (ImGui::InputText("GameObject name", nameBuffer, IM_ARRAYSIZE(nameBuffer)))
-        m_selectedGameObject->setName(nameBuffer);
+    if (UIInputText::draw(objectName))
+        m_selectedGameObject->setName(objectName);
 
     if (ImGui::BeginTabBar("Tabs"))
     {
         if (ImGui::BeginTabItem("Transform"))
         {
-            glm::vec3 position = m_selectedGameObject->getPosition();
-            if (ImGui::DragFloat3("Position", &position[0], 0.1f))
-                m_selectedGameObject->setPosition(position);
+            UITransform::draw(m_selectedGameObject);
 
-            glm::vec3 rotation = m_selectedGameObject->getRotation();
-            if (ImGui::DragFloat3("Rotation", &rotation[0], 1.0f))
-                m_selectedGameObject->setRotation(rotation);
-
-            glm::vec3 scale = m_selectedGameObject->getScale();
-            if (ImGui::DragFloat3("Scale", &scale[0], 0.1f))
-                m_selectedGameObject->setScale(scale);
-
-
-            common::Model* model{nullptr};
+            const common::Model* model{nullptr};
 
             if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
                 model = m_selectedGameObject->getComponent<SkeletalMeshComponent>()->getModel();
@@ -812,73 +946,8 @@ void Editor::showObjectInfo()
                 model = m_selectedGameObject->getComponent<StaticMeshComponent>()->getModel();
 
             if (model)
-            {
-                for (unsigned int meshIndex = 0; meshIndex < model->getMeshesSize(); meshIndex++)
-                {
-                    auto* mesh = model->getMesh(meshIndex);
-
-                    auto* material = mesh->getMaterial();
-
-                    if (!material)
-                        continue;
-
-                    const std::string header = "Mesh " + std::to_string(meshIndex);
-
-                    if (ImGui::CollapsingHeader(header.c_str()))
-                    {
-                        glm::vec3 color = material->getBaseColor();
-
-                        if (ImGui::ColorEdit3(("Base Color##" + std::to_string(meshIndex)).c_str(), &color.x))
-                            material->setBaseColor(color);
-
-                        ImGui::SeparatorText("Textures");
-
-                        using TexType = GLitch::Texture::TextureType;
-
-                        for (auto textureType : {TexType::Diffuse, TexType::Normal, TexType::Metallic, TexType::Roughness, TexType::AO})
-                        {
-                            GLitch::Texture* tex = material->getTexture(textureType);
-                            ImGui::Text("%s: %s", utilities::fromTypeToString(textureType).c_str(), tex ? tex->getName().c_str() : "(none)");
-                        }
-
-                        const auto& allMaterials = AssetsManager::instance().getAllMaterials(); // returns vector<Material*>
-                        std::vector<std::string> materialNames;
-                        int currentIndex = -1;
-
-                        for (size_t i = 0; i < allMaterials.size(); ++i)
-                        {
-                            const auto& name = allMaterials[i]->getName();
-                            materialNames.push_back(name);
-
-                            Material* activeMaterial = m_selectedGameObject->overrideMaterials.contains(meshIndex)
-                            ? m_selectedGameObject->overrideMaterials[meshIndex]
-                            : mesh->getMaterial();
-
-                            if (name == activeMaterial->getName())
-                                currentIndex = static_cast<int>(i);
-                        }
-
-                        if (ImGui::BeginCombo(("Material##" + std::to_string(meshIndex)).c_str(),
-                                              currentIndex >= 0 ? materialNames[currentIndex].c_str() : "(none)"))
-                        {
-                            for (size_t i = 0; i < materialNames.size(); ++i)
-                            {
-                                bool isSelected = (currentIndex == static_cast<int>(i));
-                                if (ImGui::Selectable(materialNames[i].c_str(), isSelected))
-                                {
-                                    auto* newMaterial = allMaterials[i];
-                                    m_selectedGameObject->overrideMaterials[meshIndex] = newMaterial;
-                                    // mesh->setMaterial(newMaterial);
-                                }
-
-                                if (isSelected)
-                                    ImGui::SetItemDefaultFocus();
-                            }
-                            ImGui::EndCombo();
-                        }
-                    }
-                }
-            }
+                for (int meshIndex = 0; meshIndex < model->getMeshesSize(); meshIndex++)
+                   UIMesh::draw(model->getMesh(meshIndex), meshIndex, m_selectedGameObject);
 
             std::vector<std::string> allModelNames;
             std::vector<const char*> convertedModelNames;
@@ -908,12 +977,91 @@ void Editor::showObjectInfo()
 
             if (ImGui::Combo("##Model combo", &m_selectedModelIndex, convertedModelNames.data(), static_cast<int>(convertedModelNames.size())))
             {
-                    if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
-                        if (auto m = AssetsManager::instance().getSkinnedModelByName(convertedModelNames[m_selectedModelIndex]))
-                            m_selectedGameObject->getComponent<SkeletalMeshComponent>()->setModel(m);
-                    if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
-                        if (auto m = AssetsManager::instance().getStaticModelByName(convertedModelNames[m_selectedModelIndex]))
-                            m_selectedGameObject->getComponent<StaticMeshComponent>()->setModel(m);
+                if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
+                    if (auto m = AssetsManager::instance().getSkinnedModelByName(convertedModelNames[m_selectedModelIndex]))
+                        m_selectedGameObject->getComponent<SkeletalMeshComponent>()->setModel(m);
+                if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
+                    if (auto m = AssetsManager::instance().getStaticModelByName(convertedModelNames[m_selectedModelIndex]))
+                        m_selectedGameObject->getComponent<StaticMeshComponent>()->setModel(m);
+            }
+
+            ImGui::SeparatorText("Components");
+
+            if (m_selectedGameObject->hasComponent<AnimatorComponent>())
+            {
+                ImGui::CollapsingHeader("Animator");
+            }
+
+            if (m_selectedGameObject->hasComponent<LightComponent>())
+            {
+                if (ImGui::CollapsingHeader("Light"))
+                {
+                    UILight::draw(m_selectedGameObject->getComponent<LightComponent>()->getLight());
+                }
+            }
+
+            if (m_selectedGameObject->hasComponent<ScriptComponent>())
+            {
+                auto scriptComponent = m_selectedGameObject->getComponent<ScriptComponent>();
+
+                const auto& scripts = scriptComponent->getScripts();
+
+                if (ImGui::CollapsingHeader("Scripts"))
+                {
+                    for (const auto& [scriptName, script] : scripts)
+                    {
+                        ImGui::Text("%s", scriptName.c_str());
+
+                        ImGui::SameLine();
+
+                        if (ImGui::Button("Simulate script"))
+                            scriptComponent->setUpdateScripts(true);
+                    }
+
+                    ImGui::Button("Attach script");
+                }
+            }
+
+            if (ImGui::Button("Add Component"))
+                ImGui::OpenPopup("AddComponentPopup");
+
+            static char searchBuffer[128] = "";
+
+            if (ImGui::BeginPopup("AddComponentPopup"))
+            {
+                ImGui::InputTextWithHint("##search", "Search...", searchBuffer, IM_ARRAYSIZE(searchBuffer));
+
+                ImGui::Separator();
+
+                const std::vector<std::string> availableComponents = {
+                    "Animator",
+                    "Script",
+                    "Light"
+                };
+
+                for (const auto& comp : availableComponents)
+                {
+                    if (strlen(searchBuffer) == 0 || comp.find(searchBuffer) != std::string::npos)
+                    {
+                        if (ImGui::MenuItem(comp.c_str()))
+                        {
+                            if (comp == "Animator" && !m_selectedGameObject->hasComponent<AnimatorComponent>())
+                                m_selectedGameObject->addComponent<AnimatorComponent>();
+                            else if (comp == "Script" && !m_selectedGameObject->hasComponent<ScriptComponent>())
+                                m_selectedGameObject->addComponent<ScriptComponent>();
+                            else if (comp == "Light" && !m_selectedGameObject->hasComponent<LightComponent>())
+                            {
+                                m_selectedGameObject->addComponent<LightComponent>(lighting::Light{});
+                                LightManager::instance().addLight(m_selectedGameObject->getComponent<LightComponent>()->getLight());
+                            }
+
+                            ImGui::CloseCurrentPopup();
+                            break;
+                        }
+                    }
+                }
+
+                ImGui::EndPopup();
             }
 
             ImGui::EndTabItem();
@@ -956,7 +1104,7 @@ void Editor::showProperties()
     if (m_selectedGameObject)
         showObjectInfo();
     else if (m_selectedMaterial)
-        showMaterialInfo();
+        UIMaterial::draw(m_selectedMaterial);
 
     // if (m_gameLibrary)
     // {

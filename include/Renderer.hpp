@@ -7,6 +7,8 @@
 
 #include "ElixirCore/GameObject.hpp"
 #include "ElixirCore/ShadowHandler.hpp"
+#include "ElixirCore/Texture.hpp"
+#include "ElixirCore/DebugLine.hpp"
 
 struct RendererFrameData
 {
@@ -31,6 +33,8 @@ public:
 
     void updateLightSpaceMatrix();
 
+    // void updateSpotLightMatrices();
+
     void renderShadowPass(const std::vector<std::shared_ptr<GameObject>>& gameObjects);
 
     unsigned int getFrameBufferTexture() const;
@@ -41,9 +45,15 @@ public:
     void unbindBuffer();
 
 private:
+    int m_width{0};
+    int m_height{0};
+    elix::debug::DebugLine debugLine;
+    void updateFrameData();
 
     // int m_width;
     // int m_height;
+
+    // elix::Texture m_colorTexture;
 
     unsigned int m_fbo = 0;
     unsigned int m_colorTexture = 0;
