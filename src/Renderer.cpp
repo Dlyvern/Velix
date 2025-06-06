@@ -1,6 +1,7 @@
+#include <glad/glad.h>
+
 #include "Renderer.hpp"
 
-#include <glad/glad.h>
 #include <glm/ext/matrix_clip_space.hpp>
 #include "CameraManager.hpp"
 #include "ElixirCore/LightManager.hpp"
@@ -8,10 +9,13 @@
 #include "ElixirCore/ShaderManager.hpp"
 #include "ElixirCore/SkeletalMeshComponent.hpp"
 #include "ElixirCore/StaticMeshComponent.hpp"
+#include <ElixirCore/MeshComponent.hpp>
 #include "ElixirCore/WindowsManager.hpp"
 #include <iostream>
+#include <ElixirCore/LightComponent.hpp>
 
 #include "Editor.hpp"
+#include <glm/gtx/string_cast.hpp>
 
 Renderer& Renderer::instance()
 {
@@ -37,8 +41,8 @@ void Renderer::initFrameBuffer(int width, int height)
     glGenTextures(1, &m_colorTexture);
     glBindTexture(GL_TEXTURE_2D, m_colorTexture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     glGenFramebuffers(1, &m_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
@@ -47,8 +51,9 @@ void Renderer::initFrameBuffer(int width, int height)
 
     glGenRenderbuffers(1, &m_depthBuffer);
     glBindRenderbuffer(GL_RENDERBUFFER, m_depthBuffer);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depthBuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_depthBuffer);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "Framebuffer not complete!" << std::endl;
@@ -69,13 +74,14 @@ void Renderer::rescaleBuffer(float width, float height)
 
         glBindTexture(GL_TEXTURE_2D, m_colorTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_colorTexture, 0);
 
         glBindRenderbuffer(GL_RENDERBUFFER, m_depthBuffer);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depthBuffer);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_depthBuffer);
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -95,9 +101,6 @@ void Renderer::unbindBuffer()
 
 void Renderer::updateFrameData()
 {
-    const auto* currentWindow = window::WindowsManager::instance().getCurrentWindow();
-
-    // const float aspect = static_cast<float>(currentWindow->getWidth()) / static_cast<float>(currentWindow->getHeight());
     const float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
 
     m_frameData.projectionMatrix = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
@@ -116,7 +119,10 @@ void Renderer::beginFrame()
         return;
 
     bindBuffer();
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_STENCIL_TEST);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT  | GL_STENCIL_BUFFER_BIT);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
     updateFrameData();
 
@@ -128,6 +134,15 @@ void Renderer::beginFrame()
 
     elix::Shader* skeletonShader = ShaderManager::instance().getShader(ShaderManager::ShaderType::SKELETON);
     elix::Shader* staticShader = ShaderManager::instance().getShader(ShaderManager::ShaderType::STATIC);
+
+    elix::Shader* staticStencilShader = ShaderManager::instance().getShader(ShaderManager::ShaderType::STATIC_STENCIL);
+    elix::Shader* skeletonStencilShader = ShaderManager::instance().getShader(ShaderManager::ShaderType::SKELETON_STENCIL);
+
+    staticStencilShader->bind();
+    staticStencilShader->setMat4("view", m_frameData.viewMatrix);
+    staticStencilShader->setMat4("projection", m_frameData.projectionMatrix);
+    staticStencilShader->setVec3("viewPos", m_frameData.cameraPosition);
+    staticStencilShader->unbind();
 
     staticShader->bind();
     staticShader->setMat4("view", m_frameData.viewMatrix);
@@ -151,29 +166,59 @@ void Renderer::beginFrame()
     LightManager::instance().bindPointLighting(*skeletonShader);
     skeletonShader->unbind();
 
+    glStencilFunc(GL_ALWAYS, 1, 0xFF);
+    glStencilMask(0xFF);
+
     for (const auto& gameObject : gameObjects)
     {
-        if (gameObject->hasComponent<StaticMeshComponent>())
+        bool isSelected = (gameObject.get() == m_selectedGameObject);
+
+        if (gameObject->hasComponent<MeshComponent>())
         {
-            staticShader->bind();
-            staticShader->setMat4("model", gameObject->getTransformMatrix());
-            gameObject->getComponent<StaticMeshComponent>()->render(&gameObject->overrideMaterials);
-            staticShader->unbind();
-        }
-        else if (gameObject->hasComponent<SkeletalMeshComponent>())
-        {
-            skeletonShader->bind();
-            skeletonShader->setMat4("model", gameObject->getTransformMatrix());
-            gameObject->getComponent<SkeletalMeshComponent>()->render(*skeletonShader, &gameObject->overrideMaterials);
-            skeletonShader->unbind();
+            glStencilFunc(GL_ALWAYS, 1, 0xFF);
+            glStencilMask(isSelected ? 0xFF : 0x00);
+
+            auto* justShader = gameObject->getComponent<MeshComponent>()->getModel()->hasSkeleton() ? skeletonShader : staticShader;
+
+            justShader->bind();
+            justShader->setMat4("model", gameObject->getTransformMatrix());
+
+            if (justShader == skeletonShader)
+            {
+                const std::vector<glm::mat4>& boneMatrices = gameObject->getComponent<MeshComponent>()->getModel()->getSkeleton()->getFinalMatrices();
+                justShader->setMat4Array("finalBonesMatrices", boneMatrices);
+            }
+
+            gameObject->getComponent<MeshComponent>()->render(&gameObject->overrideMaterials);
+            justShader->unbind();
         }
     }
+
+    if (SceneManager::instance().getCurrentScene()->getSkybox())
+        SceneManager::instance().getCurrentScene()->getSkybox()->render(m_frameData.viewMatrix, m_frameData.projectionMatrix);
 
     for (const auto& drawable : drawables)
         drawable->draw();
 
-    if (SceneManager::instance().getCurrentScene()->getSkybox())
-        SceneManager::instance().getCurrentScene()->getSkybox()->render(m_frameData.viewMatrix, m_frameData.projectionMatrix);
+    if (m_selectedGameObject && m_selectedGameObject->hasComponent<MeshComponent>())
+    {
+        glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+        glStencilMask(0x00);
+        glDisable(GL_DEPTH_TEST);
+
+        glm::mat4 model = glm::scale(m_selectedGameObject->getTransformMatrix(), glm::vec3(1.05f));
+
+        const auto* justShader = m_selectedGameObject->getComponent<MeshComponent>()->getModel()->hasSkeleton() ? skeletonStencilShader : staticStencilShader;
+
+        justShader->bind();
+        justShader->setMat4("model", model);
+        m_selectedGameObject->getComponent<MeshComponent>()->render();
+        justShader->unbind();
+
+        glEnable(GL_DEPTH_TEST);
+        glStencilMask(0xFF);
+        glStencilFunc(GL_ALWAYS, 1, 0xFF);
+    }
 
     // glm::vec3 start = glm::vec3(0.0f, 0.0f, 0.0f);
     // glm::vec3 end = glm::vec3(1.0f, 1.0f, 1.0f);
@@ -186,7 +231,6 @@ void Renderer::beginFrame()
 
     for (size_t index = 0; index < spotLight.size(); ++index)
         m_shadowHandler.bindSpotShadowPass(index, 10 + static_cast<int>(index));
-
 }
 
 void Renderer::updateLightSpaceMatrix()
@@ -233,6 +277,11 @@ void Renderer::updateLightSpaceMatrix()
     LightManager::instance().setLightSpaceMatrix(lightSpaceMatrices);
 }
 
+void Renderer::setSelectedGameObject(GameObject *gameObject)
+{
+    m_selectedGameObject = gameObject;
+}
+
 void Renderer::renderShadowPass(const std::vector<std::shared_ptr<GameObject>> &gameObjects)
 {
     if (LightManager::instance().getLights().empty() || LightManager::instance().getLightSpaceMatrix().empty())
@@ -257,22 +306,22 @@ void Renderer::renderShadowPass(const std::vector<std::shared_ptr<GameObject>> &
 
         for (const auto& obj : gameObjects)
         {
-            if (obj->hasComponent<StaticMeshComponent>())
-            {
-                staticShadowShader->bind();
-                staticShadowShader->setMat4("model", obj->getTransformMatrix());
-                staticShadowShader->setMat4("lightSpaceMatrix", lightSpaceMatrices[i]);
-                obj->getComponent<StaticMeshComponent>()->render();
-                staticShadowShader->unbind();
-            }
-            else if (obj->hasComponent<SkeletalMeshComponent>())
-            {
-                skeletonShadowShader->bind();
-                skeletonShadowShader->setMat4("model", obj->getTransformMatrix());
-                skeletonShadowShader->setMat4("lightSpaceMatrix", lightSpaceMatrices[i]);
-                obj->getComponent<SkeletalMeshComponent>()->render(*skeletonShadowShader);
-                skeletonShadowShader->unbind();
-            }
+            // if (obj->hasComponent<StaticMeshComponent>())
+            // {
+            //     staticShadowShader->bind();
+            //     staticShadowShader->setMat4("model", obj->getTransformMatrix());
+            //     staticShadowShader->setMat4("lightSpaceMatrix", lightSpaceMatrices[i]);
+            //     obj->getComponent<StaticMeshComponent>()->render();
+            //     staticShadowShader->unbind();
+            // }
+            // else if (obj->hasComponent<SkeletalMeshComponent>())
+            // {
+            //     skeletonShadowShader->bind();
+            //     skeletonShadowShader->setMat4("model", obj->getTransformMatrix());
+            //     skeletonShadowShader->setMat4("lightSpaceMatrix", lightSpaceMatrices[i]);
+            //     obj->getComponent<SkeletalMeshComponent>()->render(*skeletonShadowShader);
+            //     skeletonShadowShader->unbind();
+            // }
         }
 
         m_shadowHandler.endShadowPass();
@@ -282,6 +331,7 @@ void Renderer::renderShadowPass(const std::vector<std::shared_ptr<GameObject>> &
 void Renderer::endFrame()
 {
     unbindBuffer();
+    glDisable(GL_DEPTH_TEST);
 }
 
 const RendererFrameData& Renderer::getFrameData() const

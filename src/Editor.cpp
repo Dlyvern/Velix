@@ -1,5 +1,5 @@
 #include "Editor.hpp"
-
+#include <ElixirCore/MeshComponent.hpp>
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <imgui_internal.h>
@@ -33,6 +33,7 @@
 
 #include <unistd.h>
 #include <pwd.h>
+#include <ElixirCore/AssetsLoader.hpp>
 #include <ElixirCore/Logger.hpp>
 
 #include "ProjectManager.hpp"
@@ -80,9 +81,17 @@ void BeginDockSpace()
         ImGuiID dockIdLeftTop;
         ImGuiID dockIdLeftBottom = ImGui::DockBuilderSplitNode(dockIdLeft, ImGuiDir_Down, 0.3f, &dockIdLeftTop, &dockIdLeft);
 
+        // Split bottom area into tab bar
+        ImGuiID dockIdBottomLeft;
+        ImGuiID dockIdBottomRight = ImGui::DockBuilderSplitNode(dockIdBottom, ImGuiDir_Right, 0.5f, &dockIdBottomLeft, &dockIdBottom);
+
         ImGui::DockBuilderDockWindow("Scene hierarchy", dockIdLeft);
         ImGui::DockBuilderDockWindow("Properties", dockIdRight);
-        ImGui::DockBuilderDockWindow("Assets", dockIdBottom);
+
+        ImGui::DockBuilderDockWindow("Assets", dockIdBottomLeft);
+        ImGui::DockBuilderDockWindow("Logger", dockIdBottomLeft);
+        ImGui::DockBuilderDockWindow("Terminal", dockIdBottomRight);
+
         ImGui::DockBuilderDockWindow("Benchmark", dockIdLeftBottom);
         ImGui::DockBuilderDockWindow("Scene View", dockIdCenter);
 
@@ -103,13 +112,18 @@ void Editor::updateInput()
     auto* window = window::WindowsManager::instance().getCurrentWindow();
 
     if (input::Keyboard.isKeyReleased(input::KeyCode::DELETE) && m_selectedGameObject)
-        if (SceneManager::instance().getCurrentScene()->deleteGameObject(m_selectedGameObject))
-            m_selectedGameObject = nullptr;
+    {
+        if (SceneManager::instance().getCurrentScene())
+        {
+            if (SceneManager::instance().getCurrentScene()->deleteGameObject(m_selectedGameObject))
+                setSelectedGameObject(nullptr);
+        }
+    }
 
     if (input::Keyboard.isKeyPressed(input::KeyCode::LeftCtrl) && input::Keyboard.isKeyReleased(input::KeyCode::V) && m_savedGameObject)
     {
         SceneManager::instance().getCurrentScene()->addGameObject(m_savedGameObject);
-        m_selectedGameObject = m_savedGameObject.get();
+        setSelectedGameObject(m_savedGameObject.get());
     }
 
     if (input::Keyboard.isKeyPressed(input::KeyCode::LeftCtrl) && input::Keyboard.isKeyReleased(input::KeyCode::C) && m_selectedGameObject)
@@ -126,15 +140,15 @@ void Editor::updateInput()
         newGameObject->setPosition(m_selectedGameObject->getPosition());
         newGameObject->setRotation(m_selectedGameObject->getRotation());
         newGameObject->setScale(m_selectedGameObject->getScale());
-        // newGameObject->addComponent<RigidbodyComponent>(newGameObject);
+        newGameObject->addComponent<RigidbodyComponent>(newGameObject);
 
-        if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
-        {
-            newGameObject->addComponent<SkeletalMeshComponent>(m_selectedGameObject->getComponent<SkeletalMeshComponent>()->getModel());
-            // physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);
-        }
-        else if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
-            newGameObject->addComponent<StaticMeshComponent>(m_selectedGameObject->getComponent<StaticMeshComponent>()->getModel());
+        // if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
+        // {
+        //     newGameObject->addComponent<SkeletalMeshComponent>(m_selectedGameObject->getComponent<SkeletalMeshComponent>()->getModel());
+        //     physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);
+        // }
+        // else if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
+        //     newGameObject->addComponent<StaticMeshComponent>(m_selectedGameObject->getComponent<StaticMeshComponent>()->getModel());
 
         newGameObject->overrideMaterials = m_selectedGameObject->overrideMaterials;
 
@@ -148,7 +162,12 @@ void Editor::updateInput()
         m_actionsManager.redo();
 
     if (input::Keyboard.isKeyPressed(input::KeyCode::LeftCtrl) && input::Keyboard.isKeyReleased(input::KeyCode::S))
-        SceneManager::saveObjectsIntoFile(SceneManager::instance().getCurrentScene()->getGameObjects(), filesystem::getMapsFolderPath().string() + "/test_scene.json");
+    {
+        const auto project = ProjectManager::instance().getCurrentProject();
+
+        //TODO CHANGE IT LATER 'project->getEntryScene()'
+        SceneManager::saveSceneToFile(SceneManager::instance().getCurrentScene().get(), project->getEntryScene());
+    }
 
     if (input::Keyboard.isKeyReleased(input::KeyCode::W))
         m_transformMode = TransformMode::Translate;
@@ -253,13 +272,30 @@ void Editor::updateInput()
 
 void Editor::update()
 {
-    if (m_state == State::Editor) {
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+
+    ImGui::NewFrame();
+
+    if (m_state == State::Editor)
+    {
+        ImGuizmo::BeginFrame();
         showEditor();
-        return;
     }
+    else
+        showStart();
 
+    ImGui::Render();
 
-    showStart();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    if (const ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+    {
+        GLFWwindow* backup_current_context = glfwGetCurrentContext();
+        ImGui::UpdatePlatformWindows();
+        ImGui::RenderPlatformWindowsDefault();
+        glfwMakeContextCurrent(backup_current_context);
+    }
 }
 
 std::string getHome()
@@ -416,6 +452,8 @@ void Editor::showEditor()
     BeginDockSpace();
     showViewPort();
     showDebugInfo();
+    drawLogWindow();
+    drawTerminal();
 }
 
 void Editor::showMenuBar()
@@ -452,7 +490,6 @@ void Editor::showViewPort()
     const ImVec2 cursorPosition = ImGui::GetCursorScreenPos();
     const ImVec2 contentSize = ImGui::GetContentRegionAvail();
 
-
     ImGuiIO& io = ImGui::GetIO();
     float dpiScale = io.DisplayFramebufferScale.x;
     int fbWidth = (int)(contentSize.x * dpiScale);
@@ -464,13 +501,11 @@ void Editor::showViewPort()
     auto fboTexture = Renderer::instance().getFrameBufferTexture();
     ImGui::Image((ImTextureID)(intptr_t)fboTexture, contentSize, ImVec2(0, 1), ImVec2(1, 0));
 
-
     ImGui::SetCursorScreenPos(cursorPosition);
     ImGui::InvisibleButton("GizmoInputCatcher", contentSize,
     ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 
     ImGui::SetItemAllowOverlap();
-
 
     if (ImGui::BeginDragDropTarget())
     {
@@ -486,38 +521,41 @@ void Editor::showViewPort()
 
             std::filesystem::path path(info->name);
 
-            //TODO Replace this shit somehow
-            if (path.extension() == ".fbx" || path.extension() == ".obj")
+            if (path.extension() == ".hdr")
             {
-                ImVec2 mousePos = ImGui::GetMousePos();
+                auto skybox = std::make_shared<elix::Skybox>();
+                skybox->init({});
+                skybox->loadFromHDR(path.string());
 
-                float localX = mousePos.x - cursorPosition.x;
-                float localY = mousePos.y - cursorPosition.y;
+                SceneManager::instance().getCurrentScene()->setSkybox(skybox);
+            }
 
-                if (localX >= 0 && localY >= 0 && localX < windowWidth && localY < windowHeight)
-                {
-                    float x = (2.0f * localX) / windowWidth - 1.0f;
-                    float y = 1.0f - (2.0f * localY) / windowHeight;
-
-                    std::cout << "X: " << x << std::endl;
-                    std::cout << "Y: " << y << std::endl;
-
-                    glm::vec2 mouseNDC(x, y);
-                }
-
+            //TODO Replace this shit somehow
+            else if (path.extension() == ".fbx" || path.extension() == ".obj")
+            {
                 auto newGameObject = std::make_shared<GameObject>("test");
                 newGameObject->setPosition({0.0f, 0.0f, 0.0f});
                 newGameObject->setRotation({0.0f, 0.0f, 0.0f});
                 newGameObject->setScale({1.0f, 1.0f, 1.0f});
                 newGameObject->addComponent<RigidbodyComponent>(newGameObject);
 
-                if (auto staticModel = AssetsManager::instance().getStaticModelByName(path.filename()))
-                    newGameObject->addComponent<StaticMeshComponent>(staticModel);
-                else if (auto skinnedModel = AssetsManager::instance().getSkinnedModelByName(path.filename()))
+                if (auto cache = ProjectManager::instance().getAssetsCache())
                 {
-                    newGameObject->addComponent<SkeletalMeshComponent>(skinnedModel);
-                    physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);
+                    if (auto model = cache->getAsset<elix::AssetModel>(path.string()))
+                        newGameObject->addComponent<MeshComponent>(model->getModel());
+                    else
+                        LOG_WARN("Failed to load asset model");
                 }
+                else
+                    LOG_WARN("Failed to load cache");
+
+                // if (auto staticModel = AssetsManager::instance().getStaticModelByName(path.filename()))
+                //     newGameObject->addComponent<StaticMeshComponent>(staticModel);
+                // else if (auto skinnedModel = AssetsManager::instance().getSkinnedModelByName(path.filename()))
+                // {
+                //     newGameObject->addComponent<SkeletalMeshComponent>(skinnedModel);
+                //     physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);
+                // }
 
                 SceneManager::instance().getCurrentScene()->addGameObject(newGameObject);
             }
@@ -617,7 +655,7 @@ void Editor::showViewPort()
                     auto* gameObject = static_cast<GameObject*>(actor->userData);
 
                     if (gameObject)
-                        m_selectedGameObject = gameObject;
+                        setSelectedGameObject(gameObject);
                 }
             }
         }
@@ -648,7 +686,7 @@ void Editor::showAllObjectsInTheScene()
         bool isNodeOpened = ImGui::TreeNodeEx((void*)(intptr_t)object.get(), flags, "%s", object->getName().c_str());
 
         if (ImGui::IsItemClicked())
-            m_selectedGameObject = object.get();
+            setSelectedGameObject(object.get());
 
         if (isNodeOpened)
         {
@@ -663,22 +701,26 @@ void Editor::showAllObjectsInTheScene()
 
 void Editor::showAssetsInfo()
 {
-    static elix::Texture folderTexture = AssetsManager::instance().loadTexture(filesystem::getTexturesFolderPath().string() + "/folder.png");
-    static elix::Texture fileTexture = AssetsManager::instance().loadTexture(filesystem::getTexturesFolderPath().string() + "/file.png");
+    static auto folderTexture = ProjectManager::instance().getAssetsCache()->getAsset<elix::AssetTexture>(filesystem::getTexturesFolderPath().string() + "/folder.png");
+    static auto fileTexture = ProjectManager::instance().getAssetsCache()->getAsset<elix::AssetTexture>(filesystem::getTexturesFolderPath().string() + "/file.png");
 
-    if (!folderTexture.isBaked())
-        folderTexture.bake();
-    if (!fileTexture.isBaked())
-        fileTexture.bake();
+    if (folderTexture && !folderTexture->getTexture()->isBaked())
+        folderTexture->getTexture()->bake();
+    if (fileTexture && !fileTexture->getTexture()->isBaked())
+        fileTexture->getTexture()->bake();
 
-    static ImTextureID folderIcon = static_cast<ImTextureID>(static_cast<intptr_t>(folderTexture.getId()));
-    static ImTextureID fileIcon = static_cast<ImTextureID>(static_cast<intptr_t>(fileTexture.getId()));
+    static ImTextureID folderIcon = folderTexture ? static_cast<ImTextureID>(static_cast<intptr_t>(folderTexture->getTexture()->getId())) : 0;
+    static ImTextureID fileIcon = fileTexture ? static_cast<ImTextureID>(static_cast<intptr_t>(fileTexture->getTexture()->getId())) : 0;
 
     ImGui::Begin("Assets");
     const float iconSize = 64.0f;
     const float padding = 16.0f;
 
-    if (m_assetsPath.has_parent_path() && m_assetsPath != filesystem::getResourcesFolderPath())
+    //TODO CHANGE IT LATER
+    if (m_assetsPath.empty())
+        m_assetsPath = ProjectManager::instance().getCurrentProject()->getFullPath();
+
+    if (m_assetsPath.has_parent_path() && m_assetsPath != ProjectManager::instance().getCurrentProject()->getFullPath())
         if (ImGui::Button(".."))
             m_assetsPath = m_assetsPath.parent_path();
 
@@ -688,7 +730,7 @@ void Editor::showAssetsInfo()
 
     int itemIndex = 0;
     ImGui::Columns(columnCount, nullptr, false);
-    const std::vector<std::string> allowedExtensions{".png", ".mat", ".fbx", ".anim", ".obj"};
+    const std::vector<std::string> allowedExtensions{".png", ".mat", ".fbx", ".anim", ".obj", ".hdr", ".cpp", ".hpp", ".h"};
 
     for (const auto& entry : std::filesystem::directory_iterator(m_assetsPath))
     {
@@ -743,14 +785,14 @@ void Editor::showAssetsInfo()
             {
                 if (entry.path().extension() == ".mat")
                 {
-                    auto material = AssetsManager::instance().getMaterialByName(entry.path().filename().string());
+                    // auto material = AssetsManager::instance().getMaterialByName(entry.path().filename().string());
 
-                    //TODO: make this better
-                    if (material)
-                    {
-                        m_selectedMaterial = material;
-                        m_selectedGameObject = nullptr;
-                    }
+                    // TODO: make this better
+                    // if (material)
+                    // {
+                        // m_selectedMaterial = material;
+                        // m_selectedGameObject = nullptr;
+                    // }
                 }
             }
         }
@@ -842,6 +884,118 @@ void Editor::showGuizmosInfo()
     }
 }
 
+void Editor::drawTerminal()
+{
+    if (ImGui::Begin("Terminal"))
+    {
+        static char commandBuffer[256] = "";
+        static std::vector<std::string> history;
+
+        ImGui::BeginChild("TerminalOutput", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
+        for (const auto& line : history) {
+            ImGui::TextUnformatted(line.c_str());
+        }
+        ImGui::EndChild();
+
+        ImGui::PushItemWidth(-1);
+
+        if (ImGui::InputText("##Command", commandBuffer, IM_ARRAYSIZE(commandBuffer), ImGuiInputTextFlags_EnterReturnsTrue))
+        {
+            history.push_back("> " + std::string(commandBuffer));
+
+            constexpr int kBufferSize = 128;
+            std::array<char, kBufferSize> buffer{};
+            std::string result;
+
+            #ifdef _WIN32
+                        std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(command.c_str(), "r"), _pclose);
+            #else
+                        std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(commandBuffer, "r"), pclose);
+            #endif
+
+            if (pipe)
+            {
+                while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr)
+                {
+                    result += buffer.data();
+                }
+
+                if (!result.empty())
+                {
+                    history.push_back(result);
+                }
+
+                commandBuffer[0] = '\0';
+                ImGui::SetKeyboardFocusHere(-1);
+            }
+        }
+
+        ImGui::PopItemWidth();
+    }
+
+    ImGui::End();
+}
+
+
+void Editor::drawLogWindow()
+{
+    if (ImGui::Begin("Logger")) {
+        // Add clear button
+        // if (ImGui::Button("Clear")) {
+        //     Logger::instance().clear();
+        // }
+        ImGui::SameLine();
+
+        //TODO: Add filtering
+        // ImGui::Checkbox("Info", &show_info);
+        // ImGui::SameLine();
+        // ImGui::Checkbox("Warnings", &show_warnings);
+        // ImGui::SameLine();
+        // ImGui::Checkbox("Errors", &show_errors);
+        // Add copy button
+        // if (ImGui::Button("Copy to Clipboard"))
+        // {
+        //     copyLogsToClipboard();
+        // }
+
+        ImGui::Separator();
+
+        ImGui::BeginChild("LogContent", ImVec2(0, 0), false,
+                         ImGuiWindowFlags_HorizontalScrollbar);
+
+        const auto messages = elix::Logger::instance().getMessages();
+        for (const auto& msg : messages) {
+            // Timestamp
+            auto time_t = std::chrono::system_clock::to_time_t(msg.timestamp);
+            char time_str[20];
+            std::strftime(time_str, sizeof(time_str), "%H:%M:%S", std::localtime(&time_t));
+
+            ImGui::TextDisabled("[%s] ", time_str);
+            ImGui::SameLine();
+
+            // Colored message
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                ImVec4(msg.color.r, msg.color.g, msg.color.b, 1.0f));
+            ImGui::TextUnformatted(msg.message.c_str());
+            ImGui::PopStyleColor();
+        }
+
+        // Auto-scroll
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+            ImGui::SetScrollHereY(1.0f);
+        }
+
+        ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
+void Editor::setSelectedGameObject(GameObject *gameObject)
+{
+    m_selectedGameObject = gameObject;
+    Renderer::instance().setSelectedGameObject(m_selectedGameObject);
+}
+
 void Editor::showDebugInfo()
 {
     showAllObjectsInTheScene();
@@ -860,6 +1014,26 @@ void Editor::showDebugInfo()
             return;
 
         const std::string command = "cmake -S " + project->getSourceDir() + " -B " + project->getBuildDir() + " && cmake --build " + project->getBuildDir();
+
+        constexpr int kBufferSize = 128;
+        std::array<char, kBufferSize> buffer;
+        std::string result;
+
+        #ifdef _WIN32
+                std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(command.c_str(), "r"), _pclose);
+        #else
+                std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
+        #endif
+
+        if (!pipe)
+            LOG_ERROR("Failed to execute command");
+
+        while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr)
+        {
+            result += buffer.data();
+        }
+
+        LOG_INFO(result.c_str());
 
         if (const int result = std::system(command.c_str()); result == 0)
         {
@@ -908,7 +1082,7 @@ void Editor::showDebugInfo()
                         script->onUpdate(0.0f);
                     }
 
-                    LOG_INFO("Script loaded: " + scriptName);
+                    LOG_INFO("Script loaded: %s", scriptName);
                 }
             }
         }
@@ -938,52 +1112,59 @@ void Editor::showObjectInfo()
         {
             UITransform::draw(m_selectedGameObject);
 
-            const common::Model* model{nullptr};
+            // const common::Model* model{nullptr};
+            //
+            // if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
+            //     model = m_selectedGameObject->getComponent<SkeletalMeshComponent>()->getModel();
+            // else if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
+            //     model = m_selectedGameObject->getComponent<StaticMeshComponent>()->getModel();
+            // if (model)
+            //     for (int meshIndex = 0; meshIndex < model->getMeshesSize(); meshIndex++)
+            //        UIMesh::draw(model->getMesh(meshIndex), meshIndex, m_selectedGameObject);
 
-            if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
-                model = m_selectedGameObject->getComponent<SkeletalMeshComponent>()->getModel();
-            else if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
-                model = m_selectedGameObject->getComponent<StaticMeshComponent>()->getModel();
 
-            if (model)
-                for (int meshIndex = 0; meshIndex < model->getMeshesSize(); meshIndex++)
-                   UIMesh::draw(model->getMesh(meshIndex), meshIndex, m_selectedGameObject);
+            // m_selectedGameObject->overrideMaterials
+            if (m_selectedGameObject->hasComponent<MeshComponent>())
+                if (auto model = m_selectedGameObject->getComponent<MeshComponent>()->getModel())
+                    for (int meshIndex = 0; meshIndex < model->getNumMeshes(); meshIndex++)
+                        UIMesh::draw(model->getMesh(meshIndex), meshIndex, m_selectedGameObject);
 
-            std::vector<std::string> allModelNames;
-            std::vector<const char*> convertedModelNames;
-            std::string currentModelName;
 
-            if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
-            {
-                currentModelName = m_selectedGameObject->getComponent<SkeletalMeshComponent>()->getModel()->getName();
-                allModelNames = AssetsManager::instance().getAllSkinnedModelsNames();
-            }
-            else if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
-            {
-                currentModelName = m_selectedGameObject->getComponent<StaticMeshComponent>()->getModel()->getName();
-                allModelNames = AssetsManager::instance().getAllStaticModelsNames();
-            }
-
-             for (const auto& modelName : allModelNames)
-                convertedModelNames.push_back(modelName.c_str());
-
-            ImGui::Text("Model %s", currentModelName.c_str());
-            ImGui::SameLine();
-
-            auto i = std::ranges::find_if(convertedModelNames,
-        [&currentModelName](const std::string& modelName){return currentModelName == modelName;});
-
-            m_selectedModelIndex = std::distance(convertedModelNames.begin(), i);
-
-            if (ImGui::Combo("##Model combo", &m_selectedModelIndex, convertedModelNames.data(), static_cast<int>(convertedModelNames.size())))
-            {
-                if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
-                    if (auto m = AssetsManager::instance().getSkinnedModelByName(convertedModelNames[m_selectedModelIndex]))
-                        m_selectedGameObject->getComponent<SkeletalMeshComponent>()->setModel(m);
-                if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
-                    if (auto m = AssetsManager::instance().getStaticModelByName(convertedModelNames[m_selectedModelIndex]))
-                        m_selectedGameObject->getComponent<StaticMeshComponent>()->setModel(m);
-            }
+        //     std::vector<std::string> allModelNames;
+        //     std::vector<const char*> convertedModelNames;
+        //     std::string currentModelName;
+        //
+        //     if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
+        //     {
+        //         currentModelName = m_selectedGameObject->getComponent<SkeletalMeshComponent>()->getModel()->getName();
+        //         allModelNames = AssetsManager::instance().getAllSkinnedModelsNames();
+        //     }
+        //     else if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
+        //     {
+        //         currentModelName = m_selectedGameObject->getComponent<StaticMeshComponent>()->getModel()->getName();
+        //         allModelNames = AssetsManager::instance().getAllStaticModelsNames();
+        //     }
+        //
+        //      for (const auto& modelName : allModelNames)
+        //         convertedModelNames.push_back(modelName.c_str());
+        //
+        //     ImGui::Text("Model %s", currentModelName.c_str());
+        //     ImGui::SameLine();
+        //
+        //     auto i = std::ranges::find_if(convertedModelNames,
+        // [&currentModelName](const std::string& modelName){return currentModelName == modelName;});
+        //
+        //     m_selectedModelIndex = std::distance(convertedModelNames.begin(), i);
+        //
+        //     if (ImGui::Combo("##Model combo", &m_selectedModelIndex, convertedModelNames.data(), static_cast<int>(convertedModelNames.size())))
+        //     {
+        //         if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
+        //             if (auto m = AssetsManager::instance().getSkinnedModelByName(convertedModelNames[m_selectedModelIndex]))
+        //                 m_selectedGameObject->getComponent<SkeletalMeshComponent>()->setModel(m);
+        //         if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
+        //             if (auto m = AssetsManager::instance().getStaticModelByName(convertedModelNames[m_selectedModelIndex]))
+        //                 m_selectedGameObject->getComponent<StaticMeshComponent>()->setModel(m);
+        //     }
 
             ImGui::SeparatorText("Components");
 
@@ -1067,25 +1248,25 @@ void Editor::showObjectInfo()
             ImGui::EndTabItem();
         }
 
-        if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>() && ImGui::BeginTabItem("Bones"))
+        if (m_selectedGameObject->hasComponent<MeshComponent>() && ImGui::BeginTabItem("Bones"))
         {
-            displayBonesHierarchy(&m_selectedGameObject->getComponent<SkeletalMeshComponent>()->getModel()->getSkeleton());
+            displayBonesHierarchy(m_selectedGameObject->getComponent<MeshComponent>()->getModel()->getSkeleton());
             ImGui::EndTabItem();
         }
 
-        if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>() && ImGui::BeginTabItem("Animation"))
+        if (m_selectedGameObject->hasComponent<MeshComponent>() && ImGui::BeginTabItem("Animation"))
         {
-            auto component = m_selectedGameObject->getComponent<SkeletalMeshComponent>();
+            auto component = m_selectedGameObject->getComponent<MeshComponent>();
 
             for (const auto& anim : component->getModel()->getAnimations())
             {
-                if (ImGui::Button(anim.name.c_str()))
-                    if (auto* animation = component->getModel()->getAnimation(anim.name))
+                if (ImGui::Button(anim->name.c_str()))
+                    if (auto* animation = component->getModel()->getAnimation(anim->name))
                     {
                         if (!m_selectedGameObject->hasComponent<AnimatorComponent>())
                             m_selectedGameObject->addComponent<AnimatorComponent>();
 
-                        animation->skeletonForAnimation = &component->getModel()->getSkeleton();
+                        animation->skeletonForAnimation = component->getModel()->getSkeleton();
                         m_selectedGameObject->getComponent<AnimatorComponent>()->playAnimation(animation);
                     }
             }

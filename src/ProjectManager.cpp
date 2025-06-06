@@ -7,6 +7,11 @@
 #include <../libraries/json/json.hpp>
 #include <ElixirCore/AssetsManager.hpp>
 
+#include "ElixirCore/Mesh.hpp"
+
+#include <ElixirCore/AssetsLoader.hpp>
+#include "ElixirCore/Filesystem.hpp"
+
 ProjectManager & ProjectManager::instance()
 {
     static ProjectManager instance;
@@ -94,7 +99,7 @@ bool ProjectManager::loadConfigInProject(const std::string &configPath, Project*
     }
     catch (const nlohmann::json::parse_error& e)
     {
-        LOG_ERROR("Failed to parse config file" + std::string(e.what()));
+        LOG_ERROR("Failed to parse config file %s", std::string(e.what()));
         return false;
     }
 
@@ -111,48 +116,48 @@ bool ProjectManager::loadConfigInProject(const std::string &configPath, Project*
     return true;
 }
 
-bool ProjectManager::loadProject(Project *project)
+bool ProjectManager::loadProject(Project* project)
 {
     const std::string scenePath = project->getEntryScene();
 
     if (!std::filesystem::exists(scenePath))
         return false;
 
-    AssetsManager::instance().preLoadAllTexturesFromFolder(project->getAssetsDir() + "textures");
-    AssetsManager::instance().preLoadAllModelsFromFolder(project->getAssetsDir() + "models");
-    AssetsManager::instance().preLoadMaterialsFromFolder(project->getAssetsDir() + "materials");
+    const std::filesystem::path texturesPath = project->getAssetsDir() + "textures";
+    const std::filesystem::path modelsPath = project->getAssetsDir() + "models";
+    const std::filesystem::path materialsPath = project->getAssetsDir() + "materials";
 
-    auto models = AssetsManager::instance().getAllStaticModels();
+    for (const auto& entry : std::filesystem::directory_iterator(texturesPath))
+        if (auto asset = elix::AssetsLoader::loadAsset(entry.path()))
+            m_projectCache.addAsset(entry.path().string(), std::move(asset));
 
-    for (const auto& model : models)
-    {
-        for (int index = 0; index < model->getMeshesSize(); index++)
+    for (const auto& entry : std::filesystem::directory_iterator(modelsPath))
+        if (auto asset = elix::AssetsLoader::loadAsset(entry.path()))
         {
-            const auto& mesh = model->getMesh(index);
+            auto model = m_projectCache.addAsset(entry.path().string(), std::move(asset));
 
-            if (auto staticMesh = dynamic_cast<StaticMesh*>(mesh))
-                staticMesh->loadFromRaw();
+            if (auto animation = elix::AssetsLoader::loadAsset<elix::AssetAnimation>(entry.path()))
+            {
+                dynamic_cast<elix::AssetModel*>(model)->getModel()->addAnimation(animation->getAnimation());
+
+                const std::string animationPath = animation->getAnimation()->name;
+
+                m_projectCache.addAsset(animationPath, std::move(animation));
+            }
+
         }
-    }
 
-    auto skinnedModels = AssetsManager::instance().getAllSkinnedModels();
+    for (const auto& entry : std::filesystem::directory_iterator(materialsPath))
+        if (auto asset  = elix::AssetsLoader::loadAsset(entry.path(), &m_projectCache))
+            m_projectCache.addAsset(entry.path().string(), std::move(asset));
 
-    for (const auto& skinnedModel : skinnedModels)
-    {
-        for (int index = 0; index < skinnedModel->getMeshesSize(); index++)
-        {
-            const auto& mesh = skinnedModel->getMesh(index);
+    auto folderTextureAsset = elix::AssetsLoader::loadAsset(filesystem::getTexturesFolderPath().string() + "/folder.png");
+    m_projectCache.addAsset(filesystem::getTexturesFolderPath().string() + "/folder.png", std::move(folderTextureAsset));
 
-            if (auto skeletalMesh = dynamic_cast<SkeletalMesh*>(mesh))
-                skeletalMesh->loadFromRaw();
-        }
-    }
+    auto fileTextureAsset = elix::AssetsLoader::loadAsset(filesystem::getTexturesFolderPath().string() + "/file.png");
+    m_projectCache.addAsset(filesystem::getTexturesFolderPath().string() + "/file.png", std::move(fileTextureAsset));
 
-    const auto& objects = SceneManager::instance().loadObjectsFromFile(scenePath);
-
-    auto newScene = new Scene();
-
-    newScene->setGameObjects(objects);
+    const auto& newScene = SceneManager::loadSceneFromFile(scenePath, m_projectCache);
 
     SceneManager::instance().setCurrentScene(newScene);
 
@@ -164,7 +169,12 @@ void ProjectManager::setCurrentProject(Project *project)
     m_currentProject = project;
 }
 
-Project* ProjectManager::getCurrentProject()
+Project* ProjectManager::getCurrentProject() const
 {
     return m_currentProject;
+}
+
+elix::AssetsCache* ProjectManager::getAssetsCache()
+{
+    return &m_projectCache;
 }

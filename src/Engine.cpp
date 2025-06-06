@@ -18,7 +18,6 @@
 #include "ElixirCore/Logger.hpp"
 #define IMGUI_ENABLE_DOCKING
 
-
 bool Engine::run()
 {
     try
@@ -27,20 +26,15 @@ bool Engine::run()
     }
     catch (const std::exception &e)
     {
-        std::cerr << "ENGINE_RUN_ERROR: COULD NOT INITIALIZE ENGINE: " << e.what() << std::endl;
+        LOG_ERROR("ENGINE_RUN_ERROR: COULD NOT INITIALIZE ENGINE: %s", std::string(e.what()));
         return false;
     }
 
     float lastFrame = 0.0f;
     float deltaTime = 0.0f;
-	// glEnable(GL_DEPTH_TEST);
-	// glDisable(GL_DEPTH_TEST);
 
     while (window::WindowsManager::instance().getCurrentWindow()->isWindowOpened())
     {
-    	glEnable(GL_DEPTH_TEST);
-    	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
     	const float currentFrame = window::MainWindow::getTime();
     	deltaTime = currentFrame - lastFrame;
     	lastFrame = currentFrame;
@@ -53,24 +47,8 @@ bool Engine::run()
 
     	Renderer::instance().beginFrame();
     	Renderer::instance().endFrame();
-    	glDisable(GL_DEPTH_TEST);
 
-    	ImGui_ImplOpenGL3_NewFrame();
-    	ImGui_ImplGlfw_NewFrame();
-
-    	ImGui::NewFrame();
     	Editor::instance().update();
-    	ImGui::Render();
-
-    	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-    	if (const ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
-    	{
-    		GLFWwindow* backup_current_context = glfwGetCurrentContext();
-    		ImGui::UpdatePlatformWindows();
-    		ImGui::RenderPlatformWindowsDefault();
-    		glfwMakeContextCurrent(backup_current_context);
-    	}
 
     	window::WindowsManager::instance().getCurrentWindow()->swapBuffers();
     }
@@ -93,7 +71,7 @@ void Engine::init()
 
 	window::MainWindow::setViewport(0, 0, bufferWidth, bufferHeight);
 
-    Renderer::instance().initFrameBuffer(window::WindowsManager::instance().getCurrentWindow()->getWidth(), window::WindowsManager::instance().getCurrentWindow()->getHeight());
+    Renderer::instance().initFrameBuffer(bufferWidth, bufferHeight);
 
     initImgui();
     CameraManager::getInstance().setActiveCamera(CameraManager::getInstance().createCamera());

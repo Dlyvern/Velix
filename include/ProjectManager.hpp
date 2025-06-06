@@ -2,6 +2,7 @@
 #define PROJECT_MANAGER_HPP
 
 #include "Project.hpp"
+#include <ElixirCore/AssetsCache.hpp>
 
 class ProjectManager
 {
@@ -19,11 +20,13 @@ public:
 
     void setCurrentProject(Project* project);
 
-    Project* getCurrentProject();
+    Project* getCurrentProject() const;
+
+    elix::AssetsCache* getAssetsCache();
 
 private:
-
     Project* m_currentProject{nullptr};
+    elix::AssetsCache m_projectCache;
 
 
     ProjectManager(const ProjectManager&) = delete;

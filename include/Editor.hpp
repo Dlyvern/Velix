@@ -49,11 +49,17 @@ private:
     void showAssetsInfo();
     void showGuizmosInfo();
 
+    void drawLogWindow();
+
+    void drawTerminal();
+
+    void setSelectedGameObject(GameObject* gameObject);
+
     void displayBonesHierarchy(Skeleton* skeleton, common::BoneInfo* parent = nullptr);
 
     void updateInput();
 
-    std::filesystem::path m_assetsPath{filesystem::getResourcesFolderPath()};
+    std::filesystem::path m_assetsPath{};
 
     Editor();
     Editor(const Editor&) = delete;
