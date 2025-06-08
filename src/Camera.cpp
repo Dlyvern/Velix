@@ -107,3 +107,8 @@ void Camera::setCameraMode(const CameraMode &mode)
 {
     m_mode = mode;
 }
+
+elix::CameraComponent* Camera::getCamera()
+{
+    return &m_camera;
+}

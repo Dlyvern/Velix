@@ -1,11 +1,11 @@
 #include "CameraManager.hpp"
 
-void CameraManager::setActiveCamera(Camera* camera)
+void CameraManager::setActiveCamera(elix::CameraComponent* camera)
 {
     m_activeCamera = camera;
 }
 
-Camera* CameraManager::getActiveCamera() const
+elix::CameraComponent* CameraManager::getActiveCamera() const
 {
     return m_activeCamera;
 }
@@ -17,9 +17,16 @@ CameraManager& CameraManager::getInstance()
     return instance;
 }
 
-//TODO: MEMORY LEAK
-Camera* CameraManager::createCamera()
+void CameraManager::addCameraInTheScene(elix::CameraComponent *camera)
 {
-    return new Camera();
+    m_camerasInTheScene.push_back(camera);
+}
+
+elix::CameraComponent* CameraManager::getCameraInTheScene(int index) const
+{
+    if(index >= m_camerasInTheScene.size() || index < 0)
+        return nullptr;
+
+    return m_camerasInTheScene[index];
 }
 

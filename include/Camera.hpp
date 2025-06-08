@@ -23,6 +23,9 @@ public:
     glm::mat4 getProjectionMatrix(float aspectRatio) const;
     void setCameraMode(const CameraMode& mode);
 
+
+    elix::CameraComponent* getCamera();
+
 private:
     elix::CameraComponent m_camera;
     float m_movementSpeed{3.0f};

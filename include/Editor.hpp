@@ -6,28 +6,31 @@
 #include <filesystem>
 #include "ElixirCore/Filesystem.hpp"
 #include "ActionsManager.hpp"
+#include "Camera.hpp"
 
 class Editor
 {
+
 public:
-    static Editor& instance();
-    void update();
-    ~Editor();
-
-private:
-
     enum class State
     {
         Start,
-        Editor
+        Editor,
+        Play
     };
+
+    static Editor& instance();
+    void update();
+    [[nodiscard]] Editor::State getState() const;
+    ~Editor();
+    Camera* m_editorCamera{nullptr};
+
+private:
 
 
     State m_state{State::Start};
 
-
     void* m_gameLibrary{nullptr};
-
 
     struct DraggingInfo final
     {

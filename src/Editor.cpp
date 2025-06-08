@@ -12,7 +12,6 @@
 #include "ElixirCore/LightComponent.hpp"
 
 #include "ElixirCore/AnimatorComponent.hpp"
-#include "ElixirCore/AssetsManager.hpp"
 #include "CameraManager.hpp"
 #include "ElixirCore/Mouse.hpp"
 #include "ElixirCore/Keyboard.hpp"
@@ -23,13 +22,12 @@
 #include "UIMaterial.hpp"
 #include "UIMesh.hpp"
 #include "UITransform.hpp"
-#include "ElixirCore/ScriptsLoader.hpp"
 #include "ElixirCore/RigidbodyComponent.hpp"
 #include "ElixirCore/SceneManager.hpp"
-#include "ElixirCore/SkeletalMeshComponent.hpp"
-#include "ElixirCore/StaticMeshComponent.hpp"
 #include "ElixirCore/WindowsManager.hpp"
 #include "ElixirCore/Utilities.hpp"
+
+#include "ElixirCore/LibrariesLoader.hpp"
 
 #include <unistd.h>
 #include <pwd.h>
@@ -37,6 +35,14 @@
 #include <ElixirCore/Logger.hpp>
 
 #include "ProjectManager.hpp"
+
+bool isMouseOverEmptySpace()
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    return ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
+           ImGui::IsWindowHovered() &&
+           !ImGui::IsAnyItemHovered();
+}
 
 void BeginDockSpace()
 {
@@ -111,7 +117,7 @@ void Editor::updateInput()
 {
     auto* window = window::WindowsManager::instance().getCurrentWindow();
 
-    if (input::Keyboard.isKeyReleased(input::KeyCode::DELETE) && m_selectedGameObject)
+    if (input::Keyboard.isKeyReleased(input::KeyCode::KEY_DELETE) && m_selectedGameObject)
     {
         if (SceneManager::instance().getCurrentScene())
         {
@@ -282,8 +288,15 @@ void Editor::update()
         ImGuizmo::BeginFrame();
         showEditor();
     }
-    else
+    else if (m_state == State::Start)
         showStart();
+    else if (m_state == State::Play)
+    {
+        updateInput();
+        showMenuBar();
+        BeginDockSpace();
+        showViewPort();
+    }
 
     ImGui::Render();
 
@@ -296,6 +309,11 @@ void Editor::update()
         ImGui::RenderPlatformWindowsDefault();
         glfwMakeContextCurrent(backup_current_context);
     }
+}
+
+Editor::State Editor::getState() const
+{
+    return m_state;
 }
 
 std::string getHome()
@@ -346,14 +364,14 @@ void Editor::showStart()
 
                     if (!ProjectManager::instance().loadConfigInProject(entry.path().string() + "/Project.elixirproject", project))
                     {
-                        LOG_ERROR("Failed to load project");
+                        ELIX_LOG_ERROR("Failed to load project");
                         delete project;
                         continue;
                     }
 
                     if (!ProjectManager::instance().loadProject(project))
                     {
-                        LOG_ERROR("Failed to load project");
+                        ELIX_LOG_ERROR("Failed to load project");
                         delete project;
                         continue;
                     }
@@ -411,14 +429,14 @@ void Editor::showStart()
 
             if (!project)
             {
-                LOG_ERROR("Failed to create project");
+                ELIX_LOG_ERROR("Failed to create project");
                 ImGui::End();
                 return;
             }
 
             if (!ProjectManager::instance().loadProject(project))
             {
-                LOG_ERROR("Failed to load project");
+                ELIX_LOG_ERROR("Failed to load project");
                 ImGui::End();
                 return;
             }
@@ -458,13 +476,27 @@ void Editor::showEditor()
 
 void Editor::showMenuBar()
 {
-    if (ImGui::BeginMainMenuBar()) {
+    if (ImGui::BeginMainMenuBar())
+    {
         if (ImGui::BeginMenu("File")) {
             ImGui::MenuItem("New Project");
             ImGui::MenuItem("Open Project");
             ImGui::MenuItem("Save Scene");
             ImGui::EndMenu();
         }
+
+        if (ImGui::BeginMenu("Play"))
+        {
+            if (ImGui::MenuItem("Play game"))
+            {
+                m_state = State::Play;
+                if (auto newCamera = CameraManager::getInstance().getCameraInTheScene(0))
+                    CameraManager::getInstance().setActiveCamera(newCamera);
+            }
+
+            ImGui::EndMenu();
+        }
+
         ImGui::EndMainMenuBar();
     }
 }
@@ -544,10 +576,10 @@ void Editor::showViewPort()
                     if (auto model = cache->getAsset<elix::AssetModel>(path.string()))
                         newGameObject->addComponent<MeshComponent>(model->getModel());
                     else
-                        LOG_WARN("Failed to load asset model");
+                        ELIX_LOG_WARN("Failed to load asset model");
                 }
                 else
-                    LOG_WARN("Failed to load cache");
+                    ELIX_LOG_WARN("Failed to load cache");
 
                 // if (auto staticModel = AssetsManager::instance().getStaticModelByName(path.filename()))
                 //     newGameObject->addComponent<StaticMeshComponent>(staticModel);
@@ -575,7 +607,7 @@ void Editor::showViewPort()
         float aspectRatio = windowWidth / windowHeight;
 
         glm::mat4 viewMatrix = CameraManager::getInstance().getActiveCamera()->getViewMatrix();
-        glm::mat4 projMatrix = CameraManager::getInstance().getActiveCamera()->getProjectionMatrix(aspectRatio);
+        glm::mat4 projMatrix = CameraManager::getInstance().getActiveCamera()->getProjectionMatrix();
 
         ImGuizmo::OPERATION operation{ImGuizmo::TRANSLATE};
 
@@ -632,7 +664,7 @@ void Editor::showViewPort()
 
                 auto* camera = CameraManager::getInstance().getActiveCamera();
 
-                glm::mat4 projection = camera->getProjectionMatrix(aspectRatio);
+                glm::mat4 projection = camera->getProjectionMatrix();
                 glm::mat4 view = camera->getViewMatrix();
 
                 glm::vec4 rayClip(mouseNDC.x, mouseNDC.y, -1.0f, 1.0f);
@@ -696,6 +728,41 @@ void Editor::showAllObjectsInTheScene()
         }
     }
 
+    if (isMouseOverEmptySpace())
+    {
+        ImGui::OpenPopup("CreateMenu");
+    }
+
+    if (ImGui::BeginPopup("CreateMenu")) {
+
+        if (ImGui::MenuItem("Create Empty"))
+        {
+            auto newGameObject = std::make_shared<GameObject>("empty_game_object");
+
+            newGameObject->setPosition(glm::vec3(0.0f, 0.0f, 0.0f));
+
+            SceneManager::instance().getCurrentScene()->addGameObject(newGameObject);
+        }
+
+        if (ImGui::BeginMenu("3D Object"))
+        {
+            if (ImGui::MenuItem("Cube"))
+            {
+
+                // auto newObj = CreatePrimitive(PrimitiveType::Cube);
+                // m_gameObjects.push_back(newObj);
+            }
+            if (ImGui::MenuItem("Sphere"))
+            {
+                // auto newObj = CreatePrimitive(PrimitiveType::Sphere);
+                // m_gameObjects.push_back(newObj);
+            }
+
+            ImGui::EndMenu();
+        }
+
+        ImGui::EndPopup();
+    }
     ImGui::End();
 }
 
@@ -839,7 +906,7 @@ void Editor::showGuizmosInfo()
     float aspectRatio = contentSize.x / contentSize.y;
 
     glm::mat4 viewMatrix = CameraManager::getInstance().getActiveCamera()->getViewMatrix();
-    glm::mat4 projMatrix = CameraManager::getInstance().getActiveCamera()->getProjectionMatrix(aspectRatio);
+    glm::mat4 projMatrix = CameraManager::getInstance().getActiveCamera()->getProjectionMatrix();
 
     static ImGuizmo::MODE currentGizmoMode = ImGuizmo::WORLD;
 
@@ -1026,30 +1093,28 @@ void Editor::showDebugInfo()
         #endif
 
         if (!pipe)
-            LOG_ERROR("Failed to execute command");
+            ELIX_LOG_ERROR("Failed to execute command");
 
         while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr)
         {
             result += buffer.data();
         }
 
-        LOG_INFO(result.c_str());
+        ELIX_LOG_INFO(result.c_str());
 
         if (const int result = std::system(command.c_str()); result == 0)
         {
-            void* const library = ScriptsLoader::instance().loadLibrary(project->getBuildDir() + "libGameLib.so");
+            void* const library = elix::LibrariesLoader::loadLibrary(project->getBuildDir() + "libGameLib.so");
 
             if (library)
             {
-                ScriptsLoader::instance().library = library;
-
                 using GetScriptsRegisterFunc = ScriptsRegister* (*)();
 
-                auto getFunction = (GetScriptsRegisterFunc)ScriptsLoader::instance().getFunction("getScriptsRegister", ScriptsLoader::instance().library);
+                auto getFunction = (GetScriptsRegisterFunc)elix::LibrariesLoader::getFunction("getScriptsRegister", library);
 
                 if (!getFunction)
                 {
-                    LOG_ERROR("Could not get function 'getScriptsRegister'");
+                    ELIX_LOG_ERROR("Could not get function 'getScriptsRegister'");
                     return;
                 }
 
@@ -1057,11 +1122,11 @@ void Editor::showDebugInfo()
 
                 using InitFunc = const char**(*)(int*);
 
-                InitFunc function = (InitFunc)ScriptsLoader::instance().getFunction("initScripts", library);
+                InitFunc function = (InitFunc)elix::LibrariesLoader::getFunction("initScripts", library);
 
                 if (!function)
                 {
-                    LOG_ERROR("Could not get function 'initScripts'");
+                    ELIX_LOG_ERROR("Could not get function 'initScripts'");
                     return;
                 }
 
@@ -1075,15 +1140,17 @@ void Editor::showDebugInfo()
                     auto script = s->createScript(scriptName);
 
                     if (!script)
-                        LOG_ERROR("Could not find script");
+                        ELIX_LOG_ERROR("Could not find script");
                     else
                     {
                         script->onStart();
                         script->onUpdate(0.0f);
                     }
 
-                    LOG_INFO("Script loaded: %s", scriptName);
+                    ELIX_LOG_INFO("Script loaded: %s", scriptName);
                 }
+
+                elix::LibrariesLoader::closeLibrary(library);
             }
         }
     }
@@ -1181,6 +1248,18 @@ void Editor::showObjectInfo()
                 }
             }
 
+            if (m_selectedGameObject->hasComponent<elix::CameraComponent>())
+            {
+                if (ImGui::CollapsingHeader("Camera"))
+                {
+                    auto camera = m_selectedGameObject->getComponent<elix::CameraComponent>();
+
+                    auto position = camera->getPosition();
+                    if (ImGui::DragFloat3("Camera position", &position[0], 0.1f))
+                        camera->setPosition(position);
+                }
+            }
+
             if (m_selectedGameObject->hasComponent<ScriptComponent>())
             {
                 auto scriptComponent = m_selectedGameObject->getComponent<ScriptComponent>();
@@ -1203,7 +1282,7 @@ void Editor::showObjectInfo()
                 }
             }
 
-            if (ImGui::Button("Add Component"))
+            if (ImGui::Button("Add component"))
                 ImGui::OpenPopup("AddComponentPopup");
 
             static char searchBuffer[128] = "";
@@ -1217,7 +1296,8 @@ void Editor::showObjectInfo()
                 const std::vector<std::string> availableComponents = {
                     "Animator",
                     "Script",
-                    "Light"
+                    "Light",
+                    "Camera"
                 };
 
                 for (const auto& comp : availableComponents)
@@ -1234,6 +1314,12 @@ void Editor::showObjectInfo()
                             {
                                 m_selectedGameObject->addComponent<LightComponent>(lighting::Light{});
                                 LightManager::instance().addLight(m_selectedGameObject->getComponent<LightComponent>()->getLight());
+                            }
+                            else if (comp == "Camera" && !m_selectedGameObject->hasComponent<elix::CameraComponent>())
+                            {
+                                auto cameraComponent = m_selectedGameObject->addComponent<elix::CameraComponent>();
+
+                                CameraManager::getInstance().addCameraInTheScene(cameraComponent);
                             }
 
                             ImGui::CloseCurrentPopup();

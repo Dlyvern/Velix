@@ -1,0 +1,94 @@
+name: Build Elixir
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y cmake build-essential libgl1-mesa-dev
+
+      - name: Configure and Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build
+      - name: Install to Staging Dir
+        run: |
+          cmake --install build --prefix staging/Elixir
+
+      - name: Create Archive
+        run: |
+          tar -czvf Elixir-linux.tar.gz -C staging Elixir
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Elixir-linux
+          path: Elixir-linux.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC Developer Environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure and Build
+        run: |
+          cmake -S . -B build -G Ninja -DELIXIR_USE_PHYSX=OFF
+          cmake --build build --config Debug
+
+      - name: Install to Staging Dir
+        run: |
+          cmake --install build --prefix staging/Elixir
+
+      - name: Create Archive
+        run: |
+          tar -czvf Elixir-windows.tar.gz -C staging Elixir
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Elixir-windows
+          path: Elixir-windows.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          brew install cmake ninja
+
+      - name: Configure and Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build
+
+      - name: Install to Staging Dir
+        run: |
+          cmake --install build --prefix staging/Elixir
+
+      - name: Create Archive
+        run: |
+          tar -czvf Elixir-macos.tar.gz -C staging Elixir
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Elixir-macos
+          path: Elixir-macos.tar.gz

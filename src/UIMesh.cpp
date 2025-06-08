@@ -1,7 +1,6 @@
 #include "UIMesh.hpp"
 
 #include <imgui.h>
-#include <ElixirCore/AssetsManager.hpp>
 #include <ElixirCore/Utilities.hpp>
 
 #include "ProjectManager.hpp"

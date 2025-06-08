@@ -7,8 +7,6 @@
 #include "ElixirCore/LightManager.hpp"
 #include "ElixirCore/SceneManager.hpp"
 #include "ElixirCore/ShaderManager.hpp"
-#include "ElixirCore/SkeletalMeshComponent.hpp"
-#include "ElixirCore/StaticMeshComponent.hpp"
 #include <ElixirCore/MeshComponent.hpp>
 #include "ElixirCore/WindowsManager.hpp"
 #include <iostream>

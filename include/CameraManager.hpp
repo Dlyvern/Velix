@@ -2,16 +2,24 @@
 #define CAMERA_MANAGER_HPP
 
 #include "Camera.hpp"
+#include <vector>
 
 class CameraManager
 {
 public:
-  void setActiveCamera(Camera* camera);
-  [[nodiscard]] Camera* getActiveCamera() const;
-  static CameraManager& getInstance();
-  Camera* createCamera();
+   void setActiveCamera(elix::CameraComponent* camera);
+   [[nodiscard]] elix::CameraComponent* getActiveCamera() const;
+   static CameraManager& getInstance();
+
+   void addCameraInTheScene(elix::CameraComponent* camera);
+
+   [[nodiscard]] elix::CameraComponent* getCameraInTheScene(int index) const;
 private:
-   Camera* m_activeCamera{nullptr};
+   Camera* m_editorCamera{nullptr};
+
+
+   elix::CameraComponent* m_activeCamera{nullptr};
+   std::vector<elix::CameraComponent*> m_camerasInTheScene;
 };
 
 #endif //CAMERA_MANAGER_HPP

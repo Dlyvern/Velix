@@ -5,8 +5,6 @@
 #include "ElixirCore/Logger.hpp"
 #include <fstream>
 #include <../libraries/json/json.hpp>
-#include <ElixirCore/AssetsManager.hpp>
-
 #include "ElixirCore/Mesh.hpp"
 
 #include <ElixirCore/AssetsLoader.hpp>
@@ -23,7 +21,7 @@ Project* ProjectManager::createProject(const std::string& projectName, const std
 {
     if (std::filesystem::exists(projectPath))
     {
-        LOG_WARN("Path already exists");
+        ELIX_LOG_WARN("Path already exists");
         return nullptr;
     }
 
@@ -33,7 +31,7 @@ Project* ProjectManager::createProject(const std::string& projectName, const std
 
     if (!std::filesystem::exists(templatePath))
     {
-        LOG_ERROR("There is no template");
+        ELIX_LOG_ERROR("There is no template");
         return nullptr;
     }
 
@@ -61,7 +59,7 @@ Project* ProjectManager::createProject(const std::string& projectName, const std
     }
     else
     {
-        LOG_ERROR("Failed to write project file");
+        ELIX_LOG_ERROR("Failed to write project file");
         return nullptr;
     }
 
@@ -87,7 +85,7 @@ bool ProjectManager::loadConfigInProject(const std::string &configPath, Project*
 
     if (!configFile.is_open())
     {
-        LOG_ERROR("Failed to open config file");
+        ELIX_LOG_ERROR("Failed to open config file");
         return false;
     }
 
@@ -99,7 +97,7 @@ bool ProjectManager::loadConfigInProject(const std::string &configPath, Project*
     }
     catch (const nlohmann::json::parse_error& e)
     {
-        LOG_ERROR("Failed to parse config file %s", std::string(e.what()));
+        ELIX_LOG_ERROR("Failed to parse config file %s", std::string(e.what()));
         return false;
     }
 

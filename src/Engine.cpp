@@ -1,9 +1,7 @@
-#include "ElixirCore/ScriptsLoader.hpp"
 #include "Engine.hpp"
 
 #include <glad/glad.h>
 
-#include "ElixirCore/AssetsManager.hpp"
 #include "CameraManager.hpp"
 #include "ElixirCore/Physics.hpp"
 #include "ElixirCore/WindowsManager.hpp"
@@ -26,7 +24,7 @@ bool Engine::run()
     }
     catch (const std::exception &e)
     {
-        LOG_ERROR("ENGINE_RUN_ERROR: COULD NOT INITIALIZE ENGINE: %s", std::string(e.what()));
+        ELIX_LOG_ERROR("ENGINE_RUN_ERROR: COULD NOT INITIALIZE ENGINE: %s", std::string(e.what()));
         return false;
     }
 
@@ -42,6 +40,11 @@ bool Engine::run()
     	window::MainWindow::pollEvents();
 
     	physics::PhysicsController::instance().simulate(deltaTime);
+
+    	if (Editor::instance().getState() != Editor::State::Play)
+    		if (Editor::instance().m_editorCamera)
+    			Editor::instance().m_editorCamera->update(deltaTime);
+
     	CameraManager::getInstance().getActiveCamera()->update(deltaTime);
     	SceneManager::instance().updateCurrentScene(deltaTime);
 
@@ -74,7 +77,10 @@ void Engine::init()
     Renderer::instance().initFrameBuffer(bufferWidth, bufferHeight);
 
     initImgui();
-    CameraManager::getInstance().setActiveCamera(CameraManager::getInstance().createCamera());
+
+	const auto camera = new Camera();
+	Editor::instance().m_editorCamera = camera;
+    CameraManager::getInstance().setActiveCamera(camera->getCamera());
     physics::PhysicsController::instance().init();
 
     ShaderManager::instance().preLoadShaders();

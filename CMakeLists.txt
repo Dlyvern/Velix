@@ -9,7 +9,26 @@ set(LIBRARIES_DIR libraries)
 file(GLOB_RECURSE PROJECT_HEADERS  ${INCLUDE_DIR}/*.h ${INCLUDE_DIR}/*.hpp)
 file(GLOB_RECURSE PROJECT_SOURCES ${SRC_DIR}/*.cpp)
 
-find_package(ElixirCore REQUIRED)
+find_package(ElixirCore QUIET)
+
+if(NOT ElixirCore_FOUND)
+    message(STATUS "ElixirCore not found - cloning from GitHub...")
+
+    include(FetchContent)
+
+    FetchContent_Declare(
+            ElixirCore
+            GIT_REPOSITORY https://github.com/Dlyvern/ElixirCore
+            GIT_TAG        main
+            GIT_SHALLOW    TRUE
+    )
+
+    FetchContent_MakeAvailable(ElixirCore)
+
+    message(STATUS "ElixirCore cloned and built from source")
+else()
+    message(STATUS "Found ElixirCore: ${ElixirCore_DIR}")
+endif()
 
 add_executable(${PROJECT_NAME}
         ${PROJECT_SOURCES}
