@@ -1,0 +1,6 @@
+[submodule "libraries/2ndParty/imgui"]
+	path = libraries/2ndParty/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "libraries/2ndParty/ImGuizmo"]
+	path = libraries/2ndParty/ImGuizmo
+	url = https://github.com/CedricGuillemet/ImGuizmo.git

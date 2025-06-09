@@ -37,8 +37,8 @@ add_executable(${PROJECT_NAME}
 
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${INCLUDE_DIR}
-        ${LIBRARIES_DIR}/imgui
-        ${LIBRARIES_DIR}/ImGuizmo
+        ${LIBRARIES_DIR}/2ndParty/imgui
+        ${LIBRARIES_DIR}/2ndParty/ImGuizmo
         ${LIBRARIES_DIR}/stb
 )
 
@@ -48,16 +48,16 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 target_sources(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCES} PRIVATE ${PROJECT_HEADERS}
-        libraries/imgui/imgui.cpp
-        libraries/imgui/imgui_draw.cpp
-        libraries/imgui/imgui_widgets.cpp
-        libraries/imgui/imgui_tables.cpp
-        libraries/imgui/backends/imgui_impl_glfw.cpp
-        libraries/imgui/backends/imgui_impl_opengl3.cpp
+        libraries/2ndParty/imgui/imgui.cpp
+        libraries/2ndParty/imgui/imgui_draw.cpp
+        libraries/2ndParty/imgui/imgui_widgets.cpp
+        libraries/2ndParty/imgui/imgui_tables.cpp
+        libraries/2ndParty/imgui/backends/imgui_impl_glfw.cpp
+        libraries/2ndParty/imgui/backends/imgui_impl_opengl3.cpp
 
-        libraries/ImGuizmo/GraphEditor.cpp
-        libraries/ImGuizmo/ImCurveEdit.cpp
-        libraries/ImGuizmo/ImGradient.cpp
-        libraries/ImGuizmo/ImGuizmo.cpp
-        libraries/ImGuizmo/ImSequencer.cpp
+        libraries/2ndParty/ImGuizmo/GraphEditor.cpp
+        libraries/2ndParty/ImGuizmo/ImCurveEdit.cpp
+        libraries/2ndParty/ImGuizmo/ImGradient.cpp
+        libraries/2ndParty/ImGuizmo/ImGuizmo.cpp
+        libraries/2ndParty/ImGuizmo/ImSequencer.cpp
 )
