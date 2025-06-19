@@ -5,10 +5,9 @@
 #include "ElixirCore/Logger.hpp"
 #include <fstream>
 #include <../libraries/json/json.hpp>
-#include "ElixirCore/Mesh.hpp"
-
 #include <ElixirCore/AssetsLoader.hpp>
 #include "ElixirCore/Filesystem.hpp"
+#include "Renderer.hpp"
 
 ProjectManager & ProjectManager::instance()
 {
@@ -158,6 +157,8 @@ bool ProjectManager::loadProject(Project* project)
     const auto& newScene = SceneManager::loadSceneFromFile(scenePath, m_projectCache);
 
     SceneManager::instance().setCurrentScene(newScene);
+
+    Renderer::instance().initShadows();
 
     return true;
 }

@@ -4,9 +4,10 @@
 #include <memory>
 #include <vector>
 #include <glm/mat4x4.hpp>
+#include "ElixirCore/ShadowSystem.hpp"
+
 
 #include "ElixirCore/GameObject.hpp"
-#include "ElixirCore/ShadowHandler.hpp"
 #include "ElixirCore/DebugLine.hpp"
 
 struct RendererFrameData
@@ -30,7 +31,7 @@ public:
 
     void initShadows();
 
-    void updateLightSpaceMatrix();
+    const elix::ShadowSystem::Shadow& getShadowData(lighting::Light* light) const;
 
     void setSelectedGameObject(GameObject* gameObject);
 
@@ -51,7 +52,7 @@ private:
 
     GameObject* m_selectedGameObject{nullptr};
 
-    // elix::Texture m_colorTexture;
+    elix::ShadowSystem m_shadowSystem;
 
     unsigned int m_fbo = 0;
     unsigned int m_colorTexture = 0;
@@ -62,13 +63,7 @@ private:
     Renderer& operator=(const Renderer&) = delete;
 
     RendererFrameData m_frameData;
-    ShadowHandler m_shadowHandler;
 };
-
-inline unsigned int Renderer::getFrameBufferTexture() const
-{
-    return m_colorTexture;
-}
 
 
 #endif //RENDERER_HPP

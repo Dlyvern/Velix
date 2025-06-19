@@ -114,9 +114,7 @@ Editor& Editor::instance()
 }
 
 void Editor::updateInput()
-{
-    auto* window = window::WindowsManager::instance().getCurrentWindow();
-
+{	
     if (input::Keyboard.isKeyReleased(input::KeyCode::KEY_DELETE) && m_selectedGameObject)
     {
         if (SceneManager::instance().getCurrentScene())
@@ -147,14 +145,14 @@ void Editor::updateInput()
         newGameObject->setRotation(m_selectedGameObject->getRotation());
         newGameObject->setScale(m_selectedGameObject->getScale());
         newGameObject->addComponent<RigidbodyComponent>(newGameObject);
-
-        // if (m_selectedGameObject->hasComponent<SkeletalMeshComponent>())
-        // {
-        //     newGameObject->addComponent<SkeletalMeshComponent>(m_selectedGameObject->getComponent<SkeletalMeshComponent>()->getModel());
-        //     physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);
-        // }
-        // else if (m_selectedGameObject->hasComponent<StaticMeshComponent>())
-        //     newGameObject->addComponent<StaticMeshComponent>(m_selectedGameObject->getComponent<StaticMeshComponent>()->getModel());
+	
+	if(auto selectedMeshComponent = m_selectedGameObject->getComponent<MeshComponent>())
+	{
+		auto addedMeshComponent = newGameObject->addComponent<MeshComponent>(selectedMeshComponent->getModel());
+		
+		if(addedMeshComponent->getModel()->hasSkeleton())
+			physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);	
+	}
 
         newGameObject->overrideMaterials = m_selectedGameObject->overrideMaterials;
 
@@ -188,6 +186,7 @@ void Editor::updateInput()
     // {
     //     if (ImGuiIO& io = ImGui::GetIO(); !io.WantCaptureMouse && !ImGuizmo::IsUsing())
     //     {
+    //         const auto window = windows::WindowsManager::instance().getCurrentWindow();
     //         glm::vec2 mouseNDC;
     //
     //         auto* camera = CameraManager::getInstance().getActiveCamera();
@@ -474,6 +473,64 @@ void Editor::showEditor()
     drawTerminal();
 }
 
+void Editor::showGuizmo(GameObject* gameObject, float x, float y, float width, float height)
+{
+   ImGuizmo::SetOrthographic(false);
+ImGuizmo::SetDrawlist();
+ImGuizmo::SetRect(x, y, width, height);
+
+glm::mat4 modelMatrix = gameObject->getTransformMatrix();
+
+auto camera = CameraManager::getInstance().getActiveCamera();
+
+if(!camera)
+	return;
+
+
+glm::mat4 viewMatrix = camera->getViewMatrix();
+
+glm::mat4 projectionMatrix = camera->getProjectionMatrix();
+
+ImGuizmo::OPERATION operation{ImGuizmo::TRANSLATE};
+
+switch(m_transformMode)
+{
+	case TransformMode::Translate: operation = ImGuizmo::TRANSLATE; break;       case TransformMode::Rotate: operation = ImGuizmo::ROTATE; break;
+	case TransformMode::Scale: operation = ImGuizmo::SCALE; break;
+
+}
+
+
+        ImGuizmo::Manipulate(
+            glm::value_ptr(viewMatrix),
+            glm::value_ptr(projectionMatrix),
+            operation,
+            ImGuizmo::WORLD,
+            glm::value_ptr(modelMatrix),
+            nullptr,
+            nullptr,
+            nullptr
+        );
+
+        if (ImGuizmo::IsUsing())
+        {
+            glm::vec3 translation, rotation, scale;
+            ImGuizmo::DecomposeMatrixToComponents(
+                glm::value_ptr(modelMatrix),
+                glm::value_ptr(translation),
+                glm::value_ptr(rotation),
+                glm::value_ptr(scale)
+            );
+
+            m_selectedGameObject->setPosition(translation);
+            m_selectedGameObject->setRotation(rotation);
+            m_selectedGameObject->setScale(scale);
+        }
+
+
+}
+
+
 void Editor::showMenuBar()
 {
     if (ImGui::BeginMainMenuBar())
@@ -492,7 +549,19 @@ void Editor::showMenuBar()
                 m_state = State::Play;
                 if (auto newCamera = CameraManager::getInstance().getCameraInTheScene(0))
                     CameraManager::getInstance().setActiveCamera(newCamera);
+		else
+		{
+		    ELIX_LOG_ERROR("Could not find a camera in the scene. Some shit is weird....");   
+		    CameraManager::getInstance().setActiveCamera(nullptr);
+		}
             }
+		
+		if(ImGui::MenuItem("Stop game"))
+		{
+			m_state = State::Editor;
+			
+			CameraManager::getInstance().setActiveCamera(instance().m_editorCamera->getCamera());
+		}
 
             ImGui::EndMenu();
         }
@@ -528,7 +597,6 @@ void Editor::showViewPort()
     int fbHeight = (int)(contentSize.y * dpiScale);
 
     Renderer::instance().rescaleBuffer(fbWidth, fbHeight);
-    window::MainWindow::setViewport(0, 0, static_cast<int>(contentSize.x), static_cast<int>(contentSize.y));
 
     auto fboTexture = Renderer::instance().getFrameBufferTexture();
     ImGui::Image((ImTextureID)(intptr_t)fboTexture, contentSize, ImVec2(0, 1), ImVec2(1, 0));
@@ -574,22 +642,19 @@ void Editor::showViewPort()
                 if (auto cache = ProjectManager::instance().getAssetsCache())
                 {
                     if (auto model = cache->getAsset<elix::AssetModel>(path.string()))
-                        newGameObject->addComponent<MeshComponent>(model->getModel());
+		    {
+			auto meshComponent = newGameObject->addComponent<MeshComponent>(model->getModel());
+
+			if(meshComponent->getModel()->hasSkeleton())
+				physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);
+		    }
                     else
                         ELIX_LOG_WARN("Failed to load asset model");
                 }
                 else
                     ELIX_LOG_WARN("Failed to load cache");
-
-                // if (auto staticModel = AssetsManager::instance().getStaticModelByName(path.filename()))
-                //     newGameObject->addComponent<StaticMeshComponent>(staticModel);
-                // else if (auto skinnedModel = AssetsManager::instance().getSkinnedModelByName(path.filename()))
-                // {
-                //     newGameObject->addComponent<SkeletalMeshComponent>(skinnedModel);
-                //     physics::PhysicsController::instance().resizeCollider({1.0f, 2.0f, 1.0f}, newGameObject);
-                // }
-
-                SceneManager::instance().getCurrentScene()->addGameObject(newGameObject);
+             
+                   SceneManager::instance().getCurrentScene()->addGameObject(newGameObject);
             }
 
             std::cout << "Dropped asset into scene: " << info->name << std::endl;
@@ -597,14 +662,12 @@ void Editor::showViewPort()
         ImGui::EndDragDropTarget();
     }
 
-    if (m_selectedGameObject)
+    if (m_selectedGameObject && CameraManager::getInstance().getActiveCamera())
     {
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(cursorPosition.x, cursorPosition.y, windowWidth, windowHeight);
         glm::mat4 modelMatrix = m_selectedGameObject->getTransformMatrix();
-
-        float aspectRatio = windowWidth / windowHeight;
 
         glm::mat4 viewMatrix = CameraManager::getInstance().getActiveCamera()->getViewMatrix();
         glm::mat4 projMatrix = CameraManager::getInstance().getActiveCamera()->getProjectionMatrix();
@@ -647,7 +710,7 @@ void Editor::showViewPort()
 
     if (input::Mouse.isLeftButtonPressed())
     {
-        if (ImGui::IsItemHovered() && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
+        if (ImGui::IsItemHovered() && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() && CameraManager::getInstance().getActiveCamera()) {
             ImVec2 mousePos = ImGui::GetMousePos();
 
             float localX = mousePos.x - cursorPosition.x;

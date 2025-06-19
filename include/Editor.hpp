@@ -51,6 +51,8 @@ private:
     void showAllObjectsInTheScene();
     void showAssetsInfo();
     void showGuizmosInfo();
+	
+    void showGuizmo(GameObject* gameObject, float x, float y, float width, float height); 
 
     void drawLogWindow();
 

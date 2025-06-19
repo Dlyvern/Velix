@@ -84,8 +84,6 @@ void Engine::init()
     physics::PhysicsController::instance().init();
 
     ShaderManager::instance().preLoadShaders();
-
-    Renderer::instance().initShadows();
 }
 
 void Engine::initImgui()

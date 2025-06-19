@@ -1,3 +1,4 @@
+#include <ElixirCore/Light.hpp>
 #include <glad/glad.h>
 
 #include "Renderer.hpp"
@@ -8,12 +9,11 @@
 #include "ElixirCore/SceneManager.hpp"
 #include "ElixirCore/ShaderManager.hpp"
 #include <ElixirCore/MeshComponent.hpp>
-#include "ElixirCore/WindowsManager.hpp"
-#include <iostream>
 #include <ElixirCore/LightComponent.hpp>
 
-#include "Editor.hpp"
 #include <glm/gtx/string_cast.hpp>
+#include <string>
+
 
 Renderer& Renderer::instance()
 {
@@ -23,16 +23,6 @@ Renderer& Renderer::instance()
 
 void Renderer::initFrameBuffer(int width, int height)
 {
-    // elix::Texture::TextureParams params;
-    //
-    // params.width = width;
-    // params.height = height;
-    // params.format = elix::Texture::TextureFormat::RGB;
-    // params.usage = elix::Texture::TextureUsage::RenderTarget;
-    // params.generateMipmaps = false;
-    //
-    // m_colorTexture.loadEmpty(&params);
-
     m_width = width;
     m_height = height;
 
@@ -54,7 +44,7 @@ void Renderer::initFrameBuffer(int width, int height)
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_depthBuffer);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        std::cerr << "Framebuffer not complete!" << std::endl;
+       ELIX_LOG_ERROR("Buffer is not completed");
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -87,6 +77,11 @@ void Renderer::rescaleBuffer(float width, float height)
     }
 }
 
+unsigned int Renderer::getFrameBufferTexture() const
+{
+    return m_colorTexture;
+}
+
 void Renderer::bindBuffer()
 {
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
@@ -99,15 +94,23 @@ void Renderer::unbindBuffer()
 
 void Renderer::updateFrameData()
 {
-    const float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
-
-    m_frameData.projectionMatrix = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-
-    const auto* activeCamera = CameraManager::getInstance().getActiveCamera();
-    m_frameData.viewMatrix = activeCamera->getViewMatrix();
-    m_frameData.cameraPosition = activeCamera->getPosition();
+	if(auto activeCamera = CameraManager::getInstance().getActiveCamera())
+	{
+        float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
+        m_frameData.projectionMatrix = glm::perspective(glm::radians(activeCamera->getFOV()), aspect, activeCamera->getNear(), activeCamera->getFar());
+		// m_frameData.projectionMatrix = activeCamera->getProjectionMatrix();
+		m_frameData.viewMatrix = activeCamera->getViewMatrix();
+		m_frameData.cameraPosition = activeCamera->getPosition();
+	}
 }
 
+
+const elix::ShadowSystem::Shadow& Renderer::getShadowData(lighting::Light* light) const
+{
+    return m_shadowSystem.getShadowData(light);
+}
+
+//GL_TEXTURE_BINDING
 // glGetIntegerv(GL_FRAMEBUFFER_BINDING, reinterpret_cast<GLint*>(&previousFBO));
 // std::cout << previousFBO << std::endl;
 
@@ -116,16 +119,16 @@ void Renderer::beginFrame()
     if (!SceneManager::instance().getCurrentScene())
         return;
 
+    updateFrameData();
+    renderShadowPass(SceneManager::instance().getCurrentScene()->getGameObjects());
+
     bindBuffer();
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_STENCIL_TEST);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT  | GL_STENCIL_BUFFER_BIT);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
-    updateFrameData();
-
-    updateLightSpaceMatrix();
-    // renderShadowPass(SceneManager::instance().getCurrentScene()->getGameObjects());
+    glViewport(0, 0, m_width, m_height);
 
     const auto& gameObjects = SceneManager::instance().getCurrentScene()->getGameObjects();
     const auto& drawables = SceneManager::instance().getCurrentScene()->getDrawables();
@@ -142,26 +145,37 @@ void Renderer::beginFrame()
     staticStencilShader->setVec3("viewPos", m_frameData.cameraPosition);
     staticStencilShader->unbind();
 
+    skeletonStencilShader->bind();
+    skeletonStencilShader->setMat4("view", m_frameData.viewMatrix);
+    skeletonStencilShader->setMat4("projection", m_frameData.projectionMatrix);
+    skeletonStencilShader->setVec3("viewPos", m_frameData.cameraPosition);
+    skeletonStencilShader->unbind();
+
     staticShader->bind();
     staticShader->setMat4("view", m_frameData.viewMatrix);
     staticShader->setMat4("projection", m_frameData.projectionMatrix);
     staticShader->setVec3("viewPos", m_frameData.cameraPosition);
-    LightManager::instance().setLightSpaceMatricesInShader(*staticShader);
     LightManager::instance().sendLightsIntoShader(*staticShader);
-    LightManager::instance().bindSpotLighting(*staticShader);
-    LightManager::instance().bindGlobalLighting(*staticShader);
-    LightManager::instance().bindPointLighting(*staticShader);
+    
+    const auto& lights = LightManager::instance().getLights();
+
+    for(size_t index = 0; index < lights.size(); ++index)
+    {
+        int textureSlot = 20 + index;
+        auto* light = lights[index];
+        const auto& lightMatrix = m_shadowSystem.getLightMatrix(light);
+        staticShader->setInt("shadowMaps[" + std::to_string(index) + "]", textureSlot);
+        staticShader->setMat4("lightSpaceMatrices[" + std::to_string(index) +"]", lightMatrix);
+        m_shadowSystem.bindShadowPass(light, textureSlot);
+    }
+
     staticShader->unbind();
 
     skeletonShader->bind();
     skeletonShader->setMat4("view", m_frameData.viewMatrix);
     skeletonShader->setMat4("projection", m_frameData.projectionMatrix);
     skeletonShader->setVec3("viewPos", m_frameData.cameraPosition);
-    LightManager::instance().setLightSpaceMatricesInShader(*skeletonShader);
-    LightManager::instance().sendLightsIntoShader(*skeletonShader);
-    LightManager::instance().bindSpotLighting(*skeletonShader);
-    LightManager::instance().bindGlobalLighting(*skeletonShader);
-    LightManager::instance().bindPointLighting(*skeletonShader);
+    // LightManager::instance().sendLightsIntoShader(*skeletonShader);
     skeletonShader->unbind();
 
     glStencilFunc(GL_ALWAYS, 1, 0xFF);
@@ -209,6 +223,13 @@ void Renderer::beginFrame()
         const auto* justShader = m_selectedGameObject->getComponent<MeshComponent>()->getModel()->hasSkeleton() ? skeletonStencilShader : staticStencilShader;
 
         justShader->bind();
+        
+        if (justShader == skeletonStencilShader)
+        {
+            const std::vector<glm::mat4>& boneMatrices = m_selectedGameObject->getComponent<MeshComponent>()->getModel()->getSkeleton()->getFinalMatrices();
+            justShader->setMat4Array("finalBonesMatrices", boneMatrices);
+        }
+
         justShader->setMat4("model", model);
         m_selectedGameObject->getComponent<MeshComponent>()->render();
         justShader->unbind();
@@ -218,61 +239,12 @@ void Renderer::beginFrame()
         glStencilFunc(GL_ALWAYS, 1, 0xFF);
     }
 
+
     // glm::vec3 start = glm::vec3(0.0f, 0.0f, 0.0f);
     // glm::vec3 end = glm::vec3(1.0f, 1.0f, 1.0f);
     //
     // debugLine.draw(start, end, m_frameData.viewMatrix, m_frameData.projectionMatrix);
 
-    m_shadowHandler.bindDirectionalShadowPass(8);
-
-    const auto& spotLight = LightManager::instance().getSpotLights();
-
-    for (size_t index = 0; index < spotLight.size(); ++index)
-        m_shadowHandler.bindSpotShadowPass(index, 10 + static_cast<int>(index));
-}
-
-void Renderer::updateLightSpaceMatrix()
-{
-    if (LightManager::instance().getLights().empty())
-        return;
-
-    static constexpr float directionalNearPlane = 1.0f, directionalFarPlane = 40.0f;
-    static constexpr float spotNearPlane = 0.1f, spotFarPlane = 100.0f;
-    static constexpr float pointNearPlane = 0.1f, pointFarPlane = 25.0f;
-
-    std::vector<glm::mat4> lightSpaceMatrices;
-
-    if (auto* dirLight = LightManager::instance().getDirectionalLight()) {
-        glm::vec3 lightDir = glm::normalize(dirLight->direction);
-        glm::vec3 lightTarget{0.0f};
-        glm::vec3 lightPos = lightTarget - lightDir * 20.0f;
-
-        glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 lightProjection = glm::ortho(-30.0f, 30.0f, -30.0f, 30.0f,
-                                             directionalNearPlane, directionalFarPlane);
-
-        lightSpaceMatrices.push_back(lightProjection * lightView);
-    }
-
-    for (const auto& light : LightManager::instance().getSpotLights())
-    {
-        float aspectRatio = 1.0f;
-        float fov = glm::radians(light->outerCutoff * 2.0f);
-
-        glm::mat4 lightProjection = glm::perspective(fov, aspectRatio, spotNearPlane, spotFarPlane);
-
-        glm::vec3 up = glm::abs(glm::dot(glm::normalize(light->direction), glm::vec3(0, 1, 0))) > 0.99f
-             ? glm::vec3(0, 0, 1)
-             : glm::vec3(0, 1, 0);
-
-        glm::mat4 lightView = glm::lookAt(light->position,
-                                        light->position + light->direction,
-                                        up);
-
-        lightSpaceMatrices.push_back(lightProjection * lightView);
-    }
-
-    LightManager::instance().setLightSpaceMatrix(lightSpaceMatrices);
 }
 
 void Renderer::setSelectedGameObject(GameObject *gameObject)
@@ -282,47 +254,39 @@ void Renderer::setSelectedGameObject(GameObject *gameObject)
 
 void Renderer::renderShadowPass(const std::vector<std::shared_ptr<GameObject>> &gameObjects)
 {
-    if (LightManager::instance().getLights().empty() || LightManager::instance().getLightSpaceMatrix().empty())
+    if(LightManager::instance().getLights().empty())
         return;
 
-    auto* staticShadowShader = ShaderManager::instance().getShader(ShaderManager::ShaderType::STATIC_SHADOW);
-    auto* skeletonShadowShader = ShaderManager::instance().getShader(ShaderManager::ShaderType::SKELETON_SHADOW);
+    const auto* staticShadowShader = ShaderManager::instance().getShader(ShaderManager::ShaderType::STATIC_SHADOW);
+    const auto* skeletonShadowShader = ShaderManager::instance().getShader(ShaderManager::ShaderType::SKELETON_SHADOW);
 
-    const auto& lightSpaceMatrices = LightManager::instance().getLightSpaceMatrix();
-    const auto& lights = LightManager::instance().getLights();
-
-    for (int i = 0; i < lights.size(); ++i)
+    for(const auto& light : LightManager::instance().getLights())
     {
-        const auto& lightType = lights[i]->type;
+        m_shadowSystem.updateLightMatrix(light);
 
-        if (lightType == lighting::LightType::DIRECTIONAL)
-            m_shadowHandler.beginDirectionalShadowPass();
-        else if (lightType == lighting::LightType::SPOT)
-            m_shadowHandler.beginSpotShadowPass(i);
-        else if (lightType == lighting::LightType::POINT)
-            m_shadowHandler.beginPointShadowPass(i);
+        m_shadowSystem.beginShadowPass(light);
 
-        for (const auto& obj : gameObjects)
+        glm::mat4 lightMatrix = m_shadowSystem.getLightMatrix(light);
+
+        for (const auto& gameObject : gameObjects)
         {
-            // if (obj->hasComponent<StaticMeshComponent>())
-            // {
-            //     staticShadowShader->bind();
-            //     staticShadowShader->setMat4("model", obj->getTransformMatrix());
-            //     staticShadowShader->setMat4("lightSpaceMatrix", lightSpaceMatrices[i]);
-            //     obj->getComponent<StaticMeshComponent>()->render();
-            //     staticShadowShader->unbind();
-            // }
-            // else if (obj->hasComponent<SkeletalMeshComponent>())
-            // {
-            //     skeletonShadowShader->bind();
-            //     skeletonShadowShader->setMat4("model", obj->getTransformMatrix());
-            //     skeletonShadowShader->setMat4("lightSpaceMatrix", lightSpaceMatrices[i]);
-            //     obj->getComponent<SkeletalMeshComponent>()->render(*skeletonShadowShader);
-            //     skeletonShadowShader->unbind();
-            // }
-        }
+            const auto justShader = gameObject->getComponent<MeshComponent>()->getModel()->hasSkeleton() ? skeletonShadowShader : staticShadowShader;
+            
+            justShader->bind();
+            justShader->setMat4("model", gameObject->getTransformMatrix());
+            justShader->setMat4("lightSpaceMatrix", lightMatrix);
 
-        m_shadowHandler.endShadowPass();
+            if (justShader == skeletonShadowShader)
+            {
+                const std::vector<glm::mat4>& boneMatrices = gameObject->getComponent<MeshComponent>()->getModel()->getSkeleton()->getFinalMatrices();
+                justShader->setMat4Array("finalBonesMatrices", boneMatrices);
+            }
+
+            gameObject->getComponent<MeshComponent>()->render();
+            justShader->unbind();
+       }
+
+        m_shadowSystem.endShadowPass();
     }
 }
 
@@ -339,5 +303,5 @@ const RendererFrameData& Renderer::getFrameData() const
 
 void Renderer::initShadows()
 {
-    m_shadowHandler.initAllShadows();
+    m_shadowSystem.init(LightManager::instance().getLights(), elix::ShadowSystem::ShadowQuality::HIGH);
 }
