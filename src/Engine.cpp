@@ -1,19 +1,18 @@
-#include "Engine.hpp"
-
 #include <glad/glad.h>
 
-#include "CameraManager.hpp"
+#include "Engine.hpp"
+
 #include "ElixirCore/Physics.hpp"
 #include "ElixirCore/WindowsManager.hpp"
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 #include "Editor.hpp"
-#include "Renderer.hpp"
-#include "ElixirCore/SceneManager.hpp"
 #include "ElixirCore/ShaderManager.hpp"
-#include "ElixirCore/Application.hpp"
 #include "ElixirCore/Logger.hpp"
+#include <ElixirCore/DefaultRender.hpp>
+#include "StencilRender.hpp"
+
 #define IMGUI_ENABLE_DOCKING
 
 bool Engine::run()
@@ -28,67 +27,57 @@ bool Engine::run()
         return false;
     }
 
-    float lastFrame = 0.0f;
-    float deltaTime = 0.0f;
-
-    while (window::WindowsManager::instance().getCurrentWindow()->isWindowOpened())
+    while (s_application->getWindow()->isWindowOpened())
     {
-    	const float currentFrame = window::MainWindow::getTime();
-    	deltaTime = currentFrame - lastFrame;
-    	lastFrame = currentFrame;
+        s_application->update();
 
-    	window::MainWindow::pollEvents();
+        if (Editor::instance().m_editorCamera)
+            Editor::instance().m_editorCamera->update(s_application->getDeltaTime());
 
-    	physics::PhysicsController::instance().simulate(deltaTime);
-
-    	if (Editor::instance().getState() != Editor::State::Play)
-    		if (Editor::instance().m_editorCamera)
-    			Editor::instance().m_editorCamera->update(deltaTime);
-
-    	CameraManager::getInstance().getActiveCamera()->update(deltaTime);
-    	SceneManager::instance().updateCurrentScene(deltaTime);
-
-    	Renderer::instance().beginFrame();
-    	Renderer::instance().endFrame();
+        s_application->render();
 
     	Editor::instance().update();
 
-    	window::WindowsManager::instance().getCurrentWindow()->swapBuffers();
+        s_application->endRender();
     }
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    elix::Application::instance().shutdown();
+    elix::Application::shutdownCore();
 
     return true;
 }
 
 void Engine::init()
 {
-	elix::Application::instance().init();
+    s_application = elix::Application::createApplication();
 
 	int bufferWidth, bufferHeight;
-	glfwGetFramebufferSize(window::WindowsManager::instance().getCurrentWindow()->getOpenGLWindow(), &bufferWidth, &bufferHeight);
+	glfwGetFramebufferSize(s_application->getWindow()->getOpenGLWindow(), &bufferWidth, &bufferHeight);
 
-	window::MainWindow::setViewport(0, 0, bufferWidth, bufferHeight);
+	window::Window::setViewport(0, 0, bufferWidth, bufferHeight);
 
-    Renderer::instance().initFrameBuffer(bufferWidth, bufferHeight);
+    auto fbo = s_application->getRenderer()->initFbo(bufferWidth, bufferHeight);
+
+    auto defaultRender = s_application->getRenderer()->addRenderPath<elix::DefaultRender>();
+    defaultRender->setRenderTarget(fbo);
+
+    auto stencilRender = s_application->getRenderer()->addRenderPath<StencilRender>();
+    stencilRender->setRenderTarget(fbo);
 
     initImgui();
 
-	const auto camera = new Camera();
+	const auto camera = new Camera(s_application->getCamera());
 	Editor::instance().m_editorCamera = camera;
-    CameraManager::getInstance().setActiveCamera(camera->getCamera());
-    physics::PhysicsController::instance().init();
 
     ShaderManager::instance().preLoadShaders();
 }
 
 void Engine::initImgui()
 {
-	if (!window::WindowsManager::instance().getCurrentWindow())
+	if (!s_application->getWindow())
 		return;
 
     IMGUI_CHECKVERSION();
@@ -97,7 +86,7 @@ void Engine::initImgui()
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    ImGui_ImplGlfw_InitForOpenGL(window::WindowsManager::instance().getCurrentWindow()->getOpenGLWindow(), true);
+    ImGui_ImplGlfw_InitForOpenGL(s_application->getWindow()->getOpenGLWindow(), true);
     ImGui_ImplOpenGL3_Init("#version 330");
     ImGui::StyleColorsDark();
 

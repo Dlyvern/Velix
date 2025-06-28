@@ -1,13 +1,13 @@
 #include "ProjectManager.hpp"
 #include <filesystem>
-#include <ElixirCore/SceneManager.hpp>
-
 #include "ElixirCore/Logger.hpp"
 #include <fstream>
 #include <../libraries/json/json.hpp>
 #include <ElixirCore/AssetsLoader.hpp>
 #include "ElixirCore/Filesystem.hpp"
-#include "Renderer.hpp"
+#include "Engine.hpp"
+#include <ElixirCore/ShadowRender.hpp>
+#include <ElixirCore/LightManager.hpp>
 
 ProjectManager & ProjectManager::instance()
 {
@@ -154,11 +154,10 @@ bool ProjectManager::loadProject(Project* project)
     auto fileTextureAsset = elix::AssetsLoader::loadAsset(filesystem::getTexturesFolderPath().string() + "/file.png");
     m_projectCache.addAsset(filesystem::getTexturesFolderPath().string() + "/file.png", std::move(fileTextureAsset));
 
-    const auto& newScene = SceneManager::loadSceneFromFile(scenePath, m_projectCache);
 
-    SceneManager::instance().setCurrentScene(newScene);
+    Engine::s_application->getScene()->loadSceneFromFile(scenePath, m_projectCache);
 
-    Renderer::instance().initShadows();
+    Engine::s_application->getRenderer()->addRenderPath<elix::ShadowRender>(LightManager::instance().getLights());
 
     return true;
 }

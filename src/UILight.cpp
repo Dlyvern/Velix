@@ -4,20 +4,26 @@
 #include <string>
 #include <vector>
 
-void UILight::draw(lighting::Light *light)
+void UILight::draw(LightComponent *lightComponent)
 {
-    if (!light)
+    if (!lightComponent)
         return;
+
+    if(!lightComponent->getLight())
+        return;
+
+    auto* light = lightComponent->getLight();
 
     glm::vec3 color = light->color;
 
     if (ImGui::ColorEdit3(("Base Color##" + std::to_string(1)).c_str(), &color.x))
         light->color = color;
 
-    glm::vec3 lightPosition = light->position;
-    if (ImGui::DragFloat3("Light position", &lightPosition[0], 0.1f))
-        light->position = lightPosition;
-
+    glm::vec3 offset = lightComponent->getLocalOffset();
+    if (ImGui::DragFloat3("Local Offset", &offset[0], 0.1f)) {
+        lightComponent->setLocalOffset(offset);
+    }
+    
     float strength = light->strength;;
     if (ImGui::DragFloat("Strength", &strength, 0.1f))
         light->strength = strength;

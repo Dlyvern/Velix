@@ -1,7 +1,5 @@
 #include "DeleteAction.hpp"
 
-#include "ElixirCore/SceneManager.hpp"
-
 DeleteAction::DeleteAction(GameObject *gameObject) : m_gameObject(gameObject)
 {
     auto newGameObject = std::make_shared<GameObject>(*m_gameObject);
@@ -10,7 +8,7 @@ DeleteAction::DeleteAction(GameObject *gameObject) : m_gameObject(gameObject)
 
 void DeleteAction::execute()
 {
-    SceneManager::instance().getCurrentScene()->deleteGameObject(m_gameObject);
+    // SceneManager::instance().getCurrentScene()->deleteGameObject(m_gameObject);
 }
 
 void DeleteAction::undo()

@@ -4,19 +4,16 @@
 #include "ElixirCore/GameObject.hpp"
 #include "ElixirCore/Skeleton.hpp"
 #include <filesystem>
-#include "ElixirCore/Filesystem.hpp"
 #include "ActionsManager.hpp"
 #include "Camera.hpp"
 
 class Editor
 {
-
 public:
     enum class State
     {
         Start,
         Editor,
-        Play
     };
 
     static Editor& instance();
@@ -26,13 +23,9 @@ public:
     Camera* m_editorCamera{nullptr};
 
 private:
-
-
     State m_state{State::Start};
 
-    void* m_gameLibrary{nullptr};
-
-    struct DraggingInfo final
+    struct DraggingInfo
     {
     public:
         std::string name;
@@ -50,7 +43,6 @@ private:
     void showProperties();
     void showAllObjectsInTheScene();
     void showAssetsInfo();
-    void showGuizmosInfo();
 	
     void showGuizmo(GameObject* gameObject, float x, float y, float width, float height); 
 
@@ -91,8 +83,6 @@ private:
     };
 
     TransformMode m_transformMode{TransformMode::Translate};
-
-    int m_selectedModelIndex{-1};
 };
 
 #endif //DEBUG_EDITOR_HPP
