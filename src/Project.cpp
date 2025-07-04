@@ -1,5 +1,15 @@
 #include "Project.hpp"
 
+void Project::setProjectLibrary(void* library)
+{
+    m_projectLibrary = library;
+}
+
+void* Project::getProjectLibrary() const
+{
+    return m_projectLibrary;
+}
+
 void Project::setFullPath(const std::string &fullPath)
 {
     m_fullPath = fullPath;

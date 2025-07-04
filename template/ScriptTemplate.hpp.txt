@@ -1,0 +1,20 @@
+#pragma once
+
+#include <ElixirCore/Script.hpp>
+#include <ElixirCore/ReflectedObject.hpp>
+
+class {{ClassName}} final : public Script, public elix::ReflectedObject
+{
+public:
+    {{ClassName}}() = default;
+    ~{{ClassName}}() override = default;
+    
+    //Calls on the start of game
+    void onStart() override;
+
+    //Calls every frame
+    void onUpdate(float deltaTime) override;
+
+    //Needs for ScriptRegister(Hack for now)
+    std::string getScriptName() const override;
+};

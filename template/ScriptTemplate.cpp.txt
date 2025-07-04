@@ -1,0 +1,11 @@
+#include "{{ClassName}}.hpp"
+
+void {{ClassName}}::onCreate() 
+{
+    //Init code
+}
+
+void {{ClassName}}::onUpdate(float deltaTime)
+{
+    //Per-frame logic
+}

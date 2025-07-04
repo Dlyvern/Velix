@@ -47,7 +47,9 @@ target_link_libraries(${PROJECT_NAME}
         Elixir::ElixirCore
 )
 
-target_sources(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCES} PRIVATE ${PROJECT_HEADERS}
+target_sources(${PROJECT_NAME} PRIVATE
+        ${PROJECT_SOURCES} 
+        ${PROJECT_HEADERS}
         libraries/2ndParty/imgui/imgui.cpp
         libraries/2ndParty/imgui/imgui_draw.cpp
         libraries/2ndParty/imgui/imgui_widgets.cpp
@@ -60,4 +62,20 @@ target_sources(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCES} PRIVATE ${PROJECT_HEAD
         libraries/2ndParty/ImGuizmo/ImGradient.cpp
         libraries/2ndParty/ImGuizmo/ImGuizmo.cpp
         libraries/2ndParty/ImGuizmo/ImSequencer.cpp
+
+        libraries/2ndParty/ImGuiColorTextEdit/TextEditor.cpp
 )
+
+add_custom_command(
+    TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/resources
+    ${CMAKE_BINARY_DIR}/resources
+
+    ${CMAKE_SOURCE_DIR}/template
+    ${CMAKE_BINARY_DIR}/template
+)
+
+
+install(TARGETS ${PROJECT_NAME} DESTINATION .)
+install(DIRECTORY resources DESTINATION .)

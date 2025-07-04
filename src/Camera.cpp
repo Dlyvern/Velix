@@ -4,7 +4,6 @@
 
 #include <ElixirCore/Keyboard.hpp>
 #include "ElixirCore/Mouse.hpp"
-#include <ElixirCore/WindowsManager.hpp>
 #include "Engine.hpp"
 
 Camera::Camera(elix::CameraComponent* camera) : m_camera(camera) {}

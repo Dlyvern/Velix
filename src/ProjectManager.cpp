@@ -148,16 +148,15 @@ bool ProjectManager::loadProject(Project* project)
         if (auto asset  = elix::AssetsLoader::loadAsset(entry.path(), &m_projectCache))
             m_projectCache.addAsset(entry.path().string(), std::move(asset));
 
-    auto folderTextureAsset = elix::AssetsLoader::loadAsset(filesystem::getTexturesFolderPath().string() + "/folder.png");
-    m_projectCache.addAsset(filesystem::getTexturesFolderPath().string() + "/folder.png", std::move(folderTextureAsset));
+    auto folderTextureAsset = elix::AssetsLoader::loadAsset(elix::filesystem::getExecutablePath().string() + "/resources/textures/folder.png");
+    m_projectCache.addAsset(elix::filesystem::getExecutablePath().string() + "/resources/textures/folder.png", std::move(folderTextureAsset));
 
-    auto fileTextureAsset = elix::AssetsLoader::loadAsset(filesystem::getTexturesFolderPath().string() + "/file.png");
-    m_projectCache.addAsset(filesystem::getTexturesFolderPath().string() + "/file.png", std::move(fileTextureAsset));
-
+    auto fileTextureAsset = elix::AssetsLoader::loadAsset(elix::filesystem::getExecutablePath().string() + "/resources/textures/file.png");
+    m_projectCache.addAsset(elix::filesystem::getExecutablePath().string() + "/resources/textures/file.png", std::move(fileTextureAsset));
 
     Engine::s_application->getScene()->loadSceneFromFile(scenePath, m_projectCache);
 
-    Engine::s_application->getRenderer()->addRenderPath<elix::ShadowRender>(LightManager::instance().getLights());
+    Engine::s_application->getRenderer()->addRenderPath<elix::ShadowRender>(Engine::s_application->getScene()->getLights());
 
     return true;
 }

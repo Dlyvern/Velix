@@ -5,3 +5,7 @@
 [submodule "libraries/2ndParty/ImGuizmo"]
 	path = libraries/2ndParty/ImGuizmo
 	url = https://github.com/CedricGuillemet/ImGuizmo.git
+
+[submodule "libraries/2ndParty/ImGuiColorTextEdit"]
+	path = libraries/2ndParty/ImGuiColorTextEdit
+	url = https://github.com/BalazsJako/ImGuiColorTextEdit.git

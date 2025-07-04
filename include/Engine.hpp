@@ -2,18 +2,17 @@
 #define ENGINE_HPP
 
 #include <ElixirCore/Application.hpp>
+#include "Editor.hpp"
 
 class Engine
 {
 public:
-    static bool run();
+    static int run();
 
-
-    static inline elix::Application* s_application{nullptr}; 
-
+    static inline std::unique_ptr<elix::Application> s_application{nullptr}; 
+    static inline std::unique_ptr<Editor> s_editor{nullptr}; 
 private:
     static void init();
-    static void initImgui();
 };
 
 

@@ -1,21 +1,75 @@
 #include <glad/glad.h>
 
 #include "Engine.hpp"
+#include "StencilRender.hpp"
 
-#include "ElixirCore/Physics.hpp"
-#include "ElixirCore/WindowsManager.hpp"
-#include "imgui.h"
-#include "backends/imgui_impl_glfw.h"
-#include "backends/imgui_impl_opengl3.h"
-#include "Editor.hpp"
 #include "ElixirCore/ShaderManager.hpp"
 #include "ElixirCore/Logger.hpp"
 #include <ElixirCore/DefaultRender.hpp>
-#include "StencilRender.hpp"
 
-#define IMGUI_ENABLE_DOCKING
+#include <ElixirCore/Filesystem.hpp>
+#include <ElixirCore/AssetsLoader.hpp>
+#include <ElixirCore/ShaderManager.hpp>
 
-bool Engine::run()
+void RenderQuad()
+{
+    static unsigned int quadVAO = 0;
+    static unsigned int quadVBO;
+
+    if (quadVAO == 0)
+    {
+        float quadVertices[] =
+        {
+            -0.5f,  0.5f, 0.0f,  0.0f, 1.0f,
+            -0.5f, -0.5f, 0.0f,  0.0f, 0.0f,
+             0.5f, -0.5f, 0.0f,  1.0f, 0.0f,
+            -0.5f,  0.5f, 0.0f,  0.0f, 1.0f,
+             0.5f, -0.5f, 0.0f,  1.0f, 0.0f,
+             0.5f,  0.5f, 0.0f,  1.0f, 1.0f
+        };
+
+        glGenVertexArrays(1, &quadVAO);
+        glGenBuffers(1, &quadVBO);
+        glBindVertexArray(quadVAO);
+
+        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    }
+
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+}
+
+void RenderBillboardIcon(glm::vec3 position, elix::Texture* icon, glm::mat4 view, glm::mat4 projection, elix::Shader& shader)
+{
+    glm::vec3 camRight = glm::vec3(view[0][0], view[1][0], view[2][0]);
+    glm::vec3 camUp = glm::vec3(view[0][1], view[1][1], view[2][1]);
+
+    float scale = 0.5f;
+    glm::mat4 model(1.0f);
+    model[0] = glm::vec4(camRight * scale, 0.0f);
+    model[1] = glm::vec4(camUp * scale, 0.0f);
+    model[2] = glm::vec4(glm::cross(camRight, camUp), 0.0f);
+    model[3] = glm::vec4(position, 1.0f);
+
+    glm::mat4 mvp = projection * view * model;
+
+    shader.bind();
+    shader.setMat4("uMVP", mvp);
+    icon->bind(0);
+    shader.setInt("uTexture", 0);
+
+    RenderQuad();
+}
+
+int Engine::run()
 {
     try
     {
@@ -23,37 +77,53 @@ bool Engine::run()
     }
     catch (const std::exception &e)
     {
-        ELIX_LOG_ERROR("ENGINE_RUN_ERROR: COULD NOT INITIALIZE ENGINE: %s", std::string(e.what()));
-        return false;
+        ELIX_LOG_ERROR("COULD NOT INITIALIZE ENGINE: ",e.what());
+        return EXIT_FAILURE;
     }
+
+    auto textureAsset = elix::AssetsLoader::loadAsset(elix::filesystem::getExecutablePath().string() + "/resources/textures/folder.png");
+    auto texture = dynamic_cast<elix::AssetTexture*>(textureAsset.get())->getTexture();
 
     while (s_application->getWindow()->isWindowOpened())
     {
         s_application->update();
 
-        if (Editor::instance().m_editorCamera)
-            Editor::instance().m_editorCamera->update(s_application->getDeltaTime());
+        // GLuint queryID;
+
+        // glGenQueries(1, &queryID);
+
+        // glBeginQuery(GL_TIME_ELAPSED, queryID);
 
         s_application->render();
 
-    	Editor::instance().update();
+    	s_editor->update(s_application->getDeltaTime());
+
+        // RenderBillboardIcon({0.0, 0.0f, 0.0f}, texture, s_application->getCamera()->getViewMatrix(),
+        // s_application->getCamera()->getProjectionMatrix(), *ShaderManager::instance().getShader(ShaderManager::ShaderType::BILLBOARD));
 
         s_application->endRender();
+
+        // glEndQuery(GL_TIME_ELAPSED);
+
+        // GLuint64 elapsedTime;
+        // glGetQueryObjectui64v(queryID, GL_QUERY_RESULT, &elapsedTime);
+
+        // std::cout << "GPU Time: " << elapsedTime / 1e6 << " ms" << std::endl;
     }
 
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    s_editor->destroy();
 
     elix::Application::shutdownCore();
 
-    return true;
+    return EXIT_SUCCESS;
 }
 
 void Engine::init()
 {
     s_application = elix::Application::createApplication();
+    s_editor = std::make_unique<Editor>();
 
+    s_editor->init();
 	int bufferWidth, bufferHeight;
 	glfwGetFramebufferSize(s_application->getWindow()->getOpenGLWindow(), &bufferWidth, &bufferHeight);
 
@@ -67,75 +137,21 @@ void Engine::init()
     auto stencilRender = s_application->getRenderer()->addRenderPath<StencilRender>();
     stencilRender->setRenderTarget(fbo);
 
-    initImgui();
-
-	const auto camera = new Camera(s_application->getCamera());
-	Editor::instance().m_editorCamera = camera;
-
     ShaderManager::instance().preLoadShaders();
+
+    auto data = elix::Texture::loadImage(elix::filesystem::getExecutablePath().string() + "/resources/textures/ElixirLogo.png", false);
+    data.numberOfChannels = 4;
+
+    if(data.data)
+    {
+        GLFWimage images[1];
+        images[0].height = data.height;
+        images[0].width = data.width;
+        images[0].pixels = data.data;
+
+        glfwSetWindowIcon(s_application->getWindow()->getOpenGLWindow(), 1, images);
+    }
+    else
+        ELIX_LOG_ERROR("Failed to load logo");
 }
 
-void Engine::initImgui()
-{
-	if (!s_application->getWindow())
-		return;
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-
-    ImGui_ImplGlfw_InitForOpenGL(s_application->getWindow()->getOpenGLWindow(), true);
-    ImGui_ImplOpenGL3_Init("#version 330");
-    ImGui::StyleColorsDark();
-
-    ImGuiStyle& style = ImGui::GetStyle();
-
-	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
-	{
-		style.WindowRounding = 0.0f;
-		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-	}
-
-    style.Alpha = 1.0;
-    style.WindowRounding = 3;
-    style.GrabRounding = 1;
-    style.GrabMinSize = 20;
-    style.FrameRounding = 3;
-
-
-    style.Colors[ImGuiCol_Text] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.00f, 0.40f, 0.41f, 1.00f);
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
-    style.Colors[ImGuiCol_Border] = ImVec4(0.00f, 1.00f, 1.00f, 0.65f);
-    style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.44f, 0.80f, 0.80f, 0.18f);
-    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.44f, 0.80f, 0.80f, 0.27f);
-    style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.44f, 0.81f, 0.86f, 0.66f);
-    style.Colors[ImGuiCol_TitleBg] = ImVec4(0.14f, 0.18f, 0.21f, 0.73f);
-    style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.00f, 0.00f, 0.54f);
-    style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.27f);
-    style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
-    style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.22f, 0.29f, 0.30f, 0.71f);
-    style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.00f, 1.00f, 1.00f, 0.44f);
-    style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.00f, 1.00f, 1.00f, 0.74f);
-    style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 1.00f, 1.00f, 0.68f);
-    style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 1.00f, 1.00f, 0.36f);
-    style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.76f);
-    style.Colors[ImGuiCol_Button] = ImVec4(0.00f, 0.65f, 0.65f, 0.46f);
-    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.01f, 1.00f, 1.00f, 0.43f);
-    style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.62f);
-    style.Colors[ImGuiCol_Header] = ImVec4(0.00f, 1.00f, 1.00f, 0.33f);
-    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 1.00f, 1.00f, 0.42f);
-    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.54f);
-    style.Colors[ImGuiCol_ResizeGrip] = ImVec4(0.00f, 1.00f, 1.00f, 0.54f);
-    style.Colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.00f, 1.00f, 1.00f, 0.74f);
-    style.Colors[ImGuiCol_ResizeGripActive] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_PlotLines] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_PlotHistogram] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.00f, 1.00f, 1.00f, 0.22f);
-}

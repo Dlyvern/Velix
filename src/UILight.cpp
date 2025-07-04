@@ -12,7 +12,7 @@ void UILight::draw(LightComponent *lightComponent)
     if(!lightComponent->getLight())
         return;
 
-    auto* light = lightComponent->getLight();
+    auto light = lightComponent->getLight();
 
     glm::vec3 color = light->color;
 

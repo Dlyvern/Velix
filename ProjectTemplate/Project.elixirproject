@@ -1,0 +1,10 @@
+{
+    "name": "ProjectName",
+    "engine_version": "0.0.1",
+    "project_path": "./",
+    "entry_scene": "scene.scene",
+    "scene_dir": "./",
+    "build_dir": "./",
+    "assets_dir": "./",
+    "src_dir": "./"
+}

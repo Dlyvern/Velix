@@ -6,7 +6,6 @@
 #include <unordered_set>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
-#include <ElixirCore/LightManager.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cstdlib>
 #include "ElixirCore/LightComponent.hpp"
@@ -24,6 +23,10 @@
 #include "ElixirCore/Utilities.hpp"
 #include "ElixirCore/Filesystem.hpp"
 #include "ElixirCore/LibrariesLoader.hpp"
+#include <ElixirCore/ReflectedObject.hpp>
+#include "InspectableGameObject.hpp"
+
+#include <ElixirCore/ScriptsRegister.hpp>
 
 #include <unistd.h>
 #include <pwd.h>
@@ -36,6 +39,85 @@
 #include "ProjectManager.hpp"
 
 #include "Engine.hpp"
+
+#include "imgui.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_opengl3.h"
+
+#include "../libraries/2ndParty/ImGuiColorTextEdit/TextEditor.h"
+
+#define IMGUI_ENABLE_DOCKING
+
+void Editor::destroy()
+{
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+}
+
+void Editor::init()
+{
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+    ImGui_ImplGlfw_InitForOpenGL(Engine::s_application->getWindow()->getOpenGLWindow(), true);
+    ImGui_ImplOpenGL3_Init("#version 330");
+    ImGui::StyleColorsDark();
+
+    ImGuiStyle& style = ImGui::GetStyle();
+
+	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+	{
+		style.WindowRounding = 0.0f;
+		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+	}
+
+    style.Alpha = 1.0;
+    style.WindowRounding = 3;
+    style.GrabRounding = 1;
+    style.GrabMinSize = 20;
+    style.FrameRounding = 3;
+
+
+    style.Colors[ImGuiCol_Text] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+    style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.00f, 0.40f, 0.41f, 1.00f);
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
+    style.Colors[ImGuiCol_Border] = ImVec4(0.00f, 1.00f, 1.00f, 0.65f);
+    style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.44f, 0.80f, 0.80f, 0.18f);
+    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.44f, 0.80f, 0.80f, 0.27f);
+    style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.44f, 0.81f, 0.86f, 0.66f);
+    style.Colors[ImGuiCol_TitleBg] = ImVec4(0.14f, 0.18f, 0.21f, 0.73f);
+    style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.00f, 0.00f, 0.54f);
+    style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.27f);
+    style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
+    style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.22f, 0.29f, 0.30f, 0.71f);
+    style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.00f, 1.00f, 1.00f, 0.44f);
+    style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.00f, 1.00f, 1.00f, 0.74f);
+    style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+    style.Colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 1.00f, 1.00f, 0.68f);
+    style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 1.00f, 1.00f, 0.36f);
+    style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.76f);
+    style.Colors[ImGuiCol_Button] = ImVec4(0.00f, 0.65f, 0.65f, 0.46f);
+    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.01f, 1.00f, 1.00f, 0.43f);
+    style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.62f);
+    style.Colors[ImGuiCol_Header] = ImVec4(0.00f, 1.00f, 1.00f, 0.33f);
+    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 1.00f, 1.00f, 0.42f);
+    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.54f);
+    style.Colors[ImGuiCol_ResizeGrip] = ImVec4(0.00f, 1.00f, 1.00f, 0.54f);
+    style.Colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.00f, 1.00f, 1.00f, 0.74f);
+    style.Colors[ImGuiCol_ResizeGripActive] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+    style.Colors[ImGuiCol_PlotLines] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+    style.Colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+    style.Colors[ImGuiCol_PlotHistogram] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+    style.Colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+    style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.00f, 1.00f, 1.00f, 0.22f);
+
+	m_editorCamera = std::make_unique<Camera>(Engine::s_application->getCamera());
+}
 
 bool isMouseOverEmptySpace()
 {
@@ -106,12 +188,6 @@ void BeginDockSpace()
     }
 
     ImGui::End();
-}
-
-Editor &Editor::instance()
-{
-    static Editor instance;
-    return instance;
 }
 
 void Editor::updateInput()
@@ -185,9 +261,13 @@ void Editor::updateInput()
 
     if (input::Keyboard.isKeyReleased(input::KeyCode::R))
         m_transformMode = TransformMode::Rotate;
+
+
+    // if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        // m_selectedInspectable = nullptr;
 }
 
-void Editor::update()
+void Editor::update(float deltaTime)
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -196,11 +276,14 @@ void Editor::update()
 
     if (m_state == State::Editor)
     {
+        m_editorCamera->update(deltaTime); 
         ImGuizmo::BeginFrame();
         showEditor();
     }
     else if (m_state == State::Start)
         showStart();
+    else if(m_state == State::Play)
+        showEditor();
 
     ImGui::Render();
 
@@ -428,8 +511,37 @@ void Editor::showGuizmo(GameObject *gameObject, float x, float y, float width, f
     }
 }
 
+std::string replaceAll(std::string str, const std::string& from, const std::string& to)
+{
+    size_t startPos = 0;
+    while ((startPos = str.find(from, startPos)) != std::string::npos) {
+        str.replace(startPos, from.length(), to);
+        startPos += to.length();
+    }
+    return str;
+}
+
+std::string readFile(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) throw std::runtime_error("Failed to open file: " + path);
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
+void writeFile(const std::string& path, const std::string& content) {
+    std::ofstream file(path);
+    if (!file.is_open()) throw std::runtime_error("Failed to write file: " + path);
+
+    file << content;
+}
+
 void Editor::showMenuBar()
 {
+    static char classNameBuffer[64] = "";
+    static bool openCreateClassPopup = false;
+
     if (ImGui::BeginMainMenuBar())
     {
         if (ImGui::BeginMenu("File"))
@@ -444,6 +556,12 @@ void Editor::showMenuBar()
         {
             if (ImGui::MenuItem("Play game"))
             {
+                for(const auto& object : Engine::s_application->getScene()->getGameObjects())
+                    if(object->hasComponent<elix::CameraComponent>())
+                    {
+                        m_state = State::Play; 
+                        Engine::s_application->getCamera()->setPosition(object->getPosition());
+                    }
             }
 
             if (ImGui::MenuItem("Stop game"))
@@ -453,18 +571,59 @@ void Editor::showMenuBar()
             ImGui::EndMenu();
         }
 
+        if(ImGui::BeginMenu("Create"))
+        {
+            if(ImGui::MenuItem("Create a new class"))
+            {
+                openCreateClassPopup = true;
+            }
+
+            ImGui::EndMenu();
+        }
+
+        if (openCreateClassPopup)
+        {
+            ImGui::OpenPopup("CreateNewClass");
+            openCreateClassPopup = false;
+        }
+
+        if(ImGui::BeginPopupModal("CreateNewClass", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Class Name", classNameBuffer, sizeof(classNameBuffer));
+
+            if (ImGui::Button("Create Script"))
+            {
+                std::string hppTemplate = readFile(elix::filesystem::getExecutablePath().string() + "/template/ScriptTemplate.hpp.txt");
+                std::string cppTemplate = readFile(elix::filesystem::getExecutablePath().string() + "/template/ScriptTemplate.cpp.txt");
+
+                std::string hppContent = replaceAll(hppTemplate, "{{ClassName}}", classNameBuffer);
+                std::string cppContent = replaceAll(cppTemplate, "{{ClassName}}", classNameBuffer);
+                
+                writeFile(ProjectManager::instance().getCurrentProject()->getSourceDir() + "/" + classNameBuffer + ".hpp", hppContent);
+                writeFile(ProjectManager::instance().getCurrentProject()->getSourceDir() + "/" + classNameBuffer + ".cpp", cppContent);
+
+                classNameBuffer[0] = '\0';
+
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancel"))
+            {
+                classNameBuffer[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+
         ImGui::EndMainMenuBar();
     }
 }
 
-void Editor::showViewPort()
+void Editor::drawMainScene()
 {
-    ImGui::Begin("Scene View", nullptr,
-                 ImGuiWindowFlags_NoTitleBar |
-                     ImGuiWindowFlags_NoCollapse |
-                     ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse /*| ImGuiWindowFlags_MenuBar*/);
-
     const float windowWidth = ImGui::GetContentRegionAvail().x;
     const float windowHeight = ImGui::GetContentRegionAvail().y;
     const ImVec2 cursorPosition = ImGui::GetCursorScreenPos();
@@ -590,6 +749,108 @@ void Editor::showViewPort()
             }
         }
     }
+}
+
+void Editor::showTextEditor()
+{
+
+//     TextEditor::LanguageDefinition myLang;
+// myLang.mName = "MyLang";
+
+// // Define keywords
+// myLang.mKeywords = {"if", "else", "for", "while", "return", "struct", "uniform", "void", ... };
+
+// // Define token regexes
+// myLang.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>("\"(\\\\.|[^\"])*\"", TextEditor::PaletteIndex::String)); // string literals
+// myLang.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>("#[a-zA-Z_]+", TextEditor::PaletteIndex::Preprocessor)); // preprocessor
+// // add other token regexes...
+
+// // Then set it:
+// editor.SetLanguageDefinition(myLang);
+
+    static TextEditor editor;
+
+    // editor.SetAutoCompleteCallback([](const std::string& currentWord) -> std::vector<std::string>
+    // {
+    //     std::vector<std::string> suggestions;
+
+    //     if (currentWord.starts_with("#include"))
+    //     {
+    //         suggestions = {
+    //             "<iostream>", "<vector>", "<string>", "\"MyComponent.hpp\"", "\"Texture.hpp\""
+    //         };
+    //     }
+
+    //     return suggestions;
+    // });
+
+//     if (m_autoCompleteCallback)
+// {
+//     std::string currentWord = GetWordUnderCursor(); // ← implement this helper
+//     auto suggestions = m_autoCompleteCallback(currentWord);
+
+//     if (!suggestions.empty())
+//     {
+//         // Show ImGui dropdown here
+//         ImGui::Begin("Autocomplete");
+//         for (auto& suggestion : suggestions)
+//         {
+//             if (ImGui::Selectable(suggestion.c_str()))
+//             {
+//                 InsertText(suggestion.substr(currentWord.length())); // complete word
+//             }
+//         }
+//         ImGui::End();
+//     }
+// }
+
+    static std::string currentFilePath;
+
+    if (m_fileEditorPath != currentFilePath && !m_fileEditorPath.empty())
+    {
+        currentFilePath = m_fileEditorPath;
+
+        auto lang = TextEditor::LanguageDefinition::CPlusPlus();
+        editor.SetLanguageDefinition(lang);
+
+        std::string text = readFile(currentFilePath);
+        editor.SetText(text);
+    }
+
+    if(!editor.GetText().empty())
+        editor.Render("TextEditor");
+
+    if (ImGui::Button("Save") && !m_fileEditorPath.empty())
+    {
+        writeFile(currentFilePath, editor.GetText());
+    }
+}
+
+
+void Editor::showViewPort()
+{
+    ImGui::Begin("Scene View", nullptr,
+                 ImGuiWindowFlags_NoTitleBar |
+                     ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse /*| ImGuiWindowFlags_MenuBar*/);
+
+    if (ImGui::BeginTabBar("SceneTabs", ImGuiTabBarFlags_None))
+    {
+        if (ImGui::BeginTabItem("Scene"))
+        {
+            drawMainScene();
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("Script Editor"))
+        {
+            showTextEditor();
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
+    }
 
     ImGui::End();
 }
@@ -665,16 +926,24 @@ void Editor::showAllObjectsInTheScene()
 
 void Editor::showAssetsInfo()
 {
-    static auto folderTexture = ProjectManager::instance().getAssetsCache()->getAsset<elix::AssetTexture>(filesystem::getTexturesFolderPath().string() + "/folder.png");
-    static auto fileTexture = ProjectManager::instance().getAssetsCache()->getAsset<elix::AssetTexture>(filesystem::getTexturesFolderPath().string() + "/file.png");
+    static auto folderTexture = ProjectManager::instance().getAssetsCache()->getAsset<elix::AssetTexture>(elix::filesystem::getExecutablePath().string() + "/resources/textures/folder.png");
+    static auto fileTexture = ProjectManager::instance().getAssetsCache()->getAsset<elix::AssetTexture>(elix::filesystem::getExecutablePath().string() + "/resources/textures/file.png");
 
     if (folderTexture && !folderTexture->getTexture()->isBaked())
+    {
+        folderTexture->getTexture()->create();
+        folderTexture->getTexture()->addDefaultParameters();
         folderTexture->getTexture()->bake();
+    }
     if (fileTexture && !fileTexture->getTexture()->isBaked())
+    {
+        fileTexture->getTexture()->create();
+        fileTexture->getTexture()->addDefaultParameters();
         fileTexture->getTexture()->bake();
+    }
 
-    static ImTextureID folderIcon = folderTexture ? static_cast<ImTextureID>(static_cast<intptr_t>(folderTexture->getTexture()->getId())) : 0;
-    static ImTextureID fileIcon = fileTexture ? static_cast<ImTextureID>(static_cast<intptr_t>(fileTexture->getTexture()->getId())) : 0;
+    ImTextureID folderIcon = folderTexture ? static_cast<ImTextureID>(static_cast<intptr_t>(folderTexture->getTexture()->getId())) : 0;
+    ImTextureID fileIcon = fileTexture ? static_cast<ImTextureID>(static_cast<intptr_t>(fileTexture->getTexture()->getId())) : 0;
 
     ImGui::Begin("Assets");
     const float iconSize = 64.0f;
@@ -694,28 +963,21 @@ void Editor::showAssetsInfo()
 
     int itemIndex = 0;
     ImGui::Columns(columnCount, nullptr, false);
-    const std::vector<std::string> allowedExtensions{".png", ".mat", ".fbx", ".anim", ".obj", ".hdr", ".cpp", ".hpp", ".h"};
 
-    for (const auto &entry : std::filesystem::directory_iterator(m_assetsPath))
+    const std::unordered_set<std::string> restrictedExtensions{
+       ".elixirproject"
+    };
+
+    for (const auto& entry : std::filesystem::directory_iterator(m_assetsPath))
     {
-        const auto &path = entry.path();
+        const auto& path = entry.path();
 
         if (!is_directory(path))
         {
-            bool allow{false};
+            auto ext = path.extension().string();
 
-            for (const auto &extension : allowedExtensions)
-                if (extension == path.extension())
-                {
-                    allow = true;
-                    break;
-                }
-
-            if (!allow)
-            {
-                ImGui::End();
-                return;
-            }
+            if (restrictedExtensions.contains(ext))
+                continue;
         }
 
         std::string name = path.filename().string();
@@ -729,6 +991,32 @@ void Editor::showAssetsInfo()
                            ImVec2(0, 0), ImVec2(1, 1),
                            ImVec4(0, 0, 0, 0),
                            ImVec4(1, 1, 1, 1));
+
+
+        if (ImGui::BeginPopupContextItem("AssetContextMenu"))
+        {
+            if (ImGui::MenuItem("Open in Editor"))
+            {
+                std::string fullPath = path.string();
+
+                if (fullPath.ends_with(".cpp") || fullPath.ends_with(".hpp"))
+                    m_fileEditorPath = fullPath;
+            }
+
+            if (ImGui::MenuItem("Show in File Manager"))
+            {
+                #ifdef _WIN32
+                        std::string cmd = "explorer /select,\"" + path.string() + "\"";
+                #elif __APPLE__
+                        std::string cmd = "open -R \"" + path.string() + "\"";
+                #else
+                        std::string cmd = "xdg-open \"" + path.parent_path().string() + "\"";
+                #endif
+                        system(cmd.c_str());
+            }
+
+            ImGui::EndPopup();
+        }
 
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
         {
@@ -854,7 +1142,6 @@ void Editor::drawLogWindow()
         const auto messages = elix::Logger::instance().getMessages();
         for (const auto &msg : messages)
         {
-            // Timestamp
             auto time_t = std::chrono::system_clock::to_time_t(msg.timestamp);
             char time_str[20];
             std::strftime(time_str, sizeof(time_str), "%H:%M:%S", std::localtime(&time_t));
@@ -862,14 +1149,12 @@ void Editor::drawLogWindow()
             ImGui::TextDisabled("[%s] ", time_str);
             ImGui::SameLine();
 
-            // Colored message
             ImGui::PushStyleColor(ImGuiCol_Text,
                                   ImVec4(msg.color.r, msg.color.g, msg.color.b, 1.0f));
             ImGui::TextUnformatted(msg.message.c_str());
             ImGui::PopStyleColor();
         }
 
-        // Auto-scroll
         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
         {
             ImGui::SetScrollHereY(1.0f);
@@ -880,6 +1165,7 @@ void Editor::drawLogWindow()
     ImGui::End();
 }
 
+
 void Editor::setSelectedGameObject(GameObject *gameObject)
 {
     m_selectedGameObject = gameObject;
@@ -889,6 +1175,8 @@ void Editor::setSelectedGameObject(GameObject *gameObject)
 
     if(auto path = Engine::s_application->getRenderer()->getRenderPath<StencilRender>())
         path->setSelectedGameObject(gameObject);
+
+    m_selected = std::make_shared<InspectableGameObject>(m_selectedGameObject);
 }
 
 void Editor::showDebugInfo()
@@ -973,9 +1261,15 @@ void Editor::showDebugInfo()
                     {
                         script->onStart();
                         script->onUpdate(0.0f);
-                    }
 
-                    ELIX_LOG_INFO("Script loaded: %s", scriptName);
+                        if(auto reflectedScript = dynamic_cast<elix::ReflectedObject*>(script.get()))
+                        {
+                            for(const auto& property : reflectedScript->getProperties())
+                                ELIX_LOG_INFO(property.first);
+                        }
+                    }
+                    project->setProjectLibrary(library);
+                    ELIX_LOG_INFO("Script loaded: ", scriptName);
                 }
 
                 elix::LibrariesLoader::closeLibrary(library);
@@ -986,248 +1280,14 @@ void Editor::showDebugInfo()
     ImGui::End();
 }
 
-#include <glm/gtc/random.hpp>
-
-class GravityModule : public elix::ParticleModule
-{
-public:
-    GravityModule(glm::vec3 gravity) : m_gravity(gravity) {}
-
-    void update(elix::Particle &particle, float deltaTime) override
-    {
-        particle.velocity += m_gravity * deltaTime;
-        particle.position += particle.velocity * deltaTime;
-    }
-
-    void onSpawn(elix::Particle &particle) override {}
-    void onDeath(elix::Particle &particle) override {}
-
-private:
-    glm::vec3 m_gravity;
-};
-
-class RandomSpawnBoxModule : public elix::ParticleModule
-{
-public:
-    RandomSpawnBoxModule(glm::vec3 min, glm::vec3 max) : m_min(min), m_max(max) {}
-
-    void onSpawn(elix::Particle &particle) override
-    {
-        particle.position = glm::linearRand(m_min, m_max);
-    }
-
-    void update(elix::Particle &, float) override {}
-    void onDeath(elix::Particle &) override {}
-
-private:
-    glm::vec3 m_min;
-    glm::vec3 m_max;
-};
-
-void Editor::showObjectInfo()
-{
-    if (!m_selectedGameObject)
-    {
-        ImGui::End();
-        return;
-    }
-
-    std::string objectName = m_selectedGameObject->getName();
-
-    if (UIInputText::draw(objectName))
-        m_selectedGameObject->setName(objectName);
-
-    if (ImGui::BeginTabBar("Tabs"))
-    {
-        if (ImGui::BeginTabItem("Transform"))
-        {
-            UITransform::draw(m_selectedGameObject);
-
-            if (m_selectedGameObject->hasComponent<MeshComponent>())
-                if (auto model = m_selectedGameObject->getComponent<MeshComponent>()->getModel())
-                    for (int meshIndex = 0; meshIndex < model->getNumMeshes(); meshIndex++)
-                        UIMesh::draw(model->getMesh(meshIndex), meshIndex, m_selectedGameObject);
-
-            ImGui::SeparatorText("Components");
-
-            if (m_selectedGameObject->hasComponent<AnimatorComponent>())
-            {
-                ImGui::CollapsingHeader("Animator");
-            }
-
-            if (m_selectedGameObject->hasComponent<LightComponent>())
-            {
-                if (ImGui::CollapsingHeader("Light"))
-                {
-                    UILight::draw(m_selectedGameObject->getComponent<LightComponent>());
-                }
-            }
-
-            if (m_selectedGameObject->hasComponent<ParticleComponent>())
-            {
-                ImGui::CollapsingHeader("Particle");
-            }
-
-            if (m_selectedGameObject->hasComponent<elix::CameraComponent>())
-            {
-                if (ImGui::CollapsingHeader("Camera"))
-                {
-                    auto camera = m_selectedGameObject->getComponent<elix::CameraComponent>();
-
-                    auto position = camera->getPosition();
-                    if (ImGui::DragFloat3("Camera position", &position[0], 0.1f))
-                        camera->setPosition(position);
-                }
-            }
-
-            if (m_selectedGameObject->hasComponent<ScriptComponent>())
-            {
-                auto scriptComponent = m_selectedGameObject->getComponent<ScriptComponent>();
-
-                const auto &scripts = scriptComponent->getScripts();
-
-                if (ImGui::CollapsingHeader("Scripts"))
-                {
-                    for (const auto &[scriptName, script] : scripts)
-                    {
-                        ImGui::Text("%s", scriptName.c_str());
-
-                        ImGui::SameLine();
-
-                        if (ImGui::Button("Simulate script"))
-                            scriptComponent->setUpdateScripts(true);
-                    }
-
-                    ImGui::Button("Attach script");
-                }
-            }
-
-            if (ImGui::Button("Add component"))
-                ImGui::OpenPopup("AddComponentPopup");
-
-            static char searchBuffer[128] = "";
-
-            if (ImGui::BeginPopup("AddComponentPopup"))
-            {
-                ImGui::InputTextWithHint("##search", "Search...", searchBuffer, IM_ARRAYSIZE(searchBuffer));
-
-                ImGui::Separator();
-
-                const std::vector<std::string> availableComponents = {
-                    "Animator",
-                    "Script",
-                    "Light",
-                    "Camera",
-                    "Particle"};
-
-                for (const auto &comp : availableComponents)
-                {
-                    if (strlen(searchBuffer) == 0 || comp.find(searchBuffer) != std::string::npos)
-                    {
-                        if (ImGui::MenuItem(comp.c_str()))
-                        {
-                            if (comp == "Animator" && !m_selectedGameObject->hasComponent<AnimatorComponent>())
-                                m_selectedGameObject->addComponent<AnimatorComponent>();
-                            else if (comp == "Script" && !m_selectedGameObject->hasComponent<ScriptComponent>())
-                                m_selectedGameObject->addComponent<ScriptComponent>();
-                            else if (comp == "Light" && !m_selectedGameObject->hasComponent<LightComponent>())
-                            {
-                                m_selectedGameObject->addComponent<LightComponent>(lighting::Light{});
-                                LightManager::instance().addLight(m_selectedGameObject->getComponent<LightComponent>()->getLight());
-                            }
-                            else if (comp == "Camera" && !m_selectedGameObject->hasComponent<elix::CameraComponent>())
-                            {
-                                auto cameraComponent = m_selectedGameObject->addComponent<elix::CameraComponent>();
-                                    
-                                //TODO add new camera to the scene
-                            }
-                            else if (comp == "Particle" && !m_selectedGameObject->hasComponent<ParticleComponent>())
-                            {
-                                auto emitter = std::make_unique<elix::ParticleEmitter>();
-                                emitter->setSpawnRate(1000.0f);
-                                emitter->setLifetime(3.0f);
-                                emitter->setInitialVelocity(glm::vec3(0.0f, -10.0f, 0.0f));
-
-                                auto gravity = std::make_shared<GravityModule>(glm::vec3(0.0f, -9.81f, 0.0f));
-                                emitter->addModule(gravity);
-
-                                emitter->addModule(std::make_shared<class RandomSpawnBoxModule>(
-                                    glm::vec3(-5.0f, 10.0f, -5.0f), glm::vec3(5.0f, 10.0f, 5.0f)));
-
-                                auto system = std::make_unique<elix::ParticleSystem>();
-                                system->addEmitter(std::move(emitter));
-
-                                m_selectedGameObject->addComponent<ParticleComponent>(std::move(system));
-                            }
-
-                            ImGui::CloseCurrentPopup();
-                            break;
-                        }
-                    }
-                }
-
-                ImGui::EndPopup();
-            }
-
-            ImGui::EndTabItem();
-        }
-
-        if (m_selectedGameObject->hasComponent<MeshComponent>() && ImGui::BeginTabItem("Bones"))
-        {
-            displayBonesHierarchy(m_selectedGameObject->getComponent<MeshComponent>()->getModel()->getSkeleton());
-            ImGui::EndTabItem();
-        }
-
-        if (m_selectedGameObject->hasComponent<MeshComponent>() && ImGui::BeginTabItem("Animation"))
-        {
-            auto component = m_selectedGameObject->getComponent<MeshComponent>();
-
-            for (const auto &anim : component->getModel()->getAnimations())
-            {
-                if (ImGui::Button(anim->name.c_str()))
-                    if (auto *animation = component->getModel()->getAnimation(anim->name))
-                    {
-                        if (!m_selectedGameObject->hasComponent<AnimatorComponent>())
-                            m_selectedGameObject->addComponent<AnimatorComponent>();
-
-                        animation->skeletonForAnimation = component->getModel()->getSkeleton();
-                        m_selectedGameObject->getComponent<AnimatorComponent>()->playAnimation(animation);
-                    }
-            }
-
-            ImGui::EndTabItem();
-        }
-
-        ImGui::EndTabBar();
-    }
-}
-
 void Editor::showProperties()
 {
     ImGui::Begin("Properties");
 
-    if (m_selectedGameObject)
-        showObjectInfo();
-    else if (m_selectedMaterial)
-        UIMaterial::draw(m_selectedMaterial);
+    if(m_selected)
+        m_selected->draw();
 
     ImGui::End();
-}
-
-void Editor::displayBonesHierarchy(Skeleton *skeleton, common::BoneInfo *parent)
-{
-    if (!skeleton)
-        return;
-
-    if (const auto bone = parent ? parent : skeleton->getParent(); ImGui::TreeNode(bone->name.c_str()))
-    {
-        for (const int &childBone : bone->children)
-        {
-            displayBonesHierarchy(skeleton, skeleton->getBone(childBone));
-        }
-
-        ImGui::TreePop();
-    }
 }
 
 Editor::Editor() = default;

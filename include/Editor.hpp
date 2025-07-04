@@ -2,10 +2,10 @@
 #define DEBUG_EDITOR_HPP
 
 #include "ElixirCore/GameObject.hpp"
-#include "ElixirCore/Skeleton.hpp"
 #include <filesystem>
 #include "ActionsManager.hpp"
 #include "Camera.hpp"
+#include "IInspectable.hpp"
 
 class Editor
 {
@@ -14,16 +14,16 @@ public:
     {
         Start,
         Editor,
+        Play
     };
 
-    static Editor& instance();
-    void update();
+    Editor();
+    
+    void init();
+    void update(float deltaTime);
     [[nodiscard]] Editor::State getState() const;
     ~Editor();
-    Camera* m_editorCamera{nullptr};
-
-private:
-    State m_state{State::Start};
+    void destroy();
 
     struct DraggingInfo
     {
@@ -31,7 +31,16 @@ private:
         std::string name;
     };
 
+private:
+    State m_state{State::Start};
+
+    std::unique_ptr<Camera> m_editorCamera{nullptr};
+    
     void showStart();
+
+    void drawMainScene();
+
+    void showTextEditor();
 
     void showEditor();
 
@@ -39,7 +48,6 @@ private:
 
     void showViewPort();
     void showDebugInfo();
-    void showObjectInfo();
     void showProperties();
     void showAllObjectsInTheScene();
     void showAssetsInfo();
@@ -52,28 +60,23 @@ private:
 
     void setSelectedGameObject(GameObject* gameObject);
 
-    void displayBonesHierarchy(Skeleton* skeleton, common::BoneInfo* parent = nullptr);
-
     void updateInput();
 
     std::filesystem::path m_assetsPath{};
 
-    Editor();
-    Editor(const Editor&) = delete;
-    Editor& operator=(const Editor&) = delete;
-    Editor(Editor&&) = delete;
-    Editor& operator=(Editor&&) = delete;
+    std::shared_ptr<IInspectable> m_selected;
 
     DraggingInfo m_draggingInfo;
 
     GameObject* m_selectedGameObject{nullptr};
-    Material* m_selectedMaterial{nullptr};
 
     ActionsManager m_actionsManager;
 
     std::shared_ptr<GameObject> m_savedGameObject{nullptr};
 
     std::vector<GameObject*> m_selectedGameObjects;
+
+    std::string m_fileEditorPath{};
 
     enum class TransformMode
     {

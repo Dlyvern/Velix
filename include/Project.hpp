@@ -15,7 +15,9 @@ public:
     void setScenesDir(const std::string& scenesDir);
     void setEntryScene(const std::string& entryScene);
     void setAssetsDir(const std::string& assetsDir);
+    void setProjectLibrary(void* projectLibrary);
 
+    [[nodiscard]] void* getProjectLibrary() const;
     [[nodiscard]] std::string getAssetsDir() const;
     [[nodiscard]] std::string getEntryScene() const;
     [[nodiscard]]std::string getScenesDir() const;
@@ -26,6 +28,7 @@ public:
 
 
 private:
+    void* m_projectLibrary;
     std::string m_assetsDir;
     std::string m_entryScene;
     std::string m_scenesDir;
