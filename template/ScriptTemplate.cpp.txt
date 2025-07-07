@@ -1,6 +1,6 @@
 #include "{{ClassName}}.hpp"
 
-void {{ClassName}}::onCreate() 
+void {{ClassName}}::onStart() 
 {
     //Init code
 }
@@ -8,4 +8,9 @@ void {{ClassName}}::onCreate()
 void {{ClassName}}::onUpdate(float deltaTime)
 {
     //Per-frame logic
+}
+
+std::string {{ClassName}}::getScriptName() const
+{
+    return "{{ClassName}}";
 }

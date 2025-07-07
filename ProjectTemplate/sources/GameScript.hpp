@@ -1,7 +1,7 @@
 #ifndef GAME_SCRIPT_HPP
 #define GAME_SCRIPT_HPP
 
-#include "ElixirCore/Script.hpp"
+#include "VelixFlow/Script.hpp"
 
 class GameScript final : public Script
 {

@@ -1,7 +1,7 @@
 #ifndef UI_MATERIAL_HPP
 #define UI_MATERIAL_HPP
 
-#include "ElixirCore/Material.hpp"
+#include "VelixFlow/Material.hpp"
 
 class UIMaterial
 {

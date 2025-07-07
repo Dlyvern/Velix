@@ -15,10 +15,10 @@ foreach(file ${SOURCE_FILES})
     endif()
 endforeach()
 
-find_package(ElixirCore REQUIRED)
+find_package(VelixFlow REQUIRED)
 
 add_library(GameLib SHARED ${SOURCE_FILES}
 )
 
-target_include_directories(GameLib PRIVATE ${ELIXIR_CORE_INCLUDE})
-target_link_libraries(GameLib PRIVATE  Elixir::ElixirCore)
+target_include_directories(GameLib PRIVATE ${VELIX_FLOW_INCLUDE})
+target_link_libraries(GameLib PRIVATE  Velix::VelixFlow)

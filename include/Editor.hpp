@@ -1,12 +1,17 @@
 #ifndef DEBUG_EDITOR_HPP
 #define DEBUG_EDITOR_HPP
 
-#include "ElixirCore/GameObject.hpp"
+#include <VelixFlow/GameObject.hpp>
 #include <filesystem>
+
 #include "ActionsManager.hpp"
 #include "Camera.hpp"
 #include "IInspectable.hpp"
 
+#include "UILogger.hpp"
+#include "UITerminal.hpp"
+#include "UIAssetsWindow.hpp"
+    
 class Editor
 {
 public:
@@ -25,13 +30,11 @@ public:
     ~Editor();
     void destroy();
 
-    struct DraggingInfo
-    {
-    public:
-        std::string name;
-    };
-
 private:
+    elixUI::UILogger m_uiLogger;
+    elixUI::UITerminal m_uiTerminal;
+    elixUI::UIAssetsWindow m_uiAssetsWindow;
+    
     State m_state{State::Start};
 
     std::unique_ptr<Camera> m_editorCamera{nullptr};
@@ -62,11 +65,7 @@ private:
 
     void updateInput();
 
-    std::filesystem::path m_assetsPath{};
-
     std::shared_ptr<IInspectable> m_selected;
-
-    DraggingInfo m_draggingInfo;
 
     GameObject* m_selectedGameObject{nullptr};
 
@@ -75,8 +74,6 @@ private:
     std::shared_ptr<GameObject> m_savedGameObject{nullptr};
 
     std::vector<GameObject*> m_selectedGameObjects;
-
-    std::string m_fileEditorPath{};
 
     enum class TransformMode
     {

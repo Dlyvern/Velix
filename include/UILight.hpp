@@ -1,7 +1,7 @@
 #ifndef UI_LIGHT_HPP
 #define UI_LIGHT_HPP
 
-#include "ElixirCore/LightComponent.hpp"
+#include "VelixFlow/LightComponent.hpp"
 
 class UILight
 {

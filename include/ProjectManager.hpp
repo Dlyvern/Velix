@@ -2,7 +2,7 @@
 #define PROJECT_MANAGER_HPP
 
 #include "Project.hpp"
-#include <ElixirCore/AssetsCache.hpp>
+#include <VelixFlow/AssetsCache.hpp>
 
 class ProjectManager
 {
@@ -23,6 +23,8 @@ public:
     Project* getCurrentProject() const;
 
     elix::AssetsCache* getAssetsCache();
+
+    void exportProjectGame();
 
 private:
     Project* m_currentProject{nullptr};

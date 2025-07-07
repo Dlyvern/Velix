@@ -1,19 +1,101 @@
 #include "ProjectManager.hpp"
 #include <filesystem>
-#include "ElixirCore/Logger.hpp"
+#include "VelixFlow/Logger.hpp"
 #include <fstream>
 #include <../libraries/json/json.hpp>
-#include <ElixirCore/AssetsLoader.hpp>
-#include "ElixirCore/Filesystem.hpp"
+#include <VelixFlow/AssetsLoader.hpp>
+#include "VelixFlow/Filesystem.hpp"
 #include "Engine.hpp"
-#include <ElixirCore/ShadowRender.hpp>
-#include <ElixirCore/LightManager.hpp>
+#include <VelixFlow/ShadowRender.hpp>
+#include <filesystem>
+#include <VelixFlow/ScriptSystem.hpp>
+#include <VelixFlow/BinarySerializer.hpp>
 
 ProjectManager & ProjectManager::instance()
 {
     static ProjectManager instance;
 
     return instance;
+}
+
+void ProjectManager::exportProjectGame()
+{
+    auto project = getCurrentProject();
+
+    if(!project)
+    {
+        ELIX_LOG_ERROR("There is no current project");
+        return;
+    }
+
+    std::string exportDir = project->exportDir + "ExportedGame/";
+
+    std::filesystem::create_directories(exportDir);
+
+    std::string command = "cmake -S " + project->sourceDir + " -B " + project->buildDir + " && cmake --build " + project->buildDir;
+
+    auto result = elix::filesystem::executeCommand(command);
+
+    ELIX_LOG_INFO(result.second);
+
+    if (result.first != 0)
+    {
+        ELIX_LOG_ERROR("Build failed. Cannot export game.");
+        return;
+    }
+
+    std::string userLib = project->buildDir + "/libGameLib.so";
+
+    try
+    {
+        if (std::filesystem::exists(userLib))
+            std::filesystem::copy_file(userLib, exportDir + "libGameLib.so", std::filesystem::copy_options::overwrite_existing);
+
+        ELIX_LOG_INFO("Game exported successfully to: ", exportDir);
+    }
+    catch (const std::exception& e) 
+    {
+        ELIX_LOG_ERROR("Error exporting files: ", e.what());
+    }
+
+    const std::string buildFolder = "build_export";
+
+    command = "cmake -S " + project->exportDir + " -B " + project->exportDir + "build_export/" + " && cmake --build " + project->exportDir + "build_export/";
+
+    result = elix::filesystem::executeCommand(command);
+
+    ELIX_LOG_INFO(result.second);
+
+    if (result.first != 0)
+    {
+        ELIX_LOG_ERROR("Build failed. Cannot export game.");
+        return;
+    }
+
+    std::string gameExecutable = project->exportDir + "build_export/Game";
+
+    try
+    {
+        if (std::filesystem::exists(gameExecutable))
+            std::filesystem::copy_file(gameExecutable, exportDir + "Game", std::filesystem::copy_options::overwrite_existing);
+
+        ELIX_LOG_INFO("Game exported successfully to: ", exportDir);
+    }
+    catch (const std::exception& e) 
+    {
+        ELIX_LOG_ERROR("Error exporting files: ", e.what());
+    }
+
+    const std::string packetPath = exportDir + "assets.elixpacket";
+    std::vector<elix::AssetModel*> models;
+    elix::BinarySerializer serializer;
+
+    for(const auto& asset : m_projectCache.getAllAssets<elix::AssetModel>())
+    {
+        models.push_back(asset);
+    }
+
+    serializer.writeElixPacket(packetPath, models);
 }
 
 Project* ProjectManager::createProject(const std::string& projectName, const std::string& projectPath)
@@ -48,6 +130,7 @@ Project* ProjectManager::createProject(const std::string& projectName, const std
     projectJson["build_dir"] = projectPath + "/build/";
     projectJson["assets_dir"] = projectPath + "/assets/";
     projectJson["src_dir"] = projectPath + "/sources/";
+    projectJson["export_dir"] = projectPath + "/export/";
 
     std::ofstream out(projectFile, std::ios::trunc);
 
@@ -64,13 +147,14 @@ Project* ProjectManager::createProject(const std::string& projectName, const std
 
     auto project = new Project();
 
-    project->setName(projectName);
-    project->setFullPath(projectPath);
-    project->setBuildDir(projectPath + "/build/");
-    project->setSourceDir(projectPath + "/sources/");
-    project->setScenesDir(projectPath + "/scenes/");
-    project->setEntryScene(project->getScenesDir() + "default_scene.scene");
-    project->setAssetsDir(projectPath + "/assets/");
+    project->name = projectName;
+    project->fullPath = projectPath;
+    project->buildDir = projectPath + "/build/";
+    project->sourceDir = projectPath + "/sources/";
+    project->scenesDir = projectPath + "/scenes/";
+    project->entryScene = project->scenesDir + "default_scene.scene";
+    project->assetsDir = projectPath + "/assets/";
+    project->exportDir = projectPath + "/export/";
 
     return project;
 }
@@ -100,13 +184,14 @@ bool ProjectManager::loadConfigInProject(const std::string &configPath, Project*
         return false;
     }
 
-    project->setName(config.value("name", ""));
-    project->setFullPath(config.value("project_path", ""));
-    project->setEntryScene(config.value("entry_scene", ""));
-    project->setBuildDir(config.value("build_dir", ""));
-    project->setSourceDir(config.value("src_dir", ""));
-    project->setScenesDir(config.value("scene_dir", ""));
-    project->setAssetsDir(config.value("assets_dir", ""));
+    project->name = config.value("name", "");
+    project->fullPath = config.value("project_path", "");
+    project->entryScene = config.value("entry_scene", "");
+    project->buildDir = config.value("build_dir", "");
+    project->sourceDir = config.value("src_dir", "");
+    project->scenesDir = config.value("scene_dir", "");
+    project->assetsDir = config.value("assets_dir", "");
+    project->exportDir = config.value("export_dir", "");
 
     configFile.close();
 
@@ -115,14 +200,14 @@ bool ProjectManager::loadConfigInProject(const std::string &configPath, Project*
 
 bool ProjectManager::loadProject(Project* project)
 {
-    const std::string scenePath = project->getEntryScene();
+    const std::string scenePath = project->entryScene;
 
     if (!std::filesystem::exists(scenePath))
         return false;
 
-    const std::filesystem::path texturesPath = project->getAssetsDir() + "textures";
-    const std::filesystem::path modelsPath = project->getAssetsDir() + "models";
-    const std::filesystem::path materialsPath = project->getAssetsDir() + "materials";
+    const std::filesystem::path texturesPath = project->assetsDir + "textures";
+    const std::filesystem::path modelsPath = project->assetsDir + "models";
+    const std::filesystem::path materialsPath = project->assetsDir + "materials";
 
     for (const auto& entry : std::filesystem::directory_iterator(texturesPath))
         if (auto asset = elix::AssetsLoader::loadAsset(entry.path()))
@@ -153,6 +238,30 @@ bool ProjectManager::loadProject(Project* project)
 
     auto fileTextureAsset = elix::AssetsLoader::loadAsset(elix::filesystem::getExecutablePath().string() + "/resources/textures/file.png");
     m_projectCache.addAsset(elix::filesystem::getExecutablePath().string() + "/resources/textures/file.png", std::move(fileTextureAsset));
+
+    const std::string command = "cmake -S " + project->sourceDir + " -B " + project->buildDir + " && cmake --build " + project->buildDir;
+
+    const auto result = elix::filesystem::executeCommand(command);
+    
+    ELIX_LOG_INFO(result.second);
+
+    if (result.first == 0)
+    {
+        // if (!std::filesystem::exists(project->getSourceDir() + "GameModule.cpp"))
+        // {
+        //     std::ofstream file(project->getSourceDir() + "GameModule.cpp");
+        //     file << "#include \"VelixFlow/ScriptMacros.hpp\"\n"
+        //         << "ELIXIR_IMPLEMENT_GAME_MODULE()\n";
+        //     file.close();
+        //     ELIX_LOG_WARN("Missing GameModule.cpp — recreated default one.");
+        // }
+
+        //To let loadSceneFromFile() find .so library and attach scripts successfully
+        if (elix::ScriptSystem::loadLibrary(project->buildDir + "libGameLib.so"))
+            project->projectLibrary = elix::ScriptSystem::getLibrary();
+        else
+            ELIX_LOG_WARN("Could not load library");
+    }
 
     Engine::s_application->getScene()->loadSceneFromFile(scenePath, m_projectCache);
 

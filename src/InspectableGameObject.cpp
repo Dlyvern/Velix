@@ -2,17 +2,17 @@
 
 #include <imgui.h>
 
-#include <ElixirCore/ScriptsRegister.hpp>
-#include <ElixirCore/AnimatorComponent.hpp>
-#include <ElixirCore/GameObject.hpp>
-#include <ElixirCore/ParticleComponent.hpp>
-#include <ElixirCore/MeshComponent.hpp>
-#include <ElixirCore/LightComponent.hpp>
-#include <ElixirCore/CameraComponent.hpp>
-#include <ElixirCore/ScriptComponent.hpp>
-#include <ElixirCore/AudioComponent.hpp>
-#include <ElixirCore/ReflectedObject.hpp>
-#include <ElixirCore/Logger.hpp>
+#include <VelixFlow/ScriptsRegister.hpp>
+#include <VelixFlow/AnimatorComponent.hpp>
+#include <VelixFlow/GameObject.hpp>
+#include <VelixFlow/ParticleComponent.hpp>
+#include <VelixFlow/MeshComponent.hpp>
+#include <VelixFlow/LightComponent.hpp>
+#include <VelixFlow/CameraComponent.hpp>
+#include <VelixFlow/ScriptComponent.hpp>
+#include <VelixFlow/AudioComponent.hpp>
+#include <VelixFlow/ReflectedObject.hpp>
+#include <VelixFlow/Logger.hpp>
 
 #include "ProjectManager.hpp"
 #include "Engine.hpp"
@@ -26,7 +26,11 @@
 #include <cstdlib>
 #include <glm/gtc/random.hpp>
 
-#include <ElixirCore/LibrariesLoader.hpp>
+#include <VelixFlow/LibrariesLoader.hpp>
+
+#include "EditorCommon.hpp"
+
+#include <VelixFlow/ScriptSystem.hpp>
 
 class GravityModule : public elix::ParticleModule
 {
@@ -132,7 +136,7 @@ void InspectableGameObject::draw()
                         {
                             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
                             {
-                                const auto *const info = static_cast<Editor::DraggingInfo*>(payload->Data);
+                                const auto *const info = static_cast<editorCommon::DraggingInfo*>(payload->Data);
 
                                 if (info)
                                 {
@@ -228,7 +232,6 @@ void InspectableGameObject::draw()
                                 }, value);
                             }
                         }
-
                     }
 
                     if(ImGui::Button("Attach script"))
@@ -238,53 +241,18 @@ void InspectableGameObject::draw()
 
                     if(ImGui::BeginPopup("AttachScriptPopup"))
                     {
-                        auto library = ProjectManager::instance().getCurrentProject()->getProjectLibrary();
-
-                        if(library)
+                        if(auto scripts = elix::ScriptSystem::getAvailableScripts(); !scripts.empty())
                         {
-                            using GetScriptsRegisterFunc = ScriptsRegister *(*)();
-
-                            auto getFunction = (GetScriptsRegisterFunc)elix::LibrariesLoader::getFunction("getScriptsRegister", library);
-
-                            if (!getFunction)
+                            for(const auto& scriptName : scripts)
                             {
-                                ELIX_LOG_ERROR("Could not get function 'getScriptsRegister'");
-                                return;
-                            }
-
-                            ScriptsRegister *s = getFunction();
-
-                            using InitFunc = const char **(*)(int *);
-
-                            InitFunc function = (InitFunc)elix::LibrariesLoader::getFunction("initScripts", library);
-
-                            if (!function)
-                            {
-                                ELIX_LOG_ERROR("Could not get function 'initScripts'");
-                                return;
-                            }
-
-                            int count = 0;
-
-                            const char **scripts = function(&count);
-
-                            for (int i = 0; i < count; ++i)
-                            {
-                                std::string scriptName = scripts[i];
-
-                                auto script = s->createScript(scriptName);
-
-                                if (!script)
-                                    ELIX_LOG_ERROR("Could not find script");
-                                else
+                                if(ImGui::MenuItem(scriptName.c_str()))
                                 {
-                                    if(ImGui::MenuItem(scriptName.c_str()))
-                                    {
-                                        scriptComponent->addScript(script);
-                                    }
+                                    auto script = elix::ScriptSystem::createScript(scriptName);
+                                    scriptComponent->addScript(script);
                                 }
                             }
                         }
+
                         ImGui::EndPopup();
                     }
                 }
@@ -327,15 +295,9 @@ void InspectableGameObject::draw()
                                 Engine::s_application->getScene()->addLight(light);
                             }
                             else if (comp == "Camera" && !m_gameObject->hasComponent<elix::CameraComponent>())
-                            {
-                                auto cameraComponent = m_gameObject->addComponent<elix::CameraComponent>();
-                                //Maybe we can just re-use Application's camera                                    
-                                //TODO add new camera to the scene
-                            }
-                            else if(comp == "Audio" && !m_gameObject->hasComponent<elix::AudioComponent>())
-                            {
-                                auto audioComponent = m_gameObject->addComponent<elix::AudioComponent>();
-                            }
+                                m_gameObject->addComponent<elix::CameraComponent>();
+                            else if(comp == "Audio")
+                                m_gameObject->addComponent<elix::AudioComponent>();
                             else if (comp == "Particle" && !m_gameObject->hasComponent<ParticleComponent>())
                             {
                                 auto emitter = std::make_unique<elix::ParticleEmitter>();

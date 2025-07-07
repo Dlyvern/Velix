@@ -1,7 +1,7 @@
 #include "GameScript.hpp"
-#include "ElixirCore/ScriptsRegister.hpp"
+#include "VelixFlow/ScriptsRegister.hpp"
 #include <iostream>
-#include "ElixirCore/ScriptMacros.hpp"
+#include "VelixFlow/ScriptMacros.hpp"
 
 void GameScript::onStart()
 {

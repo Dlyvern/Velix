@@ -15,9 +15,9 @@ foreach(file ${SOURCE_FILES})
     endif()
 endforeach()
 
-find_package(ElixirCore REQUIRED)
+find_package(VelixFlow REQUIRED)
 
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${ELIXIR_CORE_INCLUDE})
-target_link_libraries(${PROJECT_NAME} PRIVATE  Elixir::ElixirCore)
+target_include_directories(${PROJECT_NAME} PRIVATE ${VELIX_FLOW_INCLUDE})
+target_link_libraries(${PROJECT_NAME} PRIVATE  Velix::VelixFlow)

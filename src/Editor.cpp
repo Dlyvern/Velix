@@ -1,5 +1,5 @@
 #include "Editor.hpp"
-#include <ElixirCore/MeshComponent.hpp>
+#include <VelixFlow/MeshComponent.hpp>
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <imgui_internal.h>
@@ -8,32 +8,32 @@
 #include <backends/imgui_impl_opengl3.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <cstdlib>
-#include "ElixirCore/LightComponent.hpp"
-#include "ElixirCore/ParticleComponent.hpp"
-#include "ElixirCore/AnimatorComponent.hpp"
-#include "ElixirCore/Mouse.hpp"
-#include "ElixirCore/Keyboard.hpp"
-#include "ElixirCore/Raycasting.hpp"
+#include "VelixFlow/LightComponent.hpp"
+#include "VelixFlow/ParticleComponent.hpp"
+#include "VelixFlow/AnimatorComponent.hpp"
+#include "VelixFlow/Mouse.hpp"
+#include "VelixFlow/Keyboard.hpp"
+#include "VelixFlow/Raycasting.hpp"
 #include "UIInputText.hpp"
 #include "UILight.hpp"
 #include "UIMaterial.hpp"
 #include "UIMesh.hpp"
 #include "UITransform.hpp"
-#include "ElixirCore/RigidbodyComponent.hpp"
-#include "ElixirCore/Utilities.hpp"
-#include "ElixirCore/Filesystem.hpp"
-#include "ElixirCore/LibrariesLoader.hpp"
-#include <ElixirCore/ReflectedObject.hpp>
+#include "VelixFlow/RigidbodyComponent.hpp"
+#include "VelixFlow/Utilities.hpp"
+#include "VelixFlow/Filesystem.hpp"
+#include "VelixFlow/LibrariesLoader.hpp"
+#include <VelixFlow/ReflectedObject.hpp>
 #include "InspectableGameObject.hpp"
 
-#include <ElixirCore/ScriptsRegister.hpp>
+#include <VelixFlow/ScriptsRegister.hpp>
 
 #include <unistd.h>
 #include <pwd.h>
-#include <ElixirCore/AssetsLoader.hpp>
-#include <ElixirCore/Logger.hpp>
+#include <VelixFlow/AssetsLoader.hpp>
+#include <VelixFlow/Logger.hpp>
 
-#include <ElixirCore/DefaultRender.hpp>
+#include <VelixFlow/DefaultRender.hpp>
 #include "StencilRender.hpp"
 
 #include "ProjectManager.hpp"
@@ -45,6 +45,9 @@
 #include "backends/imgui_impl_opengl3.h"
 
 #include "../libraries/2ndParty/ImGuiColorTextEdit/TextEditor.h"
+
+#include "EditorCommon.hpp"
+#include <VelixFlow/ScriptSystem.hpp>
 
 #define IMGUI_ENABLE_DOCKING
 
@@ -75,48 +78,70 @@ void Editor::init()
 		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
 	}
 
-    style.Alpha = 1.0;
-    style.WindowRounding = 3;
-    style.GrabRounding = 1;
-    style.GrabMinSize = 20;
-    style.FrameRounding = 3;
+    style.Alpha = 1.0f;
+    style.WindowRounding = 6.0f;
+    style.GrabRounding = 4.0f;
+    style.GrabMinSize = 20.0f;
+    style.FrameRounding = 6.0f;
+style.Colors[ImGuiCol_Text] = ImVec4(0.976f, 0.980f, 0.984f, 1.00f);              // Off White #F9FAFB
+style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.611f, 0.639f, 0.686f, 1.00f);       // Light Gray #9CA3AF
 
+// Backgrounds
+style.Colors[ImGuiCol_WindowBg] = ImVec4(0.122f, 0.161f, 0.204f, 1.00f);           // Dark Gray #1F2933
+style.Colors[ImGuiCol_ChildBg] = ImVec4(0.122f, 0.161f, 0.204f, 1.00f);
+style.Colors[ImGuiCol_PopupBg] = ImVec4(0.122f, 0.161f, 0.204f, 1.00f);
 
-    style.Colors[ImGuiCol_Text] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.00f, 0.40f, 0.41f, 1.00f);
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
-    style.Colors[ImGuiCol_Border] = ImVec4(0.00f, 1.00f, 1.00f, 0.65f);
-    style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.44f, 0.80f, 0.80f, 0.18f);
-    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.44f, 0.80f, 0.80f, 0.27f);
-    style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.44f, 0.81f, 0.86f, 0.66f);
-    style.Colors[ImGuiCol_TitleBg] = ImVec4(0.14f, 0.18f, 0.21f, 0.73f);
-    style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.00f, 0.00f, 0.54f);
-    style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.27f);
-    style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
-    style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.22f, 0.29f, 0.30f, 0.71f);
-    style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.00f, 1.00f, 1.00f, 0.44f);
-    style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.00f, 1.00f, 1.00f, 0.74f);
-    style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 1.00f, 1.00f, 0.68f);
-    style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 1.00f, 1.00f, 0.36f);
-    style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.76f);
-    style.Colors[ImGuiCol_Button] = ImVec4(0.00f, 0.65f, 0.65f, 0.46f);
-    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.01f, 1.00f, 1.00f, 0.43f);
-    style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.62f);
-    style.Colors[ImGuiCol_Header] = ImVec4(0.00f, 1.00f, 1.00f, 0.33f);
-    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 1.00f, 1.00f, 0.42f);
-    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.54f);
-    style.Colors[ImGuiCol_ResizeGrip] = ImVec4(0.00f, 1.00f, 1.00f, 0.54f);
-    style.Colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.00f, 1.00f, 1.00f, 0.74f);
-    style.Colors[ImGuiCol_ResizeGripActive] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_PlotLines] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_PlotHistogram] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-    style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.00f, 1.00f, 1.00f, 0.22f);
+style.Colors[ImGuiCol_Border] = ImVec4(0.294f, 0.333f, 0.388f, 1.00f);             // Medium Gray #4B5563
+style.Colors[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
 
+// Frames (inputs, sliders, etc)
+style.Colors[ImGuiCol_FrameBg] = ImVec4(0.122f, 0.161f, 0.204f, 0.75f);            // Dark Gray + transparency
+style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.091f, 0.753f, 0.922f, 0.30f);     // Velix Teal #17C0EB translucent
+style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.063f, 0.741f, 0.894f, 0.60f);      // Velix Teal stronger
+
+// Title bars
+style.Colors[ImGuiCol_TitleBg] = ImVec4(0.040f, 0.239f, 0.325f, 0.75f);            // Velix Navy #0A3B54 translucent
+style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.040f, 0.239f, 0.325f, 1.00f);      // Velix Navy full
+style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.122f, 0.161f, 0.204f, 0.75f);  // Dark Gray translucent
+
+// Scrollbar
+style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.122f, 0.161f, 0.204f, 0.50f);
+style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.041f, 0.678f, 0.890f, 0.44f);       // Velix Blue #0ABDE3 translucent
+style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.041f, 0.678f, 0.890f, 0.74f);
+style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.041f, 0.678f, 0.890f, 1.00f);
+
+// Checkmarks and sliders
+style.Colors[ImGuiCol_CheckMark] = ImVec4(0.041f, 0.678f, 0.890f, 0.68f);
+style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.041f, 0.678f, 0.890f, 0.36f);
+style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.041f, 0.678f, 0.890f, 0.76f);
+
+// Buttons
+style.Colors[ImGuiCol_Button] = ImVec4(0.041f, 0.678f, 0.890f, 0.46f);              // Velix Blue #0ABDE3 translucent
+style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.090f, 0.753f, 0.922f, 0.43f);       // Velix Teal #17C0EB translucent
+style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.040f, 0.239f, 0.325f, 0.62f);        // Velix Navy #0A3B54 translucent
+
+// Headers (tree nodes, etc)
+style.Colors[ImGuiCol_Header] = ImVec4(0.041f, 0.678f, 0.890f, 0.33f);
+style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.090f, 0.753f, 0.922f, 0.42f);
+style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.040f, 0.239f, 0.325f, 0.54f);
+
+// Resize grips
+style.Colors[ImGuiCol_ResizeGrip] = ImVec4(0.041f, 0.678f, 0.890f, 0.54f);
+style.Colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.090f, 0.753f, 0.922f, 0.74f);
+style.Colors[ImGuiCol_ResizeGripActive] = ImVec4(0.040f, 0.239f, 0.325f, 1.00f);
+
+// Plot lines
+style.Colors[ImGuiCol_PlotLines] = ImVec4(0.041f, 0.678f, 0.890f, 1.00f);
+style.Colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.041f, 0.678f, 0.890f, 1.00f);
+
+// Histogram
+style.Colors[ImGuiCol_PlotHistogram] = ImVec4(0.041f, 0.678f, 0.890f, 1.00f);
+style.Colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.041f, 0.678f, 0.890f, 1.00f);
+
+// Text selected background
+style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.041f, 0.678f, 0.890f, 0.22f);
 	m_editorCamera = std::make_unique<Camera>(Engine::s_application->getCamera());
+
 }
 
 bool isMouseOverEmptySpace()
@@ -250,7 +275,7 @@ void Editor::updateInput()
         const auto project = ProjectManager::instance().getCurrentProject();
 
         // TODO CHANGE IT LATER 'project->getEntryScene()'
-        Engine::s_application->getScene()->saveSceneToFile(project->getEntryScene());
+        Engine::s_application->getScene()->saveSceneToFile(project->entryScene);
     }
 
     if (input::Keyboard.isKeyReleased(input::KeyCode::W))
@@ -552,6 +577,16 @@ void Editor::showMenuBar()
             ImGui::EndMenu();
         }
 
+        if(ImGui::BeginMenu("Export"))
+        {
+            if(ImGui::MenuItem("Export game"))
+            {
+                ProjectManager::instance().exportProjectGame();
+            }
+
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu("Play"))
         {
             if (ImGui::MenuItem("Play game"))
@@ -599,8 +634,8 @@ void Editor::showMenuBar()
                 std::string hppContent = replaceAll(hppTemplate, "{{ClassName}}", classNameBuffer);
                 std::string cppContent = replaceAll(cppTemplate, "{{ClassName}}", classNameBuffer);
                 
-                writeFile(ProjectManager::instance().getCurrentProject()->getSourceDir() + "/" + classNameBuffer + ".hpp", hppContent);
-                writeFile(ProjectManager::instance().getCurrentProject()->getSourceDir() + "/" + classNameBuffer + ".cpp", cppContent);
+                writeFile(ProjectManager::instance().getCurrentProject()->sourceDir + "/" + classNameBuffer + ".hpp", hppContent);
+                writeFile(ProjectManager::instance().getCurrentProject()->sourceDir + "/" + classNameBuffer + ".cpp", cppContent);
 
                 classNameBuffer[0] = '\0';
 
@@ -649,7 +684,7 @@ void Editor::drawMainScene()
     {
         if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
         {
-            const auto *const info = static_cast<DraggingInfo *>(payload->Data);
+            const auto *const info = static_cast<editorCommon::DraggingInfo*>(payload->Data);
 
             if (!info)
             {
@@ -806,9 +841,11 @@ void Editor::showTextEditor()
 
     static std::string currentFilePath;
 
-    if (m_fileEditorPath != currentFilePath && !m_fileEditorPath.empty())
+    auto assetPath = m_uiAssetsWindow.getFileEditorPath();
+
+    if (assetPath != currentFilePath && !assetPath.empty())
     {
-        currentFilePath = m_fileEditorPath;
+        currentFilePath = assetPath;
 
         auto lang = TextEditor::LanguageDefinition::CPlusPlus();
         editor.SetLanguageDefinition(lang);
@@ -820,7 +857,7 @@ void Editor::showTextEditor()
     if(!editor.GetText().empty())
         editor.Render("TextEditor");
 
-    if (ImGui::Button("Save") && !m_fileEditorPath.empty())
+    if (ImGui::Button("Save") && !assetPath.empty())
     {
         writeFile(currentFilePath, editor.GetText());
     }
@@ -926,245 +963,26 @@ void Editor::showAllObjectsInTheScene()
 
 void Editor::showAssetsInfo()
 {
-    static auto folderTexture = ProjectManager::instance().getAssetsCache()->getAsset<elix::AssetTexture>(elix::filesystem::getExecutablePath().string() + "/resources/textures/folder.png");
-    static auto fileTexture = ProjectManager::instance().getAssetsCache()->getAsset<elix::AssetTexture>(elix::filesystem::getExecutablePath().string() + "/resources/textures/file.png");
-
-    if (folderTexture && !folderTexture->getTexture()->isBaked())
-    {
-        folderTexture->getTexture()->create();
-        folderTexture->getTexture()->addDefaultParameters();
-        folderTexture->getTexture()->bake();
-    }
-    if (fileTexture && !fileTexture->getTexture()->isBaked())
-    {
-        fileTexture->getTexture()->create();
-        fileTexture->getTexture()->addDefaultParameters();
-        fileTexture->getTexture()->bake();
-    }
-
-    ImTextureID folderIcon = folderTexture ? static_cast<ImTextureID>(static_cast<intptr_t>(folderTexture->getTexture()->getId())) : 0;
-    ImTextureID fileIcon = fileTexture ? static_cast<ImTextureID>(static_cast<intptr_t>(fileTexture->getTexture()->getId())) : 0;
-
     ImGui::Begin("Assets");
-    const float iconSize = 64.0f;
-    const float padding = 16.0f;
-
-    // TODO CHANGE IT LATER
-    if (m_assetsPath.empty())
-        m_assetsPath = ProjectManager::instance().getCurrentProject()->getFullPath();
-
-    if (m_assetsPath.has_parent_path() && m_assetsPath != ProjectManager::instance().getCurrentProject()->getFullPath())
-        if (ImGui::Button(".."))
-            m_assetsPath = m_assetsPath.parent_path();
-
-    float cellSize = iconSize + padding;
-    float panelWidth = ImGui::GetContentRegionAvail().x;
-    int columnCount = std::max(1, (int)(panelWidth / cellSize));
-
-    int itemIndex = 0;
-    ImGui::Columns(columnCount, nullptr, false);
-
-    const std::unordered_set<std::string> restrictedExtensions{
-       ".elixirproject"
-    };
-
-    for (const auto& entry : std::filesystem::directory_iterator(m_assetsPath))
-    {
-        const auto& path = entry.path();
-
-        if (!is_directory(path))
-        {
-            auto ext = path.extension().string();
-
-            if (restrictedExtensions.contains(ext))
-                continue;
-        }
-
-        std::string name = path.filename().string();
-
-        ImGui::PushID(name.c_str());
-
-        ImTextureID icon = entry.is_directory() ? folderIcon : fileIcon;
-
-        ImGui::ImageButton("", icon,
-                           ImVec2(iconSize, iconSize),
-                           ImVec2(0, 0), ImVec2(1, 1),
-                           ImVec4(0, 0, 0, 0),
-                           ImVec4(1, 1, 1, 1));
-
-
-        if (ImGui::BeginPopupContextItem("AssetContextMenu"))
-        {
-            if (ImGui::MenuItem("Open in Editor"))
-            {
-                std::string fullPath = path.string();
-
-                if (fullPath.ends_with(".cpp") || fullPath.ends_with(".hpp"))
-                    m_fileEditorPath = fullPath;
-            }
-
-            if (ImGui::MenuItem("Show in File Manager"))
-            {
-                #ifdef _WIN32
-                        std::string cmd = "explorer /select,\"" + path.string() + "\"";
-                #elif __APPLE__
-                        std::string cmd = "open -R \"" + path.string() + "\"";
-                #else
-                        std::string cmd = "xdg-open \"" + path.parent_path().string() + "\"";
-                #endif
-                        system(cmd.c_str());
-            }
-
-            ImGui::EndPopup();
-        }
-
-        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
-        {
-            m_draggingInfo.name = path.string();
-
-            ImGui::SetDragDropPayload("ASSET_PATH", &m_draggingInfo, sizeof(m_draggingInfo));
-            ImGui::Text("Dragging: %s", name.c_str());
-            ImGui::EndDragDropSource();
-        }
-
-        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0))
-        {
-            if (entry.is_directory())
-            {
-            }
-            else
-            {
-            }
-        }
-
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
-        {
-            if (entry.is_directory())
-            {
-                m_assetsPath = path;
-            }
-            else
-            {
-            }
-        }
-
-        ImGui::TextWrapped("%s", name.c_str());
-
-        ImGui::NextColumn();
-        ImGui::PopID();
-        itemIndex++;
-    }
-
-    ImGui::Columns(1);
+    m_uiAssetsWindow.draw();
     ImGui::End();
 }
 
 void Editor::drawTerminal()
 {
-    if (ImGui::Begin("Terminal"))
-    {
-        static char commandBuffer[256] = "";
-        static std::vector<std::string> history;
-
-        ImGui::BeginChild("TerminalOutput", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
-        for (const auto &line : history)
-        {
-            ImGui::TextUnformatted(line.c_str());
-        }
-        ImGui::EndChild();
-
-        ImGui::PushItemWidth(-1);
-
-        if (ImGui::InputText("##Command", commandBuffer, IM_ARRAYSIZE(commandBuffer), ImGuiInputTextFlags_EnterReturnsTrue))
-        {
-            history.push_back("> " + std::string(commandBuffer));
-
-            constexpr int kBufferSize = 128;
-            std::array<char, kBufferSize> buffer{};
-            std::string result;
-
-#ifdef _WIN32
-            std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(command.c_str(), "r"), _pclose);
-#else
-            std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(commandBuffer, "r"), pclose);
-#endif
-
-            if (pipe)
-            {
-                while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr)
-                {
-                    result += buffer.data();
-                }
-
-                if (!result.empty())
-                {
-                    history.push_back(result);
-                }
-
-                commandBuffer[0] = '\0';
-                ImGui::SetKeyboardFocusHere(-1);
-            }
-        }
-
-        ImGui::PopItemWidth();
-    }
-
+    ImGui::Begin("Terminal");
+    m_uiTerminal.draw();
     ImGui::End();
 }
 
 void Editor::drawLogWindow()
 {
-    if (ImGui::Begin("Logger"))
-    {
-        // Add clear button
-        // if (ImGui::Button("Clear")) {
-        //     Logger::instance().clear();
-        // }
-        ImGui::SameLine();
+    ImGui::Begin("Logger");
 
-        // TODO: Add filtering
-        //  ImGui::Checkbox("Info", &show_info);
-        //  ImGui::SameLine();
-        //  ImGui::Checkbox("Warnings", &show_warnings);
-        //  ImGui::SameLine();
-        //  ImGui::Checkbox("Errors", &show_errors);
-        //  Add copy button
-        //  if (ImGui::Button("Copy to Clipboard"))
-        //  {
-        //      copyLogsToClipboard();
-        //  }
+    m_uiLogger.draw();
 
-        ImGui::Separator();
-
-        ImGui::BeginChild("LogContent", ImVec2(0, 0), false,
-                          ImGuiWindowFlags_HorizontalScrollbar);
-
-        const auto messages = elix::Logger::instance().getMessages();
-        for (const auto &msg : messages)
-        {
-            auto time_t = std::chrono::system_clock::to_time_t(msg.timestamp);
-            char time_str[20];
-            std::strftime(time_str, sizeof(time_str), "%H:%M:%S", std::localtime(&time_t));
-
-            ImGui::TextDisabled("[%s] ", time_str);
-            ImGui::SameLine();
-
-            ImGui::PushStyleColor(ImGuiCol_Text,
-                                  ImVec4(msg.color.r, msg.color.g, msg.color.b, 1.0f));
-            ImGui::TextUnformatted(msg.message.c_str());
-            ImGui::PopStyleColor();
-        }
-
-        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-        {
-            ImGui::SetScrollHereY(1.0f);
-        }
-
-        ImGui::EndChild();
-    }
     ImGui::End();
 }
-
 
 void Editor::setSelectedGameObject(GameObject *gameObject)
 {
@@ -1196,64 +1014,30 @@ void Editor::showDebugInfo()
         if (!project)
             return;
 
-        const std::string command = "cmake -S " + project->getSourceDir() + " -B " + project->getBuildDir() + " && cmake --build " + project->getBuildDir();
+        const std::string command = "cmake -S " + project->sourceDir + " -B " + project->buildDir + " && cmake --build " + project->buildDir;
 
-        constexpr int kBufferSize = 128;
-        std::array<char, kBufferSize> buffer;
-        std::string result;
+        const auto result = elix::filesystem::executeCommand(command);
+        
+        ELIX_LOG_INFO(result.second);
 
-#ifdef _WIN32
-        std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(command.c_str(), "r"), _pclose);
-#else
-        std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
-#endif
-
-        if (!pipe)
-            ELIX_LOG_ERROR("Failed to execute command");
-
-        while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr)
+        if (result.first == 0)
         {
-            result += buffer.data();
-        }
+            // if (!std::filesystem::exists(project->getSourceDir() + "/GameModule.cpp"))
+            // {
+            //     std::ofstream file(project->getSourceDir() + "/GameModule.cpp");
+            //     file << "#include \"VelixFlow/ScriptMacros.hpp\"\n"
+            //         << "ELIXIR_IMPLEMENT_GAME_MODULE()\n";
+            //     file.close();
+            //     ELIX_LOG_WARN("Missing GameModule.cpp — recreated default one.");
+            // }
 
-        ELIX_LOG_INFO(result.c_str());
-
-        if (const int result = std::system(command.c_str()); result == 0)
-        {
-            void *const library = elix::LibrariesLoader::loadLibrary(project->getBuildDir() + "libGameLib.so");
-
-            if (library)
+            if (elix::ScriptSystem::loadLibrary(project->buildDir + "libGameLib.so"))
             {
-                using GetScriptsRegisterFunc = ScriptsRegister *(*)();
+                project->projectLibrary = elix::ScriptSystem::getLibrary();
 
-                auto getFunction = (GetScriptsRegisterFunc)elix::LibrariesLoader::getFunction("getScriptsRegister", library);
-
-                if (!getFunction)
+                for(const auto& scriptName : elix::ScriptSystem::getAvailableScripts())
                 {
-                    ELIX_LOG_ERROR("Could not get function 'getScriptsRegister'");
-                    return;
-                }
-
-                ScriptsRegister *s = getFunction();
-
-                using InitFunc = const char **(*)(int *);
-
-                InitFunc function = (InitFunc)elix::LibrariesLoader::getFunction("initScripts", library);
-
-                if (!function)
-                {
-                    ELIX_LOG_ERROR("Could not get function 'initScripts'");
-                    return;
-                }
-
-                int count = 0;
-                const char **scripts = function(&count);
-
-                for (int i = 0; i < count; ++i)
-                {
-                    std::string scriptName = scripts[i];
-
-                    auto script = s->createScript(scriptName);
+                    auto script = elix::ScriptSystem::createScript(scriptName);
 
                     if (!script)
                         ELIX_LOG_ERROR("Could not find script");
@@ -1268,11 +1052,9 @@ void Editor::showDebugInfo()
                                 ELIX_LOG_INFO(property.first);
                         }
                     }
-                    project->setProjectLibrary(library);
+                    
                     ELIX_LOG_INFO("Script loaded: ", scriptName);
                 }
-
-                elix::LibrariesLoader::closeLibrary(library);
             }
         }
     }

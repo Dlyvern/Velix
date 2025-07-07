@@ -6,5 +6,6 @@
     "scene_dir": "./",
     "build_dir": "./",
     "assets_dir": "./",
-    "src_dir": "./"
+    "src_dir": "./",
+    "export_dir": "./"
 }

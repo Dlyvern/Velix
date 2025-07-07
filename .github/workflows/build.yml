@@ -22,7 +22,7 @@ jobs:
 
       - name: Configure and Build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVELIX_USE_PHYSX=OFF
           cmake --build build
       - name: Install to Staging Dir
         run: |
@@ -82,7 +82,7 @@ jobs:
 
       - name: Configure and Build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVELIX_USE_PHYSX=OFF
           cmake --build build
 
       - name: Install to Staging Dir

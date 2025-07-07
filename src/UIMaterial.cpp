@@ -1,5 +1,3 @@
-// #include <ElixirCore/Utilities.hpp>
-
 #include "UIMaterial.hpp"
 
 #include <imgui.h>

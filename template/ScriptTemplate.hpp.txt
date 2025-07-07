@@ -1,7 +1,7 @@
 #pragma once
 
-#include <ElixirCore/Script.hpp>
-#include <ElixirCore/ReflectedObject.hpp>
+#include <VelixFlow/Script.hpp>
+#include <VelixFlow/ReflectedObject.hpp>
 
 class {{ClassName}} final : public Script, public elix::ReflectedObject
 {

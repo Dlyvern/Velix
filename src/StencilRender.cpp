@@ -1,6 +1,6 @@
 #include <glad/glad.h>
 #include "StencilRender.hpp"
-#include <ElixirCore/MeshComponent.hpp>
+#include <VelixFlow/MeshComponent.hpp>
 
 bool StencilRender::shouldExecute() const
 {

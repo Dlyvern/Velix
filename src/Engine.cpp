@@ -3,13 +3,13 @@
 #include "Engine.hpp"
 #include "StencilRender.hpp"
 
-#include "ElixirCore/ShaderManager.hpp"
-#include "ElixirCore/Logger.hpp"
-#include <ElixirCore/DefaultRender.hpp>
+#include "VelixFlow/ShaderManager.hpp"
+#include "VelixFlow/Logger.hpp"
+#include <VelixFlow/DefaultRender.hpp>
 
-#include <ElixirCore/Filesystem.hpp>
-#include <ElixirCore/AssetsLoader.hpp>
-#include <ElixirCore/ShaderManager.hpp>
+#include <VelixFlow/Filesystem.hpp>
+#include <VelixFlow/AssetsLoader.hpp>
+#include <VelixFlow/ShaderManager.hpp>
 
 void RenderQuad()
 {

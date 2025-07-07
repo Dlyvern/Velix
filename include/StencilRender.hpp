@@ -1,7 +1,7 @@
 #ifndef STENCIL_RENDER_HPP
 #define STENCIL_RENDER_HPP
 
-#include <ElixirCore/Render.hpp>
+#include <VelixFlow/Render.hpp>
 
 class StencilRender : public elix::IRender
 {

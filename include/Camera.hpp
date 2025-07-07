@@ -1,7 +1,7 @@
 #ifndef CAMERA_HPP
 #define CAMERA_HPP
 
-#include "ElixirCore/CameraComponent.hpp"
+#include "VelixFlow/CameraComponent.hpp"
 
 class Camera
 {

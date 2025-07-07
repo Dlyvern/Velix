@@ -2,8 +2,8 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 
-#include <ElixirCore/Keyboard.hpp>
-#include "ElixirCore/Mouse.hpp"
+#include <VelixFlow/Keyboard.hpp>
+#include "VelixFlow/Mouse.hpp"
 #include "Engine.hpp"
 
 Camera::Camera(elix::CameraComponent* camera) : m_camera(camera) {}
