@@ -21,15 +21,8 @@ jobs:
           sudo apt install -y cmake build-essential libgl1-mesa-dev ninja-build libvulkan-dev vulkan-tools
 
       - name: Configure and Build
-        run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DVELIX_USE_PHYSX=ON \ 
-            -DVELIX_USE_VULKAN=ON \ 
-            -DVELIX_USE_OPENGL=ON \
-            -DCMAKE_INSTALL_RPATH="\$ORIGIN/lib"
-          cmake --build build
-
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVELIX_USE_PHYSX=ON -DVELIX_USE_VULKAN=ON -DVELIX_USE_OPENGL=ON -DCMAKE_INSTALL_RPATH="\$ORIGIN/lib" && cmake --build build
+      
       - name: Install to Staging Dir
         run: |
           cmake --install build --prefix staging/Velix
