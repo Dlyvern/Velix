@@ -18,13 +18,15 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y cmake build-essential libgl1-mesa-dev
+          sudo apt install -y cmake build-essential libgl1-mesa-dev ninja-build libvulkan-dev vulkan-tools
 
       - name: Configure and Build
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DVELIX_USE_PHYSX=ON \
+            -DVELIX_USE_PHYSX=ON \ 
+            -DVELIX_USE_VULKAN=ON \ 
+            -DVELIX_USE_OPENGL=ON  \
             -DCMAKE_INSTALL_RPATH="\$ORIGIN/lib"
           cmake --build build
 
@@ -55,7 +57,7 @@ jobs:
 
       - name: Configure and Build
         run: |
-          cmake -S . -B build -G Ninja -DVelix_USE_PHYSX=OFF
+          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG="/MD" -DPHYSX_BUILD_TYPE=checked -DVELIX_USE_VULKAN=OFF -DVELIX_USE_OPENGL=ON
           cmake --build build --config Debug
 
       - name: Install to Staging Dir
@@ -82,11 +84,11 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          brew install cmake ninja
+          brew install cmake ninja freetype glfw
 
       - name: Configure and Build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVELIX_USE_PHYSX=OFF
+          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DVELIX_USE_VULKAN=OFF -DVELIX_USE_OPENGL=ON
           cmake --build build
 
       - name: Install to Staging Dir
