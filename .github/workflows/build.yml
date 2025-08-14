@@ -26,13 +26,15 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DVELIX_USE_PHYSX=ON \ 
             -DVELIX_USE_VULKAN=ON \ 
-            -DVELIX_USE_OPENGL=ON  \
+            -DVELIX_USE_OPENGL=ON \
             -DCMAKE_INSTALL_RPATH="\$ORIGIN/lib"
           cmake --build build
 
       - name: Install to Staging Dir
         run: |
           cmake --install build --prefix staging/Velix
+          mkdir -p staging/Velix/lib
+          cp build/lib*.so* staging/Velix/lib/ || true
 
       - name: Create Archive
         run: |
