@@ -17,41 +17,43 @@
 
 #include "VelixFlow/Logger.hpp"
 
-#include <execinfo.h>
 #include <unistd.h>
 #include <sstream>
 #include <cstdlib>
 #include <string>
 #include <cstring>
 
-void printBacktraceWithAddr2Line()
-{
-    void* callstack[128];
-    int frames = backtrace(callstack, 128);
 
-    char exePath[1024] = {};
-    readlink("/proc/self/exe", exePath, sizeof(exePath));
-
-    for (int i = 0; i < frames; ++i)
+#ifndef _WIN32
+    void printBacktraceWithAddr2Line()
     {
-        std::stringstream cmd;
-        cmd << "addr2line -e " << exePath << " -f -C " << callstack[i];
-        FILE* fp = popen(cmd.str().c_str(), "r");
-        if (fp)
+        void* callstack[128];
+        int frames = backtrace(callstack, 128);
+
+        char exePath[1024] = {};
+        readlink("/proc/self/exe", exePath, sizeof(exePath));
+
+        for (int i = 0; i < frames; ++i)
         {
-            char function[512];
-            char location[512];
-            if (fgets(function, sizeof(function), fp) &&
-                fgets(location, sizeof(location), fp))
+            std::stringstream cmd;
+            cmd << "addr2line -e " << exePath << " -f -C " << callstack[i];
+            FILE* fp = popen(cmd.str().c_str(), "r");
+            if (fp)
             {
-                function[strcspn(function, "\n")] = 0;
-                location[strcspn(location, "\n")] = 0;
-                printf("   %s at %s\n", function, location);
+                char function[512];
+                char location[512];
+                if (fgets(function, sizeof(function), fp) &&
+                    fgets(location, sizeof(location), fp))
+                {
+                    function[strcspn(function, "\n")] = 0;
+                    location[strcspn(location, "\n")] = 0;
+                    printf("   %s at %s\n", function, location);
+                }
+                pclose(fp);
             }
-            pclose(fp);
         }
     }
-}
+#endif
 
 void signalHandler(int signal)
 {
@@ -94,7 +96,9 @@ void signalHandler(int signal)
     ELIX_LOG_ERROR("Signal ", signal, " received. (No backtrace on this platform)");
 #endif
 
+#ifndef _WIN32
     printBacktraceWithAddr2Line();
+#endif
 
     std::exit(signal);
 }

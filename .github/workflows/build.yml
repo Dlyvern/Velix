@@ -25,9 +25,8 @@ jobs:
       
       - name: Install to Staging Dir
         run: |
+          mkdir -p build/lib
           cmake --install build --prefix staging/Velix
-          mkdir -p staging/Velix/lib
-          cp build/lib*.so* staging/Velix/lib/ || true
 
       - name: Create Archive
         run: |
