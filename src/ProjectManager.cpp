@@ -6,12 +6,11 @@
 #include <VelixFlow/AssetsLoader.hpp>
 #include "VelixFlow/Filesystem.hpp"
 #include "Engine.hpp"
-#include <VelixFlow/ShadowRender.hpp>
 #include <filesystem>
-#include <VelixFlow/ScriptSystem.hpp>
+#include <VelixFlow/Scripting/ScriptSystem.hpp>
 #include <VelixFlow/BinarySerializer.hpp>
 
-ProjectManager & ProjectManager::instance()
+ProjectManager& ProjectManager::instance()
 {
     static ProjectManager instance;
 
@@ -213,6 +212,8 @@ bool ProjectManager::loadProject(Project* project)
         if (auto asset = elix::AssetsLoader::loadAsset(entry.path()))
             m_projectCache.addAsset(entry.path().string(), std::move(asset));
 
+    ELIX_LOG_INFO("Loading models");
+
     for (const auto& entry : std::filesystem::directory_iterator(modelsPath))
         if (auto asset = elix::AssetsLoader::loadAsset(entry.path()))
         {
@@ -226,7 +227,6 @@ bool ProjectManager::loadProject(Project* project)
 
                 m_projectCache.addAsset(animationPath, std::move(animation));
             }
-
         }
 
     for (const auto& entry : std::filesystem::directory_iterator(materialsPath))
@@ -257,15 +257,27 @@ bool ProjectManager::loadProject(Project* project)
         // }
 
         //To let loadSceneFromFile() find .so library and attach scripts successfully
-        if (elix::ScriptSystem::loadLibrary(project->buildDir + "libGameLib.so"))
-            project->projectLibrary = elix::ScriptSystem::getLibrary();
+        if (elix::scripting::ScriptSystem::loadLibrary(project->buildDir + "libGameLib.so"))
+            project->projectLibrary = elix::scripting::ScriptSystem::getLibrary();
         else
-            ELIX_LOG_WARN("Could not load library");
+            ELIX_LOG_WARN("Failed to load library");
     }
 
-    Engine::s_application->getScene()->loadSceneFromFile(scenePath, m_projectCache);
+    // Engine::s_application->getScene()->loadSceneFromFile(scenePath, m_projectCache);
 
-    Engine::s_application->getRenderer()->addRenderPath<elix::ShadowRender>(Engine::s_application->getScene()->getLights());
+    // Engine::s_application->getRenderer()->addRenderPath<elix::render::GLShadowRender>(Engine::s_application->getScene()->getLights());
+
+    // Engine::s_application->getRenderer()->addRenderPath<elix::render::GLUIRender>();
+
+    // auto testShit = std::make_shared<elix::ui::UIElement>();
+
+
+    // testShit->setPosition({0.0f, 0.0f}); // bottom-left corner
+    // testShit->setSize({300.0f, 150.0f}); // in pixels
+    // testShit->setColor({1.0f, 0.0f, 0.0f, 1.0f}); // bright red
+    // testShit->setAlpha(1.0f);
+
+    // Engine::s_application->getScene()->addUIElement(testShit);
 
     return true;
 }

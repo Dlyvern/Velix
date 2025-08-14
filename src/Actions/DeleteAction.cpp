@@ -1,8 +1,8 @@
-#include "DeleteAction.hpp"
+#include "Actions/DeleteAction.hpp"
 
-DeleteAction::DeleteAction(GameObject *gameObject) : m_gameObject(gameObject)
+DeleteAction::DeleteAction(elix::GameObject *gameObject) : m_gameObject(gameObject)
 {
-    auto newGameObject = std::make_shared<GameObject>(*m_gameObject);
+    auto newGameObject = std::make_shared<elix::GameObject>(*m_gameObject);
     m_undoObject = newGameObject;
 }
 

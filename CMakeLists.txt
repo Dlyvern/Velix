@@ -11,6 +11,14 @@ file(GLOB_RECURSE PROJECT_SOURCES ${SRC_DIR}/*.cpp)
 
 find_package(VelixFlow QUIET)
 
+add_executable(${PROJECT_NAME}
+        ${PROJECT_SOURCES}
+        ${PROJECT_HEADERS}
+)
+
+
+option(VELIX_USE_PHYSX "Enable NVIDIA PhysX support" ON)
+
 if(NOT VelixFlow_FOUND)
     message(STATUS "VelixFlow not found - cloning from GitHub...")
 
@@ -23,22 +31,52 @@ if(NOT VelixFlow_FOUND)
             GIT_SHALLOW    TRUE
     )
 
+    set(VelixFlow_INSTALL_DIR ${CMAKE_BINARY_DIR}/_deps/install)
+    set(CMAKE_INSTALL_PREFIX ${VelixFlow_INSTALL_DIR})
+
     FetchContent_MakeAvailable(VelixFlow)
 
     message(STATUS "VelixFlow cloned and built from source")
 else()
-    message(STATUS "Found VelixFlow: ${VelixFlow_DIR}")
-endif()
+        message(STATUS "Found VelixFlow: ${VelixFlow_DIR}")
+        add_custom_command(
+                TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${VelixFlow_DIR}/../../../include/VelixFlow/"
+                "${CMAKE_BINARY_DIR}/include/VelixFlow"
+        )
 
-add_executable(${PROJECT_NAME}
-        ${PROJECT_SOURCES}
-        ${PROJECT_HEADERS}
-)
+        get_filename_component(VELIXFLOW_INSTALL_PREFIX "${VelixFlow_DIR}/../.." ABSOLUTE)
+
+        set(VELIXFLOW_LIB_DIR "${VELIXFLOW_INSTALL_PREFIX}")
+        message(STATUS "VelixFlow libs should be in: ${VELIXFLOW_LIB_DIR}")
+
+        file(GLOB VELIXFLOW_LIBS
+                "${VELIXFLOW_LIB_DIR}/libVelixFlow.a*"
+                "${VELIXFLOW_LIB_DIR}/libVelixGL.so*"
+                "${VELIXFLOW_LIB_DIR}/libVelixVK.so*"
+                "${VELIXFLOW_LIB_DIR}/libfmod.so.14*"
+        )
+
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+        foreach(lib IN LISTS VELIXFLOW_LIBS)
+    if(EXISTS "${lib}")
+        add_custom_command(
+            TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${lib}"
+            "${CMAKE_BINARY_DIR}/lib"
+        )
+        message(STATUS "FOUND: ${lib}")
+    else()
+        message(WARNING "VelixFlow runtime library not found: ${lib}")
+    endif()
+            endforeach()
+endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${INCLUDE_DIR}
-        ${LIBRARIES_DIR}/2ndParty/imgui
-        ${LIBRARIES_DIR}/2ndParty/ImGuizmo
         ${LIBRARIES_DIR}/stb
 )
 
@@ -46,25 +84,19 @@ target_link_libraries(${PROJECT_NAME}
         PRIVATE
         Velix::VelixFlow
 )
-option(VELIX_USE_PHYSX "Enable NVIDIA PhysX support" ON)
+
+if(UNIX)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        BUILD_RPATH "$ORIGIN/lib"
+        INSTALL_RPATH "$ORIGIN/lib"
+    )
+endif()
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 
 target_sources(${PROJECT_NAME} PRIVATE
         ${PROJECT_SOURCES} 
         ${PROJECT_HEADERS}
-        libraries/2ndParty/imgui/imgui.cpp
-        libraries/2ndParty/imgui/imgui_draw.cpp
-        libraries/2ndParty/imgui/imgui_widgets.cpp
-        libraries/2ndParty/imgui/imgui_tables.cpp
-        libraries/2ndParty/imgui/backends/imgui_impl_glfw.cpp
-        libraries/2ndParty/imgui/backends/imgui_impl_opengl3.cpp
-
-        libraries/2ndParty/ImGuizmo/GraphEditor.cpp
-        libraries/2ndParty/ImGuizmo/ImCurveEdit.cpp
-        libraries/2ndParty/ImGuizmo/ImGradient.cpp
-        libraries/2ndParty/ImGuizmo/ImGuizmo.cpp
-        libraries/2ndParty/ImGuizmo/ImSequencer.cpp
-
-        libraries/2ndParty/ImGuiColorTextEdit/TextEditor.cpp
 )
 
 add_custom_command(
@@ -78,3 +110,5 @@ add_custom_command(
 install(TARGETS ${PROJECT_NAME} DESTINATION .)
 install(DIRECTORY resources DESTINATION .)
 install(DIRECTORY template DESTINATION .)
+install(DIRECTORY ProjectTemplate DESTINATION .)
+install(DIRECTORY "${CMAKE_BINARY_DIR}/lib" DESTINATION .)

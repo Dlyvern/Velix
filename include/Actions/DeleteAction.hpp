@@ -8,7 +8,7 @@
 class DeleteAction final : public Action
 {
 public:
-  explicit DeleteAction(GameObject* gameObject);
+  explicit DeleteAction(elix::GameObject* gameObject);
 
   void execute() override;
 
@@ -18,8 +18,8 @@ public:
 
   ~DeleteAction() override;
 private:
-  GameObject* m_gameObject{nullptr};
-  std::shared_ptr<GameObject> m_undoObject{nullptr};
+  elix::GameObject* m_gameObject{nullptr};
+  std::shared_ptr<elix::GameObject> m_undoObject{nullptr};
 };
 
 #endif //DELETEACTION_HPP

@@ -1,88 +1,32 @@
-#ifndef DEBUG_EDITOR_HPP
-#define DEBUG_EDITOR_HPP
+#ifndef EDITOR_HPP
+#define EDITOR_HPP
 
-#include <VelixFlow/GameObject.hpp>
-#include <filesystem>
+#include <VelixFlow/Scene.hpp>
+#include <VelixFlow/UI/UIWidget.hpp>
+#include <VelixFlow/AssetsCache.hpp>
 
-#include "ActionsManager.hpp"
-#include "Camera.hpp"
-#include "IInspectable.hpp"
+#include <memory>
 
-#include "UILogger.hpp"
-#include "UITerminal.hpp"
-#include "UIAssetsWindow.hpp"
-    
 class Editor
 {
 public:
+    void init();
+
+    void update(float deltaTime);
+
+    std::shared_ptr<elix::Scene> getOverlay();
+private:
     enum class State
     {
-        Start,
-        Editor,
-        Play
+        MAIN_MENU,
+        EDITOR
     };
 
-    Editor();
-    
-    void init();
-    void update(float deltaTime);
-    [[nodiscard]] Editor::State getState() const;
-    ~Editor();
-    void destroy();
-
-private:
-    elixUI::UILogger m_uiLogger;
-    elixUI::UITerminal m_uiTerminal;
-    elixUI::UIAssetsWindow m_uiAssetsWindow;
-    
-    State m_state{State::Start};
-
-    std::unique_ptr<Camera> m_editorCamera{nullptr};
-    
-    void showStart();
-
-    void drawMainScene();
-
-    void showTextEditor();
-
-    void showEditor();
-
-    void showMenuBar();
-
-    void showViewPort();
-    void showDebugInfo();
-    void showProperties();
-    void showAllObjectsInTheScene();
-    void showAssetsInfo();
-	
-    void showGuizmo(GameObject* gameObject, float x, float y, float width, float height); 
-
-    void drawLogWindow();
-
-    void drawTerminal();
-
-    void setSelectedGameObject(GameObject* gameObject);
-
-    void updateInput();
-
-    std::shared_ptr<IInspectable> m_selected;
-
-    GameObject* m_selectedGameObject{nullptr};
-
-    ActionsManager m_actionsManager;
-
-    std::shared_ptr<GameObject> m_savedGameObject{nullptr};
-
-    std::vector<GameObject*> m_selectedGameObjects;
-
-    enum class TransformMode
-    {
-        Translate,
-        Rotate,
-        Scale
-    };
-
-    TransformMode m_transformMode{TransformMode::Translate};
+    void addUI(const std::shared_ptr<elix::ui::UIWidget>& element);
+    std::shared_ptr<elix::Scene> m_overlay;
+    elix::AssetsCache m_editorCache;
+    State m_state{State::MAIN_MENU};
 };
 
-#endif //DEBUG_EDITOR_HPP
+
+#endif //EDITOR_HPP

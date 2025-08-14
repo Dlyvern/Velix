@@ -1,6 +1,3 @@
-#include <exception>
-#include <iostream>
-
 #include "Engine.hpp"
 
 int main()
@@ -11,7 +8,7 @@ int main()
     }
     catch (const std::exception& e)
     {
-        std::cerr << "ENGINE_RUN_ERROR: EXCEPTION WHILE RUNNING THE ENGINE: " << e.what() << std::endl;
+        ELIX_LOG_ERROR("ENGINE_RUN_ERROR: EXCEPTION WHILE RUNNING THE ENGINE: ", e.what());
         return -1;
     }
 

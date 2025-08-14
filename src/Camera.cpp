@@ -2,27 +2,27 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 
-#include <VelixFlow/Keyboard.hpp>
-#include "VelixFlow/Mouse.hpp"
+#include <VelixFlow/Input/Keyboard.hpp>
+#include "VelixFlow/Input/Mouse.hpp"
 #include "Engine.hpp"
 
-Camera::Camera(elix::CameraComponent* camera) : m_camera(camera) {}
+Camera::Camera(elix::components::CameraComponent* camera) : m_camera(camera) {}
 
 void Camera::update(float deltaTime)
 {
     static bool mouseLocked{false};
 
-    const auto* window = Engine::s_application->getWindow();
+    const window::Window* window = Engine::s_window;
 
     if (input::Mouse.isRightButtonPressed() && !mouseLocked)
     {
-        glfwSetInputMode(window->getOpenGLWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        // glfwSetInputMode(window->getGLFWWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED); 
         m_firstClick = true;
         mouseLocked = true;
     }
     else if((!input::Mouse.isRightButtonPressed()) && mouseLocked)
     {
-        glfwSetInputMode(window->getOpenGLWindow(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        // glfwSetInputMode(window->getGLFWWindow(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         mouseLocked = false;
     }
 
@@ -85,7 +85,7 @@ void Camera::update(float deltaTime)
     m_camera->update(deltaTime);
 }
 
-elix::CameraComponent* Camera::getCamera()
+elix::components::CameraComponent* Camera::getCamera()
 {
     return m_camera;
 }

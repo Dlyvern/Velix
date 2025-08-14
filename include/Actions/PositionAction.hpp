@@ -7,7 +7,7 @@
 class PositionAction final : public Action
 {
 public:
-    PositionAction(GameObject* gameObject, const glm::vec3& oldPosition, const glm::vec3& newPosition);
+    PositionAction(elix::GameObject* gameObject, const glm::vec3& oldPosition, const glm::vec3& newPosition);
 
     void execute() override;
 
@@ -17,7 +17,7 @@ public:
 
     ~PositionAction() override;
  private:
-    GameObject* m_gameObject{nullptr};
+    elix::GameObject* m_gameObject{nullptr};
     glm::vec3 m_oldPosition;
     glm::vec3 m_newPosition;
 };

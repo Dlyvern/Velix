@@ -3,7 +3,7 @@
 
 #include "VelixFlow/Script.hpp"
 
-class GameScript final : public Script
+class GameScript final : public elix::scripting::Script
 {
 public:
     void onStart() override;
