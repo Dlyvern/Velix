@@ -19,6 +19,8 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y cmake build-essential libgl1-mesa-dev ninja-build libvulkan-dev vulkan-tools
+          sudo apt install -y libwayland-dev wayland-protocols extra-cmake-modules
+          sudo apt install -y libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 
       - name: Configure and Build
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVELIX_USE_PHYSX=ON -DPHYSX_BUILD_TYPE=checked && cmake --build build
@@ -50,7 +52,9 @@ jobs:
         run: |
           curl -Lo vulkan-sdk.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
           ./vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install
-          echo "VULKAN_SDK=$env:USERPROFILE\VulkanSDK\$(ls $env:USERPROFILE\VulkanSDK | Select-Object -Last 1)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $sdkPath = Get-ChildItem "C:\VulkanSDK" -Directory | Select-Object -Last 1 -ExpandProperty FullName
+          echo "VULKAN_SDK=$sdkPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          echo "VULKAN_SDK is set to: $sdkPath"
 
       - name: Setup MSVC Developer Environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -88,6 +92,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          brew uninstall cmake || true
           brew install cmake ninja freetype glfw
 
       - name: Install Vulkan SDK
