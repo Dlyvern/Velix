@@ -21,7 +21,7 @@ jobs:
           sudo apt install -y cmake build-essential libgl1-mesa-dev ninja-build libvulkan-dev vulkan-tools
 
       - name: Configure and Build
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVELIX_USE_PHYSX=ON -DVELIX_USE_VULKAN=ON -DVELIX_USE_OPENGL=ON -DCMAKE_INSTALL_RPATH="\$ORIGIN/lib" && cmake --build build
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVELIX_USE_PHYSX=ON -DPHYSX_BUILD_TYPE=checked && cmake --build build
       
       - name: Install to Staging Dir
         run: |
@@ -46,17 +46,27 @@ jobs:
         with:
           submodules: 'recursive'
 
+      - name: Install Vulkan SDK
+        run: |
+          curl -Lo vulkan-sdk.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
+          ./vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install
+          echo "VULKAN_SDK=$env:USERPROFILE\VulkanSDK\$(ls $env:USERPROFILE\VulkanSDK | Select-Object -Last 1)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Setup MSVC Developer Environment
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Configure and Build
         run: |
-          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG="/MD" -DPHYSX_BUILD_TYPE=checked -DVELIX_USE_VULKAN=OFF -DVELIX_USE_OPENGL=ON
+          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DCMAKE_BUILD_TYPE=Debug -DPHYSX_BUILD_TYPE=checked -DVulkan_ROOT="$env:VULKAN_SDK"
           cmake --build build --config Debug
 
       - name: Install to Staging Dir
         run: |
           cmake --install build --prefix staging/Velix
+
+      - name: Copy Vulkan Runtime DLLs
+        run: |
+          Copy-Item "$env:VULKAN_SDK/Bin/vulkan-1.dll" "staging/Velix/bin/"
 
       - name: Create Archive
         run: |
@@ -80,14 +90,28 @@ jobs:
         run: |
           brew install cmake ninja freetype glfw
 
+      - name: Install Vulkan SDK
+        run: |
+          curl -Lo vulkan-sdk.dmg https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg
+          hdiutil attach vulkan-sdk.dmg
+          sudo installer -pkg /Volumes/VulkanSDK*/InstallVulkan.app/Contents/Resources/VulkanSDK.pkg -target /
+          VULKAN_VERSION=$(ls /VulkanSDK | head -n 1)
+          echo "VULKAN_SDK=/VulkanSDK/$VULKAN_VERSION" >> $GITHUB_ENV
+
       - name: Configure and Build
         run: |
-          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DVELIX_USE_VULKAN=OFF -DVELIX_USE_OPENGL=ON
+          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DVulkan_ROOT="$VULKAN_SDK"
           cmake --build build
 
       - name: Install to Staging Dir
         run: |
           cmake --install build --prefix staging/Velix
+
+      - name: Copy MoltenVK Runtime Libraries
+        run: |
+          mkdir -p staging/Velix/lib/
+          cp "$VULKAN_SDK/lib/libMoltenVK.dylib" "staging/Velix/lib/"
+          cp "$VULKAN_SDK/share/vulkan/icd.d/MoltenVK_icd.json" "staging/Velix/lib/"
 
       - name: Create Archive
         run: |
