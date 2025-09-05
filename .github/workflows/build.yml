@@ -21,6 +21,8 @@ jobs:
           sudo apt install -y cmake build-essential libgl1-mesa-dev ninja-build libvulkan-dev vulkan-tools
           sudo apt install -y libwayland-dev wayland-protocols extra-cmake-modules
           sudo apt install -y libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          sudo apt install -y libxkbcommon-dev
+          sudo apt install -y pkg-config
 
       - name: Configure and Build
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVELIX_USE_PHYSX=ON -DPHYSX_BUILD_TYPE=checked && cmake --build build
@@ -97,11 +99,31 @@ jobs:
 
       - name: Install Vulkan SDK
         run: |
-          curl -Lo vulkan-sdk.dmg https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg
-          hdiutil attach vulkan-sdk.dmg
-          sudo installer -pkg /Volumes/VulkanSDK*/InstallVulkan.app/Contents/Resources/VulkanSDK.pkg -target /
-          VULKAN_VERSION=$(ls /VulkanSDK | head -n 1)
-          echo "VULKAN_SDK=/VulkanSDK/$VULKAN_VERSION" >> $GITHUB_ENV
+          curl -Lo vulkan-sdk.zip https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.zip
+          unzip -q vulkan-sdk.zip -d vulkan-sdk-extracted
+          cd vulkan-sdk-extracted
+          SDK_APP=$(find . -name "*.app" | head -n 1)
+          echo "Found installer: $SDK_APP"
+          
+          sudo "$SDK_APP/Contents/MacOS/$(basename "$SDK_APP" .app)" \
+            --root /usr/local \
+            --accept-licenses \
+            --default-answer \
+            --confirm-command \
+            install \
+            com.lunarg.vulkan.core \
+            com.lunarg.vulkan.usr
+          
+          echo "VULKAN_SDK=/usr/local" >> $GITHUB_ENV
+          echo "VK_ICD_FILENAMES=/usr/local/share/vulkan/icd.d/MoltenVK_icd.json" >> $GITHUB_ENV
+
+      - name: Verify Vulkan Installation
+        run: |
+          echo "Vulkan SDK installed at: $VULKAN_SDK"
+          echo "Checking installed files:"
+          ls -la /usr/local/lib/libvulkan* 2>/dev/null || echo "No Vulkan libs found"
+          ls -la /usr/local/lib/libMoltenVK* 2>/dev/null || echo "No MoltenVK libs found"
+          ls -la /usr/local/share/vulkan/icd.d/ 2>/dev/null || echo "No ICD files found"
 
       - name: Configure and Build
         run: |
@@ -115,8 +137,9 @@ jobs:
       - name: Copy MoltenVK Runtime Libraries
         run: |
           mkdir -p staging/Velix/lib/
-          cp "$VULKAN_SDK/lib/libMoltenVK.dylib" "staging/Velix/lib/"
-          cp "$VULKAN_SDK/share/vulkan/icd.d/MoltenVK_icd.json" "staging/Velix/lib/"
+          cp "/usr/local/lib/libMoltenVK.dylib" "staging/Velix/lib/"
+          cp "/usr/local/share/vulkan/icd.d/MoltenVK_icd.json" "staging/Velix/lib/"
+          cp "/usr/local/lib/libvulkan.dylib" "staging/Velix/lib/" 2>/dev/null || true
 
       - name: Create Archive
         run: |

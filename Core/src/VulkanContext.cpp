@@ -234,27 +234,6 @@ void VulkanContext::createLogicalDevice()
     vkGetDeviceQueue(m_device, indices.presentFamily.value(), 0, &m_presentQueue);
     
     volkLoadDevice(m_device);
-
-    // std::cout << "Volk load: " << std::endl;
-    // volkLoadDeviceTable(m_deviceTable, m_device);
-    // std::cout << "Volk loaded: " << std::endl;
-
-
-    // std::cout << "Default memory: " << (void*)vkCreatePipelineLayout << std::endl;
-    // std::cout << "Device table memory: " << (void*)m_deviceTable->vkCreatePipelineLayout << std::endl;
-
-    
-    //TODO just a little test....
-    // VkPipelineLayoutCreateInfo plcInfo{};
-    // plcInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    // plcInfo.pNext = nullptr;
-    // plcInfo.setLayoutCount = 0;
-    // plcInfo.pushConstantRangeCount = 0;
-
-    // VkPipelineLayout tmpPL = VK_NULL_HANDLE;
-    // VkResult r = vkCreatePipelineLayout(m_device, &plcInfo, nullptr, &tmpPL);
-    // std::cout << "tmp pipeline layout create: " << r << ", ptr fn = " << (void*)vkCreatePipelineLayout << std::endl;
-    // if (r == VK_SUCCESS) vkDestroyPipelineLayout(m_device, tmpPL, nullptr);
 }
 
 VulkanContext::QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDevice device)
