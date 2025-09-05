@@ -4,6 +4,10 @@ project(Velix LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MSVC)
+    add_compile_options(/std:c++17)
+endif()
+
 add_subdirectory(external)
 
 add_subdirectory(Core)
