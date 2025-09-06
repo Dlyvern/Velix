@@ -62,7 +62,6 @@ jobs:
         run: |
           git submodule update --init --recursive
           git submodule status
-          ls -la external/
 
       - name: Install Vulkan SDK
         run: |
@@ -125,25 +124,17 @@ jobs:
           cd vulkan-sdk-extracted
           SDK_APP=$(find . -name "*.app" | head -n 1)
           echo "Found installer: $SDK_APP"
+
+          VERSION_DIR="$HOME/VulkanSDK/1.4.321.0"
+          mkdir -p "$VERSION_DIR"
+
+          sudo "$SDK_APP/Contents/MacOS/$(basename "$SDK_APP" .app)" \
+            --root "$VERSION_DIR" \
+            --accept-licenses --default-answer --confirm-command install \
+            com.lunarg.vulkan.core com.lunarg.vulkan.usr com.lunarg.vulkan.volk com.lunarg.vulkan.vma
           
-          echo "yes" | sudo "$SDK_APP/Contents/MacOS/$(basename "$SDK_APP" .app)" \
-            --root /usr/local \
-            --accept-licenses \
-            --verbose \
-            install \
-            com.lunarg.vulkan.core \
-            com.lunarg.vulkan.usr
-
-          echo "VULKAN_SDK=/usr/local" >> $GITHUB_ENV
-          echo "VK_ICD_FILENAMES=/usr/local/share/vulkan/icd.d/MoltenVK_icd.json" >> $GITHUB_ENV
-
-      - name: Verify Vulkan Installation
-        run: |
-          echo "Vulkan SDK installed at: $VULKAN_SDK"
-          echo "Checking installed files:"
-          ls -la /usr/local/lib/libvulkan* 2>/dev/null || echo "No Vulkan libs found"
-          ls -la /usr/local/lib/libMoltenVK* 2>/dev/null || echo "No MoltenVK libs found"
-          ls -la /usr/local/share/vulkan/icd.d/ 2>/dev/null || echo "No ICD files found"
+          echo "VULKAN_SDK=$VERSION_DIR/macOS" >> $GITHUB_ENV
+          echo "$VERSION_DIR/macOS/bin" >> $GITHUB_PATH
 
       - name: Configure and Build
         run: |
