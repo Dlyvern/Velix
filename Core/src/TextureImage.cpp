@@ -1,7 +1,7 @@
 #include "Core/TextureImage.hpp"
 
-// #define STB_IMAGE_IMPLEMENTATION
-// #include <stb_image.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 #include <volk.h>
 
@@ -14,9 +14,7 @@ bool TextureImage::load(const std::string& path, bool freeOnLoad)
 {
     int width, height, channels;
 
-    void* pixels;
-
-    // stbi_uc* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+    stbi_uc* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
 
     VkDeviceSize imageSize = width * height * 4;
 
