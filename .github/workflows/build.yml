@@ -85,7 +85,28 @@ jobs:
 
       - name: Copy Vulkan Runtime DLLs
         run: |
-          Copy-Item "$env:VULKAN_SDK/Bin/vulkan-1.dll" "staging/Velix/bin/"
+            $vulkanDll = Get-ChildItem -Path $env:VULKAN_SDK -Recurse -Filter "vulkan-1.dll" | Select-Object -First 1
+            if ($vulkanDll) {
+                Copy-Item $vulkanDll.FullName "staging/Velix/bin/"
+                echo "Successfully copied vulkan-1.dll from: $($vulkanDll.FullName)"
+            } else {
+                echo "ERROR: vulkan-1.dll not found in $env:VULKAN_SDK"
+
+                echo "Trying alternative locations..."
+                  
+                $alternativePaths = @(
+                    "C:\Windows\System32\vulkan-1.dll",
+                    "C:\Windows\SysWOW64\vulkan-1.dll"
+                )
+                
+                foreach ($path in $alternativePaths) {
+                    if (Test-Path $path) {
+                        Copy-Item $path "staging/Velix/bin/"
+                        echo "Copied vulkan-1.dll from system location: $path"
+                        break
+                    }
+                }
+            }
 
       - name: Create Archive
         run: |
