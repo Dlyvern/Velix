@@ -85,27 +85,44 @@ jobs:
 
       - name: Copy Vulkan Runtime DLLs
         run: |
+            $binDir = "staging/Velix/bin"
+            New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+            echo "Created directory: $binDir"
+            
             $vulkanDll = Get-ChildItem -Path $env:VULKAN_SDK -Recurse -Filter "vulkan-1.dll" | Select-Object -First 1
             if ($vulkanDll) {
-                Copy-Item $vulkanDll.FullName "staging/Velix/bin/"
+                Copy-Item $vulkanDll.FullName $binDir
                 echo "Successfully copied vulkan-1.dll from: $($vulkanDll.FullName)"
             } else {
-                echo "ERROR: vulkan-1.dll not found in $env:VULKAN_SDK"
-
-                echo "Trying alternative locations..."
-                  
-                $alternativePaths = @(
+                echo "vulkan-1.dll not found in Vulkan SDK, trying system locations..."
+                
+                # Try system directories
+                $systemDll = $null
+                $systemPaths = @(
                     "C:\Windows\System32\vulkan-1.dll",
                     "C:\Windows\SysWOW64\vulkan-1.dll"
                 )
                 
-                foreach ($path in $alternativePaths) {
+                foreach ($path in $systemPaths) {
                     if (Test-Path $path) {
-                        Copy-Item $path "staging/Velix/bin/"
-                        echo "Copied vulkan-1.dll from system location: $path"
+                        $systemDll = $path
                         break
                     }
                 }
+                
+                if ($systemDll) {
+                    Copy-Item $systemDll $binDir
+                    echo "Copied vulkan-1.dll from system location: $systemDll"
+                } else {
+                    echo "WARNING: vulkan-1.dll not found in any location!"
+                    echo "The application may not run without Vulkan runtime installed."
+                }
+            }
+            
+            if (Test-Path "$binDir/vulkan-1.dll") {
+                echo "SUCCESS: vulkan-1.dll is in the staging directory"
+            } else {
+                echo "ERROR: vulkan-1.dll was not copied to staging directory"
             }
 
       - name: Create Archive
