@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 #include <unordered_set>
+#include <string>
 
 template<typename T>
 struct IsMultiComponent {

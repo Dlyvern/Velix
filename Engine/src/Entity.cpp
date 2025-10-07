@@ -24,19 +24,21 @@ void Entity::setName(const std::string& name)
 
 bool Entity::removeTag(const std::string& tag)
 {
-    auto it = std::find_if(m_tags.begin(), m_tags.end(), [&tag](const auto& t) {return tag == t; });
+    // auto it = std::find_if(m_tags.begin(), m_tags.end(), [&tag](const auto& t) {return tag == t; });
 
-    if(it != m_tags.end())
-        m_tags.erase(it);
+    // if(it != m_tags.end())
+    //     m_tags.erase(it);
     
-    return it != m_tags.end();
+    // return it != m_tags.end();
+    return false;
 }
 
 bool Entity::hasTag(const std::string& tag) const
 {
-    auto it = std::find_if(m_tags.begin(), m_tags.end(), [&tag](const auto& t) {return tag == t; });
+    // auto it = std::find_if(m_tags.begin(), m_tags.end(), [&tag](const auto& t) {return tag == t; });
 
-    return it != m_tags.end();
+    // return it != m_tags.end();
+    return false;
 }
 
 void Entity::setLayer(int layerID)
