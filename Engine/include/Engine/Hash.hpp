@@ -2,7 +2,9 @@
 #define ELIX_HASH_HPP
 
 #include "Core/Macros.hpp"
+
 #include <cstdint>
+#include <cstddef>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 

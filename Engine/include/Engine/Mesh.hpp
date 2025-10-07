@@ -66,16 +66,16 @@ struct GPUMesh
 
         gpuMesh->bindingDescription = bindingDescription;
 
-        hashing::hash(gpuMesh->vertexLayoutHash, bindingDescription.binding);
-        hashing::hash(gpuMesh->vertexLayoutHash, bindingDescription.inputRate);
-        hashing::hash(gpuMesh->vertexLayoutHash, bindingDescription.stride);
+        hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(bindingDescription.binding));
+        hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(bindingDescription.inputRate));
+        hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(bindingDescription.stride));
 
         for(const auto& b : attributeDescription)
         {
-            hashing::hash(gpuMesh->vertexLayoutHash, b.binding);
-            hashing::hash(gpuMesh->vertexLayoutHash, b.format);
-            hashing::hash(gpuMesh->vertexLayoutHash, b.location);
-            hashing::hash(gpuMesh->vertexLayoutHash, b.offset);
+            hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(b.binding));
+            hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(b.format));
+            hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(b.location));
+            hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(b.offset));
             gpuMesh->attributeDescriptions.push_back(b);
         }
 
@@ -98,16 +98,16 @@ struct GPUMesh
         auto bindingDescription = engine::Vertex2D::getBindingDescription();
         auto attributeDescription = engine::Vertex2D::getAttributeDescriptions();
 
-        hashing::hash(gpuMesh->vertexLayoutHash, bindingDescription.binding);
-        hashing::hash(gpuMesh->vertexLayoutHash, bindingDescription.inputRate);
-        hashing::hash(gpuMesh->vertexLayoutHash, bindingDescription.stride);
+        hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(bindingDescription.binding));
+        hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(bindingDescription.inputRate));
+        hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(bindingDescription.stride));
 
         for(const auto& b : attributeDescription)
         {
-            hashing::hash(gpuMesh->vertexLayoutHash, b.binding);
-            hashing::hash(gpuMesh->vertexLayoutHash, b.format);
-            hashing::hash(gpuMesh->vertexLayoutHash, b.location);
-            hashing::hash(gpuMesh->vertexLayoutHash, b.offset);
+            hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(b.binding));
+            hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(b.format));
+            hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(b.location));
+            hashing::hash(gpuMesh->vertexLayoutHash, static_cast<std::size_t>(b.offset));
         }
 
         return gpuMesh;

@@ -37,7 +37,7 @@ int main(int argc, char** argv)
     auto secondTestEntity = scene->addEntity("test2");
     auto testPlane = scene->addEntity("plane");
 
-    elix::engine::Mesh3D meshModel = elix::engine::AssetsLoader::loadModel("./resources/models/concrete_wall.obj");
+    // elix::engine::Mesh3D meshModel = elix::engine::AssetsLoader::loadModel("./resources/models/concrete_wall.obj");
     elix::engine::Mesh3D mesh{elix::engine::cube::vertices, elix::engine::cube::indices};
 
     elix::engine::Material::createDefaultDescriptorSetLayout(vulkanContext->getDevice());

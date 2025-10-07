@@ -9,12 +9,12 @@ size_t ShaderCache::createOrGetShaderCache(const std::string& vertexPath, const 
 
     auto shader = std::make_shared<core::Shader>(vertexPath,  fragmentPath);
 
-    for(const auto& fragmentCode : shader->getFragmentHandler().getCode())
-        hashing::hash(hashData, fragmentCode);
+    // for(const auto& fragmentCode : shader->getFragmentHandler().getCode())
+    //     hashing::hash(hashData, fragmentCode);
     
-    for(const auto& vertexCode : shader->getVertexHandler().getCode())
-        hashing::hash(hashData, vertexCode);
-    
+    // for(const auto& vertexCode : shader->getVertexHandler().getCode())
+        // hashing::hash(hashData, vertexCode);
+    // 
     if(auto it = m_shadersCache.find(hashData); it == m_shadersCache.end())
         m_shadersCache[hashData] = std::move(shader);
 

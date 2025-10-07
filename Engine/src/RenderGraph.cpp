@@ -132,12 +132,12 @@ m_swapchain(swapchain), m_scene(scene)
             const auto& mesh = staticMeshComponent->getMesh();
             size_t hashData{0};
 
-            hashing::hash(hashData, mesh.indices.size());
+            hashing::hash(hashData, static_cast<std::size_t>(mesh.indices.size()));
 
             for(const auto& indices : mesh.indices)
-                hashing::hash(hashData, indices);
+                hashing::hash(hashData, static_cast<std::size_t>(indices));
 
-            hashing::hash(hashData, mesh.vertices.size());
+            hashing::hash(hashData, static_cast<std::size_t>(mesh.vertices.size()));
 
             auto gpuMesh = GPUMesh::createFromMesh(mesh, graphicsQueue, m_commandPool);
             m_staticMeshProxy->storage.data[hashData] = gpuMesh;
