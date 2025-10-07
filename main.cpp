@@ -37,7 +37,7 @@ int main(int argc, char** argv)
     auto secondTestEntity = scene->addEntity("test2");
     auto testPlane = scene->addEntity("plane");
 
-    elix::engine::Mesh3D meshModel = elix::engine::AssetsLoader::loadModel("/home/dlyvern/Projects/Velix/resources/models/concrete_wall.obj");
+    elix::engine::Mesh3D meshModel = elix::engine::AssetsLoader::loadModel("./resources/models/concrete_wall.obj");
     elix::engine::Mesh3D mesh{elix::engine::cube::vertices, elix::engine::cube::indices};
 
     elix::engine::Material::createDefaultDescriptorSetLayout(vulkanContext->getDevice());
@@ -77,7 +77,7 @@ int main(int argc, char** argv)
     renderGraph.createRenderGraphResources();
 
     auto textureImage = std::make_shared<elix::engine::TextureImage>();
-    textureImage->load(vulkanContext->getDevice(), "/home/dlyvern/Projects/Velix/resources/textures/ConcreteWall.png", renderGraph.getCommandPool(), vulkanContext->getGraphicsQueue());
+    textureImage->load(vulkanContext->getDevice(), "./resources/textures/ConcreteWall.png", renderGraph.getCommandPool(), vulkanContext->getGraphicsQueue());
 
     auto material = elix::engine::Material::create(vulkanContext->getDevice(), renderGraph.getDescriptorPool(),
     renderGraph.MAX_FRAMES_IN_FLIGHT, textureImage, renderGraph.getMaterialDescriptorSetLayout());

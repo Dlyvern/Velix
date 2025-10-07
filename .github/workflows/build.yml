@@ -32,7 +32,7 @@ jobs:
           sudo apt install -y pkg-config
 
       - name: Configure and Build
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVELIX_USE_PHYSX=ON -DPHYSX_BUILD_TYPE=checked && cmake --build build
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVELIX_USE_PHYSX=ON -DPHYSX_BUILD_TYPE=checked && cmake --build build
       
       - name: Install to Staging Dir
         run: |
@@ -76,8 +76,8 @@ jobs:
 
       - name: Configure and Build
         run: |
-          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DCMAKE_BUILD_TYPE=Debug -DPHYSX_BUILD_TYPE=checked -DVulkan_ROOT="$env:VULKAN_SDK"
-          cmake --build build --config Debug
+          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DCMAKE_BUILD_TYPE=Release -DPHYSX_BUILD_TYPE=checked -DVulkan_ROOT="$env:VULKAN_SDK"
+          cmake --build build --config Release
 
       - name: Install to Staging Dir
         run: |

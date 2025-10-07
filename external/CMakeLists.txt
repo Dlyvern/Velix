@@ -27,4 +27,9 @@ target_include_directories(imgui PUBLIC
 
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_VULKAN_USE_VOLK=1)
 
-target_link_libraries(imgui PUBLIC volk)
+if(UNIX AND NOT APPLE)
+    find_package(X11 REQUIRED)
+    find_package(Threads REQUIRED)
+endif()
+
+target_link_libraries(imgui PUBLIC volk glfw  $<$<PLATFORM_ID:Linux>:${X11_LIBRARIES}> $<$<PLATFORM_ID:Linux>:Threads::Threads>)

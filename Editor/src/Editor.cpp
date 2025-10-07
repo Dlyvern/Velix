@@ -210,7 +210,7 @@ void Editor::drawBenchmark()
     
     if(ImGui::Button("Save scene"))
         if(m_scene)
-            m_scene->saveSceneToFile("/home/dlyvern/Projects/Velix/resources/scenes/default_scene.scene");
+            m_scene->saveSceneToFile("./resources/scenes/default_scene.scene");
     
     ImGui::End();
 }

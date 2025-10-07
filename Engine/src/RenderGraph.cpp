@@ -528,7 +528,7 @@ void RenderGraph::setup()
 
 void RenderGraph::createGraphicsPipeline()
 {
-    core::Shader shader("/home/dlyvern/Projects/Velix/resources/shaders/test_vert.spv", "/home/dlyvern/Projects/Velix/resources/shaders/test_frag.spv");
+    core::Shader shader("./resources/shaders/test_vert.spv", "./resources/shaders/test_frag.spv");
 
     const std::vector<VkPushConstantRange> pushConstants
     {

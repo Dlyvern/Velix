@@ -18,7 +18,7 @@ endif()
 
 if(WIN32)
     set(FBX_LIB_DIR "${CMAKE_CURRENT_LIST_DIR}/lib/${FBX_PLATFORM}/${CMAKE_BUILD_TYPE}")
-    set(FBX_LIB "${FBX_LIB_DIR}/libfbxsdk-md.lib")
+    set(FBX_LIB "${FBX_LIB_DIR}/libfbxsdk.dll")
 elseif(APPLE)
     set(FBX_LIB_DIR "${CMAKE_CURRENT_LIST_DIR}/lib/${FBX_PLATFORM}/${CMAKE_BUILD_TYPE}")
     set(FBX_LIB "${FBX_LIB_DIR}/libfbxsdk.dylib")
