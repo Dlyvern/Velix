@@ -6,7 +6,7 @@
 #include <limits>
 #include <iostream>
 #include <array>
-
+#include <algorithm>
 #include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)

@@ -39,10 +39,18 @@ endif()
 
 
 install(TARGETS ${PROJECT_NAME}
-    RUNTIME DESTINATION bin
-    BUNDLE DESTINATION bin
+    RUNTIME DESTINATION .
+    BUNDLE DESTINATION .
     LIBRARY DESTINATION lib
 )
+
+if(EXISTS ${RESOURCE_DIR})
+    install(DIRECTORY ${RESOURCE_DIR}/
+        DESTINATION resources
+        USE_SOURCE_PERMISSIONS
+    )
+    message(STATUS "Resources will be installed to: resources/")
+endif()
 
 set(CPACK_PACKAGE_NAME "VelixEngine")
 set(CPACK_PACKAGE_VERSION "1.0.0")
