@@ -61,7 +61,7 @@ namespace helpers
         return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
     }
 
-    inline std::string VulkanResultToString(VkResult result)
+    inline std::string vulkanResultToString(VkResult result)
     {
         switch(result) 
         {

@@ -10,6 +10,7 @@
 #include "Core/VulkanHelpers.hpp"
 #include "Core/VulkanContext.hpp"
 #include <stdexcept>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 TextureImage::TextureImage() = default;
@@ -63,11 +64,15 @@ void TextureImage::create(VkDevice device, core::CommandPool::SharedPtr commandP
     samplerInfo.mipLodBias = 0.0f;
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = 0.0f;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
 
-    if(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create sampler");
+    if(VkResult result = vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler); result != VK_SUCCESS)
+    {
+        std::string errorMsg = "Failed to create sampler: ";
+
+        errorMsg += core::helpers::vulkanResultToString(result);
+
+        throw std::runtime_error(errorMsg);
+    }
 }
 
 bool TextureImage::load(VkDevice device, const std::string& path, core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad)
@@ -128,12 +133,18 @@ bool TextureImage::load(VkDevice device, const std::string& path, core::CommandP
     samplerInfo.mipLodBias = 0.0f;
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = 0.0f;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
 
-    if(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create sampler");
+    if(VkResult result = vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler); result != VK_SUCCESS)
+    {
+        std::string errorMsg = "Failed to create sampler: ";
+
+        errorMsg += core::helpers::vulkanResultToString(result);
+
+        throw std::runtime_error(errorMsg);
+
+    }
     
+    return true;
 }
 
 VkSampler TextureImage::vkSampler()

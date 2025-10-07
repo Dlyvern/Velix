@@ -6,6 +6,7 @@
 
 #include "Editor/Editor.hpp"
 
+#include <array>
 #include <volk.h>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
