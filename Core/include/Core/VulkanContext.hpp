@@ -3,6 +3,7 @@
 
 #include "Macros.hpp"
 #include "Window.hpp"
+#include "SwapChain.hpp"
 
 #include <volk.h>
 
@@ -27,15 +28,13 @@ public:
     VkSurfaceKHR getSurface() const;
     VkPhysicalDevice getPhysicalDevice() const;
     VkDevice getDevice() const;
-    VkSwapchainKHR getSwapchain() const;
+    std::shared_ptr<SwapChain> getSwapchain() const;
     VkQueue getGraphicsQueue() const;
     VkQueue getPresentQueue() const;
-    VkFormat getSwapchainImageFormat() const;
-    VkExtent2D getSwapchainExtent() const;
+    VkPhysicalDeviceProperties getPhysicalDevicePoperties();
+    VkPhysicalDeviceFeatures getPhysicalDeviceFeatures();
 
-    const std::vector<VkImageView>& getSwapChainImageViews() const;
-
-    //TODO FIX THAT(we need it for Render class)
+    //TODO FIX THAT(we need it for Render and SwapChain classes)
     struct QueueFamilyIndices
     {
         std::optional<uint32_t> graphicsFamily;
@@ -47,7 +46,17 @@ public:
         }
     };
 
-    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
+    struct SwapChainSupportDetails
+    {
+        VkSurfaceCapabilitiesKHR capabilities;
+        std::vector<VkSurfaceFormatKHR> formats;
+        std::vector<VkPresentModeKHR> presentModes;
+    };
+
+    static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface);
+    static SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface);
+
+    const QueueFamilyIndices& getQueueFamilyIndices() const;
 
     void cleanup();
     
@@ -55,13 +64,6 @@ public:
 
 private:
     bool m_isCleanedUp{false};
-
-    struct SwapChainSupportDetails
-    {
-        VkSurfaceCapabilitiesKHR capabilities;
-        std::vector<VkSurfaceFormatKHR> formats;
-        std::vector<VkPresentModeKHR> presentModes;
-    };
 
     std::shared_ptr<platform::Window> m_window{nullptr};
 
@@ -78,9 +80,6 @@ private:
 #endif
     };
 
-    std::vector<VkImage> m_swapChainImages;
-    std::vector<VkImageView> m_swapChainImageViews;
-
     VkInstance m_instance{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
     VkDevice m_device{VK_NULL_HANDLE};
@@ -88,27 +87,22 @@ private:
     VkSurfaceKHR m_surface{VK_NULL_HANDLE};
     VkQueue m_graphicsQueue{VK_NULL_HANDLE};
     VkQueue m_presentQueue{VK_NULL_HANDLE};
-    VkSwapchainKHR m_swapChain{VK_NULL_HANDLE};
-    VkFormat m_swapChainImageFormat{};
-    VkExtent2D m_swapChainExtent{};
+
+    QueueFamilyIndices m_queueFamilyIndices;
+
+    SwapChain::SharedPtr m_swapChain{nullptr};
 
     bool checkValidationLayers();
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
     std::vector<const char*> getRequiredExtensions();
     void pickPhysicalDevice();
     bool isDeviceSuitable(VkPhysicalDevice device);
-    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
-    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
-    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
-    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, std::shared_ptr<platform::Window> window);
 
     void initVulkan(std::shared_ptr<platform::Window> window);
     void createInstance();
     void createDebugger();
     void createSurface(std::shared_ptr<platform::Window> window);
     void createLogicalDevice();
-    void createSwapChain(std::shared_ptr<platform::Window> window);
-    void createImageViews();
 };
 
 ELIX_NESTED_NAMESPACE_END

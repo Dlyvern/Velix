@@ -25,6 +25,8 @@ public:
     VkShaderStageFlagBits getStage();
     VkPipelineShaderStageCreateInfo getInfo();
 
+    const std::vector<char>& getCode() const;
+
     ShaderHandler(const ShaderHandler&) = delete;
     ShaderHandler& operator=(const ShaderHandler&) = delete;
     ShaderHandler();
@@ -37,6 +39,8 @@ private:
     VkShaderStageFlagBits m_shaderStage;
 
     VkPipelineShaderStageCreateInfo m_info{};
+
+    std::vector<char> m_code;
 };
 
 ELIX_NESTED_NAMESPACE_END

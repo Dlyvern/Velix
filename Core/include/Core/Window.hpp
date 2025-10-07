@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 #include <memory>
+#include <functional>
+#include <vector>
 
 #include "Macros.hpp"
 
@@ -14,7 +16,9 @@ ELIX_NESTED_NAMESPACE_BEGIN(platform)
 class Window
 {
 public:
+    using SharedPtr = std::shared_ptr<Window>;
     Window(uint32_t width, uint32_t height, const std::string& title);
+    static SharedPtr create(uint32_t width, uint32_t height, const std::string& title);
 
     void pollEvents();
 
@@ -24,10 +28,12 @@ public:
 
     virtual ~Window();
 
-    static std::shared_ptr<Window> create(uint32_t width, uint32_t height, const std::string& title);
+    void addResizeCallback(const std::function<void(Window*, int, int)>& function);
 
     GLFWwindow* getRawHandler();
 private:
+    static void onWindowResize(GLFWwindow *window, int width, int height);
+    std::vector<std::function<void(Window*, int, int)>> m_resizeCallbacks;
     int m_width, m_height{0};
     std::string m_title;
     GLFWwindow* m_window{nullptr};

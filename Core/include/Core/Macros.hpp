@@ -1,3 +1,5 @@
+//* Yeah, I know that store Macroses inside Core Layer is not ideal...
+
 #ifndef ELIX_MACROS_HPP
 #define ELIX_MACROS_HPP
 

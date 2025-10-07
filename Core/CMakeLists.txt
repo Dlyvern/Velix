@@ -25,6 +25,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
         glfw
         volk
         stb
+        glm::glm
 )
 
 if (WIN32)

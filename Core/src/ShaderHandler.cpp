@@ -71,6 +71,11 @@ VkShaderStageFlagBits ShaderHandler::getStage()
     return m_shaderStage;
 }
 
+const std::vector<char>& ShaderHandler::getCode() const
+{
+    return m_code;
+}
+
 void ShaderHandler::createInfo()
 {
     m_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -81,8 +86,9 @@ void ShaderHandler::createInfo()
 
 VkShaderModule ShaderHandler::createShaderModule(const std::vector<char>& code)
 {
-    VkShaderModuleCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    m_code = code;
+
+    VkShaderModuleCreateInfo createInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     createInfo.codeSize = code.size();
     createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
 

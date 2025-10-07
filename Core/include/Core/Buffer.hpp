@@ -6,24 +6,36 @@
 #include <memory>
 #include <cstdint>
 
+#include "Core/CommandPool.hpp"
+#include "Core/CommandBuffer.hpp"
+
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 class Buffer
 {
 public:
-    Buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags);
+    using SharedPtr = std::shared_ptr<Buffer>;
+
+    Buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags);
 
     void upload(const void* data, VkDeviceSize size);
 
-    static std::shared_ptr<Buffer> create(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags);
+    void bind(VkDeviceSize memoryOffset = 0);
+
+    void destroy();
+
+    static SharedPtr create(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags);
+
+    static CommandBuffer::SharedPtr copy(SharedPtr srcBuffer,  SharedPtr dstBuffer, CommandPool::SharedPtr commandPool,  VkDeviceSize size);
+    
+    static SharedPtr createCopied(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags, CommandPool::SharedPtr commandPool, VkQueue queue);
 
     VkBuffer vkBuffer();
     VkDeviceMemory vkDeviceMemory();
 
     ~Buffer();
 private:
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags flags);
-
+    bool m_isDestroyed{false};
     VkBuffer m_buffer{VK_NULL_HANDLE};
     VkDeviceMemory m_bufferMemory{VK_NULL_HANDLE};
 };
