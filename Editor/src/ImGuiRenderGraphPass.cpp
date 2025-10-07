@@ -6,7 +6,7 @@
 #include <imgui_internal.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
-
+#include <stdexcept>
 //*Proxies should have another proxies and create them with default names
 //*For example, SwapChain proxy can create RenderPassProxy with default name 'SwapChainRenderPass' and the same with framebuffers etc...
 

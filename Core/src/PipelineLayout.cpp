@@ -1,5 +1,6 @@
 #include "Core/PipelineLayout.hpp"
 #include <cstdint>
+#include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 

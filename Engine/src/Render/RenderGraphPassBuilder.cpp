@@ -1,6 +1,6 @@
 #include "Engine/Render/RenderGraphPassBuilder.hpp"
 #include <iostream>
-
+#include <stdexcept>
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 void RenderGraphPassBuilder::createImageProxy(VkDevice device, ImageRenderGraphProxy* imageProxy)

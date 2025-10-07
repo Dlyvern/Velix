@@ -7,6 +7,8 @@
 #include <iostream>
 #include <array>
 
+#include <stdexcept>
+
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 SwapChain::SwapChain(std::shared_ptr<platform::Window> window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily) :

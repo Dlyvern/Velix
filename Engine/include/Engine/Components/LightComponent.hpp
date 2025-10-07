@@ -5,7 +5,7 @@
 #include "Engine/Components/ECS.hpp"
 
 #include <memory>
-
+#include <stdexcept>
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class LightComponent : public ECS

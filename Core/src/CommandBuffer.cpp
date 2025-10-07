@@ -1,6 +1,7 @@
 #include "Core/CommandBuffer.hpp"
 #include <iostream>
 #include <string>
+#include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 

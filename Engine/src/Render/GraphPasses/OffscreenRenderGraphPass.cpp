@@ -7,7 +7,7 @@
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Material.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
-
+#include <stdexcept>
 
 struct ModelPushConstant
 {

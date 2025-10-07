@@ -2,7 +2,7 @@
 #include <glm/vec4.hpp>
 
 #include <cstring>
-
+#include <stdexcept>
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 struct MaterialColor

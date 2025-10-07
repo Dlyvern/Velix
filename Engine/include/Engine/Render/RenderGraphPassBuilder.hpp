@@ -8,7 +8,7 @@
 #include "Engine/Render/Proxies/RenderPassRenderGraphProxy.hpp"
 
 #include <unordered_map>
-
+#include <stdexcept>
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 enum class ResourceAccess : uint8_t

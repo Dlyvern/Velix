@@ -1,5 +1,5 @@
 #include "Engine/EngineConfig.hpp"
-
+#include <stdexcept>
 bool EngineConfig::load(const std::string& path)
 {
     const std::string configPath = path.empty() ? getConfigPath() : path;

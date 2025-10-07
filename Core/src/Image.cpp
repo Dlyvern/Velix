@@ -1,6 +1,7 @@
 #include "Core/Image.hpp"
 #include "Core/VulkanHelpers.hpp"
 #include "Core/CommandBuffer.hpp"
+#include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 

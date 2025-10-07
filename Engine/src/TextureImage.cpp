@@ -9,7 +9,7 @@
 #include "Core/Buffer.hpp"
 #include "Core/VulkanHelpers.hpp"
 #include "Core/VulkanContext.hpp"
-
+#include <stdexcept>
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 TextureImage::TextureImage() = default;
