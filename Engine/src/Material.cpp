@@ -3,6 +3,8 @@
 
 #include <cstring>
 #include <stdexcept>
+#include <array>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 struct MaterialColor

@@ -3,6 +3,7 @@
 
 #include "Engine/Render/GraphPasses/BaseRenderGraphPass.hpp"
 #include <iostream>
+#include <array>
 
 #include "Core/RenderPass.hpp"
 #include <cstring>

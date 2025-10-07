@@ -10,6 +10,8 @@
 
 #include <glm/mat4x4.hpp>
 
+#include <volk.h>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class Material
