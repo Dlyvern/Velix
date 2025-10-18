@@ -22,13 +22,19 @@ CommandBuffer::SharedPtr CommandBuffer::create(VkDevice device, VkCommandPool co
     return std::make_shared<CommandBuffer>(device, commandPool, level);
 }
 
-CommandBuffer::~CommandBuffer()
+void CommandBuffer::destroyVk()
 {
     if(m_commandBuffer)
     {
+        reset();
         vkFreeCommandBuffers(m_device, m_commandPool, 1, &m_commandBuffer);
         m_commandBuffer = VK_NULL_HANDLE;
     }
+}
+
+CommandBuffer::~CommandBuffer()
+{
+    destroyVk();
 }
 
 void CommandBuffer::reset(VkCommandBufferResetFlags flags)

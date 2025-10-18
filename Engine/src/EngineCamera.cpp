@@ -1,6 +1,5 @@
 #include "Engine/EngineCamera.hpp"
 
-#include "Core/Window.hpp"
 #include "Core/VulkanContext.hpp"
 
 #include <GLFW/glfw3.h>

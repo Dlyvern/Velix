@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <array>
 
+#include "Engine/Builders/DescriptorSetBuilder.hpp"
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 struct MaterialColor
@@ -12,54 +14,58 @@ struct MaterialColor
     glm::vec4 color = glm::vec4(1.0f);
 };
 
-Material::Material(VkDevice device, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, 
+Material::Material(VkDevice device, VkPhysicalDevice physicalDevice, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, 
 engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout) :
-m_maxFramesInFlight(maxFramesInFlight), m_texture(texture), m_device(device)
+m_maxFramesInFlight(maxFramesInFlight), m_texture(texture), m_device(device), m_descriptorPool(descriptorPool), m_descriptorSetLayout(descriptorSetLayout)
 {
-    std::vector<VkDescriptorSetLayout> layouts(m_maxFramesInFlight, descriptorSetLayout ? descriptorSetLayout->vk() : m_defaultDescriptorSetLayout->vk());
-
-    VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
-    allocInfo.pSetLayouts = layouts.data();
-
     m_descriptorSets.resize(m_maxFramesInFlight);
+    m_colorBuffers.reserve(m_maxFramesInFlight);
 
-    if(vkAllocateDescriptorSets(device, &allocInfo, m_descriptorSets.data()) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate decsriptor sets");
+    for(uint32_t i = 0; i < m_maxFramesInFlight; ++i)
+    {
+        auto colorBuffer = m_colorBuffers.emplace_back(core::Buffer::create(device, physicalDevice, sizeof(MaterialColor), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
 
+        colorBuffer->upload(&m_color, sizeof(MaterialColor));
+
+        m_descriptorSets[i] = DescriptorSetBuilder::begin()
+        .addBuffer(colorBuffer, sizeof(MaterialColor), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        .addImage(m_texture->vkImageView(), m_texture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+        .build(m_device, m_descriptorPool, m_descriptorSetLayout->vk());
+    }
+}
+
+void Material::setTexture(TextureImage::SharedPtr texture)
+{
+    m_texture = texture;
     updateDescriptorSets();
 }
 
-void Material::createDefaultMaterial(VkDevice device, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, 
-engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout)
+void Material::setColor(const glm::vec4& color)
 {
-    s_defaultMaterial = create(device, descriptorPool, maxFramesInFlight, texture, descriptorSetLayout);
+    m_color = color;
+    updateDescriptorSets();
 }
 
-void Material::createDefaultDescriptorSetLayout(VkDevice device)
+const glm::vec4& Material::getColor() const
 {
-    VkDescriptorSetLayoutBinding textureLayoutBinding{};
-    textureLayoutBinding.binding = 1;
-    textureLayoutBinding.descriptorCount = 1;
-    textureLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    textureLayoutBinding.pImmutableSamplers = nullptr;
-    textureLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutBinding colorLayoutBinding{};
-    colorLayoutBinding.binding = 2;
-    colorLayoutBinding.descriptorCount = 1;
-    colorLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    colorLayoutBinding.pImmutableSamplers = nullptr;
-    colorLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    m_defaultDescriptorSetLayout = core::DescriptorSetLayout::create(device, {textureLayoutBinding, colorLayoutBinding});
+    return m_color;
 }
 
-Material::SharedPtr Material::create(VkDevice device, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, 
+TextureImage::SharedPtr Material::getTexture() const
+{
+    return m_texture;
+}
+
+void Material::createDefaultMaterial(VkDevice device, VkPhysicalDevice physicalDevice, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, 
 engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout)
 {
-    return std::make_shared<Material>(device, descriptorPool, maxFramesInFlight, texture, descriptorSetLayout);
+    s_defaultMaterial = create(device, physicalDevice,descriptorPool, maxFramesInFlight, texture, descriptorSetLayout);
+}
+
+Material::SharedPtr Material::create(VkDevice device, VkPhysicalDevice physicalDevice, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, 
+engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout)
+{
+    return std::make_shared<Material>(device, physicalDevice, descriptorPool, maxFramesInFlight, texture, descriptorSetLayout);
 }
 
 VkDescriptorSet Material::getDescriptorSet(uint32_t frameIndex) const
@@ -69,48 +75,15 @@ VkDescriptorSet Material::getDescriptorSet(uint32_t frameIndex) const
 
 void Material::updateDescriptorSets()
 {
-    m_colorBuffers.reserve(m_maxFramesInFlight);
-
     for(uint32_t i = 0; i < m_maxFramesInFlight; ++i)
     {
-        auto colorBuffer = m_colorBuffers.emplace_back(core::Buffer::create(sizeof(MaterialColor), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
-
-        VkDescriptorImageInfo imageInfo{};
-        VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = m_colorBuffers[i]->vkBuffer();
-        bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(MaterialColor);
-
-        void* data;
-        vkMapMemory(m_device, m_colorBuffers[i]->vkDeviceMemory(), 0, sizeof(MaterialColor), 0, &data);
-        std::memcpy(data, &m_color, sizeof(MaterialColor));
-        vkUnmapMemory(m_device, m_colorBuffers[i]->vkDeviceMemory());
-
-        if(m_texture)
-        {
-            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfo.imageView = m_texture->vkImageView();
-            imageInfo.sampler = m_texture->vkSampler();
-        }
-
-        std::array<VkWriteDescriptorSet, 2> writes{};
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = m_descriptorSets[i];
-        writes[0].dstBinding = 2;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[0].pBufferInfo = &bufferInfo;
-
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = m_descriptorSets[i];
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[1].pImageInfo = m_texture ? &imageInfo : VK_NULL_HANDLE;
-
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        m_colorBuffers[i]->upload(&m_color, sizeof(MaterialColor));
+        
+        DescriptorSetBuilder::begin()
+        .addBuffer(m_colorBuffers[i], sizeof(MaterialColor), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        .addImage(m_texture->vkImageView(), m_texture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+        .update(m_device, m_descriptorSets[i]);
     }
 }
-
 
 ELIX_NESTED_NAMESPACE_END

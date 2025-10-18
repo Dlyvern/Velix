@@ -17,9 +17,9 @@ public:
 
     TextureImage();
 
-    void create(VkDevice device, core::CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t pixels = 0xFFFFFFFF);
+    void create(VkDevice device, VkPhysicalDevice physicalDevice, core::CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t pixels = 0xFFFFFFFF);
 
-    bool load(VkDevice device, const std::string& path, core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad = true);
+    bool load(VkDevice device, VkPhysicalDevice physicalDevice, const std::string& path, core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad = true);
     void freePixels();
 
     unsigned char* getPixels() const;
@@ -27,7 +27,7 @@ public:
     int getHeight() const;
     int getChannels() const;
 
-    core::Image::SharedPtr getImage();
+    core::Image<core::ImageDeleter>::SharedPtr getImage();
     VkImageView vkImageView();
     VkSampler vkSampler();
 
@@ -38,7 +38,7 @@ private:
     int m_width{1};
     int m_height{1};
     int m_channels{0};
-    core::Image::SharedPtr m_image{nullptr};
+    core::Image<core::ImageDeleter>::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};
     VkSampler m_sampler{VK_NULL_HANDLE};
 };

@@ -24,6 +24,7 @@ public:
     void submit(VkQueue queue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkPipelineStageFlags>& waitStages,
     const std::vector<VkSemaphore>& signalSemaphores, VkFence fence);
 
+    void destroyVk();
     VkCommandBuffer vk();
     VkCommandBuffer* pVk();
 

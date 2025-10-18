@@ -19,9 +19,9 @@ public:
         return sizeof(T);
     }
 
-    explicit UniformBufferObject(VkDevice device)
+    explicit UniformBufferObject(VkDevice device, VkPhysicalDevice physicalDevice)
     {
-        m_buffer = core::Buffer::create(sizeof(T), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 0,
+        m_buffer = core::Buffer::create(device, physicalDevice, sizeof(T), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 0,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         vkMapMemory(device, m_buffer->vkDeviceMemory(), 0, sizeof(T), 0, &m_mapped);
@@ -29,9 +29,9 @@ public:
 
     ~UniformBufferObject() = default;
 
-    static SharedPtr create(VkDevice device)
+    static SharedPtr create(VkDevice device, VkPhysicalDevice physicalDevice)
     {
-        return std::make_shared<UniformBufferObject>(device);
+        return std::make_shared<UniformBufferObject>(device, physicalDevice);
     }
 
     void update(const void* data)

@@ -2,7 +2,6 @@
 #define ELIX_VULKAN_HELPERS_HPP
 
 #include "Core/Macros.hpp"
-#include "Core/VulkanContext.hpp"
 
 #include <cstdint>
 #include <iostream>
@@ -13,10 +12,10 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 namespace helpers
 {
-    inline uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags flags)
+    inline uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags flags)
     {
         VkPhysicalDeviceMemoryProperties memoryProperties;
-        vkGetPhysicalDeviceMemoryProperties(VulkanContext::getContext()->getPhysicalDevice(), &memoryProperties);
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
 
         for(uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
             if((typeFilter & (1 << i)) && (memoryProperties.memoryTypes[i].propertyFlags & flags) == flags)
@@ -27,12 +26,12 @@ namespace helpers
         return 0xFFFFFFFF;
     }
 
-    inline VkFormat findSupportedFormat(const std::vector<VkFormat>&candidates, VkImageTiling tiling, VkFormatFeatureFlags features)
+    inline VkFormat findSupportedFormat(VkPhysicalDevice physicalDevice, const std::vector<VkFormat>&candidates, VkImageTiling tiling, VkFormatFeatureFlags features)
     {
         for(auto format : candidates)
         {
             VkFormatProperties properties;
-            vkGetPhysicalDeviceFormatProperties(VulkanContext::getContext()->getPhysicalDevice(), format, &properties);
+            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
 
             if(tiling == VK_IMAGE_TILING_LINEAR && (properties.linearTilingFeatures & features) == features)
                 return format;
@@ -45,9 +44,9 @@ namespace helpers
         return VK_FORMAT_UNDEFINED;
     }
 
-    inline VkFormat findDepthFormat()
+    inline VkFormat findDepthFormat(VkPhysicalDevice physicalDevice)
     {
-        auto format = findSupportedFormat({VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT}, VK_IMAGE_TILING_OPTIMAL,
+        auto format = findSupportedFormat(physicalDevice, {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT}, VK_IMAGE_TILING_OPTIMAL,
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 
         if(format == VK_FORMAT_UNDEFINED)

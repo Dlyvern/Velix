@@ -7,65 +7,48 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <stdexcept>
-//*Proxies should have another proxies and create them with default names
-//*For example, SwapChain proxy can create RenderPassProxy with default name 'SwapChainRenderPass' and the same with framebuffers etc...
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor) : m_editor(editor)
+ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor)
+: m_editor(editor), m_device(core::VulkanContext::getContext()->getDevice())
 {
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     m_clearValues[1].depthStencil = {1.0f, 0};
 }
 
-void ImGuiRenderGraphPass::setup(std::shared_ptr<engine::RenderGraphPassBuilder> builder)
+void ImGuiRenderGraphPass::setViewportImages(const std::vector<VkImageView>& imageViews)
 {
-    m_swapChainProxy = builder->createProxy<engine::SwapChainRenderGraphProxy>("__ELIX_SWAP_CHAIN_PROXY__");
-    m_swapChainProxy->isDependedOnSwapChain = true;
-    m_swapChainProxy->addOnSwapChainRecretedFunction([this]
+    m_descriptorSets.clear();
+
+    for(int index = 0; index < imageViews.size(); ++index)
     {
-        for(auto& framebuffer : m_framebuffers)
-            if(framebuffer)
-                vkDestroyFramebuffer(core::VulkanContext::getContext()->getDevice(), framebuffer, nullptr);
-
-        createFramebuffers();
-    });
-}
-
-void ImGuiRenderGraphPass::createFramebuffers()
-{
-    for (uint32_t i = 0; i < m_swapChainProxy->imageViews.size(); i++)
-    {
-        std::vector<VkImageView> framebufferAttachment{m_swapChainProxy->imageViews[i]};
-        VkFramebufferCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        info.renderPass = m_renderPass->vk();
-        info.attachmentCount = static_cast<uint32_t>(framebufferAttachment.size());
-        info.pAttachments = framebufferAttachment.data();
-        info.width = core::VulkanContext::getContext()->getSwapchain()->getExtent().width;
-        info.height = core::VulkanContext::getContext()->getSwapchain()->getExtent().height;
-        info.layers = 1;
-
-        if (vkCreateFramebuffer(core::VulkanContext::getContext()->getDevice(), &info, nullptr, &m_framebuffers[i]) != VK_SUCCESS)
-            throw std::runtime_error("failed to create framebuffer!");
+        m_descriptorSets.push_back(ImGui_ImplVulkan_AddTexture(m_sampler, imageViews[index], 
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
     }
 }
 
-void ImGuiRenderGraphPass::compile()
+void ImGuiRenderGraphPass::setup(engine::RenderGraphPassRecourceBuilder& graphPassBuilder)
 {
     VkAttachmentDescription attachment = {};
-    attachment.format = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();;
+    attachment.format = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();
     attachment.samples = VK_SAMPLE_COUNT_1_BIT;
     attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    //TODO MAYBE THIS IS NEEDED
-    // attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
     attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    // VkAttachmentDescription colorAttachment{};
+    // colorAttachment.format = m_swapchain->getImageFormat();
+    // colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    // colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    // colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    // colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    // colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     VkAttachmentReference color_attachment = {};
     color_attachment.attachment = 0;
@@ -85,10 +68,74 @@ void ImGuiRenderGraphPass::compile()
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
     m_renderPass = core::RenderPass::create(core::VulkanContext::getContext()->getDevice(), {attachment}, {subpass}, {dependency});
-    
-    m_framebuffers.resize(m_swapChainProxy->imageViews.size());
 
-    createFramebuffers();
+    engine::RenderGraphPassResourceTypes::SizeSpec sizeSpec
+    {
+        .type = engine::RenderGraphPassResourceTypes::SizeClass::SwapchainRelative,
+    };
+    
+    engine::RenderGraphPassResourceTypes::TextureDescription colorTexture{
+        // .name = "__ELIX_SWAP_CHAIN_COLOR__",
+        .name = "__ELIX_IMGUI_COLOR__",
+        .size = sizeSpec,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+        .source = engine::RenderGraphPassResourceTypes::TextureDescription::FormatSource::Swapchain
+    };
+
+    auto colorImageHash = graphPassBuilder.createTexture(colorTexture);
+
+    for(size_t i = 0; i < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++i)
+    {
+        const std::string name = "__ELIX_IMGUI_FRAMEBUFFER_" + std::to_string(i) + "__";
+
+        engine::RenderGraphPassResourceTypes::FramebufferDescription framebufferDescription{
+            .name = name,
+            .attachmentsHash = {colorImageHash + i},
+            .renderPass = m_renderPass,
+            .size = sizeSpec,
+            .layers = 1
+        };
+
+        m_framebufferHashes.push_back(graphPassBuilder.createFramebuffer(framebufferDescription));
+    }
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.maxAnisotropy = 1.0f;
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+
+    if (vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
+        throw std::runtime_error("failed to create texture sampler!");
+}
+
+void ImGuiRenderGraphPass::compile(engine::RenderGraphPassResourceHash& storage)
+{
+    for(const auto& framebufferCache : m_framebufferHashes)
+    {
+        auto framebuffer = storage.getFramebuffer(framebufferCache);
+
+        if(!framebuffer)
+        {
+            std::cerr << "Failed to find a framebuffer for BaseRenderGraphPass" << std::endl;
+            continue;
+        }
+
+        m_framebuffers.push_back(framebuffer);
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -126,8 +173,7 @@ void ImGuiRenderGraphPass::compile()
 		{ VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
 	};
 
-	VkDescriptorPoolCreateInfo poolInfo = {};
-	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	VkDescriptorPoolCreateInfo poolInfo = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
 	poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 	poolInfo.maxSets = 1000;
 	poolInfo.poolSizeCount = std::size(poolSizes);
@@ -161,26 +207,44 @@ void ImGuiRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo& renderP
 {
     renderPassBeginInfo = VkRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     renderPassBeginInfo.renderPass = m_renderPass->vk();
-    renderPassBeginInfo.framebuffer = m_framebuffers[m_currentImageIndex];
+    renderPassBeginInfo.framebuffer = m_framebuffers[m_currentImageIndex]->vk();
     renderPassBeginInfo.renderArea.offset = {0, 0};
     renderPassBeginInfo.renderArea.extent = core::VulkanContext::getContext()->getSwapchain()->getExtent();
     renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(m_clearValues.size());
     renderPassBeginInfo.pClearValues = m_clearValues.data();
 }
 
-void ImGuiRenderGraphPass::update(uint32_t currentFrame, uint32_t currentImageIndex, VkFramebuffer fr)
+void ImGuiRenderGraphPass::update(const engine::RenderGraphPassContext& renderData)
 {
-    m_currentFramebuffer = fr;
-    m_currentImageIndex = currentImageIndex;
+    m_currentFrame = renderData.currentFrame;
+    m_currentImageIndex = renderData.currentImageIndex;
 }
 
-void ImGuiRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer)
+void ImGuiRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData& data)
 {
+    if(data.isViewportImageViewsDirty)
+        setViewportImages(data.viewportImageViews);
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(core::VulkanContext::getContext()->getSwapchain()->getExtent().width);
+    viewport.height = static_cast<float>(core::VulkanContext::getContext()->getSwapchain()->getExtent().height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer->vk(), 0, 1, &viewport);
+    
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = core::VulkanContext::getContext()->getSwapchain()->getExtent();
+    vkCmdSetScissor(commandBuffer->vk(), 0, 1, &scissor);
+
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    m_editor->drawFrame();
+    m_editor->drawFrame(!m_descriptorSets.empty() && m_descriptorSets.size() > m_currentFrame ?
+    m_descriptorSets.at(m_currentFrame) : VK_NULL_HANDLE);
 
     ImGui::Render();
 

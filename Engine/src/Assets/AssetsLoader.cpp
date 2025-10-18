@@ -1,7 +1,8 @@
-#include "Engine/AssetsLoader.hpp"
+#include "Engine/Assets/AssetsLoader.hpp"
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
+
 
 #include <iostream>
 #include <unordered_map>

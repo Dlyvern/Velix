@@ -7,13 +7,13 @@
 #include "Core/CommandPool.hpp"
 #include "Core/SyncObject.hpp"
 
-#include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
-#include "Engine/Render/RenderGraphPassBuilder.hpp"
-#include "Engine/Render/Proxies/ImageRenderGraphProxy.hpp"
 #include "Engine/TextureImage.hpp"
-#include "Engine/Render/Proxies/StaticMeshRenderGraphProxy.hpp"
 
-#include "Engine/Render/Proxies/SwapChainRenderGraphProxy.hpp"
+#include "Engine/Render/RenderGraphPassResourceBuilder.hpp"
+#include "Engine/Render/RenderGraphPassRecourceCompiler.hpp"
+#include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
+#include "Engine/GraphicsPipelineBuilder.hpp"
+
 #include "Core/DescriptorSetLayout.hpp"
 
 #include "Engine/Scene.hpp"
@@ -95,9 +95,11 @@ public:
     void createRenderGraphResources();
     void createDescriptorSetPool();
     void createDescriptorSetLayouts();
-    void createCameraDescriptorSets();
+    void createCameraDescriptorSets(VkSampler sampler, VkImageView imageView);
     void createGraphicsPipeline();
     void createDirectionalLightDescriptorSets();
+
+    void cleanResources();
 
 private:
     struct CameraUBO
@@ -121,20 +123,19 @@ private:
         LightData lights[];
     };  
 
+    struct LightSpaceMatrixUBO
+    {
+        glm::mat4 lightSpaceMatrix;
+    };
+
     void begin();
     void end();
 
     Scene::SharedPtr m_scene{nullptr};
 
-    void createSwapChainResources();
-    void cleanupSwapChainResources();
-
-
     void compile();
     std::unordered_map<std::type_index, IRenderGraphPass::SharedPtr> m_renderGraphPasses;
     
-    std::shared_ptr<RenderGraphPassBuilder> m_builder{nullptr};
-
     VkDevice m_device{VK_NULL_HANDLE};
 
     core::SwapChain::SharedPtr m_swapchain{nullptr};
@@ -164,12 +165,18 @@ private:
     core::DescriptorSetLayout::SharedPtr m_cameraSetLayout{nullptr};
     std::vector<VkDescriptorSet> m_cameraDescriptorSets;
 
+    std::vector<UniformBufferObject<LightSpaceMatrixUBO>::SharedPtr> m_lightSpaceMatrixUniformObjects;
+
     std::vector<core::CommandBuffer::SharedPtr> m_commandBuffers;
     std::vector<std::vector<core::CommandBuffer::SharedPtr>> m_secondaryCommandBuffers;
 
-    SwapChainRenderGraphProxy::SharedPtr m_swapChainProxy{nullptr};
-    StaticMeshRenderGraphProxy::SharedPtr m_staticMeshProxy{nullptr};
-    ImageRenderGraphProxy::SharedPtr m_depthImageProxy{nullptr};
+    core::RenderPass::SharedPtr m_swapChainRenderPass{nullptr};
+
+    RenderGraphPassRecourceBuilder m_resourceBuilder;
+    RenderGraphPassResourceHash m_resourceStorage;
+    RenderGraphPassResourceCompiler m_resourceCompiler;
+
+    RenderGraphPassPerFrameData m_perFrameData;
 };
 
 ELIX_NESTED_NAMESPACE_END

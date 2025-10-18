@@ -14,20 +14,36 @@ class DescriptorSetBuilder
 {
 public:
     static DescriptorSetBuilder begin();
-    DescriptorSetBuilder& addImage();
-    DescriptorSetBuilder& addBuffer(core::Buffer::SharedPtr buffer, VkDeviceSize range, uint32_t binding, VkDescriptorSet descriptorSet);
+    DescriptorSetBuilder& addImage(VkImageView imageView, VkSampler sampler, VkImageLayout imageLayout, uint32_t binding);
+    DescriptorSetBuilder& addBuffer(core::Buffer::SharedPtr buffer, VkDeviceSize range, uint32_t binding, VkDescriptorType descriptorType);
 
-    void build(VkDevice device);
+    VkDescriptorSet build(VkDevice device, VkDescriptorPool descriptorPool, VkDescriptorSetLayout layout);
+
+    void update(VkDevice device, VkDescriptorSet dst);
 
 private:
-    struct WriterData
+    struct BufferInfo
     {
-        VkDescriptorBufferInfo buffer{VK_NULL_HANDLE};
-        VkDescriptorImageInfo image{VK_NULL_HANDLE};
+        core::Buffer::SharedPtr buffer{nullptr};
+        uint32_t binding{0};
+        VkDeviceSize range{0};
+        VkDescriptorType descriptorType{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER};
     };
 
-    std::vector<std::pair<VkWriteDescriptorSet, WriterData>> m_writers;
-    // std::vector<VkWriteDescriptorSet> m_writers;
+    struct ImageInfo
+    {
+        VkImageView imageView{VK_NULL_HANDLE};
+        VkSampler sampler{VK_NULL_HANDLE};
+        VkImageLayout imageLayout{VK_IMAGE_LAYOUT_UNDEFINED};
+        uint32_t binding{0};
+    };
+
+    std::vector<BufferInfo> m_bufferInfos;
+    std::vector<ImageInfo> m_imageInfos;
+
+    std::vector<VkWriteDescriptorSet> m_writers;
+
+    void createWriters(VkDescriptorSet dstSet, std::vector<VkWriteDescriptorSet>& writers, std::vector<VkDescriptorBufferInfo>& bufferInfos, std::vector<VkDescriptorImageInfo>& imageInfos);
 };
 
 ELIX_NESTED_NAMESPACE_END

@@ -9,8 +9,6 @@
 #include <iostream>
 #include <cstring>
 
-
-
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 void ShowMainDockSpace()
@@ -78,10 +76,13 @@ void ShowMainDockSpace()
     }
 }
 
-void Editor::drawFrame()
+void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet)
 {
     ShowMainDockSpace();
-    drawViewport();
+
+    if(viewportDescriptorSet)
+        drawViewport(viewportDescriptorSet);
+    
     drawHierarchy();
     drawBenchmark();
     drawDetails();
@@ -192,14 +193,13 @@ void Editor::drawDetails()
     ImGui::End();
 }
 
-void Editor::drawViewport()
+void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 {
     ImGui::Begin("Viewport");
     ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
-    // ImGui::Image((ImTextureID)(intptr_t)m_offscreenDescriptor, ImVec2(viewportPanelSize.x, viewportPanelSize.y));
+    ImGui::Image(viewportDescriptorSet, ImVec2(viewportPanelSize.x, viewportPanelSize.y));
     ImGui::End();
 }
-
 
 void Editor::drawBenchmark()
 {

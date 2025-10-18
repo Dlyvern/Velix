@@ -2,58 +2,63 @@
 #define ELIX_OFFSCREEN_RENDER_GRAPH_PASS_HPP
 
 #include "Core/Macros.hpp"
-
-#include "Core/Image.hpp"
+#include "Core/PipelineLayout.hpp"
+#include "Core/SwapChain.hpp"
+#include "Core/GraphicsPipeline.hpp"
 #include "Core/RenderPass.hpp"
 #include "Core/CommandPool.hpp"
-#include "Core/PipelineLayout.hpp"
-#include "Core/GraphicsPipeline.hpp"
-#include "Core/DescriptorSetLayout.hpp"
+#include "Core/Framebuffer.hpp"
+#include "Core/Texture.hpp"
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
-#include "Engine/Render/Proxies/ImageRenderGraphProxy.hpp"
-#include "Engine/Render/Proxies/StaticMeshRenderGraphProxy.hpp"
-#include "Engine/Render/Proxies/RenderPassRenderGraphProxy.hpp"
 
-#include <vector>
+#include <array>
+#include <cstdint>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class OffscreenRenderGraphPass : public IRenderGraphPass
 {
 public:
-    OffscreenRenderGraphPass(core::PipelineLayout::SharedPtr pipelineLayout, const std::vector<VkDescriptorSet>& descriptorSets,
-    core::GraphicsPipeline::SharedPtr graphicsPipeline);
-    void setup(std::shared_ptr<RenderGraphPassBuilder> builder) override;
-    void compile() override;
-    void execute(core::CommandBuffer::SharedPtr commandBuffer) override;
-    void update(uint32_t currentFrame, uint32_t currentImageIndex, VkFramebuffer fr) override;
+    OffscreenRenderGraphPass(VkDevice device, core::PipelineLayout::SharedPtr pipelineLayout);
+    void setup(RenderGraphPassRecourceBuilder& graphPassBuilder) override;
+    void compile(RenderGraphPassResourceHash& storage) override;
+    void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data) override;
+    void update(const RenderGraphPassContext& renderData) override;
     void getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const override;
+
+    void beginRenderPass() override {}
+    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer) override {}
+    void cleanup() override {}
+
+    std::vector<VkImageView> getImageViews() const
+    {
+        //TODO resize it
+        std::vector<VkImageView> imageViews;
+
+        for(const auto& texture : m_colorImages)
+            imageViews.push_back(texture->vkImageView());
+
+        return imageViews;
+    }
 private:
-    void createImages();
-    void createImageViews();
-    void createFramebuffers();
-
-    std::array<VkClearValue, 2> m_clearValue;
-    std::vector<core::Image::SharedPtr> m_images;
-    std::vector<VkImageView> m_imageViews;
-
-    ImageRenderGraphProxy::SharedPtr m_depthImageProxy{nullptr};
-
-    uint32_t m_currentFrame;
-    uint32_t m_imageIndex;
-    std::vector<VkDescriptorSet> m_descriptorSet;
-
-    // RenderPassRenderGraphProxy::SharedPtr m_viewportRenderPassProxy{nullptr};
-    core::RenderPass::SharedPtr m_renderPass{nullptr};
-
-    StaticMeshRenderGraphProxy::SharedPtr m_staticMeshProxy{nullptr};
-    core::CommandPool::SharedPtr m_commandPool{nullptr};
-    core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
+    std::array<VkClearValue, 2> m_clearValues;
+    uint32_t m_imageIndex{0};
+    uint32_t m_currentFrame{0};
+    std::weak_ptr<core::PipelineLayout> m_pipelineLayout;
+    std::weak_ptr<core::SwapChain> m_swapChain;
     core::GraphicsPipeline::SharedPtr m_graphicsPipeline{nullptr};
-    core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
+    core::RenderPass::SharedPtr m_renderPass{nullptr};
+    core::CommandPool::SharedPtr m_commandPool{nullptr};
+    VkDevice m_device{VK_NULL_HANDLE};
+    std::size_t m_depthImageHash;
 
-    std::vector<VkFramebuffer> m_framebuffers{nullptr};
+    std::vector<std::size_t> m_framebufferHashes;
+    std::vector<std::size_t> m_colorTextureHashes;
+
+    std::vector<core::Texture<core::ImageNoDelete>::SharedPtr> m_colorImages;
+    core::Texture<core::ImageNoDelete>::SharedPtr m_depthImageTexture;
+    std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
 };
 
 ELIX_NESTED_NAMESPACE_END

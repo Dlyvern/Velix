@@ -16,15 +16,16 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 class Editor
 {
 public:
-    //!Maybe we can do something better heres
+    //!Maybe we can do something better here
     void setScene(engine::Scene::SharedPtr scene)
     {
         m_scene = scene;
     }
-    void drawFrame();
+
+    void drawFrame(VkDescriptorSet viewportDescriptorSet = VK_NULL_HANDLE);
 private:
     void drawDetails();
-    void drawViewport();
+    void drawViewport(VkDescriptorSet viewportDescriptorSet);
     void drawHierarchy();
     void drawBenchmark();
     engine::Scene::SharedPtr m_scene{nullptr};

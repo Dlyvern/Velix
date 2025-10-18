@@ -30,6 +30,8 @@ public:
 
     void addResizeCallback(const std::function<void(Window*, int, int)>& function);
 
+    void getMaxMonitorResolution(int* width, int* height);
+
     GLFWwindow* getRawHandler();
 private:
     static void onWindowResize(GLFWwindow *window, int width, int height);

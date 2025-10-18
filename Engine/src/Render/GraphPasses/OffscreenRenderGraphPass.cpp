@@ -1,247 +1,251 @@
 #include "Engine/Render/GraphPasses/OffscreenRenderGraphPass.hpp"
 
-#include "Core/VulkanContext.hpp"
+#include "Engine/Components/StaticMeshComponent.hpp"
+#include "Engine/Components/Transform3DComponent.hpp"
+#include "Engine/GraphicsPipelineBuilder.hpp"
+
+#include "Core/Shader.hpp"
 #include "Core/VulkanHelpers.hpp"
 
-#include "Engine/GraphicsPipelineBuilder.hpp"
-#include "Engine/Components/Transform3DComponent.hpp"
-#include "Engine/Material.hpp"
-#include "Engine/Components/StaticMeshComponent.hpp"
-#include <stdexcept>
+#include <iostream>
 
 struct ModelPushConstant
 {
-    glm::mat4 model;
+    glm::mat4 model{1.0f};
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-OffscreenRenderGraphPass::OffscreenRenderGraphPass(core::PipelineLayout::SharedPtr pipelineLayout, const std::vector<VkDescriptorSet>& descriptorSets,
-core::GraphicsPipeline::SharedPtr graphicsPipeline)
-: m_pipelineLayout(pipelineLayout), m_descriptorSet(descriptorSets), m_graphicsPipeline(graphicsPipeline)
+OffscreenRenderGraphPass::OffscreenRenderGraphPass(VkDevice device, core::PipelineLayout::SharedPtr pipelineLayout) :
+m_pipelineLayout(pipelineLayout), m_swapChain(core::VulkanContext::getContext()->getSwapchain()), m_device(device)
 {
-    const auto& context = core::VulkanContext::getContext();
-    const auto& swapChain = context->getSwapchain();
-    const auto& swapChainImages = swapChain->getImages();
+    auto queueFamilyIndices = core::VulkanContext::findQueueFamilies(core::VulkanContext::getContext()->getPhysicalDevice(), core::VulkanContext::getContext()->getSurface());
+    m_commandPool = core::CommandPool::create(device, queueFamilyIndices.graphicsFamily.value());
 
-    m_imageViews.resize(swapChainImages.size());
-    m_images.reserve(swapChainImages.size());
-    m_framebuffers.resize(m_imageViews.size());
+    m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
+    m_clearValues[1].depthStencil = {1.0f, 0};
+}   
 
-    auto queueFamilyIndices = core::VulkanContext::findQueueFamilies(context->getPhysicalDevice(), context->getSurface());
-    m_commandPool = core::CommandPool::create(context->getDevice(), queueFamilyIndices.graphicsFamily.value());
-
-    m_clearValue[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
-    m_clearValue[1].depthStencil = {1.0f, 0};
-
-    std::vector<VkAttachmentDescription> attachments = {};
-    attachments.resize(2);
-    attachments[0].format = swapChain->getImageFormat();
-    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
-    attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    attachments[1].format = core::helpers::findDepthFormat();
-    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
-    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference colorReference = {};
-    colorReference.attachment = 0;
-    colorReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference depthReference = {};
-    depthReference.attachment = 1;
-    depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkSubpassDescription subpassDescription = {};
-    subpassDescription.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpassDescription.colorAttachmentCount = 1;
-    subpassDescription.pColorAttachments = &colorReference;
-    subpassDescription.pDepthStencilAttachment = &depthReference;
-    subpassDescription.inputAttachmentCount = 0;
-    subpassDescription.pInputAttachments = nullptr;
-    subpassDescription.preserveAttachmentCount = 0;
-    subpassDescription.pPreserveAttachments = nullptr;
-    subpassDescription.pResolveAttachments = nullptr;
-
-    // Subpass dependencies for layout transitions
-    std::vector<VkSubpassDependency> dependencies;
-    dependencies.resize(2);
-    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependencies[0].dstSubpass = 0;
-    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-    dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
-
-    dependencies[1].srcSubpass = 0;
-    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-    dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-    dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
-
-    VkRenderPassCreateInfo renderPassInfo = {};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-    renderPassInfo.pAttachments = attachments.data();
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpassDescription;
-    renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
-    renderPassInfo.pDependencies = dependencies.data();
-
-    m_renderPass = core::RenderPass::create(context->getDevice(), attachments, {subpassDescription}, dependencies);
-
-    createImages();
-    createImageViews();
-}
-
-void OffscreenRenderGraphPass::createImages()
+void OffscreenRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuilder)
 {
-    auto swapChain = core::VulkanContext::getContext()->getSwapchain();
+    VkAttachmentDescription colorAttachment{};
+    colorAttachment.format = m_swapChain.lock()->getImageFormat();
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    for(uint32_t i = 0; i < swapChain->getImages().size(); ++i)
+    VkAttachmentDescription depthAttachment{};
+    depthAttachment.format = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
+    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference colorAttachmentReference{};
+    colorAttachmentReference.attachment = 0;
+    colorAttachmentReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference depthAttachmentReference{};
+    depthAttachmentReference.attachment = 1;
+    depthAttachmentReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorAttachmentReference;
+    subpass.pDepthStencilAttachment = &depthAttachmentReference;
+
+    std::vector<VkSubpassDependency> dependency;
+    dependency.resize(1);
+    dependency[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency[0].dstSubpass = 0;
+    dependency[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency[0].srcAccessMask = 0;
+    dependency[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    std::vector<VkAttachmentDescription> attachments{colorAttachment, depthAttachment};
+
+    m_renderPass = core::RenderPass::create(m_device, attachments, {subpass}, dependency);
+
+    RenderGraphPassResourceTypes::SizeSpec sizeSpec
     {
-        auto image = core::Image::create(core::VulkanContext::getContext()->getDevice(), swapChain->getExtent().width, swapChain->getExtent().height, 
-        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        VK_FORMAT_B8G8R8A8_SRGB, VK_IMAGE_TILING_LINEAR);
-        
-        image->insertImageMemoryBarrier(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-        m_commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
+        .type = RenderGraphPassResourceTypes::SizeClass::SwapchainRelative,
+    };
 
-        m_images.push_back(image);
+    RenderGraphPassResourceTypes::TextureDescription depthTexture{
+        .name = "__ELIX_OFFSCREEN_DEPTH__",
+        .format = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice()),
+        .size = sizeSpec,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+        .properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+    };
+    
+    RenderGraphPassResourceTypes::TextureDescription colorTexture{
+        .format = m_swapChain.lock()->getImageFormat(),
+        .size = sizeSpec,
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+        .properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        .tiling = VK_IMAGE_TILING_LINEAR,
+    };
+
+    m_depthImageHash = graphPassBuilder.createTexture(depthTexture, {.access = ResourceAccess::WRITE, .user = this});
+
+    for(int i = 0; i < m_swapChain.lock()->getImages().size(); ++i)
+    {
+        const std::string name = "__ELIX_OFFSCREEN_COLOR_" + std::to_string(i) + "__";
+        colorTexture.name = name;
+        m_colorTextureHashes.push_back(graphPassBuilder.createTexture(colorTexture, {.access = ResourceAccess::WRITE, .user = this}));
+    }
+
+    for(size_t i = 0; i < m_colorTextureHashes.size(); ++i)
+    {
+        const std::string name = "__ELIX_OFFSCREEN_FRAMEBUFFER_" + std::to_string(i) + "__";
+
+        RenderGraphPassResourceTypes::FramebufferDescription framebufferDescription{
+            .name = name,
+            .attachmentsHash = {m_colorTextureHashes[i], m_depthImageHash},
+            .renderPass = m_renderPass,
+            .size = sizeSpec,
+            .layers = 1
+        };
+
+        m_framebufferHashes.push_back(graphPassBuilder.createFramebuffer(framebufferDescription));
     }
 }
 
-void OffscreenRenderGraphPass::createImageViews()
+void OffscreenRenderGraphPass::update(const RenderGraphPassContext& renderData)
 {
-    for(size_t i = 0; i < m_images.size(); ++i)
-    {
-        VkImageViewCreateInfo imageViewCI{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        imageViewCI.image = m_images[i]->vk();
-        imageViewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        imageViewCI.format = VK_FORMAT_B8G8R8A8_SRGB;
-        imageViewCI.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        imageViewCI.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        imageViewCI.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        imageViewCI.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        imageViewCI.subresourceRange.baseMipLevel = 0;
-        imageViewCI.subresourceRange.levelCount = 1;
-        imageViewCI.subresourceRange.baseArrayLayer = 0;
-        imageViewCI.subresourceRange.layerCount = 1;
-
-        if(vkCreateImageView(core::VulkanContext::getContext()->getDevice(), &imageViewCI, nullptr, &m_imageViews[i]) != VK_SUCCESS)
-            throw std::runtime_error("Failed to create image views");
-    }
-}
-
-void OffscreenRenderGraphPass::createFramebuffers()
-{
-    for(size_t i = 0; i < m_imageViews.size(); ++i)
-    {
-        std::vector<VkImageView> attachments{m_imageViews[i], m_depthImageProxy->imageView};
-
-        VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-        // framebufferInfo.renderPass = m_viewportRenderPassProxy->storage.data->vk();
-        framebufferInfo.renderPass = m_renderPass->vk();
-        framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-        framebufferInfo.pAttachments = attachments.data();
-        framebufferInfo.width = core::VulkanContext::getContext()->getSwapchain()->getExtent().width;
-        framebufferInfo.height = core::VulkanContext::getContext()->getSwapchain()->getExtent().height;
-        framebufferInfo.layers = 1;
-
-        if(vkCreateFramebuffer(core::VulkanContext::getContext()->getDevice(), &framebufferInfo, nullptr, &m_framebuffers[i]) != VK_SUCCESS)
-            throw std::runtime_error("Failed to create framebuffer");
-    }
+    m_currentFrame = renderData.currentFrame;
+    m_imageIndex = renderData.currentImageIndex;
 }
 
 void OffscreenRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const
 {
     renderPassBeginInfo = VkRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    // renderPassBeginInfo.renderPass = m_viewportRenderPassProxy->storage.data->vk();
     renderPassBeginInfo.renderPass = m_renderPass->vk();
-    renderPassBeginInfo.framebuffer = m_framebuffers[m_imageIndex];
+    renderPassBeginInfo.framebuffer = m_framebuffers[m_imageIndex]->vk();
     renderPassBeginInfo.renderArea.offset = {0, 0};
-    renderPassBeginInfo.renderArea.extent = core::VulkanContext::getContext()->getSwapchain()->getExtent();
-    renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(m_clearValue.size());
-    renderPassBeginInfo.pClearValues = m_clearValue.data();
+    renderPassBeginInfo.renderArea.extent = m_swapChain.lock()->getExtent();
+    renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(m_clearValues.size());
+    renderPassBeginInfo.pClearValues = m_clearValues.data();
 }
 
-void OffscreenRenderGraphPass::setup(RenderGraphPassBuilder::SharedPtr builder)
+void OffscreenRenderGraphPass::compile(RenderGraphPassResourceHash& storage)
 {
-    m_depthImageProxy = builder->createProxy<ImageRenderGraphProxy>("__ELIX_SWAP_CHAIN_DEPTH_PROXY__");
-    m_staticMeshProxy = builder->createProxy<StaticMeshRenderGraphProxy>("__ELIX_SCENE_STATIC_MESH_PROXY__");
-    // m_viewportRenderPassProxy = builder->createProxy<RenderPassRenderGraphProxy>("__ELIX_VIEWPORT_RENDER_PASS_PROXY__");
+    for(const auto& colorHash : m_colorTextureHashes)
+    {
+        auto colorTexture = storage.getTexture(colorHash);
+
+        if(!colorTexture)
+        {
+            std::cerr << "Failed to find a color texture for OffscreenRenderGraphPass" << std::endl;
+            continue;
+        }
+
+        colorTexture->getImage()->insertImageMemoryBarrier(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VkImageSubresourceRange{
+            VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, m_commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
+
+        m_colorImages.push_back(colorTexture);
+    }   
+
+    for(const auto& framebufferCache : m_framebufferHashes)
+    {
+        auto framebuffer = storage.getFramebuffer(framebufferCache);
+
+        if(!framebuffer)
+        {
+            std::cerr << "Failed to find a framebuffer for BaseRenderGraphPass" << std::endl;
+            continue;
+        }
+
+        m_framebuffers.push_back(framebuffer);
+    }
+
+
+    core::Shader shader("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
+
+    auto bindingDescription = engine::Vertex3D::getBindingDescription();
+    auto attributeDescription = engine::Vertex3D::getAttributeDescriptions();
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescription.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescription.data();
+
+    auto viewport = m_swapChain.lock()->getViewport();
+    auto scissor = m_swapChain.lock()->getScissor();
+
+    engine::GraphicsPipelineBuilder graphicsPipelineBuilder;
+    graphicsPipelineBuilder.layout = m_pipelineLayout.lock()->vk();
+    graphicsPipelineBuilder.renderPass = m_renderPass->vk();
+    graphicsPipelineBuilder.viewportState.pViewports = &viewport;
+    graphicsPipelineBuilder.viewportState.pScissors = &scissor;
+    graphicsPipelineBuilder.shaderStages = shader.getShaderStages();
+
+    m_graphicsPipeline = graphicsPipelineBuilder.build(m_device, vertexInputInfo);
 }
 
-void OffscreenRenderGraphPass::compile()
+void OffscreenRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data)
 {
-    createFramebuffers();
-}
+    vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline->vk());
 
-void OffscreenRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer)
-{
-    // const auto& context = core::VulkanContext::getContext();
-    // const auto& swapChain = context->getSwapchain();
+    vkCmdSetViewport(commandBuffer->vk(), 0, 1, &data.swapChainViewport);
+    vkCmdSetScissor(commandBuffer->vk(), 0, 1, &data.swapChainScissor);
 
-    // vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline->vk());
+    for(const auto [entity, mesh] : data.transformationBasedOnMesh)
+    {
+        VkBuffer vertexBuffers[] = {mesh->vertexBuffer->vkBuffer()};
+        VkDeviceSize offset[] = {0};
 
-    // auto viewport = swapChain->getViewport();
-    // auto scissor = swapChain->getScissor();
-    // vkCmdSetViewport(commandBuffer->vk(), 0, 1, &viewport);
-    // vkCmdSetScissor(commandBuffer->vk(), 0, 1, &scissor);
+        vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
+        vkCmdBindIndexBuffer(commandBuffer->vk(), mesh->indexBuffer->vkBuffer(), 0, mesh->indexType);
 
-    // for(const auto [enity, mesh] : m_staticMeshProxy->transformationBasedOnMesh)
-    // {
-    //     VkBuffer vertexBuffers[] = {mesh->vertexBuffer->vkBuffer()};
+        ModelPushConstant modelPushConstant{};
 
-    //     VkDeviceSize offset[] = {0};
-    //     vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
-    //     vkCmdBindIndexBuffer(commandBuffer->vk(), mesh->indexBuffer->vkBuffer(), 0, mesh->indexType);
-
-    //     // getDevice()->gpuProps.limits.maxPushConstantsSize;
-
-    //     ModelPushConstant modelPushConstant;
-    //     modelPushConstant.model = glm::mat4(1.0f);
-
-    //     if(auto tr = enity->getComponent<Transform3DComponent>())
-    //         modelPushConstant.model = tr->getMatrix();
-    //     else
-    //         std::cerr << "ERROR: MODEL DOES NOT HAVE TRANSFORM COMPONENT. SOMETHING IS WEIRD" << std::endl;
+        if(auto tr = entity->getComponent<Transform3DComponent>())
+            modelPushConstant.model = tr->getMatrix();
+        else
+            std::cerr << "ERROR: MODEL DOES NOT HAVE TRANSFORM COMPONENT. SOMETHING IS WEIRD" << std::endl;
         
-    //     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
+        vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout.lock()->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
 
-    //     VkDescriptorSet materialDst = Material::getDefaultMaterial()->getDescriptorSet(m_currentFrame);
+        VkDescriptorSet materialDst{VK_NULL_HANDLE};
 
-    //     if(auto staticMesh = enity->getComponent<StaticMeshComponent>())
-    //         if(auto material = staticMesh->getMaterial())
-    //             materialDst = material->getDescriptorSet(m_currentFrame);
+        if(auto staticMesh = entity->getComponent<StaticMeshComponent>())
+            if(auto material = staticMesh->getMaterial())
+                materialDst = material->getDescriptorSet(m_currentFrame);
+            else
+                materialDst = Material::getDefaultMaterial()->getDescriptorSet(m_currentFrame);
 
-    //     vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout->vk(), 1, 1, &materialDst, 0, nullptr);
+        const std::array<VkDescriptorSet, 3> descriptorSets = 
+        {
+            data.cameraDescriptorSet,
+            materialDst,
+            data.lightDescriptorSet
+        };
 
-    //     vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout->vk(), 0, 1, &m_descriptorSet[m_currentFrame], 0, nullptr);
+        vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout.lock()->vk(), 0, static_cast<uint32_t>(descriptorSets.size()), 
+        descriptorSets.data(), 0, nullptr);
 
-    //     vkCmdDrawIndexed(commandBuffer->vk(), mesh->indicesCount, 1, 0, 0, 0);
-    // }
-}
-
-void OffscreenRenderGraphPass::update(uint32_t currentFrame, uint32_t currentImageIndex, VkFramebuffer fr)
-{
-    m_currentFrame = currentFrame;
-    m_imageIndex = currentImageIndex;
+        vkCmdDrawIndexed(commandBuffer->vk(), mesh->indicesCount, 1, 0, 0, 0);
+    }
 }
 
 ELIX_NESTED_NAMESPACE_END

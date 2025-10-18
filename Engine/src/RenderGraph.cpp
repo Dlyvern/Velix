@@ -1,28 +1,29 @@
 #include "Engine/RenderGraph.hpp"
 #include "Core/VulkanContext.hpp"
 
-#include "Engine/Render/GraphPasses/BaseRenderGraphPass.hpp"
 #include <iostream>
 #include <array>
-
-#include "Core/RenderPass.hpp"
 #include <cstring>
 #include <stdexcept>
+
+#include "Core/RenderPass.hpp"
 #include "Core/Shader.hpp"
 #include "Core/VulkanHelpers.hpp"
 
-#include "Engine/GraphicsPipelineBuilder.hpp"
-
-#include "Engine/Render/GraphPasses/BaseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/OffscreenRenderGraphPass.hpp"
 
+#include "Engine/GraphicsPipelineBuilder.hpp"
+#include "Engine/Render/GraphPasses/BaseRenderGraphPass.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
-#include "Core/VulkanHelpers.hpp"
-
 #include "Engine/PushConstant.hpp"
-
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
+#include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
+
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 struct ModelPushConstant
 {
@@ -32,17 +33,9 @@ struct ModelPushConstant
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene) : m_device(device), 
-m_swapchain(swapchain), m_scene(scene)
+m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanContext::getContext()->getPhysicalDevice(), swapchain)
 {
-    //!All engine's proxies should be named with __ELIX__ prefix
-    //!Describe proxies data then compile it and then build it via RenderGraphPassBuilder
-
-    m_builder = std::make_shared<RenderGraphPassBuilder>();
-
     m_syncObject = std::make_unique<core::SyncObject>(m_device, MAX_FRAMES_IN_FLIGHT);
-
-    m_swapChainProxy = m_builder->createProxy<SwapChainRenderGraphProxy>("__ELIX_SWAP_CHAIN_PROXY__");
-    m_swapChainProxy->renderPassProxy = m_builder->createProxy<RenderPassRenderGraphProxy>("__ELIX_SWAP_CHAIN_RENDER_PASS_PROXY__");
 
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = m_swapchain->getImageFormat();
@@ -55,7 +48,7 @@ m_swapchain(swapchain), m_scene(scene)
     colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     VkAttachmentDescription depthAttachment{};
-    depthAttachment.format = core::helpers::findDepthFormat();
+    depthAttachment.format = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -63,7 +56,6 @@ m_swapchain(swapchain), m_scene(scene)
     depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
 
     VkAttachmentReference colorAttachmentReference{};
     colorAttachmentReference.attachment = 0;
@@ -90,36 +82,8 @@ m_swapchain(swapchain), m_scene(scene)
 
     std::vector<VkAttachmentDescription> attachments{colorAttachment, depthAttachment};
 
-    // m_swapChainProxy->renderPassProxy->attachments.insert(m_swapChainProxy->renderPassProxy->attachments.begin(), attachments.begin(), attachments.end());
-    // m_swapChainProxy->renderPassProxy->subpasses.push_back(subpass);
-    // m_swapChainProxy->renderPassProxy->dependencies.push_back(dependency);
-
     //TODO IT SHOULD BE REMOVED IMMEDIATLY
-    m_swapChainProxy->renderPassProxy->storage.data = core::RenderPass::create(m_device, attachments, {subpass}, dependency);
-
-    m_swapChainProxy->imageViews.resize(swapchain->getImages().size());
-    m_swapChainProxy->storage.data.resize(m_swapChainProxy->imageViews.size());
-    m_swapChainProxy->images.resize(swapchain->getImages().size());
-
-    m_depthImageProxy = m_builder->createProxy<ImageRenderGraphProxy>("__ELIX_SWAP_CHAIN_DEPTH_PROXY__");
-
-    m_depthImageProxy->width = m_swapchain->getExtent().width;
-    m_depthImageProxy->height = m_swapchain->getExtent().height;
-    m_depthImageProxy->usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    m_depthImageProxy->format = core::helpers::findDepthFormat();
-    m_depthImageProxy->properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-    m_depthImageProxy->aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-    m_depthImageProxy->isDependedOnSwapChain = true;
-    
-    m_depthImageProxy->addOnSwapChainRecretedFunction([this]()
-    {     
-        m_depthImageProxy->storage.data->transitionImageLayout(core::helpers::findDepthFormat(), VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, m_commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
-    });
-
-    m_swapChainProxy->additionalImages.push_back(m_depthImageProxy);
-
-    m_staticMeshProxy = m_builder->createProxy<StaticMeshRenderGraphProxy>("__ELIX_SCENE_STATIC_MESH_PROXY__");
+    m_swapChainRenderPass = core::RenderPass::create(m_device, attachments, {subpass}, dependency);
 
     auto queueFamilyIndices = core::VulkanContext::findQueueFamilies(core::VulkanContext::getContext()->getPhysicalDevice(), core::VulkanContext::getContext()->getSurface());
     m_commandPool = core::CommandPool::create(m_device, queueFamilyIndices.graphicsFamily.value());
@@ -140,32 +104,12 @@ m_swapchain(swapchain), m_scene(scene)
 
             hashing::hash(hashData, (mesh.vertices.size()));
 
-            auto gpuMesh = GPUMesh::createFromMesh(mesh, graphicsQueue, m_commandPool);
-            m_staticMeshProxy->storage.data[hashData] = gpuMesh;
-            m_staticMeshProxy->transformationBasedOnMesh[entity] = gpuMesh;
+            auto gpuMesh = GPUMesh::createFromMesh(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), mesh, graphicsQueue, m_commandPool);
+
+            m_perFrameData.meshes[hashData] = gpuMesh;
+            m_perFrameData.transformationBasedOnMesh[entity] = gpuMesh;
+
         }
-    }
-
-    for(size_t index = 0; index < m_swapchain->getImages().size(); ++index)
-    {
-        m_swapChainProxy->images[index] = m_swapchain->getImages()[index];
-
-        VkImageViewCreateInfo createInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        createInfo.image = m_swapchain->getImages()[index];
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = m_swapchain->getImageFormat();
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        createInfo.subresourceRange.baseMipLevel = 0;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
-
-        if(vkCreateImageView(m_device, &createInfo, nullptr, &m_swapChainProxy->imageViews[index]) != VK_SUCCESS)
-            throw std::runtime_error("Failed to create image views");
     }
 
     m_commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
@@ -179,6 +123,11 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     // float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
     // CameraUBO cameraUBO{};
     // cameraUBO.model = glm::rotate(model, time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f,s 1.0f));
+
+    m_perFrameData.swapChainViewport = m_swapchain->getViewport();
+    m_perFrameData.swapChainScissor = m_swapchain->getScissor();
+    m_perFrameData.lightDescriptorSet = m_directionalLightDescriptorSets[m_currentFrame];
+    m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
 
     CameraUBO cameraUBO{};
 
@@ -261,6 +210,47 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     }
 
     vkUnmapMemory(m_device, m_lightSSBOs[m_currentFrame]->vkDeviceMemory());
+
+    for(size_t i = 0; i < lights.size(); ++i)
+    {
+        auto light = lights[i];
+
+        if(auto directionalLight = dynamic_cast<DirectionalLight*>(light.get()))
+        {
+            LightSpaceMatrixUBO lightSpaceMatrixUBO{};
+
+            glm::vec3 lightDirection = glm::normalize(directionalLight->direction);
+
+            glm::vec3 lightTarget{0.0f};
+
+            //Position 'light camera' 20 units away from the target 
+            glm::vec3 lightPosition = lightTarget - lightDirection * 20.0f;
+
+            glm::mat4 lightView = glm::lookAt(lightPosition, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
+
+            glm::mat4 lightProjection = glm::ortho(-30.0f, 30.0f, -30.0f, 30.0f, 1.0f, 40.0f);
+
+
+            // glm::mat4 clipCorrection = glm::mat4(
+            //     1,  0,   0, 0,
+            //     0, -1,   0, 0,
+            //     0,  0, 0.5, 0,
+            //     0,  0, 0.5, 1
+            // );
+
+            // glm::mat4 lightMatrix = clipCorrection * lightProjection * lightView;
+            glm::mat4 lightMatrix = lightProjection * lightView;
+
+            lightSpaceMatrixUBO.lightSpaceMatrix = lightMatrix;
+
+            m_lightSpaceMatrixUniformObjects[m_currentFrame]->update(&lightSpaceMatrixUBO);
+
+            m_perFrameData.lightSpaceMatrix = lightMatrix;
+
+            //!Only one directional light. Fix it later
+            break;
+        }
+    }
 }
 
 void RenderGraph::createDescriptorSetLayouts()
@@ -273,7 +263,21 @@ void RenderGraph::createDescriptorSetLayouts()
         uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         uboLayoutBinding.pImmutableSamplers = nullptr;
 
-        m_cameraSetLayout = core::DescriptorSetLayout::create(m_device, {uboLayoutBinding});
+        VkDescriptorSetLayoutBinding lightSpaceBinding{};
+        lightSpaceBinding.binding = 1;
+        lightSpaceBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        lightSpaceBinding.descriptorCount = 1;
+        lightSpaceBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        lightSpaceBinding.pImmutableSamplers = nullptr;
+
+        VkDescriptorSetLayoutBinding lightMapBinding{};
+        lightMapBinding.binding = 2;
+        lightMapBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        lightMapBinding.descriptorCount = 1;
+        lightMapBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        lightMapBinding.pImmutableSamplers = nullptr;
+
+        m_cameraSetLayout = core::DescriptorSetLayout::create(m_device, {uboLayoutBinding, lightSpaceBinding, lightMapBinding});
     }
 
     {
@@ -289,14 +293,14 @@ void RenderGraph::createDescriptorSetLayouts()
 
     {
         VkDescriptorSetLayoutBinding textureLayoutBinding{};
-        textureLayoutBinding.binding = 1;
+        textureLayoutBinding.binding = 0;
         textureLayoutBinding.descriptorCount = 1;
         textureLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         textureLayoutBinding.pImmutableSamplers = nullptr;
         textureLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutBinding colorLayoutBinding{};
-        colorLayoutBinding.binding = 2;
+        colorLayoutBinding.binding = 1;
         colorLayoutBinding.descriptorCount = 1;
         colorLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         colorLayoutBinding.pImmutableSamplers = nullptr;
@@ -328,80 +332,8 @@ void RenderGraph::createDescriptorSetPool()
         throw std::runtime_error("Failed to create descriptor pool");
 }
 
-void RenderGraph::createSwapChainResources()
-{
-    for(size_t index = 0; index < m_swapchain->getImages().size(); ++index)
-    {
-        m_swapChainProxy->images[index] = m_swapchain->getImages()[index];
-
-        VkImageViewCreateInfo createInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        createInfo.image = m_swapchain->getImages()[index];
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = m_swapchain->getImageFormat();
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        createInfo.subresourceRange.baseMipLevel = 0;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
-
-        if(vkCreateImageView(m_device, &createInfo, nullptr, &m_swapChainProxy->imageViews[index]) != VK_SUCCESS)
-            throw std::runtime_error("Failed to create image views");
-    }
-
-    for(auto& depend : m_swapChainProxy->additionalImages)
-    {
-        depend->height = m_swapchain->getExtent().height;
-        depend->width = m_swapchain->getExtent().width;
-
-        m_builder->buildProxy(depend.get(), m_device);
-
-        depend->onSwapChainRecreated();
-    }
-
-    for(size_t i = 0; i < m_swapChainProxy->imageViews.size(); ++i)
-    {
-        std::vector<VkImageView> attachments{m_swapChainProxy->imageViews[i]};
-
-        for(const auto& attachment : m_swapChainProxy->additionalImages)
-            attachments.push_back(attachment->imageView);
-
-        VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-        framebufferInfo.renderPass = m_swapChainProxy->renderPassProxy->storage.data->vk();
-        framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-        framebufferInfo.pAttachments = attachments.data();
-        framebufferInfo.width = m_swapchain->getExtent().width;
-        framebufferInfo.height = m_swapchain->getExtent().height;
-        framebufferInfo.layers = 1;
-
-        if(vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_swapChainProxy->storage.data[i]) != VK_SUCCESS)
-            throw std::runtime_error("Failed to create framebuffer");
-    }
-}
-
-void RenderGraph::cleanupSwapChainResources()
-{
-    for(auto& depend : m_swapChainProxy->additionalImages)
-    {
-        depend->storage.data->destroy();
-    
-        if(depend->imageView)
-            vkDestroyImageView(m_device, depend->imageView, nullptr);
-    }
-    for (auto view : m_swapChainProxy->imageViews)
-        if (view)
-            vkDestroyImageView(m_device, view, nullptr);
-
-    for(auto framebuffer : m_swapChainProxy->storage.data)
-        if(framebuffer)
-            vkDestroyFramebuffer(m_device, framebuffer, nullptr);
-}
-
 void RenderGraph::begin()
-{
+{    
     auto& lock = m_syncObject->getSync(m_currentFrame);
 
     vkWaitForFences(m_device, 1, &lock.inFlightFence, VK_TRUE, UINT64_MAX);
@@ -411,10 +343,18 @@ void RenderGraph::begin()
     if(result == VK_ERROR_OUT_OF_DATE_KHR || m_rebuildSwapchain)
     {
         m_swapchain->recreate();
-        cleanupSwapChainResources();
-        createSwapChainResources();
         m_rebuildSwapchain = false;
-        m_swapChainProxy->onSwapChainRecreated();
+        m_resourceCompiler.onSwapChainResize(m_resourceBuilder, m_resourceStorage);
+
+        for(const auto& renderPass : m_renderGraphPasses)
+        {
+            if(auto s = dynamic_cast<OffscreenRenderGraphPass*>(renderPass.second.get()))
+            {
+                m_perFrameData.viewportImageViews = s->getImageViews();
+                m_perFrameData.isViewportImageViewsDirty = true;
+                break;
+            }
+        }
     }
     else if(result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
         throw std::runtime_error("Failed to acquire swap chain image");
@@ -437,9 +377,29 @@ void RenderGraph::begin()
 
     size_t passIndex = 0;
 
-    for(const auto& [_, renderGraphPass] : m_renderGraphPasses)
+    std::vector<std::shared_ptr<IRenderGraphPass>> shadowPasses;
+    std::vector<std::shared_ptr<IRenderGraphPass>> otherPasses;
+
+    for (const auto& [_, pass] : m_renderGraphPasses) {
+        if (dynamic_cast<ShadowRenderGraphPass*>(pass.get()))
+            shadowPasses.push_back(pass);
+        else
+            otherPasses.push_back(pass);
+    }
+
+    std::vector<std::shared_ptr<IRenderGraphPass>> orderedPasses;
+    orderedPasses.reserve(shadowPasses.size() + otherPasses.size());
+    orderedPasses.insert(orderedPasses.end(), shadowPasses.begin(), shadowPasses.end());
+    orderedPasses.insert(orderedPasses.end(), otherPasses.begin(), otherPasses.end());
+
+    RenderGraphPassContext frameData{
+        .currentFrame = m_currentFrame,
+        .currentImageIndex = m_imageIndex
+    };
+
+    for(const auto& renderGraphPass : orderedPasses)
     {
-        renderGraphPass->update(m_currentFrame, m_imageIndex, m_swapChainProxy->storage.data[m_imageIndex]);
+        renderGraphPass->update(frameData);
 
         VkRenderPassBeginInfo beginRenderPassInfo;
         renderGraphPass->getRenderPassBeginInfo(beginRenderPassInfo);
@@ -455,7 +415,7 @@ void RenderGraph::begin()
 
         secCB->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT | VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT, &inherit);
 
-        renderGraphPass->execute(secCB);
+        renderGraphPass->execute(secCB, m_perFrameData);
 
         secCB->end();
 
@@ -467,12 +427,16 @@ void RenderGraph::begin()
         ++passIndex;
 
         vkCmdEndRenderPass(primaryCommandBuffer->vk());
+
+        renderGraphPass->endBeginRenderPass(primaryCommandBuffer);
     }
 
     // if(!vkSecondaries.empty())
     //     vkCmdExecuteCommands(primaryCommandBuffer->vk(), static_cast<uint32_t>(vkSecondaries.size()), vkSecondaries.data());
 
     primaryCommandBuffer->end();
+
+    m_perFrameData.isViewportImageViewsDirty = false;
 }
 
 void RenderGraph::end()
@@ -500,15 +464,21 @@ void RenderGraph::end()
     if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || m_rebuildSwapchain)
     {
         m_swapchain->recreate();
-        cleanupSwapChainResources();
-        createSwapChainResources();
         m_rebuildSwapchain = false;
-        m_swapChainProxy->onSwapChainRecreated();
+        m_resourceCompiler.onSwapChainResize(m_resourceBuilder, m_resourceStorage);
+        for(const auto& renderPass : m_renderGraphPasses)
+        {
+            if(auto s = dynamic_cast<OffscreenRenderGraphPass*>(renderPass.second.get()))
+            {
+                m_perFrameData.viewportImageViews = s->getImageViews();
+                m_perFrameData.isViewportImageViewsDirty = true;
+                break;
+            }
+        }
+
     }
     else if(result != VK_SUCCESS)
         throw std::runtime_error("Failed to present swap chain image");
-
-    m_swapChainProxy->currentImageIndex = m_imageIndex;
 
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -522,14 +492,14 @@ void RenderGraph::draw()
 void RenderGraph::setup()
 {
     for(const auto& pass : m_renderGraphPasses)
-        pass.second->setup(m_builder);
+        pass.second->setup(m_resourceBuilder);
 
     compile();
 }
 
 void RenderGraph::createGraphicsPipeline()
 {
-    core::Shader shader("./resources/shaders/test_vert.spv", "./resources/shaders/test_frag.spv");
+    core::Shader shader("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
 
     const std::vector<VkPushConstantRange> pushConstants
     {
@@ -559,7 +529,7 @@ void RenderGraph::createGraphicsPipeline()
 
     engine::GraphicsPipelineBuilder graphicsPipelineBuilder;
     graphicsPipelineBuilder.layout = m_pipelineLayout->vk();
-    graphicsPipelineBuilder.renderPass = m_swapChainProxy->renderPassProxy->storage.data->vk();
+    graphicsPipelineBuilder.renderPass = m_swapChainRenderPass->vk();
     graphicsPipelineBuilder.viewportState.pViewports = &viewport;
     graphicsPipelineBuilder.viewportState.pScissors = &scissor;
     graphicsPipelineBuilder.shaderStages = shader.getShaderStages();
@@ -572,50 +542,25 @@ void RenderGraph::createDirectionalLightDescriptorSets()
     m_lightSSBOs.reserve(MAX_FRAMES_IN_FLIGHT);
     m_directionalLightDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
 
-    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_directionalLightSetLayout->vk());
-
-    VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    allocInfo.descriptorPool = m_descriptorPool;
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
-    allocInfo.pSetLayouts = layouts.data();
-
-    if(vkAllocateDescriptorSets(m_device, &allocInfo, m_directionalLightDescriptorSets.data()) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate decsriptor sets");
-    
-    VkQueue graphicsQueue = core::VulkanContext::getContext()->getGraphicsQueue();
-
     static constexpr uint8_t INIT_LIGHTS_COUNT = 2;
+    static constexpr VkDeviceSize INITIAL_SIZE = sizeof(LightData) * (INIT_LIGHTS_COUNT * sizeof(LightData));
 
     for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        VkDeviceSize initialSize = sizeof(LightData) * (INIT_LIGHTS_COUNT * sizeof(LightData));
-
-        auto ssboBuffer = m_lightSSBOs.emplace_back(core::Buffer::create(initialSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 0,
+        auto ssboBuffer = m_lightSSBOs.emplace_back(core::Buffer::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 0,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
 
-        VkDescriptorBufferInfo ssboBufferInfo{};
-        ssboBufferInfo.buffer = ssboBuffer->vkBuffer();
-        ssboBufferInfo.offset = 0;
-        ssboBufferInfo.range = VK_WHOLE_SIZE;
-
-        std::array<VkWriteDescriptorSet, 1> descriptorWrites{};
-
-        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[0].dstSet = m_directionalLightDescriptorSets[i];
-        descriptorWrites[0].dstBinding = 0;
-        descriptorWrites[0].dstArrayElement = 0;
-        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        descriptorWrites[0].descriptorCount = 1;
-        descriptorWrites[0].pBufferInfo = &ssboBufferInfo;
-
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        m_directionalLightDescriptorSets[i] = DescriptorSetBuilder::begin()
+        .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+        .build(m_device, m_descriptorPool, m_directionalLightSetLayout->vk());
     }
 }
 
-void RenderGraph::createCameraDescriptorSets()
+void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imageView)
 {
     m_cameraDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
     m_cameraUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
+    m_lightSpaceMatrixUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
 
     std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_cameraSetLayout->vk());
 
@@ -629,14 +574,34 @@ void RenderGraph::createCameraDescriptorSets()
 
     for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        auto uniformObject = m_cameraUniformObjects.emplace_back(UniformBufferObject<CameraUBO>::create(m_device));
+        auto uniformObject = m_cameraUniformObjects.emplace_back(UniformBufferObject<CameraUBO>::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice()));
+        auto lightSpaceUniformObject = m_lightSpaceMatrixUniformObjects.emplace_back(UniformBufferObject<LightSpaceMatrixUBO>::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice()));
+
+        // auto s = uniformObject->getBuffer();
+        // auto v = lightSpaceUniformObject->getBuffer();
+
+        // m_cameraDescriptorSets[i] = DescriptorSetBuilder::begin()
+        // .addBuffer(s, uniformObject->getDeviceSize(), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        // .addBuffer(v, lightSpaceUniformObject->getDeviceSize(), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        // .addImage(imageView, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
+        // .build(m_device, m_descriptorPool, m_cameraSetLayout->vk());
 
         VkDescriptorBufferInfo bufferInfo{};
         bufferInfo.buffer = uniformObject->getBuffer()->vkBuffer();
         bufferInfo.offset = 0;
         bufferInfo.range = uniformObject->getDeviceSize();
 
-        std::array<VkWriteDescriptorSet, 1> descriptorWrites{};
+        VkDescriptorBufferInfo lightSpaceBufferInfo{};
+        lightSpaceBufferInfo.buffer = lightSpaceUniformObject->getBuffer()->vkBuffer();
+        lightSpaceBufferInfo.offset = 0;
+        lightSpaceBufferInfo.range = lightSpaceUniformObject->getDeviceSize();
+
+        VkDescriptorImageInfo shadowMapImageInfo{};
+        shadowMapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shadowMapImageInfo.imageView = imageView;
+        shadowMapImageInfo.sampler = sampler;
+
+        std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = m_cameraDescriptorSets[i];
         descriptorWrites[0].dstBinding = 0;
@@ -645,6 +610,22 @@ void RenderGraph::createCameraDescriptorSets()
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pBufferInfo = &bufferInfo;
 
+        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[1].dstSet = m_cameraDescriptorSets[i];
+        descriptorWrites[1].dstBinding = 1;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pBufferInfo = &lightSpaceBufferInfo;
+
+        descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[2].dstSet = m_cameraDescriptorSets[i];
+        descriptorWrites[2].dstBinding = 2;
+        descriptorWrites[2].dstArrayElement = 0;
+        descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[2].descriptorCount = 1;
+        descriptorWrites[2].pImageInfo = &shadowMapImageInfo;
+        
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
 }
@@ -664,22 +645,34 @@ void RenderGraph::createRenderGraphResources()
 
 void RenderGraph::compile()
 {
-    for(auto& [id, proxy] : m_builder->getProxies())
-    {
-        if(auto image = dynamic_cast<ImageRenderGraphProxy*>(proxy.get()))
-            m_builder->buildProxy(image, m_device);
-        // else if(auto renderPass = dynamic_cast<RenderPassRenderGraphProxy*>(proxy.get()))
-        //     m_builder->buildProxy(renderPass, m_device);
-    }
-
-    m_depthImageProxy->storage.data->transitionImageLayout(core::helpers::findDepthFormat(), VK_IMAGE_LAYOUT_UNDEFINED,
-    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, m_commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
-
+    m_resourceCompiler.compile(m_resourceBuilder, m_resourceStorage);
+    
     for(const auto& pass : m_renderGraphPasses)
-        pass.second->compile();
+        pass.second->compile(m_resourceStorage);
 
-    createSwapChainResources();
+    for(const auto& renderPass : m_renderGraphPasses)
+    {
+        if(auto s = dynamic_cast<OffscreenRenderGraphPass*>(renderPass.second.get()))
+        {
+            m_perFrameData.viewportImageViews = s->getImageViews();
+            m_perFrameData.isViewportImageViewsDirty = true;
+            break;
+        }
+    }
 }
 
+void RenderGraph::cleanResources()
+{
+    // vkDeviceWaitIdle(m_device);
+
+    for(const auto& primary : m_commandBuffers)
+        primary->destroyVk();
+    for(const auto& secondary : m_secondaryCommandBuffers)
+        for(const auto& cb : secondary)
+            cb->destroyVk();
+
+    for(const auto& renderPass : m_renderGraphPasses)
+        renderPass.second->cleanup();
+}
 
 ELIX_NESTED_NAMESPACE_END

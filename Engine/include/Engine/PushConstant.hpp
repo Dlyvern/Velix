@@ -17,6 +17,7 @@ public:
     static constexpr uint32_t size = sizeof(T);
     static constexpr uint32_t allignedSize =  (size + 3) & ~3; //*Vulkan requires push constant sizes to be multiple of 4 bytes
 
+    //TODO getDevice()->gpuProps.limits.maxPushConstantsSize;
     static VkPushConstantRange getRange(VkShaderStageFlags stageFlags, uint32_t offset = 0)
     {
         VkPushConstantRange range{};

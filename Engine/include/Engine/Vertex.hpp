@@ -75,7 +75,7 @@ struct Vertex3D
                textureCoordinates == other.textureCoordinates;
     }
 
-    static VkVertexInputBindingDescription getBindingDescription() 
+    static constexpr VkVertexInputBindingDescription getBindingDescription() 
     {
         VkVertexInputBindingDescription binding{};
         binding.binding = 0;
@@ -84,7 +84,7 @@ struct Vertex3D
         return binding;
     }
 
-    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions()
+    static constexpr std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions()
     {
         std::array<VkVertexInputAttributeDescription, 3> attributes{};
 
@@ -94,6 +94,7 @@ struct Vertex3D
 
         return attributes;
     }
+
 };
 
 ELIX_NESTED_NAMESPACE_END

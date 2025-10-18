@@ -16,19 +16,24 @@ class Buffer
 public:
     using SharedPtr = std::shared_ptr<Buffer>;
 
-    Buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags);
+    Buffer(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags);
 
     void upload(const void* data, VkDeviceSize size);
 
     void bind(VkDeviceSize memoryOffset = 0);
 
+    //!Broken function
+    void map(VkDeviceSize offset, VkDeviceSize size,  VkMemoryMapFlags flags, void* data);
+
+    void unmap();
+
     void destroy();
 
-    static SharedPtr create(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags);
+    static SharedPtr create(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags);
 
     static CommandBuffer::SharedPtr copy(SharedPtr srcBuffer,  SharedPtr dstBuffer, CommandPool::SharedPtr commandPool,  VkDeviceSize size);
     
-    static SharedPtr createCopied(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags, CommandPool::SharedPtr commandPool, VkQueue queue);
+    static SharedPtr createCopied(VkDevice device, VkPhysicalDevice physicalDevice, const void* data, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags, CommandPool::SharedPtr commandPool, VkQueue queue);
 
     VkBuffer vkBuffer();
     VkDeviceMemory vkDeviceMemory();
@@ -38,6 +43,7 @@ private:
     bool m_isDestroyed{false};
     VkBuffer m_buffer{VK_NULL_HANDLE};
     VkDeviceMemory m_bufferMemory{VK_NULL_HANDLE};
+    VkDevice m_device{VK_NULL_HANDLE};
 };
 
 ELIX_NESTED_NAMESPACE_END

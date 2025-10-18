@@ -2,7 +2,9 @@
 #define ELIX_ASSETS_LOADER_HPP
 
 #include "Core/Macros.hpp"
+
 #include "Engine/Mesh.hpp"
+#include "Engine/Assets/IAssetLoader.hpp"
 
 #include <string>
 #include <vector>
@@ -13,7 +15,6 @@ class AssetsLoader
 {
 public:
     static Mesh3D loadModel(const std::string& path);
-
 };
 
 ELIX_NESTED_NAMESPACE_END

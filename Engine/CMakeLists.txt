@@ -21,5 +21,6 @@ target_link_libraries(${PROJECT_NAME}
         PUBLIC
         nlohmann_json
         tinyobjloader
+        fbx_sdk
         VelixCore
 )

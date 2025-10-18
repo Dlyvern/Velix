@@ -4,6 +4,8 @@
 
 #include <stdexcept>
 
+#include <iostream>
+
 ELIX_NESTED_NAMESPACE_BEGIN(platform)
 
 Window::Window(uint32_t width, uint32_t height, const std::string& title) : m_width(width), m_height(height), m_title(title)
@@ -22,6 +24,22 @@ Window::Window(uint32_t width, uint32_t height, const std::string& title) : m_wi
     
     glfwSetFramebufferSizeCallback(m_window, &Window::onWindowResize);
 }
+
+void Window::getMaxMonitorResolution(int* width, int* height)
+{
+    GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+
+    if (!primaryMonitor) 
+    {
+        std::cerr << "Failed to get primary monitor" << std::endl;
+        return;
+    }
+
+    int xpos, ypos;
+
+    glfwGetMonitorWorkarea(primaryMonitor, &xpos, &ypos, width, height);
+}
+
 
 void Window::addResizeCallback(const std::function<void(Window*, int, int)>& function)
 {

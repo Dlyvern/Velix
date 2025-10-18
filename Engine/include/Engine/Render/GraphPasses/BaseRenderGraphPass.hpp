@@ -3,8 +3,6 @@
 
 #include "Core/Macros.hpp"
 
-#include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
-
 #include "Core/CommandBuffer.hpp"
 #include "Core/VulkanContext.hpp"
 #include "Core/CommandPool.hpp"
@@ -14,40 +12,34 @@
 #include "Core/GraphicsPipeline.hpp"
 #include "Core/DescriptorSetLayout.hpp"
 #include "Core/PipelineLayout.hpp"
+#include "Core/RenderPass.hpp"
+
+#include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 #include "Engine/TextureImage.hpp"
 #include "Engine/Scene.hpp"
-
-#include "Engine/Render/Proxies/ImageRenderGraphProxy.hpp"
-#include "Engine/Render/Proxies/SwapChainRenderGraphProxy.hpp"
-
 #include "Engine/Mesh.hpp"
 #include "Engine/Hash.hpp"
 #include "Engine/Material.hpp"
 
-#include "Engine/Render/Proxies/StaticMeshRenderGraphProxy.hpp"
-
 #include <unordered_map>
+#include <cstddef>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class BaseRenderGraphPass : public IRenderGraphPass
 {
 public:
-    BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, uint32_t maxFrameInFlight,
-    core::GraphicsPipeline::SharedPtr graphicsPipeline, core::PipelineLayout::SharedPtr pipelineLayout,
-    const std::vector<VkDescriptorSet>& descriptorSets, const std::vector<VkDescriptorSet>& lightDescriptorSets);
-    void update(uint32_t currentFrame, uint32_t currentImageIndex, VkFramebuffer fr);
-    void setup(std::shared_ptr<RenderGraphPassBuilder> builder) override;
-    void compile() override;
-    void execute(core::CommandBuffer::SharedPtr commandBuffer) override;
+    BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, core::GraphicsPipeline::SharedPtr graphicsPipeline,
+    core::PipelineLayout::SharedPtr pipelineLayout);
+
+    void update(const RenderGraphPassContext& renderData);
+    void setup(RenderGraphPassRecourceBuilder& graphPassBuilder) override;
+    void compile(RenderGraphPassResourceHash& storage) override;
+    void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data) override;
 
     void  getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const override;
 private:
     std::array<VkClearValue, 2> m_clearValues;
-
-    ImageRenderGraphProxy::SharedPtr m_swapChainImagesProxy{nullptr};
-
-    SwapChainRenderGraphProxy::SharedPtr m_swapChainProxy{nullptr};
 
     VkDevice m_device{VK_NULL_HANDLE};
 
@@ -56,17 +48,18 @@ private:
     core::GraphicsPipeline::SharedPtr m_graphicsPipeline{nullptr};
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
 
-    VkFramebuffer m_currentFramebuffer{VK_NULL_HANDLE};
-
-    std::vector<VkDescriptorSet> m_descriptorSet;
-    std::vector<VkDescriptorSet> m_lightDescriptorSet;
-    
     uint32_t m_imageIndex{0};
     uint32_t m_currentFrame{0};
 
-    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
+    std::size_t m_depthImageHash;
+    std::size_t m_renderPassHash;
 
-    StaticMeshRenderGraphProxy::SharedPtr m_staticMeshProxy{nullptr};
+    std::vector<std::size_t> m_framebufferHashes;
+
+    core::Texture<core::ImageNoDelete>::SharedPtr m_depthImageTexture;
+
+    std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
+    core::RenderPass::SharedPtr m_renderPass{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

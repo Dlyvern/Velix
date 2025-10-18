@@ -15,7 +15,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 TextureImage::TextureImage() = default;
 
-void TextureImage::create(VkDevice device, core::CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t pixels)
+void TextureImage::create(VkDevice device, VkPhysicalDevice physicalDevice, core::CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t pixels)
 {
     m_width = 1;
     m_height = 1;
@@ -23,11 +23,11 @@ void TextureImage::create(VkDevice device, core::CommandPool::SharedPtr commandP
 
     VkDeviceSize imageSize = sizeof(pixels);
 
-    auto buffer = core::Buffer::create(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto buffer = core::Buffer::create(device, physicalDevice, imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-    buffer->upload(static_cast<const void*>(&pixels), imageSize);
+    buffer->upload(&pixels, imageSize);
 
-    m_image = std::make_shared<core::Image>(m_device, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
+    m_image = core::Image<core::ImageDeleter>::create(m_device, physicalDevice, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
     VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, queue);
@@ -75,7 +75,7 @@ void TextureImage::create(VkDevice device, core::CommandPool::SharedPtr commandP
     }
 }
 
-bool TextureImage::load(VkDevice device, const std::string& path, core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad)
+bool TextureImage::load(VkDevice device, VkPhysicalDevice physicalDevice, const std::string& path, core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad)
 {
     m_device = device;
 
@@ -89,14 +89,14 @@ bool TextureImage::load(VkDevice device, const std::string& path, core::CommandP
         return false;
     }
 
-    auto buffer = core::Buffer::create(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto buffer = core::Buffer::create(device, physicalDevice, imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     buffer->upload(m_pixels, imageSize);
 
     if(freePixelsOnLoad)
         freePixels();
 
-    m_image = std::make_shared<core::Image>(m_device, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
+    m_image = core::Image<core::ImageDeleter>::create(m_device, physicalDevice, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
     VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, queue);
@@ -157,7 +157,7 @@ VkImageView TextureImage::vkImageView()
     return m_imageView;
 }
 
-core::Image::SharedPtr TextureImage::getImage()
+core::Image<core::ImageDeleter>::SharedPtr TextureImage::getImage()
 {
     return m_image;
 }

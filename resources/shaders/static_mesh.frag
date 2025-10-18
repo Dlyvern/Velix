@@ -15,21 +15,44 @@ struct Light
 layout(location = 0) in vec2 fragTextureCoordinates;
 layout(location = 1) in vec3 fragNormalView;
 layout(location = 2) in vec3 fragPositionView;
+layout(location = 3) in vec4 fragPositionLightSpace;
 
 layout(location = 0) out vec4 outColor;
 
-layout(set = 1, binding = 1) uniform sampler2D texSampler;
+layout(set = 0, binding = 2) uniform sampler2D shadowMap;
 
-layout(set = 1, binding = 2) uniform MaterialColor
+layout(set = 1, binding = 0) uniform sampler2D texSampler;
+
+layout(set = 1, binding = 1) uniform MaterialColor
 {
     vec4 color;
 } materialColor;
+
 
 layout(set = 2, binding = 0) readonly buffer LightSSBO
 {
     int lightCount;
     Light lights[];
 } lightData;
+
+
+float calculateDirectionalLightShadow(vec3 lightDirection, vec3 normal, sampler2D shadowMapToUse)
+{
+    vec3 projCoords = fragPositionLightSpace.xyz / fragPositionLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    if (projCoords.z > 1.0)
+        return 0.0;
+
+    float closestDepth = texture(shadowMapToUse, projCoords.xy).r;
+    float currentDepth = projCoords.z;
+
+    float bias = max(0.05 * (1.0 - dot(normal, lightDirection)), 0.005);
+
+    float shadow = currentDepth - bias > closestDepth ? 1.0 : 0.0;
+
+    return shadow;
+}
 
 vec3 calculateDirectionalLight(vec3 albedo, Light light)
 {
@@ -41,7 +64,9 @@ vec3 calculateDirectionalLight(vec3 albedo, Light light)
     float diff = max(dot(normal, lightDirection), 0.0);
     vec3 diffuse = light.colorStrength.xyz * strength * diff;
 
-    vec3 result = albedo * diffuse;
+    float shadow = calculateDirectionalLightShadow(lightDirection, normal, shadowMap);
+
+    vec3 result = albedo * diffuse * (1.0 - shadow);
 
     return result;
 }

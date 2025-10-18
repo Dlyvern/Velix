@@ -19,29 +19,36 @@ class Material
 public:
     using SharedPtr = std::shared_ptr<Material>;
 
-    Material(VkDevice device, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout = nullptr);
+    Material(VkDevice device, VkPhysicalDevice physicalDevice, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout);
 
     void updateDescriptorSets();
 
     VkDescriptorSet getDescriptorSet(uint32_t frameIndex) const;
+
+    void setTexture(TextureImage::SharedPtr texture);
+    void setColor(const glm::vec4& color);
+
+    const glm::vec4& getColor() const;
+    TextureImage::SharedPtr getTexture() const;
 
     static Material::SharedPtr getDefaultMaterial()
     {
         return s_defaultMaterial;
     }
 
-    static void createDefaultDescriptorSetLayout(VkDevice device);
-    static void createDefaultMaterial(VkDevice device, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout);
-    static SharedPtr create(VkDevice device, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout = nullptr);
+    static void createDefaultMaterial(VkDevice device, VkPhysicalDevice physicalDevice, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout);
+    static SharedPtr create(VkDevice device, VkPhysicalDevice physicalDevice, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout);
 private:
     uint32_t m_maxFramesInFlight;
     std::vector<VkDescriptorSet> m_descriptorSets;
     engine::TextureImage::SharedPtr m_texture{nullptr};
     VkDevice m_device{VK_NULL_HANDLE};
     std::vector<core::Buffer::SharedPtr> m_colorBuffers;
-    static inline core::DescriptorSetLayout::SharedPtr m_defaultDescriptorSetLayout{nullptr};
     static inline Material::SharedPtr s_defaultMaterial{nullptr};
-    glm::mat4 m_color{1.0f};
+    glm::vec4 m_color{1.0f};
+
+    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
+    core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END
