@@ -37,6 +37,33 @@ else()
     message(WARNING "Resource directory not found: ${RESOURCE_DIR}")
 endif()
 
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    BUILD_WITH_INSTALL_RPATH TRUE
+    INSTALL_RPATH "$ORIGIN/lib"
+)
+
+
+if(WIN32)
+    set(DYNAMIC_LIB_EXTENSION ".dll")
+elseif(APPLE)
+    set(DYNAMIC_LIB_EXTENSION ".dylib")
+else()
+    set(DYNAMIC_LIB_EXTENSION ".so")
+endif()
+
+if(EXISTS ${FBX_DLL})
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/lib"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${FBX_DLL}"
+            "${CMAKE_BINARY_DIR}/lib/libfbxsdk${DYNAMIC_LIB_EXTENSION}"
+        COMMENT "Copying FBX SDK to build directory"
+    )
+    message(STATUS "FBX SDK will be copied to: ${CMAKE_BINARY_DIR}/lib/")
+else()
+    message(WARNING "FBX SDK not found: ${FBX_DLL}")
+endif()
+
 
 install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION .
@@ -51,6 +78,8 @@ if(EXISTS ${RESOURCE_DIR})
     )
     message(STATUS "Resources will be installed to: resources/")
 endif()
+
+install(FILES ${FBX_DLL} DESTINATION lib)
 
 set(CPACK_PACKAGE_NAME "VelixEngine")
 set(CPACK_PACKAGE_VERSION "1.0.0")
