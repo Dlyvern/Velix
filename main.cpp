@@ -9,25 +9,25 @@
 #include "Engine/Render/GraphPasses/BaseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/OffscreenRenderGraphPass.hpp"
-
 #include "Engine/RenderGraph.hpp"
-
 #include "Engine/Components/StaticMeshComponent.hpp"
-
 #include "Engine/Components/LightComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
-
 #include "Engine/Assets/AssetsLoader.hpp"
-
 #include "Engine/Primitives.hpp"
-#include <GLFW/glfw3.h>
-
 #include "Engine/EngineCamera.hpp"
+#include "Engine/Assets/OBJAssetLoader.hpp"
+#include "Engine/Assets/FBXAssetLoader.hpp"
+
+#include <GLFW/glfw3.h>
 
 #include <chrono>
 
 int main(int argc, char** argv)
 {
+    elix::engine::AssetsLoader::registerAssetLoader(std::make_shared<elix::engine::OBJAssetLoader>());
+    elix::engine::AssetsLoader::registerAssetLoader(std::make_shared<elix::engine::FBXAssetLoader>());
+
     auto start = std::chrono::high_resolution_clock::now();
 
     auto window = elix::platform::Window::create(1280, 720, "Window");
@@ -38,10 +38,10 @@ int main(int argc, char** argv)
     auto secondTestEntity = scene->addEntity("test2");
     auto testPlane = scene->addEntity("plane");
 
-    // elix::engine::Mesh3D meshModel = elix::engine::AssetsLoader::loadModel("./resources/models/concrete_wall.obj");
+    elix::engine::Mesh3D meshModel = elix::engine::AssetsLoader::loadModel("./resources/models/concrete_wall.obj");
     elix::engine::Mesh3D mesh{elix::engine::cube::vertices, elix::engine::cube::indices};
 
-    testEntity->addComponent<elix::engine::StaticMeshComponent>(mesh);
+    testEntity->addComponent<elix::engine::StaticMeshComponent>(meshModel);
     secondTestEntity->addComponent<elix::engine::StaticMeshComponent>(mesh);
     testPlane->addComponent<elix::engine::StaticMeshComponent>(mesh);
 

@@ -12,11 +12,10 @@ class FBXAssetLoader : public IAssetLoader
 public:
     FBXAssetLoader();
     const std::vector<std::string> getSupportedFormats() const override;
-    void load(const std::string& filePath) override;
-    bool canLoad(const std::string& extension) override;
+    std::shared_ptr<IAsset> load(const std::string& filePath) override;
 private:
-    // FBXManager* m_fbxManager{nullptr};
-    // FbxIOSettings* m_fbxIOSettings{nullptr};
+    FbxManager* m_fbxManager{nullptr};
+    FbxIOSettings* m_fbxIOSettings{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

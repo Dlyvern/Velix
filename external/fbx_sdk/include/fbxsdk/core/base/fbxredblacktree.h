@@ -315,7 +315,7 @@ public:
                 const RecordType* lParent = mParent;
                 const RecordType* lNode = this;
 
-                while (lParent && lParent->mLefttChild == lNode)
+                while (lParent && lParent->mLeftChild == lNode)
                 {
                     lNode = lParent;
                     lParent = lParent->mParent;

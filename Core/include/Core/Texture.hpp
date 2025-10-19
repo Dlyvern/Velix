@@ -11,7 +11,6 @@
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 //VkImage + VkImageView handler
-
 template<typename Deleter = ImageDeleter>
 class Texture
 {
@@ -98,7 +97,7 @@ private:
     core::Image<Deleter>::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};
     VkFormat m_format{VK_FORMAT_UNDEFINED};
-    VkImageAspectFlags m_aspect{VK_IMAGE_ASPECT_NONE};
+    VkImageAspectFlags m_aspect;
 };
 
 ELIX_NESTED_NAMESPACE_END

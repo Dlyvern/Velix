@@ -18,24 +18,32 @@ endif()
 
 if(WIN32)
     set(FBX_LIB_DIR "${CMAKE_CURRENT_LIST_DIR}/lib/${FBX_PLATFORM}/${CMAKE_BUILD_TYPE}")
-    set(FBX_LIB "${FBX_LIB_DIR}/libfbxsdk.dll")
+    set(FBX_LIB "${FBX_LIB_DIR}/libfbxsdk.lib")
+    set(FBX_DLL "${FBX_LIB_DIR}/libfbxsdk.dll")
 elseif(APPLE)
     set(FBX_LIB_DIR "${CMAKE_CURRENT_LIST_DIR}/lib/${FBX_PLATFORM}/${CMAKE_BUILD_TYPE}")
-    set(FBX_LIB "${FBX_LIB_DIR}/libfbxsdk.dylib")
+    set(FBX_LIB "${FBX_LIB_DIR}/libfbxsdk.a")
+    set(FBX_DLL "${FBX_LIB_DIR}/libfbxsdk.dylib")
 else()
     set(FBX_LIB_DIR "${CMAKE_CURRENT_LIST_DIR}/lib/${FBX_PLATFORM}/${CMAKE_BUILD_TYPE}")
-    set(FBX_LIB "${FBX_LIB_DIR}/libfbxsdk.so")
+    set(FBX_LIB "${FBX_LIB_DIR}/libfbxsdk.a")
+    set(FBX_DLL "${FBX_LIB_DIR}/libfbxsdk.so")
+endif()
+
+if(NOT EXISTS "${FBX_DLL}")
+    message(FATAL_ERROR "FBX SDK library not found: ${FBX_DLL}")
 endif()
 
 if(NOT EXISTS "${FBX_LIB}")
     message(FATAL_ERROR "FBX SDK library not found: ${FBX_LIB}")
 endif()
 
-add_library(fbx_sdk STATIC IMPORTED GLOBAL)
+add_library(fbx_sdk SHARED IMPORTED GLOBAL)
 
 set_target_properties(fbx_sdk PROPERTIES
-    IMPORTED_LOCATION "${FBX_LIB}"
+    IMPORTED_LOCATION "${FBX_DLL}"
+    IMPORTED_IMPLIB "${FBX_LIB}"
     INTERFACE_INCLUDE_DIRECTORIES "${FBX_SDK_INCLUDE_DIR}"
 )
 
-message(STATUS "FBX SDK: ${FBX_LIB}, includes: ${FBX_SDK_INCLUDE_DIR}")
+message(STATUS "FBX SDK: ${FBX_DLL}, includes: ${FBX_SDK_INCLUDE_DIR}")
