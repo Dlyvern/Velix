@@ -32,12 +32,12 @@ public:
     BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, core::GraphicsPipeline::SharedPtr graphicsPipeline,
     core::PipelineLayout::SharedPtr pipelineLayout);
 
-    void update(const RenderGraphPassContext& renderData);
+    void update(const RenderGraphPassContext& renderData) override;
     void setup(RenderGraphPassRecourceBuilder& graphPassBuilder) override;
     void compile(RenderGraphPassResourceHash& storage) override;
     void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data) override;
 
-    void  getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const override;
+    void getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const override;
 private:
     std::array<VkClearValue, 2> m_clearValues;
 

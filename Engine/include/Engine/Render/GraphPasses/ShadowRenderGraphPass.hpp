@@ -22,11 +22,11 @@ class ShadowRenderGraphPass : public IRenderGraphPass
 {
 public:
     ShadowRenderGraphPass(VkDevice device);
-    void setup(RenderGraphPassRecourceBuilder& graphPassBuilder);
-    void compile(RenderGraphPassResourceHash& storage);
-    void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data);
-    void update(const RenderGraphPassContext& renderData);
-    void getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const;
+    void setup(RenderGraphPassRecourceBuilder& graphPassBuilder) override;
+    void compile(RenderGraphPassResourceHash& storage) override;
+    void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data) override;
+    void update(const RenderGraphPassContext& renderData) override;
+    void getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const override;
     void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer) override;
 
     VkSampler getSampler()
