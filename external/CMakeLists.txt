@@ -4,6 +4,7 @@ add_subdirectory(tinyobjloader)
 add_subdirectory(volk)
 add_subdirectory(fbx_sdk)
 add_subdirectory(glm) #glm::glm
+add_subdirectory(SPIRV-Cross)
 
 add_library(stb INTERFACE)
 

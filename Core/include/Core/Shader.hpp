@@ -15,7 +15,7 @@ public:
     using SharedPtr = std::shared_ptr<Shader>;
 
     Shader(const std::string& vertexPath, const std::string& fragmentPath);
-    Shader(const std::vector<char>& vertexCode, const std::vector<char>& fragmentCode);
+    Shader(const std::vector<uint32_t>& vertexCode, const std::vector<uint32_t>& fragmentCode);
 
     ~Shader();
     Shader(const Shader&) = delete;

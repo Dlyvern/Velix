@@ -19,20 +19,20 @@ class ShaderHandler
 {
 public:
     void loadFromFile(const std::string& path, ShaderStage shaderStage);
-    void loadFromCode(const std::vector<char>& code, ShaderStage shaderStage);
+    void loadFromCode(const std::vector<uint32_t>& code, ShaderStage shaderStage);
 
     VkShaderModule getModule();
     VkShaderStageFlagBits getStage();
     VkPipelineShaderStageCreateInfo getInfo();
 
-    const std::vector<char>& getCode() const;
+    const std::vector<uint32_t>& getCode() const;
 
     ShaderHandler(const ShaderHandler&) = delete;
     ShaderHandler& operator=(const ShaderHandler&) = delete;
     ShaderHandler();
     ~ShaderHandler();
 private:
-    VkShaderModule createShaderModule(const std::vector<char>& code);
+    VkShaderModule createShaderModule(const std::vector<uint32_t>& code);
     void createInfo();
     
     VkShaderModule m_shaderModule{VK_NULL_HANDLE};
@@ -40,7 +40,7 @@ private:
 
     VkPipelineShaderStageCreateInfo m_info{};
 
-    std::vector<char> m_code;
+    std::vector<uint32_t> m_code;
 };
 
 ELIX_NESTED_NAMESPACE_END

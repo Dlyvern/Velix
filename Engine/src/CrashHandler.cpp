@@ -25,7 +25,7 @@ void printBacktraceWithAddr2Line()
     int frames = backtrace(callstack, 128);
 
     char exePath[1024] = {};
-    readlink("/proc/self/exe", exePath, sizeof(exePath));
+    auto something = readlink("/proc/self/exe", exePath, sizeof(exePath));
 
     for (int i = 0; i < frames; ++i)
     {

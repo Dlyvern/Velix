@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(VelixCore LANGUAGES CXX)
-
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(INCLUDE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -15,6 +15,16 @@ add_library(${PROJECT_NAME} STATIC
         ${PROJECT_SOURCES}
         ${PROJECT_HEADERS}
 )
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    $<$<CONFIG:Debug>:DEBUG_BUILD>
+    $<$<CONFIG:Release>:RELEASE_BUILD>
+)
+
+# set_target_properties(${PROJECT_NAME} PROPERTIES
+#     IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/bin/libVelixCore.a"
+#     INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}/include"
+# )
 
 target_include_directories(${PROJECT_NAME} PUBLIC
         ${INCLUDE_DIR}

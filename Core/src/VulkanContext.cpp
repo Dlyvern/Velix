@@ -49,6 +49,12 @@ std::shared_ptr<VulkanContext> VulkanContext::getContext()
 
 VulkanContext::VulkanContext(std::shared_ptr<platform::Window> window)
 {
+#ifdef DEBUG_BUILD
+    m_isValidationLayersEnabled = true;
+#else
+    m_isValidationLayersEnabled = false;
+#endif
+
     initVulkan(window);
 }
 
@@ -374,6 +380,7 @@ std::vector<const char*> VulkanContext::getRequiredExtensions()
 
 void VulkanContext::createDebugger()
 {
+#ifdef DEBUG_BUILD
     VkDebugUtilsMessengerCreateInfoEXT createInfo{};
 
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -393,6 +400,7 @@ void VulkanContext::createDebugger()
     if (function)
         if (function(m_instance, &createInfo, nullptr, &m_debugMessenger) != VK_SUCCESS)
             std::cerr << ("Failed to create debug messenger") << std::endl;
+#endif
 }
 
 void VulkanContext::cleanup()

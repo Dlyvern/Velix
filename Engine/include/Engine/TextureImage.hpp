@@ -6,6 +6,7 @@
 #include "Core/CommandPool.hpp"
 
 #include <string>
+#include <array>
 #include <memory>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -22,11 +23,13 @@ public:
     bool load(VkDevice device, VkPhysicalDevice physicalDevice, const std::string& path, core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad = true);
     void freePixels();
 
+    bool loadCubemap(VkDevice device, VkPhysicalDevice physicalDevice, const std::array<std::string, 6>& cubemaps, 
+    core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad = true);
+
     unsigned char* getPixels() const;
     int getWidth() const;
     int getHeight() const;
     int getChannels() const;
-
     core::Image<core::ImageDeleter>::SharedPtr getImage();
     VkImageView vkImageView();
     VkSampler vkSampler();

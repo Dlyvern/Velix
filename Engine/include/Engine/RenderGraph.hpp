@@ -12,20 +12,17 @@
 #include "Engine/Render/RenderGraphPassResourceBuilder.hpp"
 #include "Engine/Render/RenderGraphPassRecourceCompiler.hpp"
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
-#include "Engine/GraphicsPipelineBuilder.hpp"
 
 #include "Core/DescriptorSetLayout.hpp"
 
 #include "Engine/Scene.hpp"
 
-#include "Core/GraphicsPipeline.hpp"
 #include "Core/PipelineLayout.hpp"
 
 #include <typeindex>
 #include <unordered_map>
 
 #include "Engine/Camera.hpp"
-
 #include "Engine/UniformBufferObject.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -60,11 +57,6 @@ public:
     core::DescriptorSetLayout::SharedPtr getMaterialDescriptorSetLayout() const
     {
         return m_materialSetLayout;
-    }
-
-    core::GraphicsPipeline::SharedPtr getGraphicsPipeline() const
-    {
-        return m_graphicsPipeline;
     }
 
     core::PipelineLayout::SharedPtr  getPipelineLayout() const
@@ -143,23 +135,18 @@ private:
 
     core::SyncObject::UniquePtr m_syncObject{nullptr};
 
-    core::GraphicsPipeline::SharedPtr m_graphicsPipeline{nullptr};
-    
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     
     uint32_t m_imageIndex{0};
     uint32_t m_currentFrame{0};
 
-    bool m_rebuildSwapchain{false};
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
-
 
     core::DescriptorSetLayout::SharedPtr m_materialSetLayout{nullptr};
 
     core::DescriptorSetLayout::SharedPtr m_directionalLightSetLayout{nullptr};
     std::vector<VkDescriptorSet> m_directionalLightDescriptorSets;
     std::vector<core::Buffer::SharedPtr> m_lightSSBOs;
-
 
     std::vector<UniformBufferObject<CameraUBO>::SharedPtr> m_cameraUniformObjects;
     core::DescriptorSetLayout::SharedPtr m_cameraSetLayout{nullptr};
@@ -169,8 +156,6 @@ private:
 
     std::vector<core::CommandBuffer::SharedPtr> m_commandBuffers;
     std::vector<std::vector<core::CommandBuffer::SharedPtr>> m_secondaryCommandBuffers;
-
-    core::RenderPass::SharedPtr m_swapChainRenderPass{nullptr};
 
     RenderGraphPassRecourceBuilder m_resourceBuilder;
     RenderGraphPassResourceHash m_resourceStorage;

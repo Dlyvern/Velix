@@ -70,8 +70,7 @@ int main(int argc, char** argv)
 
     //TODO: Change order to see if RenderGraph compile works
     renderGraph.addPass<elix::editor::ImGuiRenderGraphPass>(editor);
-    renderGraph.addPass<elix::engine::BaseRenderGraphPass>(vulkanContext->getDevice(), vulkanContext->getSwapchain(), 
-    renderGraph.getGraphicsPipeline(), renderGraph.getPipelineLayout());
+    renderGraph.addPass<elix::engine::BaseRenderGraphPass>(vulkanContext->getDevice(), vulkanContext->getSwapchain(), renderGraph.getPipelineLayout());
     renderGraph.addPass<elix::engine::OffscreenRenderGraphPass>(vulkanContext->getDevice(), renderGraph.getPipelineLayout());
 
     renderGraph.createRenderGraphResources();
@@ -96,7 +95,6 @@ int main(int argc, char** argv)
     const float fixedStep = 1.0f / 60.0f;
     float accumulator = 0.0f;
 
-
     auto camera = std::make_shared<elix::engine::Camera>();
     auto engineCamera = std::make_shared<elix::engine::EngineCamera>(camera);
 
@@ -106,12 +104,6 @@ int main(int argc, char** argv)
     std::cout << "Engine load took: " << duration.count() << " microseconds\n";
     std::cout << "Engine load took: " << duration.count() / 1000.0 << " milliseconds\n";
     std::cout << "Engine load took: " << duration.count() / 1000000.0 << " seconds\n";
-
-    int width, height;
-    window->getMaxMonitorResolution(&width, &height);
-
-    std::cout << "Width: " << width << std::endl;
-    std::cout << "Height: " << height << std::endl;
 
     while(window->isOpen())
     {

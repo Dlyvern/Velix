@@ -15,12 +15,20 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
+struct GPUEntity
+{
+    std::shared_ptr<GPUMesh> mesh;
+    glm::mat4 transform;
+    VkDescriptorSet materialDescriptorSet;
+};
+
 class RenderGraphPassPerFrameData
 {
 public:
     //!For now, leave it like this, after adding SkeletonMeshProxy it needs to be redesigned
     std::map<Entity::SharedPtr, std::shared_ptr<GPUMesh>> transformationBasedOnMesh;
-    std::map<size_t, std::shared_ptr<GPUMesh>> meshes;
+    std::map<Entity::SharedPtr, GPUEntity> meshes;
+
     glm::mat4 lightSpaceMatrix;
     VkViewport swapChainViewport;
     VkRect2D swapChainScissor;

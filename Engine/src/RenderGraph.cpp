@@ -37,54 +37,6 @@ m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanC
 {
     m_syncObject = std::make_unique<core::SyncObject>(m_device, MAX_FRAMES_IN_FLIGHT);
 
-    VkAttachmentDescription colorAttachment{};
-    colorAttachment.format = m_swapchain->getImageFormat();
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    VkAttachmentDescription depthAttachment{};
-    depthAttachment.format = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
-    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference colorAttachmentReference{};
-    colorAttachmentReference.attachment = 0;
-    colorAttachmentReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference depthAttachmentReference{};
-    depthAttachmentReference.attachment = 1;
-    depthAttachmentReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachmentReference;
-    subpass.pDepthStencilAttachment = &depthAttachmentReference;
-
-    std::vector<VkSubpassDependency> dependency;
-    dependency.resize(1);
-    dependency[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency[0].dstSubpass = 0;
-    dependency[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dependency[0].srcAccessMask = 0;
-    dependency[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dependency[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-    std::vector<VkAttachmentDescription> attachments{colorAttachment, depthAttachment};
-
-    //TODO IT SHOULD BE REMOVED IMMEDIATLY
-    m_swapChainRenderPass = core::RenderPass::create(m_device, attachments, {subpass}, dependency);
-
     auto queueFamilyIndices = core::VulkanContext::findQueueFamilies(core::VulkanContext::getContext()->getPhysicalDevice(), core::VulkanContext::getContext()->getSurface());
     m_commandPool = core::CommandPool::create(m_device, queueFamilyIndices.graphicsFamily.value());
 
@@ -106,9 +58,15 @@ m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanC
 
             auto gpuMesh = GPUMesh::createFromMesh(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), mesh, graphicsQueue, m_commandPool);
 
-            m_perFrameData.meshes[hashData] = gpuMesh;
-            m_perFrameData.transformationBasedOnMesh[entity] = gpuMesh;
+            GPUEntity gpuEntity
+            {
+                .mesh = gpuMesh,
+                .transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f),
+                .materialDescriptorSet = VK_NULL_HANDLE
+            };
 
+            m_perFrameData.transformationBasedOnMesh[entity] = gpuMesh;
+            m_perFrameData.meshes[entity] = gpuEntity;
         }
     }
 
@@ -128,6 +86,30 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     m_perFrameData.swapChainScissor = m_swapchain->getScissor();
     m_perFrameData.lightDescriptorSet = m_directionalLightDescriptorSets[m_currentFrame];
     m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
+
+    for(const auto& entity : m_scene->getEntities())
+    {
+        auto en = m_perFrameData.meshes.find(entity);
+
+        if(en == m_perFrameData.meshes.end())
+        {
+            std::cerr << "Failed to find entity" << std::endl;
+            continue;
+        }
+
+        m_perFrameData.meshes[entity].transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() 
+        : glm::mat4(1.0f);
+
+        VkDescriptorSet materialDst{VK_NULL_HANDLE};
+
+        if(auto staticMesh = entity->getComponent<StaticMeshComponent>())
+            if(auto material = staticMesh->getMaterial())
+                materialDst = material->getDescriptorSet(m_currentFrame);
+            else
+                materialDst = Material::getDefaultMaterial()->getDescriptorSet(m_currentFrame);
+
+        m_perFrameData.meshes[entity].materialDescriptorSet = materialDst;
+    }
 
     CameraUBO cameraUBO{};
 
@@ -340,10 +322,9 @@ void RenderGraph::begin()
 
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, lock.imageAvailableSemaphore, VK_NULL_HANDLE, &m_imageIndex);
 
-    if(result == VK_ERROR_OUT_OF_DATE_KHR || m_rebuildSwapchain)
+    if(result == VK_ERROR_OUT_OF_DATE_KHR)
     {
         m_swapchain->recreate();
-        m_rebuildSwapchain = false;
         m_resourceCompiler.onSwapChainResize(m_resourceBuilder, m_resourceStorage);
 
         for(const auto& renderPass : m_renderGraphPasses)
@@ -461,10 +442,9 @@ void RenderGraph::end()
 
     VkResult result = vkQueuePresentKHR(core::VulkanContext::getContext()->getPresentQueue(), &presentInfo);
 
-    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || m_rebuildSwapchain)
+    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
     {
         m_swapchain->recreate();
-        m_rebuildSwapchain = false;
         m_resourceCompiler.onSwapChainResize(m_resourceBuilder, m_resourceStorage);
         for(const auto& renderPass : m_renderGraphPasses)
         {
@@ -499,8 +479,6 @@ void RenderGraph::setup()
 
 void RenderGraph::createGraphicsPipeline()
 {
-    core::Shader shader("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
-
     const std::vector<VkPushConstantRange> pushConstants
     {
         PushConstant<ModelPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)
@@ -514,27 +492,6 @@ void RenderGraph::createGraphicsPipeline()
     };
 
     m_pipelineLayout = core::PipelineLayout::create(m_device, setLayouts, pushConstants);
-
-    auto bindingDescription = engine::Vertex3D::getBindingDescription();
-    auto attributeDescription = engine::Vertex3D::getAttributeDescriptions();
-
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescription.size());
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescription.data();
-
-    auto viewport = m_swapchain->getViewport();
-    auto scissor = m_swapchain->getScissor();
-
-    engine::GraphicsPipelineBuilder graphicsPipelineBuilder;
-    graphicsPipelineBuilder.layout = m_pipelineLayout->vk();
-    graphicsPipelineBuilder.renderPass = m_swapChainRenderPass->vk();
-    graphicsPipelineBuilder.viewportState.pViewports = &viewport;
-    graphicsPipelineBuilder.viewportState.pScissors = &scissor;
-    graphicsPipelineBuilder.shaderStages = shader.getShaderStages();
-
-    m_graphicsPipeline = graphicsPipelineBuilder.build(m_device, vertexInputInfo);
 }
 
 void RenderGraph::createDirectionalLightDescriptorSets()

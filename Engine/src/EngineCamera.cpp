@@ -21,7 +21,7 @@ void EngineCamera::update(float deltaTime)
 
     if (rightButtonState == GLFW_PRESS && !mouseLocked)
     {
-        glfwSetInputMode(window->getRawHandler(), GLFW_CURSOR, GLFW_CURSOR_DISABLED); 
+        glfwSetInputMode(window->getRawHandler(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         m_firstClick = true;
         mouseLocked = true;
     }
@@ -58,7 +58,6 @@ void EngineCamera::update(float deltaTime)
     static float lastX = static_cast<float>(core::VulkanContext::getContext()->getSwapchain()->getExtent().width) / 2.0f;
     static float lastY = static_cast<float>(core::VulkanContext::getContext()->getSwapchain()->getExtent().height) / 2.0f;
 
-
     double xPosition, yPosition;
     glfwGetCursorPos(window->getRawHandler(), &xPosition, &yPosition);
 
@@ -88,7 +87,6 @@ void EngineCamera::update(float deltaTime)
     m_camera->setPitch(pitch);
 
     m_camera->updateCameraVectors();
-
 }
 
 ELIX_NESTED_NAMESPACE_END

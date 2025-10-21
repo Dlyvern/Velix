@@ -201,6 +201,8 @@ void ImGuiRenderGraphPass::compile(engine::RenderGraphPassResourceHash& storage)
     imguiInitInfo.Allocator = nullptr;
 
     ImGui_ImplVulkan_Init(&imguiInitInfo);
+
+    m_editor->initStyle();
 }
 
 void ImGuiRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const

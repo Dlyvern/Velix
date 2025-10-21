@@ -9,7 +9,7 @@ Shader::Shader(const std::string& vertexPath, const std::string& fragmentPath)
     m_shaderStages = {m_vertexHandler.getInfo(), m_fragmentHandler.getInfo()};
 }
 
-Shader::Shader(const std::vector<char>& vertexCode, const std::vector<char>& fragmentCode)
+Shader::Shader(const std::vector<uint32_t>& vertexCode, const std::vector<uint32_t>& fragmentCode)
 {
     m_vertexHandler.loadFromCode(vertexCode, ShaderStage::VERTEX);
     m_fragmentHandler.loadFromCode(fragmentCode, ShaderStage::FRAGMENT);

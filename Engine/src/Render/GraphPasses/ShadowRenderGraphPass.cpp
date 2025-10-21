@@ -215,7 +215,6 @@ void ShadowRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr co
     );
 }
 
-
 void ShadowRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuilder)
 {
 }

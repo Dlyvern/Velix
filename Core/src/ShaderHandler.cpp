@@ -4,6 +4,28 @@
 #include <fstream>
 #include <iostream>
 
+namespace
+{
+    std::vector<uint32_t> readSpirvFile(const std::string& path)
+    {
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (!file.is_open())
+            throw std::runtime_error("Failed to open SPIR-V file: " + path);
+
+        size_t size = static_cast<size_t>(file.tellg());
+        file.seekg(0, std::ios::beg);
+
+        if (size % 4 != 0)
+            throw std::runtime_error("SPIR-V file size not divisible by 4: " + path);
+
+        std::vector<uint32_t> spirv(size / sizeof(uint32_t));
+        file.read(reinterpret_cast<char*>(spirv.data()), size);
+        file.close();
+
+        return spirv;
+    }
+}
+
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 ShaderHandler::ShaderHandler() = default;
@@ -17,17 +39,7 @@ ShaderHandler::~ShaderHandler()
 //TODO get name from filename
 void ShaderHandler::loadFromFile(const std::string& path, ShaderStage shaderStage)
 {
-    std::ifstream file(path, std::ios::ate | std::ios::binary);
-
-    if (!file.is_open())
-        throw std::runtime_error("Failed to open shader file: " + path);
-
-    size_t fileSize = (size_t)file.tellg();
-    std::vector<char> buffer(fileSize);
-
-    file.seekg(0);
-    file.read(buffer.data(), fileSize);
-    file.close();
+    auto buffer = readSpirvFile(path);
 
     m_shaderModule = createShaderModule(buffer);
 
@@ -42,7 +54,7 @@ void ShaderHandler::loadFromFile(const std::string& path, ShaderStage shaderStag
 }
 
 //TODO get name from code
-void ShaderHandler::loadFromCode(const std::vector<char>& code, ShaderStage shaderStage)
+void ShaderHandler::loadFromCode(const std::vector<uint32_t>& code, ShaderStage shaderStage)
 {
     m_shaderModule = createShaderModule(code);
 
@@ -71,7 +83,7 @@ VkShaderStageFlagBits ShaderHandler::getStage()
     return m_shaderStage;
 }
 
-const std::vector<char>& ShaderHandler::getCode() const
+const std::vector<uint32_t>& ShaderHandler::getCode() const
 {
     return m_code;
 }
@@ -84,13 +96,13 @@ void ShaderHandler::createInfo()
     m_info.pName = "main";
 }
 
-VkShaderModule ShaderHandler::createShaderModule(const std::vector<char>& code)
+VkShaderModule ShaderHandler::createShaderModule(const std::vector<uint32_t>& code)
 {
     m_code = code;
 
     VkShaderModuleCreateInfo createInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    createInfo.codeSize = code.size();
-    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+    createInfo.codeSize = code.size() * sizeof(uint32_t);;
+    createInfo.pCode = code.data();
 
     VkShaderModule shaderModule;
 

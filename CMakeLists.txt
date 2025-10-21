@@ -16,10 +16,11 @@ add_subdirectory(Engine)
 
 add_subdirectory(Editor)
 
+add_subdirectory(VelixSDK)
+
 add_executable(${PROJECT_NAME} main.cpp)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE VelixEngine VelixCore VelixEditor)
-
 
 set(RESOURCE_DIR "${CMAKE_SOURCE_DIR}/resources")
 set(OUTPUT_RESOURCE_DIR "${CMAKE_BINARY_DIR}/resources")
@@ -63,7 +64,6 @@ if(EXISTS ${FBX_DLL})
 else()
     message(WARNING "FBX SDK not found: ${FBX_DLL}")
 endif()
-
 
 install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION .

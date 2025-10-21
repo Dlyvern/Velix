@@ -29,8 +29,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class BaseRenderGraphPass : public IRenderGraphPass
 {
 public:
-    BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, core::GraphicsPipeline::SharedPtr graphicsPipeline,
-    core::PipelineLayout::SharedPtr pipelineLayout);
+    BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, core::PipelineLayout::SharedPtr pipelineLayout);
 
     void update(const RenderGraphPassContext& renderData) override;
     void setup(RenderGraphPassRecourceBuilder& graphPassBuilder) override;

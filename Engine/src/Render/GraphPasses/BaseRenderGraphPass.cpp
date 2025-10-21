@@ -2,8 +2,12 @@
 
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
+#include "Engine/GraphicsPipelineBuilder.hpp"
+#include "Engine/ShaderDataExtractor.hpp"
 
+#include "Core/Shader.hpp"
 #include "Core/VulkanHelpers.hpp"
+
 #include <iostream>
 
 struct ModelPushConstant
@@ -13,9 +17,9 @@ struct ModelPushConstant
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-BaseRenderGraphPass::BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, core::GraphicsPipeline::SharedPtr graphicsPipeline, 
+BaseRenderGraphPass::BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, 
 core::PipelineLayout::SharedPtr pipelineLayout) 
-: m_device(device), m_swapchain(swapchain), m_graphicsPipeline(graphicsPipeline), m_pipelineLayout(pipelineLayout)
+: m_device(device), m_swapchain(swapchain), m_pipelineLayout(pipelineLayout)
 {
     auto queueFamilyIndices = core::VulkanContext::findQueueFamilies(core::VulkanContext::getContext()->getPhysicalDevice(), core::VulkanContext::getContext()->getSurface());
     m_commandPool = core::CommandPool::create(device, queueFamilyIndices.graphicsFamily.value());
@@ -163,6 +167,33 @@ void BaseRenderGraphPass::compile(RenderGraphPassResourceHash& storage)
 
         m_framebuffers.push_back(framebuffer);
     }
+
+    core::Shader shader("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
+
+    const auto& vertexHandler = shader.getVertexHandler();
+
+    ShaderDataExtractor::parse(vertexHandler, "./resources/shaders/static_mesh.vert.spv");
+
+    auto bindingDescription = engine::Vertex3D::getBindingDescription();
+    auto attributeDescription = engine::Vertex3D::getAttributeDescriptions();
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescription.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescription.data();
+
+    auto viewport = m_swapchain->getViewport();
+    auto scissor = m_swapchain->getScissor();
+
+    engine::GraphicsPipelineBuilder graphicsPipelineBuilder;
+    graphicsPipelineBuilder.layout = m_pipelineLayout->vk();
+    graphicsPipelineBuilder.renderPass = m_renderPass->vk();
+    graphicsPipelineBuilder.viewportState.pViewports = &viewport;
+    graphicsPipelineBuilder.viewportState.pScissors = &scissor;
+    graphicsPipelineBuilder.shaderStages = shader.getShaderStages();
+
+    m_graphicsPipeline = graphicsPipelineBuilder.build(m_device, vertexInputInfo);
 }
 
 void BaseRenderGraphPass::update(const RenderGraphPassContext& renderData)
@@ -178,42 +209,32 @@ void BaseRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, 
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &data.swapChainViewport);
     vkCmdSetScissor(commandBuffer->vk(), 0, 1, &data.swapChainScissor);
 
-    for(const auto [entity, mesh] : data.transformationBasedOnMesh)
+    for(const auto [entity, gpuEntity] : data.meshes)
     {
-        VkBuffer vertexBuffers[] = {mesh->vertexBuffer->vkBuffer()};
+        VkBuffer vertexBuffers[] = {gpuEntity.mesh->vertexBuffer->vkBuffer()};
         VkDeviceSize offset[] = {0};
 
         vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
-        vkCmdBindIndexBuffer(commandBuffer->vk(), mesh->indexBuffer->vkBuffer(), 0, mesh->indexType);
+        vkCmdBindIndexBuffer(commandBuffer->vk(), gpuEntity.mesh->indexBuffer->vkBuffer(), 0, gpuEntity.mesh->indexType);
 
-        ModelPushConstant modelPushConstant{};
+        ModelPushConstant modelPushConstant
+        {
+            .model = gpuEntity.transform
+        };
 
-        if(auto tr = entity->getComponent<Transform3DComponent>())
-            modelPushConstant.model = tr->getMatrix();
-        else
-            std::cerr << "ERROR: MODEL DOES NOT HAVE TRANSFORM COMPONENT. SOMETHING IS WEIRD" << std::endl;
-        
         vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
-
-        VkDescriptorSet materialDst{VK_NULL_HANDLE};
-
-        if(auto staticMesh = entity->getComponent<StaticMeshComponent>())
-            if(auto material = staticMesh->getMaterial())
-                materialDst = material->getDescriptorSet(m_currentFrame);
-            else
-                materialDst = Material::getDefaultMaterial()->getDescriptorSet(m_currentFrame);
 
         const std::array<VkDescriptorSet, 3> descriptorSets = 
         {
             data.cameraDescriptorSet, // set 0: camera
-            materialDst,  // set 1: material
+            gpuEntity.materialDescriptorSet,  // set 1: material
             data.lightDescriptorSet // set 2: lighting
         };
 
         vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout->vk(), 0, static_cast<uint32_t>(descriptorSets.size()), 
         descriptorSets.data(), 0, nullptr);
 
-        vkCmdDrawIndexed(commandBuffer->vk(), mesh->indicesCount, 1, 0, 0, 0);
+        vkCmdDrawIndexed(commandBuffer->vk(), gpuEntity.mesh->indicesCount, 1, 0, 0, 0);
     }
 }
 
