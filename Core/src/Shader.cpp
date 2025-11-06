@@ -16,6 +16,11 @@ Shader::Shader(const std::vector<uint32_t>& vertexCode, const std::vector<uint32
     m_shaderStages = {m_vertexHandler.getInfo(), m_fragmentHandler.getInfo()};
 }
 
+Shader::SharedPtr Shader::create(const std::string& vertexPath, const std::string& fragmentPath)
+{
+    return std::make_shared<Shader>(vertexPath, fragmentPath);
+}
+
 const std::vector<VkPipelineShaderStageCreateInfo>& Shader::getShaderStages() const
 {
     return m_shaderStages;

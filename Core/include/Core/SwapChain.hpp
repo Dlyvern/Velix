@@ -1,8 +1,8 @@
 #ifndef ELIX_SWAP_CHAIN_HPP
 #define ELIX_SWAP_CHAIN_HPP
 
-#include "Window.hpp"
-#include "Macros.hpp"
+#include "Core/Window.hpp"
+#include "Core/Macros.hpp"
 
 #include "Core/Image.hpp"
 #include <vector>

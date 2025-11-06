@@ -6,24 +6,18 @@
 #include "Core/CommandBuffer.hpp"
 #include "Core/CommandPool.hpp"
 #include "Core/SyncObject.hpp"
+#include "Core/DescriptorSetLayout.hpp"
+#include "Core/PipelineLayout.hpp"
 
 #include "Engine/TextureImage.hpp"
-
 #include "Engine/Render/RenderGraphPassResourceBuilder.hpp"
 #include "Engine/Render/RenderGraphPassRecourceCompiler.hpp"
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
-
-#include "Core/DescriptorSetLayout.hpp"
-
 #include "Engine/Scene.hpp"
-
-#include "Core/PipelineLayout.hpp"
+#include "Engine/Camera.hpp"
 
 #include <typeindex>
 #include <unordered_map>
-
-#include "Engine/Camera.hpp"
-#include "Engine/UniformBufferObject.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -35,14 +29,13 @@ public:
     template<typename T, typename... Args>
     T* addPass(Args&&... args)
     {
-        static_assert(!std::is_abstract_v<T>, "RenderGraph::addPass() Cannot add abstract component!");
+        static_assert(!std::is_abstract_v<T>, "RenderGraph::addPass() Cannot add abstract render pass!");
         static_assert(std::is_base_of_v<IRenderGraphPass, T>, "RenderGraph::addPass() T must derive from IRenderGraphPass class");
 
         const auto type = std::type_index(typeid(T));
         auto renderPass = std::make_shared<T>(std::forward<Args>(args)...);
         T* ptr = renderPass.get();
 
-        // m_passExecutionOrder.push_back(renderPass);
         m_renderGraphPasses[type] = std::move(renderPass);
 
         return ptr;
@@ -59,21 +52,6 @@ public:
         return m_materialSetLayout;
     }
 
-    core::PipelineLayout::SharedPtr  getPipelineLayout() const
-    {
-        return m_pipelineLayout;
-    }
-
-    const std::vector<VkDescriptorSet>& getCameraDescriptorSets() const
-    {
-        return m_cameraDescriptorSets;
-    }
-
-    const std::vector<VkDescriptorSet>& getLightDescriptorSets() const
-    {
-        return m_directionalLightDescriptorSets;
-    }
-
     VkDescriptorPool getDescriptorPool() const
     {
         return m_descriptorPool;
@@ -86,10 +64,9 @@ public:
 
     void createRenderGraphResources();
     void createDescriptorSetPool();
-    void createDescriptorSetLayouts();
     void createCameraDescriptorSets(VkSampler sampler, VkImageView imageView);
-    void createGraphicsPipeline();
     void createDirectionalLightDescriptorSets();
+    void createDataFromScene();
 
     void cleanResources();
 
@@ -129,14 +106,13 @@ private:
     std::unordered_map<std::type_index, IRenderGraphPass::SharedPtr> m_renderGraphPasses;
     
     VkDevice m_device{VK_NULL_HANDLE};
+    VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
 
     core::SwapChain::SharedPtr m_swapchain{nullptr};
     core::CommandPool::SharedPtr m_commandPool{nullptr};
 
-    core::SyncObject::UniquePtr m_syncObject{nullptr};
-
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
-    
+
     uint32_t m_imageIndex{0};
     uint32_t m_currentFrame{0};
 
@@ -148,11 +124,13 @@ private:
     std::vector<VkDescriptorSet> m_directionalLightDescriptorSets;
     std::vector<core::Buffer::SharedPtr> m_lightSSBOs;
 
-    std::vector<UniformBufferObject<CameraUBO>::SharedPtr> m_cameraUniformObjects;
+    std::vector<void*> m_cameraMapped;
+    std::vector<core::Buffer::SharedPtr> m_cameraUniformObjects;
     core::DescriptorSetLayout::SharedPtr m_cameraSetLayout{nullptr};
     std::vector<VkDescriptorSet> m_cameraDescriptorSets;
 
-    std::vector<UniformBufferObject<LightSpaceMatrixUBO>::SharedPtr> m_lightSpaceMatrixUniformObjects;
+    std::vector<void*> m_lightMapped;
+    std::vector<core::Buffer::SharedPtr> m_lightSpaceMatrixUniformObjects;
 
     std::vector<core::CommandBuffer::SharedPtr> m_commandBuffers;
     std::vector<std::vector<core::CommandBuffer::SharedPtr>> m_secondaryCommandBuffers;
@@ -162,6 +140,11 @@ private:
     RenderGraphPassResourceCompiler m_resourceCompiler;
 
     RenderGraphPassPerFrameData m_perFrameData;
+
+    std::vector<VkFence> m_inFlightFences;
+    std::vector<VkSemaphore> m_imageAvailableSemaphores;
+    std::vector<VkSemaphore> m_renderFinishedSemaphores;
+    std::vector<VkFence> m_imagesInFlight;
 };
 
 ELIX_NESTED_NAMESPACE_END

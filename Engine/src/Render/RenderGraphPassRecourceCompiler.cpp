@@ -11,84 +11,72 @@ m_device(device), m_physicalDevice(physicalDevice), m_swapChain(swapChain)
 void RenderGraphPassResourceCompiler::compile(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
 {
     compileTextures(builder, storage);
-    compileFramebuffers(builder, storage);
     compileRenderPasses(builder, storage);
+    compileFramebuffers(builder, storage);
+    compileGraphicsPipelines(builder, storage);
+}
+
+void RenderGraphPassResourceCompiler::compileGraphicsPipelines(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
+{
+    for(auto [hash, graphicsPipelineDescription] : builder.getGraphicsPipelineHashes())
+    {
+        VkPipelineVertexInputStateCreateInfo vertexInputStateCI{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        vertexInputStateCI.vertexBindingDescriptionCount = static_cast<uint32_t>(graphicsPipelineDescription.vertexBindingDescriptions.size());
+        vertexInputStateCI.pVertexBindingDescriptions = graphicsPipelineDescription.vertexBindingDescriptions.data();
+        vertexInputStateCI.vertexAttributeDescriptionCount = static_cast<uint32_t>(graphicsPipelineDescription.vertexAttributeDescriptions.size());
+        vertexInputStateCI.pVertexAttributeDescriptions = graphicsPipelineDescription.vertexAttributeDescriptions.data();
+
+        graphicsPipelineDescription.viewportState.pViewports = &graphicsPipelineDescription.viewport;
+        graphicsPipelineDescription.viewportState.pScissors = &graphicsPipelineDescription.scissor;
+
+        if(!graphicsPipelineDescription.colorBlendingAttachments.empty())
+        {
+            graphicsPipelineDescription.colorBlending.attachmentCount = static_cast<uint32_t>(graphicsPipelineDescription.colorBlendingAttachments.size());
+            graphicsPipelineDescription.colorBlending.pAttachments = graphicsPipelineDescription.colorBlendingAttachments.data();
+        }
+
+        graphicsPipelineDescription.dynamicState.dynamicStateCount = (uint32_t)graphicsPipelineDescription.dynamicStates.size();
+        graphicsPipelineDescription.dynamicState.pDynamicStates = graphicsPipelineDescription.dynamicStates.data();
+
+        auto shaderStages = graphicsPipelineDescription.shader->getShaderStages();
+
+        VkRenderPass renderPass;
+
+        if(!graphicsPipelineDescription.renderPass)
+            renderPass = storage.getRenderPass(graphicsPipelineDescription.renderPassHash)->vk();
+        else
+            renderPass = graphicsPipelineDescription.renderPass;
+
+        auto graphicsPipeline = std::make_shared<core::GraphicsPipeline>(m_device, renderPass, shaderStages.data(), 
+        static_cast<uint32_t>(graphicsPipelineDescription.shader->getShaderStages().size()), graphicsPipelineDescription.layout, graphicsPipelineDescription.dynamicState, graphicsPipelineDescription.colorBlending,
+        graphicsPipelineDescription.multisampling, graphicsPipelineDescription.rasterizer, graphicsPipelineDescription.viewportState, graphicsPipelineDescription.inputAssembly,
+        vertexInputStateCI, graphicsPipelineDescription.subpass, graphicsPipelineDescription.depthStencil);
+
+        storage.addGraphicsPipeline(hash, graphicsPipeline);
+    }
 }
 
 void RenderGraphPassResourceCompiler::compileRenderPasses(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
 {
     for(const auto& [hash, renderPassDescription] : builder.getRenderPassHashes())
     {
-        std::vector<VkAttachmentReference> colorAttachments;
-        
-        for(const auto& att : renderPassDescription.colorAttachments)
-            colorAttachments.push_back(att.colorAttachmentReference);
-        
-        VkSubpassDescription subpassDescription{};
-        subpassDescription.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpassDescription.pColorAttachments = colorAttachments.data();
-        subpassDescription.colorAttachmentCount = static_cast<uint32_t>(colorAttachments.size());
-        subpassDescription.pDepthStencilAttachment = renderPassDescription.depthAttachments.data();
+        std::vector<VkSubpassDescription> subpassDescriptions;
 
-        auto renderPass = core::RenderPass::create(m_device, renderPassDescription.attachments, {subpassDescription}, 
+        for(const auto& subpassDescription : renderPassDescription.subpassDescriptions)
+        {
+            VkSubpassDescription description{};
+            description.pipelineBindPoint = subpassDescription.pipelineBindPoint;
+            description.colorAttachmentCount = subpassDescription.colorAttachmentCount;
+            description.pColorAttachments = subpassDescription.colorAttachments.data();
+            description.pDepthStencilAttachment = subpassDescription.depthStencilAttachments.data();
+
+            subpassDescriptions.push_back(description);
+        }
+
+        auto renderPass = core::RenderPass::create(renderPassDescription.attachments, subpassDescriptions, 
         renderPassDescription.subpassDependencies);
 
         storage.addRenderPass(hash, renderPass);
-        // subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        // subpass.colorAttachmentCount = 1;
-        // subpass.pColorAttachments = &colorAttachmentReference;
-        // subpass.pDepthStencilAttachment = &depthAttachmentReference;
-
-        // auto renderPass = core::RenderPass::create(m_device, renderPassDescription.attachments, 
-        // renderPassDescription.subpassDescriptions, renderPassDescription.subpassDependencies);
-
-        // storage.addRenderPass(hash, renderPass);
-        // VkAttachmentDescription colorAttachment{};
-        // colorAttachment.format = m_swapchain->getImageFormat();
-        // colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        // colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        // colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        // colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        // colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        // colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        // colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-        // VkAttachmentDescription depthAttachment{};
-        // depthAttachment.format = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
-        // depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        // depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        // depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        // depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        // depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        // depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        // depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-        // VkAttachmentReference colorAttachmentReference{};
-        // colorAttachmentReference.attachment = 0;
-        // colorAttachmentReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-        // VkAttachmentReference depthAttachmentReference{};
-        // depthAttachmentReference.attachment = 1;
-        // depthAttachmentReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-        // VkSubpassDescription subpass{};
-        // subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        // subpass.colorAttachmentCount = 1;
-        // subpass.pColorAttachments = &colorAttachmentReference;
-        // subpass.pDepthStencilAttachment = &depthAttachmentReference;
-
-        // std::vector<VkSubpassDependency> dependency;
-        // dependency.resize(1);
-        // dependency[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-        // dependency[0].dstSubpass = 0;
-        // dependency[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-        // dependency[0].srcAccessMask = 0;
-        // dependency[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-        // dependency[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-        // std::vector<VkAttachmentDescription> attachments{colorAttachment, depthAttachment};
-
-        // m_renderPass = core::RenderPass::create(m_device, attachments, {subpass}, dependency);
     }
 }
 
@@ -108,9 +96,9 @@ void RenderGraphPassResourceCompiler::compileTextures(RenderGraphPassRecourceBui
             
             for(const auto& image : m_swapChain.lock()->getImages())
             {
-                auto wrapImage = core::Image<core::ImageNoDelete>::wrap(m_device, image);
+                auto wrapImage = core::Image::wrap(m_device, image);
 
-                auto texture = std::make_shared<core::Texture<core::ImageNoDelete>>(m_device, m_physicalDevice, m_swapChain.lock()->getImageFormat(),
+                auto texture = std::make_shared<core::Texture>(m_device, m_physicalDevice, m_swapChain.lock()->getImageFormat(),
                 textureDescription.aspect, wrapImage);
 
                 storage.addTexture(copyHash, texture);
@@ -131,10 +119,10 @@ void RenderGraphPassResourceCompiler::compileTextures(RenderGraphPassRecourceBui
         else
             size = {textureDescription.size.width, textureDescription.size.height};
 
-        auto image = core::Image<core::ImageNoDelete>::createCustom<core::ImageNoDelete>(m_device, m_physicalDevice, size.width, size.height,
+        auto image = core::Image::create(m_device, m_physicalDevice, size.width, size.height,
         textureDescription.usage, textureDescription.properties, textureDescription.format, textureDescription.tiling);
 
-        auto texture = std::make_shared<core::Texture<core::ImageNoDelete>>(m_device, m_physicalDevice, textureDescription.format, textureDescription.aspect, image);
+        auto texture = std::make_shared<core::Texture>(m_device, m_physicalDevice, textureDescription.format, textureDescription.aspect, image);
 
         storage.addTexture(hash, texture);
     }
@@ -171,12 +159,18 @@ void RenderGraphPassResourceCompiler::compileFramebuffers(RenderGraphPassRecourc
         else
             size = {framebufferDescription.size.width, framebufferDescription.size.height};
 
-        auto framebuffer = std::make_shared<core::Framebuffer>(m_device, attachments, framebufferDescription.renderPass, 
+        core::RenderPass::SharedPtr renderPass{nullptr};
+
+        if(!framebufferDescription.renderPass)
+            renderPass = storage.getRenderPass(framebufferDescription.renderPassHash);
+        else
+            renderPass = framebufferDescription.renderPass;
+
+        auto framebuffer = std::make_shared<core::Framebuffer>(m_device, attachments, renderPass, 
         VkExtent2D{size.width, size.height}, framebufferDescription.layers);
 
         storage.addFramebuffer(hash, framebuffer);
     }
-
 }
 
 void RenderGraphPassResourceCompiler::onSwapChainResize(const RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
@@ -197,7 +191,7 @@ void RenderGraphPassResourceCompiler::onSwapChainResize(const RenderGraphPassRec
 
             texture->destroyVkImageView();
 
-            auto wrapImage = core::Image<core::ImageNoDelete>::wrap(m_device, image);
+            auto wrapImage = core::Image::wrap(m_device, image);
 
             texture->resetVkImage(wrapImage);
 

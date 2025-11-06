@@ -9,8 +9,8 @@
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 //TODO maybe throw here is not a good idea
-Buffer::Buffer(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags) :
-m_device(device)
+Buffer::Buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memFlags, VkBufferCreateFlags flags) :
+m_device(core::VulkanContext::getContext()->getDevice()), m_size(size)
 {
     VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bufferInfo.flags = flags;
@@ -26,15 +26,20 @@ m_device(device)
 
     VkMemoryAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     allocateInfo.allocationSize = memRequirements.size;
-    allocateInfo.memoryTypeIndex = helpers::findMemoryType(physicalDevice, memRequirements.memoryTypeBits, memFlags);
+    allocateInfo.memoryTypeIndex = helpers::findMemoryType(core::VulkanContext::getContext()->getPhysicalDevice(), memRequirements.memoryTypeBits, memFlags);
 
     if(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_bufferMemory) != VK_SUCCESS)
         throw std::runtime_error("Failed to allocate buffer memory");
 
-    vkBindBufferMemory(m_device, m_buffer, m_bufferMemory, 0);
+    bind(0);
 }
 
-void Buffer::map(VkDeviceSize offset, VkDeviceSize size,  VkMemoryMapFlags flags, void* data)
+void Buffer::map(void*& data, VkDeviceSize offset, VkMemoryMapFlags flags)
+{
+    vkMapMemory(m_device, m_bufferMemory, offset, m_size, flags, &data);
+}
+
+void Buffer::map(VkDeviceSize offset, VkDeviceSize size,  VkMemoryMapFlags flags, void*& data)
 {
     vkMapMemory(m_device, m_bufferMemory, offset, size, flags, &data);
 }
@@ -47,8 +52,7 @@ void Buffer::unmap()
 void Buffer::upload(const void* data, VkDeviceSize size)
 {
     void* dst;
-    // map(0, size, 0, dst);
-    vkMapMemory(m_device, m_bufferMemory, 0, size, 0, &dst);
+    map(0, size, 0, dst);
     std::memcpy(dst, data, static_cast<size_t>(size));
     unmap();
 }
@@ -81,23 +85,27 @@ VkBuffer Buffer::vkBuffer()
     return m_buffer;
 }
 
-void Buffer::destroy()
+void Buffer::destroyVk()
 {
     if(m_buffer)
+    {
         vkDestroyBuffer(m_device, m_buffer, nullptr);
+        m_buffer = VK_NULL_HANDLE;
+    }
     
     if(m_bufferMemory)
+    {
         vkFreeMemory(m_device, m_bufferMemory, nullptr);
-
-    m_isDestroyed = true;
+        m_bufferMemory = VK_NULL_HANDLE;
+    }
 }
 
-Buffer::SharedPtr Buffer::createCopied(VkDevice device, VkPhysicalDevice physicalDevice, const void* data, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags, CommandPool::SharedPtr commandPool, VkQueue queue)
+Buffer::SharedPtr Buffer::createCopied(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memFlags, CommandPool::SharedPtr commandPool, VkQueue queue)
 {
-    auto staging = Buffer::create(device, physicalDevice, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto staging = Buffer::create(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     staging->upload(data, size);
 
-    auto gpuBuffer = Buffer::create(device, physicalDevice, size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, flags, memFlags);
+    auto gpuBuffer = Buffer::create(size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, memFlags);
 
     auto cmd = Buffer::copy(staging, gpuBuffer, commandPool, size);
     cmd->submit(queue, {}, {}, {}, VK_NULL_HANDLE);
@@ -111,15 +119,14 @@ VkDeviceMemory Buffer::vkDeviceMemory()
     return m_bufferMemory;
 }
 
-std::shared_ptr<Buffer> Buffer::create(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags)
+std::shared_ptr<Buffer> Buffer::create(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memFlags, VkBufferCreateFlags flags)
 {
-    return std::make_shared<Buffer>(device, physicalDevice, size, usage, flags, memFlags);
+    return std::make_shared<Buffer>(size, usage, memFlags, flags);
 }
 
 Buffer::~Buffer()
 {
-    if(!m_isDestroyed)
-        destroy();
+    destroyVk();
 }
 
 ELIX_NESTED_NAMESPACE_END

@@ -14,12 +14,20 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
+class CPUMaterial
+{
+public:
+    std::string albedoTexture;
+    glm::vec4 color;
+    std::string name;
+};
+
 class Material
 {
 public:
     using SharedPtr = std::shared_ptr<Material>;
 
-    Material(VkDevice device, VkPhysicalDevice physicalDevice, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout);
+    Material(VkDescriptorPool descriptorPool, engine::TextureImage::SharedPtr texture);
 
     void updateDescriptorSets();
 
@@ -36,8 +44,9 @@ public:
         return s_defaultMaterial;
     }
 
-    static void createDefaultMaterial(VkDevice device, VkPhysicalDevice physicalDevice, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout);
-    static SharedPtr create(VkDevice device, VkPhysicalDevice physicalDevice, VkDescriptorPool descriptorPool, uint32_t maxFramesInFlight, engine::TextureImage::SharedPtr texture, core::DescriptorSetLayout::SharedPtr descriptorSetLayout);
+    static void createDefaultMaterial(VkDescriptorPool descriptorPool, engine::TextureImage::SharedPtr texture);
+    static void deleteDefaultMaterial();
+    static SharedPtr create(VkDescriptorPool descriptorPool, engine::TextureImage::SharedPtr texture);
 private:
     uint32_t m_maxFramesInFlight;
     std::vector<VkDescriptorSet> m_descriptorSets;
@@ -46,9 +55,6 @@ private:
     std::vector<core::Buffer::SharedPtr> m_colorBuffers;
     static inline Material::SharedPtr s_defaultMaterial{nullptr};
     glm::vec4 m_color{1.0f};
-
-    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
-    core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

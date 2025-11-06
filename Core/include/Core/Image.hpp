@@ -13,44 +13,17 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-struct ImageDeleter
-{
-    void operator()(VkImage image, VkDeviceMemory memory, VkDevice device) const 
-    {
-        if (memory)
-        {
-            vkFreeMemory(device, memory, nullptr);
-            memory = VK_NULL_HANDLE;
-        }
-        if (image)
-        {
-            vkDestroyImage(device, image, nullptr);
-            image = VK_NULL_HANDLE;
-        }
-    }
-};
-
-struct ImageNoDelete
-{
-    void operator()(VkImage image, VkDeviceMemory memory, VkDevice device) const 
-    {
-
-    }
-};
-
-
-template<typename Deleter = ImageDeleter>
 class Image
 {
 public:
-    using SharedPtr = std::shared_ptr<Image<Deleter>>;
-    using UniquePtr = std::unique_ptr<Image<Deleter>>;
-    using WeakPtr = std::weak_ptr<Image<Deleter>>;
+    using SharedPtr = std::shared_ptr<Image>;
+    using UniquePtr = std::unique_ptr<Image>;
+    using WeakPtr = std::weak_ptr<Image>;
 
     Image(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t width, uint32_t height, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB, 
-    VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL) : m_device(device)
+    VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0) : m_device(device)
     {
-        createVk(physicalDevice, VkExtent2D{.width = width, .height = height}, usage, properties, format, tiling);
+        createVk(physicalDevice, VkExtent2D{.width = width, .height = height}, usage, properties, format, tiling, arrayLayers, flags);
     }
 
     Image(VkDevice device, VkImage image) : m_device(device)
@@ -58,6 +31,42 @@ public:
         m_image = image;
     }
 
+    /*
+        TODO: Document this
+    */
+    void createVk(VkPhysicalDevice physicalDevice, VkExtent2D extent, VkImageUsageFlags usage, 
+    VkMemoryPropertyFlags properties, VkFormat format, VkImageTiling tiling, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0)
+    {
+        VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.extent.width = extent.width;
+        imageInfo.extent.height = extent.height;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = arrayLayers;
+        imageInfo.format = format;
+        imageInfo.tiling = tiling;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageInfo.usage = usage;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.flags = flags;
+
+        if(vkCreateImage(m_device, &imageInfo, nullptr, &m_image) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create image");
+        
+        VkMemoryRequirements memRequirements;
+        vkGetImageMemoryRequirements(m_device, m_image, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = helpers::findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties);
+        
+        if(vkAllocateMemory(m_device, &allocInfo, nullptr, &m_imageMemory) != VK_SUCCESS)
+            throw std::runtime_error("Failed to allocate image memory");
+        
+        vkBindImageMemory(m_device, m_image, m_imageMemory, 0);
+    }
 
     Image(const Image&) = delete;
     Image& operator=(const Image&) = delete;
@@ -192,72 +201,36 @@ public:
     VkImage vk()
     {
         return m_image;
-
     }
 
     static SharedPtr create(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t width, uint32_t height, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB, 
-    VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL)
+    VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0)
     {
-        return std::make_shared<Image<ImageDeleter>>(device, physicalDevice, width, height, usage, properties, format, tiling);
+        return std::make_shared<Image>(device, physicalDevice, width, height, usage, properties, format, tiling, arrayLayers, flags);
     }
 
     static SharedPtr wrap(VkDevice device, VkImage image)
     {
-        return std::make_shared<Image<ImageNoDelete>>(device, image);
-    }
-
-    template<typename Del = ImageDeleter>
-    static SharedPtr createCustom(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t width, uint32_t height, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB, 
-    VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL)
-    {
-        return std::make_shared<Image<Del>>(device, physicalDevice, width, height, usage, properties, format, tiling);
-    }
-
-    template<typename Del = ImageDeleter>
-    static SharedPtr wrapCustom(VkDevice device, VkImage image)
-    {
-        return std::make_shared<Image<Del>>(device, image); 
-    }
-
-    /*
-        TODO: Document this
-    */
-    void createVk(VkPhysicalDevice physicalDevice, VkExtent2D extent, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkFormat format, VkImageTiling tiling)
-    {
-        VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        imageInfo.imageType = VK_IMAGE_TYPE_2D;
-        imageInfo.extent.width = extent.width;
-        imageInfo.extent.height = extent.height;
-        imageInfo.extent.depth = 1;
-        imageInfo.mipLevels = 1;
-        imageInfo.arrayLayers = 1;
-        imageInfo.format = format;
-        imageInfo.tiling = tiling;
-        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageInfo.usage = usage;
-        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-        imageInfo.flags = 0;
-
-        if(vkCreateImage(m_device, &imageInfo, nullptr, &m_image) != VK_SUCCESS)
-            throw std::runtime_error("Failed to create image");
-        
-        VkMemoryRequirements memRequirements;
-        vkGetImageMemoryRequirements(m_device, m_image, &memRequirements);
-
-        VkMemoryAllocateInfo allocInfo{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = helpers::findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties);
-        
-        if(vkAllocateMemory(m_device, &allocInfo, nullptr, &m_imageMemory) != VK_SUCCESS)
-            throw std::runtime_error("Failed to allocate image memory");
-        
-        vkBindImageMemory(m_device, m_image, m_imageMemory, 0);
+        auto wrappedImage = std::make_shared<Image>(device, image);
+        wrappedImage->m_isWrapped = true;
+        return wrappedImage;
     }
 
     void destroyVk()
     {
-        m_deleter(m_image, m_imageMemory, m_device);
+        if(!m_isWrapped)
+        {
+            if (m_imageMemory)
+            {
+                vkFreeMemory(m_device, m_imageMemory, nullptr);
+                m_imageMemory = VK_NULL_HANDLE;
+            }
+            if (m_image)
+            {
+                vkDestroyImage(m_device, m_image, nullptr);
+                m_image = VK_NULL_HANDLE;
+            }
+        }
     }
 
     ~Image()
@@ -265,10 +238,10 @@ public:
         destroyVk();
     }
 private:
-    Deleter m_deleter{Deleter{}};
     VkImage m_image{VK_NULL_HANDLE};
     VkDeviceMemory m_imageMemory{VK_NULL_HANDLE};
     VkDevice m_device{VK_NULL_HANDLE};
+    bool m_isWrapped{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

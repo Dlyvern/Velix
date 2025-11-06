@@ -12,7 +12,6 @@
 
 #include "Engine/Render/GraphPasses/OffscreenRenderGraphPass.hpp"
 
-#include "Engine/GraphicsPipelineBuilder.hpp"
 #include "Engine/Render/GraphPasses/BaseRenderGraphPass.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
@@ -20,8 +19,9 @@
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
 
+#include "Engine/ShaderFamily.hpp"
+
 #define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -35,43 +35,87 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene) : m_device(device), 
 m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanContext::getContext()->getPhysicalDevice(), swapchain)
 {
-    m_syncObject = std::make_unique<core::SyncObject>(m_device, MAX_FRAMES_IN_FLIGHT);
+    // m_syncObject = std::make_unique<core::SyncObject>(m_device, MAX_FRAMES_IN_FLIGHT);
+    m_physicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
 
-    auto queueFamilyIndices = core::VulkanContext::findQueueFamilies(core::VulkanContext::getContext()->getPhysicalDevice(), core::VulkanContext::getContext()->getSurface());
-    m_commandPool = core::CommandPool::create(m_device, queueFamilyIndices.graphicsFamily.value());
+    m_commandPool = core::CommandPool::create(m_device, core::VulkanContext::getContext()->getGraphicsFamily());
 
+    m_commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+    m_secondaryCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+    int imageCount = swapchain->getImages().size();
+
+    m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    m_renderFinishedSemaphores.resize(imageCount);
+    m_imagesInFlight.resize(imageCount, VK_NULL_HANDLE);
+
+    VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+
+    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;  // Start signaled
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) 
+    {
+        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
+            vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create synchronization objects for a frame!");
+        }
+    }
+
+    for (int i = 0; i < imageCount; ++i)
+    {
+        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create renderFinished semaphore for image!");
+    }
+
+    elix::engine::engineShaderFamilies::initEngineShaderFamilies();
+
+    m_cameraSetLayout = engineShaderFamilies::staticMeshCameraLayout;
+    m_directionalLightSetLayout = engineShaderFamilies::staticMeshLightLayout;
+    m_materialSetLayout = engineShaderFamilies::staticMeshMaterialLayout;
+}
+
+void RenderGraph::createDataFromScene()
+{
     VkQueue graphicsQueue = core::VulkanContext::getContext()->getGraphicsQueue();
 
     for(const auto& entity : m_scene->getEntities())
     {
         if(auto staticMeshComponent = entity->getComponent<StaticMeshComponent>())
         {
-            const auto& mesh = staticMeshComponent->getMesh();
+            const auto& meshes = staticMeshComponent->getMeshes();
+            std::vector<GPUMesh::SharedPtr> gpuMeshes;
+
             size_t hashData{0};
 
-            hashing::hash(hashData, (mesh.indices.size()));
+            for(const auto& mesh : meshes)
+            {
+                auto gpuMesh = GPUMesh::createFromMesh(m_device, m_physicalDevice, mesh, graphicsQueue, m_commandPool);
 
-            for(const auto& indices : mesh.indices)
-                hashing::hash(hashData, (indices));
+                if(mesh.material.albedoTexture.empty())
+                    gpuMesh->material = Material::getDefaultMaterial();
+                else
+                {
+                    auto textureImage = std::make_shared<TextureImage>();
+                    textureImage->load(mesh.material.albedoTexture, m_commandPool);
 
-            hashing::hash(hashData, (mesh.vertices.size()));
+                    auto material = Material::create(getDescriptorPool(), textureImage);
+                    gpuMesh->material = material;
+                }
 
-            auto gpuMesh = GPUMesh::createFromMesh(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), mesh, graphicsQueue, m_commandPool);
+                gpuMeshes.push_back(gpuMesh);
+            }
 
             GPUEntity gpuEntity
             {
-                .mesh = gpuMesh,
+                .meshes = gpuMeshes,
                 .transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f),
-                .materialDescriptorSet = VK_NULL_HANDLE
             };
 
-            m_perFrameData.transformationBasedOnMesh[entity] = gpuMesh;
             m_perFrameData.meshes[entity] = gpuEntity;
         }
     }
-
-    m_commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
-    m_secondaryCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
 }
 
 void RenderGraph::prepareFrame(Camera::SharedPtr camera)
@@ -99,16 +143,6 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
         m_perFrameData.meshes[entity].transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() 
         : glm::mat4(1.0f);
-
-        VkDescriptorSet materialDst{VK_NULL_HANDLE};
-
-        if(auto staticMesh = entity->getComponent<StaticMeshComponent>())
-            if(auto material = staticMesh->getMaterial())
-                materialDst = material->getDescriptorSet(m_currentFrame);
-            else
-                materialDst = Material::getDefaultMaterial()->getDescriptorSet(m_currentFrame);
-
-        m_perFrameData.meshes[entity].materialDescriptorSet = materialDst;
     }
 
     CameraUBO cameraUBO{};
@@ -117,7 +151,12 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     cameraUBO.projection = camera->getProjectionMatrix();
     cameraUBO.projection[1][1] *= -1;
 
-    m_cameraUniformObjects[m_currentFrame]->update(&cameraUBO);
+    m_perFrameData.projection = cameraUBO.projection;
+    m_perFrameData.view = camera->getViewMatrix();
+
+    std::memcpy(m_cameraMapped[m_currentFrame], &cameraUBO, sizeof(CameraUBO));
+
+    // m_cameraUniformObjects[m_currentFrame]->update();
     
     //TODO NEEDS TO BE REDESIGNED
     // size_t requiredSize = sizeof(LightData) * lights.size();
@@ -204,7 +243,8 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
             glm::vec3 lightDirection = glm::normalize(directionalLight->direction);
 
             glm::vec3 lightTarget{0.0f};
-
+            float nearPlane = 50.0f;
+            float farPlane = 1000.0f;
             //Position 'light camera' 20 units away from the target 
             glm::vec3 lightPosition = lightTarget - lightDirection * 20.0f;
 
@@ -212,20 +252,15 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
             glm::mat4 lightProjection = glm::ortho(-30.0f, 30.0f, -30.0f, 30.0f, 1.0f, 40.0f);
 
+            // glm::mat4 lightProjection = glm::perspective(glm::radians(45.0f), 1.0f, nearPlane, farPlane);
 
-            // glm::mat4 clipCorrection = glm::mat4(
-            //     1,  0,   0, 0,
-            //     0, -1,   0, 0,
-            //     0,  0, 0.5, 0,
-            //     0,  0, 0.5, 1
-            // );
-
-            // glm::mat4 lightMatrix = clipCorrection * lightProjection * lightView;
             glm::mat4 lightMatrix = lightProjection * lightView;
 
             lightSpaceMatrixUBO.lightSpaceMatrix = lightMatrix;
 
-            m_lightSpaceMatrixUniformObjects[m_currentFrame]->update(&lightSpaceMatrixUBO);
+            std::memcpy(m_lightMapped[m_currentFrame], &lightSpaceMatrixUBO, sizeof(LightSpaceMatrixUBO));
+
+            // m_lightSpaceMatrixUniformObjects[m_currentFrame]->update(&lightSpaceMatrixUBO);
 
             m_perFrameData.lightSpaceMatrix = lightMatrix;
 
@@ -235,73 +270,17 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     }
 }
 
-void RenderGraph::createDescriptorSetLayouts()
-{
-    {
-        VkDescriptorSetLayoutBinding uboLayoutBinding{};
-        uboLayoutBinding.binding = 0;
-        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        uboLayoutBinding.pImmutableSamplers = nullptr;
-
-        VkDescriptorSetLayoutBinding lightSpaceBinding{};
-        lightSpaceBinding.binding = 1;
-        lightSpaceBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        lightSpaceBinding.descriptorCount = 1;
-        lightSpaceBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        lightSpaceBinding.pImmutableSamplers = nullptr;
-
-        VkDescriptorSetLayoutBinding lightMapBinding{};
-        lightMapBinding.binding = 2;
-        lightMapBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        lightMapBinding.descriptorCount = 1;
-        lightMapBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        lightMapBinding.pImmutableSamplers = nullptr;
-
-        m_cameraSetLayout = core::DescriptorSetLayout::create(m_device, {uboLayoutBinding, lightSpaceBinding, lightMapBinding});
-    }
-
-    {
-        VkDescriptorSetLayoutBinding lightSSBOLayoutBinding{};
-        lightSSBOLayoutBinding.binding = 0;
-        lightSSBOLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        lightSSBOLayoutBinding.descriptorCount = 1;
-        lightSSBOLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        lightSSBOLayoutBinding.pImmutableSamplers = nullptr;
-
-        m_directionalLightSetLayout = core::DescriptorSetLayout::create(m_device, {lightSSBOLayoutBinding});
-    }
-
-    {
-        VkDescriptorSetLayoutBinding textureLayoutBinding{};
-        textureLayoutBinding.binding = 0;
-        textureLayoutBinding.descriptorCount = 1;
-        textureLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        textureLayoutBinding.pImmutableSamplers = nullptr;
-        textureLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        VkDescriptorSetLayoutBinding colorLayoutBinding{};
-        colorLayoutBinding.binding = 1;
-        colorLayoutBinding.descriptorCount = 1;
-        colorLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        colorLayoutBinding.pImmutableSamplers = nullptr;
-        colorLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        m_materialSetLayout = core::DescriptorSetLayout::create(m_device, {textureLayoutBinding, colorLayoutBinding});
-    }
-}
-
 void RenderGraph::createDescriptorSetPool()
 {
-    const std::vector<VkDescriptorPoolSize> poolSizes{
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(1000)},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(1000)},
-        { VK_DESCRIPTOR_TYPE_SAMPLER,                  16 },
-        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,            16 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,           16 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,     16 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,     16 }
+    const std::vector<VkDescriptorPoolSize> poolSizes
+    {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000}
     };
 
     VkDescriptorPoolCreateInfo descriptorPoolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -316,11 +295,14 @@ void RenderGraph::createDescriptorSetPool()
 
 void RenderGraph::begin()
 {    
-    auto& lock = m_syncObject->getSync(m_currentFrame);
+    // auto& lock = m_syncObject->getSync(m_currentFrame);
 
-    vkWaitForFences(m_device, 1, &lock.inFlightFence, VK_TRUE, UINT64_MAX);
+    // vkWaitForFences(m_device, 1, &lock.inFlightFence, VK_TRUE, UINT64_MAX);
 
-    VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, lock.imageAvailableSemaphore, VK_NULL_HANDLE, &m_imageIndex);
+    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+
+    // VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, lock.imageAvailableSemaphore, VK_NULL_HANDLE, &m_imageIndex);
+    VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
 
     if(result == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -340,7 +322,16 @@ void RenderGraph::begin()
     else if(result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
         throw std::runtime_error("Failed to acquire swap chain image");
 
-    vkResetFences(m_device, 1, &lock.inFlightFence);
+    //Remove
+    if (m_imagesInFlight[m_imageIndex] != VK_NULL_HANDLE)
+        vkWaitForFences(m_device, 1, &m_imagesInFlight[m_imageIndex], VK_TRUE, UINT64_MAX);
+
+    m_imagesInFlight[m_imageIndex] = m_inFlightFences[m_currentFrame];
+    //
+
+    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+
+    // vkResetFences(m_device, 1, &lock.inFlightFence);
 
     // Create a pool of secondary command buffers per frame: maybe 2–4 per frame (depending on how many threads you want to use).
 
@@ -358,8 +349,8 @@ void RenderGraph::begin()
 
     size_t passIndex = 0;
 
-    std::vector<std::shared_ptr<IRenderGraphPass>> shadowPasses;
-    std::vector<std::shared_ptr<IRenderGraphPass>> otherPasses;
+    std::vector<IRenderGraphPass::SharedPtr> shadowPasses;
+    std::vector<IRenderGraphPass::SharedPtr> otherPasses;
 
     for (const auto& [_, pass] : m_renderGraphPasses) {
         if (dynamic_cast<ShadowRenderGraphPass*>(pass.get()))
@@ -373,7 +364,8 @@ void RenderGraph::begin()
     orderedPasses.insert(orderedPasses.end(), shadowPasses.begin(), shadowPasses.end());
     orderedPasses.insert(orderedPasses.end(), otherPasses.begin(), otherPasses.end());
 
-    RenderGraphPassContext frameData{
+    RenderGraphPassContext frameData
+    {
         .currentFrame = m_currentFrame,
         .currentImageIndex = m_imageIndex
     };
@@ -385,7 +377,7 @@ void RenderGraph::begin()
         VkRenderPassBeginInfo beginRenderPassInfo;
         renderGraphPass->getRenderPassBeginInfo(beginRenderPassInfo);
 
-        auto& secCB = m_secondaryCommandBuffers[m_currentFrame][passIndex];
+        const auto& secCB = m_secondaryCommandBuffers[m_currentFrame][passIndex];
 
         VkCommandBufferInheritanceInfo inherit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
         inherit.renderPass = beginRenderPassInfo.renderPass;
@@ -422,19 +414,18 @@ void RenderGraph::begin()
 
 void RenderGraph::end()
 {
-    auto& lock = m_syncObject->getSync(m_currentFrame);
-
     const auto& currentCommandBuffer = m_commandBuffers.at(m_currentFrame);
-    const std::vector<VkSemaphore> waitSemaphores = {lock.imageAvailableSemaphore};
+    const std::vector<VkSemaphore> waitSemaphores = {m_imageAvailableSemaphores[m_currentFrame]};
     const std::vector<VkPipelineStageFlags> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    const std::vector<VkSemaphore> signalSemaphores = {lock.renderFinishedSemaphore};
+    const std::vector<VkSemaphore> signalSemaphores = {m_renderFinishedSemaphores[m_imageIndex]};
     const std::vector<VkSwapchainKHR> swapChains = {m_swapchain->vk()};
 
-    currentCommandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue(), waitSemaphores, waitStages, signalSemaphores, lock.inFlightFence);
+    currentCommandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue(), waitSemaphores, waitStages, signalSemaphores,
+    m_inFlightFences[m_currentFrame]);
     
     VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     presentInfo.waitSemaphoreCount = static_cast<uint32_t>(signalSemaphores.size());
-    presentInfo.pWaitSemaphores = signalSemaphores.data();
+    presentInfo.pWaitSemaphores = signalSemaphores.data(); 
     presentInfo.swapchainCount = static_cast<uint32_t>(swapChains.size());
     presentInfo.pSwapchains = swapChains.data();
     presentInfo.pImageIndices = &m_imageIndex;
@@ -455,7 +446,6 @@ void RenderGraph::end()
                 break;
             }
         }
-
     }
     else if(result != VK_SUCCESS)
         throw std::runtime_error("Failed to present swap chain image");
@@ -477,23 +467,6 @@ void RenderGraph::setup()
     compile();
 }
 
-void RenderGraph::createGraphicsPipeline()
-{
-    const std::vector<VkPushConstantRange> pushConstants
-    {
-        PushConstant<ModelPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)
-    };
-    
-    const std::vector<core::DescriptorSetLayout::SharedPtr> setLayouts
-    {
-        m_cameraSetLayout,
-        m_materialSetLayout,
-        m_directionalLightSetLayout
-    };
-
-    m_pipelineLayout = core::PipelineLayout::create(m_device, setLayouts, pushConstants);
-}
-
 void RenderGraph::createDirectionalLightDescriptorSets()
 {
     m_lightSSBOs.reserve(MAX_FRAMES_IN_FLIGHT);
@@ -504,7 +477,7 @@ void RenderGraph::createDirectionalLightDescriptorSets()
 
     for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        auto ssboBuffer = m_lightSSBOs.emplace_back(core::Buffer::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 0,
+        auto ssboBuffer = m_lightSSBOs.emplace_back(core::Buffer::create(INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
 
         m_directionalLightDescriptorSets[i] = DescriptorSetBuilder::begin()
@@ -516,74 +489,28 @@ void RenderGraph::createDirectionalLightDescriptorSets()
 void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imageView)
 {
     m_cameraDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-    m_cameraUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
+    m_cameraMapped.resize(MAX_FRAMES_IN_FLIGHT);
+    m_lightMapped.resize(MAX_FRAMES_IN_FLIGHT);
+
     m_lightSpaceMatrixUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
-
-    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_cameraSetLayout->vk());
-
-    VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    allocInfo.descriptorPool = m_descriptorPool;
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
-    allocInfo.pSetLayouts = layouts.data();
-
-    if(vkAllocateDescriptorSets(m_device, &allocInfo, m_cameraDescriptorSets.data()) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate decsriptor sets");
+    m_cameraUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
 
     for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        auto uniformObject = m_cameraUniformObjects.emplace_back(UniformBufferObject<CameraUBO>::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice()));
-        auto lightSpaceUniformObject = m_lightSpaceMatrixUniformObjects.emplace_back(UniformBufferObject<LightSpaceMatrixUBO>::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice()));
-
-        // auto s = uniformObject->getBuffer();
-        // auto v = lightSpaceUniformObject->getBuffer();
-
-        // m_cameraDescriptorSets[i] = DescriptorSetBuilder::begin()
-        // .addBuffer(s, uniformObject->getDeviceSize(), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-        // .addBuffer(v, lightSpaceUniformObject->getDeviceSize(), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-        // .addImage(imageView, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
-        // .build(m_device, m_descriptorPool, m_cameraSetLayout->vk());
-
-        VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = uniformObject->getBuffer()->vkBuffer();
-        bufferInfo.offset = 0;
-        bufferInfo.range = uniformObject->getDeviceSize();
-
-        VkDescriptorBufferInfo lightSpaceBufferInfo{};
-        lightSpaceBufferInfo.buffer = lightSpaceUniformObject->getBuffer()->vkBuffer();
-        lightSpaceBufferInfo.offset = 0;
-        lightSpaceBufferInfo.range = lightSpaceUniformObject->getDeviceSize();
-
-        VkDescriptorImageInfo shadowMapImageInfo{};
-        shadowMapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        shadowMapImageInfo.imageView = imageView;
-        shadowMapImageInfo.sampler = sampler;
-
-        std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
-        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[0].dstSet = m_cameraDescriptorSets[i];
-        descriptorWrites[0].dstBinding = 0;
-        descriptorWrites[0].dstArrayElement = 0;
-        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWrites[0].descriptorCount = 1;
-        descriptorWrites[0].pBufferInfo = &bufferInfo;
-
-        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[1].dstSet = m_cameraDescriptorSets[i];
-        descriptorWrites[1].dstBinding = 1;
-        descriptorWrites[1].dstArrayElement = 0;
-        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWrites[1].descriptorCount = 1;
-        descriptorWrites[1].pBufferInfo = &lightSpaceBufferInfo;
-
-        descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[2].dstSet = m_cameraDescriptorSets[i];
-        descriptorWrites[2].dstBinding = 2;
-        descriptorWrites[2].dstArrayElement = 0;
-        descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptorWrites[2].descriptorCount = 1;
-        descriptorWrites[2].pImageInfo = &shadowMapImageInfo;
+        auto& cameraBuffer = m_cameraUniformObjects.emplace_back(core::Buffer::create(sizeof(CameraUBO),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
         
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        auto& lightBuffer = m_lightSpaceMatrixUniformObjects.emplace_back(core::Buffer::create(sizeof(LightSpaceMatrixUBO),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+
+        cameraBuffer->map(m_cameraMapped[i]);
+        lightBuffer->map(m_lightMapped[i]);
+
+        m_cameraDescriptorSets[i] = DescriptorSetBuilder::begin()
+        .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        .addBuffer(lightBuffer, sizeof(LightSpaceMatrixUBO), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        .addImage(imageView, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
+        .build(m_device, m_descriptorPool, m_cameraSetLayout->vk());
     }
 }
 
@@ -620,7 +547,8 @@ void RenderGraph::compile()
 
 void RenderGraph::cleanResources()
 {
-    // vkDeviceWaitIdle(m_device);
+    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    vkDeviceWaitIdle(m_device);
 
     for(const auto& primary : m_commandBuffers)
         primary->destroyVk();
@@ -630,6 +558,17 @@ void RenderGraph::cleanResources()
 
     for(const auto& renderPass : m_renderGraphPasses)
         renderPass.second->cleanup();
+
+    for(const auto& light : m_lightSpaceMatrixUniformObjects)
+        light->destroyVk();
+    
+    for(const auto& camera : m_cameraUniformObjects)
+        camera->destroyVk();
+
+    m_perFrameData.meshes.clear();
+
+    m_resourceStorage.cleanup();
+    m_resourceBuilder.cleanup();
 }
 
 ELIX_NESTED_NAMESPACE_END

@@ -23,11 +23,11 @@ void TextureImage::create(VkDevice device, VkPhysicalDevice physicalDevice, core
 
     VkDeviceSize imageSize = sizeof(pixels);
 
-    auto buffer = core::Buffer::create(device, physicalDevice, imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto buffer = core::Buffer::create(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     buffer->upload(&pixels, imageSize);
 
-    m_image = core::Image<core::ImageDeleter>::create(m_device, physicalDevice, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
+    m_image = core::Image::create(m_device, physicalDevice, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
     VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, queue);
@@ -75,9 +75,9 @@ void TextureImage::create(VkDevice device, VkPhysicalDevice physicalDevice, core
     }
 }
 
-bool TextureImage::load(VkDevice device, VkPhysicalDevice physicalDevice, const std::string& path, core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad)
+bool TextureImage::load(const std::string& path, core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
 {
-    m_device = device;
+    m_device = core::VulkanContext::getContext()->getDevice();
 
     m_pixels = stbi_load(path.c_str(), &m_width, &m_height, &m_channels, STBI_rgb_alpha);
 
@@ -89,19 +89,19 @@ bool TextureImage::load(VkDevice device, VkPhysicalDevice physicalDevice, const 
         return false;
     }
 
-    auto buffer = core::Buffer::create(device, physicalDevice, imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto buffer = core::Buffer::create(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     buffer->upload(m_pixels, imageSize);
 
     if(freePixelsOnLoad)
         freePixels();
 
-    m_image = core::Image<core::ImageDeleter>::create(m_device, physicalDevice, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
+    m_image = core::Image::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
     VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, queue);
-    m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, queue);
-    m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, commandPool, queue);
+    m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
+    m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
+    m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
 
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.image = m_image->vk();
@@ -146,10 +146,10 @@ bool TextureImage::load(VkDevice device, VkPhysicalDevice physicalDevice, const 
     return true;
 }
 
-bool TextureImage::loadCubemap(VkDevice device, VkPhysicalDevice physicalDevice, const std::array<std::string, 6>& cubemaps, 
-core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad)
+bool TextureImage::loadCubemap(const std::array<std::string, 6>& cubemaps, 
+core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
 {
-    m_device = device;
+    m_device = core::VulkanContext::getContext()->getDevice();
     
     std::array<stbi_uc*, 6> facePixels{};
 
@@ -174,17 +174,16 @@ core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad)
         }
     }
 
-
     VkDeviceSize imageSize = m_width * m_height * 4;
     VkDeviceSize layerSize = imageSize;
     VkDeviceSize totalSize = layerSize * 6;
 
-    auto buffer = core::Buffer::create(device, physicalDevice, totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | 
+    auto buffer = core::Buffer::create(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | 
     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    
+
     void* data;
 
-    vkMapMemory(device, buffer->vkDeviceMemory(), 0, totalSize, 0, &data);
+    vkMapMemory(m_device, buffer->vkDeviceMemory(), 0, totalSize, 0, &data);
 
     for(int face = 0; face < 6; ++face)
     {
@@ -196,42 +195,15 @@ core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad)
             stbi_image_free(facePixels[face]);
     }
 
-    VkImageCreateInfo imageCI{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    imageCI.imageType = VK_IMAGE_TYPE_2D;
-    imageCI.extent.width = static_cast<uint32_t>(m_width);
-    imageCI.extent.height = static_cast<uint32_t>(m_height);
-    imageCI.extent.depth = 1;
-    imageCI.mipLevels = 1;
-    imageCI.arrayLayers = 6;
-    imageCI.format = VK_FORMAT_R8G8B8A8_SRGB;
-    imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageCI.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    imageCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    imageCI.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageCI.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
-
-    // if(vkCreateImage(device, &imageCI, nullptr, ) != VK_SUCCESS)
-    //     throw std::runtime_error("Failed to create cubemap image");
-
-    // VkMemoryRequirements memRequirements;
-    // vkGetImageMemoryRequirements(m_device, m_image, &memRequirements);
-
-    // VkMemoryAllocateInfo allocInfo{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    // allocInfo.allocationSize = memRequirements.size;
-    // allocInfo.memoryTypeIndex = core::helpers::findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties);
-    
-    // if(vkAllocateMemory(m_device, &allocInfo, nullptr, &m_imageMemory) != VK_SUCCESS)
-    //     throw std::runtime_error("Failed to allocate image memory");
-    
-    // vkBindImageMemory(m_device, m_image, m_imageMemory, 0);
+    m_image = core::Image::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), static_cast<uint32_t>(m_width), 
+    static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_FORMAT_R8G8B8A8_SRGB,
+    VK_IMAGE_TILING_OPTIMAL, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
     commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
-    m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, queue);
+    m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
-
 
     VkImageViewCreateInfo imageViewCI{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     imageViewCI.image = m_image->vk();
@@ -241,7 +213,7 @@ core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad)
     imageViewCI.subresourceRange.baseMipLevel = 0;
     imageViewCI.subresourceRange.levelCount = 1;
     imageViewCI.subresourceRange.baseArrayLayer = 0;
-    imageViewCI.subresourceRange.layerCount = 6; // All 6 faces
+    imageViewCI.subresourceRange.layerCount = 6;
 
     if (vkCreateImageView(m_device, &imageViewCI, nullptr, &m_imageView) != VK_SUCCESS)
         throw std::runtime_error("failed to create cubemap image view!");
@@ -269,7 +241,6 @@ core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad)
     return true;
 }
 
-
 VkSampler TextureImage::vkSampler()
 {
     return m_sampler;
@@ -280,7 +251,7 @@ VkImageView TextureImage::vkImageView()
     return m_imageView;
 }
 
-core::Image<core::ImageDeleter>::SharedPtr TextureImage::getImage()
+core::Image::SharedPtr TextureImage::getImage()
 {
     return m_image;
 }

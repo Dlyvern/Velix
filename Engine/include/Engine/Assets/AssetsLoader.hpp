@@ -15,7 +15,7 @@ class AssetsLoader
 {
 public:
     static void registerAssetLoader(const std::shared_ptr<IAssetLoader>& assetLoader);
-    static Mesh3D loadModel(const std::string& path);
+    static std::vector<Mesh3D> loadModel(const std::string& path);
 
 public:
     static inline std::vector<std::shared_ptr<IAssetLoader>> s_assetLoaders;

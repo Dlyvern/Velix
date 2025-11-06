@@ -6,6 +6,8 @@ add_subdirectory(fbx_sdk)
 add_subdirectory(glm) #glm::glm
 add_subdirectory(SPIRV-Cross)
 
+target_compile_definitions(glm INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE)
+
 add_library(stb INTERFACE)
 
 target_include_directories(stb INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/stb)

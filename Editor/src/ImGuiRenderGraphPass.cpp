@@ -33,7 +33,7 @@ void ImGuiRenderGraphPass::setup(engine::RenderGraphPassRecourceBuilder& graphPa
     VkAttachmentDescription attachment = {};
     attachment.format = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();
     attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -50,14 +50,14 @@ void ImGuiRenderGraphPass::setup(engine::RenderGraphPassRecourceBuilder& graphPa
     // colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     // colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-    VkAttachmentReference color_attachment = {};
-    color_attachment.attachment = 0;
-    color_attachment.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference colorAttachment = {};
+    colorAttachment.attachment = 0;
+    colorAttachment.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     VkSubpassDescription subpass = {};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &color_attachment;
+    subpass.pColorAttachments = &colorAttachment;
 
     VkSubpassDependency dependency = {};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -67,7 +67,7 @@ void ImGuiRenderGraphPass::setup(engine::RenderGraphPassRecourceBuilder& graphPa
     dependency.srcAccessMask = 0; // or VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-    m_renderPass = core::RenderPass::create(core::VulkanContext::getContext()->getDevice(), {attachment}, {subpass}, {dependency});
+    m_renderPass = core::RenderPass::create({attachment}, {subpass}, {dependency});
 
     engine::RenderGraphPassResourceTypes::SizeSpec sizeSpec
     {
@@ -100,8 +100,7 @@ void ImGuiRenderGraphPass::setup(engine::RenderGraphPassRecourceBuilder& graphPa
         m_framebufferHashes.push_back(graphPassBuilder.createFramebuffer(framebufferDescription));
     }
 
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -188,7 +187,7 @@ void ImGuiRenderGraphPass::compile(engine::RenderGraphPassResourceHash& storage)
     imguiInitInfo.Instance = core::VulkanContext::getContext()->getInstance();
     imguiInitInfo.PhysicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
     imguiInitInfo.Device = core::VulkanContext::getContext()->getDevice();
-    imguiInitInfo.QueueFamily = core::VulkanContext::getContext()->getQueueFamilyIndices().graphicsFamily.value();
+    imguiInitInfo.QueueFamily = core::VulkanContext::getContext()->getGraphicsFamily();
     imguiInitInfo.Queue = core::VulkanContext::getContext()->getGraphicsQueue();
     imguiInitInfo.PipelineCache = VK_NULL_HANDLE;
     imguiInitInfo.DescriptorPool = m_descriptorPool;

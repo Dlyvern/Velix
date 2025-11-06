@@ -15,10 +15,10 @@ class RenderPass
 public:
     using SharedPtr = std::shared_ptr<RenderPass>;
     
-    RenderPass(VkDevice device, const std::vector<VkAttachmentDescription>& attachments, const std::vector<VkSubpassDescription>& subpasses, 
+    RenderPass(const std::vector<VkAttachmentDescription>& attachments, const std::vector<VkSubpassDescription>& subpasses, 
     const std::vector<VkSubpassDependency>& dependencies);
 
-    static SharedPtr create(VkDevice device, const std::vector<VkAttachmentDescription>& attachments, const std::vector<VkSubpassDescription>& subpasses, 
+    static SharedPtr create(const std::vector<VkAttachmentDescription>& attachments, const std::vector<VkSubpassDescription>& subpasses, 
     const std::vector<VkSubpassDependency>& dependencies);
 
     VkRenderPass vk();

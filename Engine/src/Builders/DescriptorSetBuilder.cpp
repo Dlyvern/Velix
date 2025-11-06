@@ -1,4 +1,6 @@
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
+#include "Core/VulkanHelpers.hpp"
+
 #include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -39,6 +41,10 @@ void DescriptorSetBuilder::update(VkDevice device, VkDescriptorSet dst)
     std::vector<VkWriteDescriptorSet> writers;
     std::vector<VkDescriptorBufferInfo> bufferInfos;
     std::vector<VkDescriptorImageInfo> imageInfos;
+
+    writers.reserve(m_bufferInfos.size() + m_imageInfos.size());
+    bufferInfos.reserve(m_bufferInfos.size());
+    imageInfos.reserve(m_imageInfos.size());
 
     createWriters(dst, writers, bufferInfos, imageInfos);
 
@@ -93,8 +99,8 @@ VkDescriptorSet DescriptorSetBuilder::build(VkDevice device, VkDescriptorPool de
     allocateInfo.pSetLayouts = &layout;
     allocateInfo.pNext = nullptr;
 
-    if(vkAllocateDescriptorSets(device, &allocateInfo, &descriptorSet) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate descriptor set");
+    if(VkResult result = vkAllocateDescriptorSets(device, &allocateInfo, &descriptorSet); result != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate descriptor set " + core::helpers::vulkanResultToString(result));
 
     update(device, descriptorSet);
 

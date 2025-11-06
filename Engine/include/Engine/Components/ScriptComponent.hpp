@@ -9,11 +9,13 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class ScriptComponent : public ECS
 {
 public:
-    ScriptComponent(const Script& script);
+    ScriptComponent(Script* script);
 
     void update(float deltaTime) override;
+
+    void destroy() override;
 private:
-    Script m_script;
+    Script* m_script{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

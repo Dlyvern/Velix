@@ -32,8 +32,16 @@ public:
 
     void drawFrame(VkDescriptorSet viewportDescriptorSet = VK_NULL_HANDLE);
 private:
+    bool m_showAssetsWindow{true};
+
     engine::TextureImage::SharedPtr m_logoTexture{nullptr};
     VkDescriptorSet m_logoDescriptorSet{VK_NULL_HANDLE};
+
+    engine::TextureImage::SharedPtr m_folderTexture{nullptr};
+    VkDescriptorSet m_folderDescriptorSet{VK_NULL_HANDLE};
+
+    engine::TextureImage::SharedPtr m_fileTexture{nullptr};
+    VkDescriptorSet m_fileDescriptorSet{VK_NULL_HANDLE};
 
     Project m_currentProject;
 

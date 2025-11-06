@@ -10,7 +10,7 @@ void AssetsLoader::registerAssetLoader(const std::shared_ptr<IAssetLoader>& asse
     s_assetLoaders.push_back(assetLoader);
 }
 
-Mesh3D AssetsLoader::loadModel(const std::string& path)
+std::vector<Mesh3D> AssetsLoader::loadModel(const std::string& path)
 {
     const std::string extension = std::filesystem::path(path).extension().string();
     
@@ -21,14 +21,14 @@ Mesh3D AssetsLoader::loadModel(const std::string& path)
             auto model = dynamic_cast<ModelAsset*>(modelAsset.get());
 
             if(model)
-                return model->mesh;
+                return model->meshes;
 
             //!Do not break here, try to load a model with the different loaders
         }
 
     std::cerr << "Failed to load a model" << std::endl;
 
-    return {Mesh3D{{}, {}}};
+    return {};
 }
 
 ELIX_NESTED_NAMESPACE_END

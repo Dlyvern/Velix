@@ -11,16 +11,12 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class StaticMeshComponent : public ECS
 {
 public:
-    explicit StaticMeshComponent(const Mesh3D& mesh);
+    explicit StaticMeshComponent(const std::vector<Mesh3D>& meshes);
 
-    const Mesh3D& getMesh() const;
-
-    void setMaterial(Material::SharedPtr material);
-
-    Material::SharedPtr getMaterial() const;
+    const std::vector<Mesh3D>& getMeshes() const;
+    Mesh3D& getMesh(int index);
 private:
-    Mesh3D m_mesh;
-    Material::SharedPtr m_material{nullptr};
+    std::vector<Mesh3D> m_meshes;
 };
 
 ELIX_NESTED_NAMESPACE_END

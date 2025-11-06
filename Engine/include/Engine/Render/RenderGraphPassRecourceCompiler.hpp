@@ -26,6 +26,7 @@ private:
     void compileTextures(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage);
     void compileFramebuffers(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage);
     void compileRenderPasses(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage);
+    void compileGraphicsPipelines(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage);
 };
 
 ELIX_NESTED_NAMESPACE_END

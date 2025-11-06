@@ -10,6 +10,8 @@
 #include "Core/Framebuffer.hpp"
 #include "Core/Texture.hpp"
 
+#include "Engine/Skybox.hpp"
+
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 
 #include <array>
@@ -20,7 +22,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class OffscreenRenderGraphPass : public IRenderGraphPass
 {
 public:
-    OffscreenRenderGraphPass(VkDevice device, core::PipelineLayout::SharedPtr pipelineLayout);
+    OffscreenRenderGraphPass(VkDescriptorPool descriptorPool);
     void setup(RenderGraphPassRecourceBuilder& graphPassBuilder) override;
     void compile(RenderGraphPassResourceHash& storage) override;
     void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data) override;
@@ -33,8 +35,8 @@ public:
 
     std::vector<VkImageView> getImageViews() const
     {
-        //TODO resize it
         std::vector<VkImageView> imageViews;
+        imageViews.reserve(m_colorImages.size());
 
         for(const auto& texture : m_colorImages)
             imageViews.push_back(texture->vkImageView());
@@ -52,13 +54,18 @@ private:
     core::CommandPool::SharedPtr m_commandPool{nullptr};
     VkDevice m_device{VK_NULL_HANDLE};
     std::size_t m_depthImageHash;
+    std::size_t m_graphicsPipelineHash;
+    std::size_t m_renderPassHash;
 
     std::vector<std::size_t> m_framebufferHashes;
     std::vector<std::size_t> m_colorTextureHashes;
 
-    std::vector<core::Texture<core::ImageNoDelete>::SharedPtr> m_colorImages;
-    core::Texture<core::ImageNoDelete>::SharedPtr m_depthImageTexture;
+    std::vector<core::Texture::SharedPtr> m_colorImages;
+    core::Texture::SharedPtr m_depthImageTexture;
     std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
+    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
+
+    std::unique_ptr<Skybox> m_skybox{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

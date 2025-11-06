@@ -24,10 +24,18 @@ DescriptorSetLayout::SharedPtr DescriptorSetLayout::create(VkDevice device, cons
     return std::make_shared<DescriptorSetLayout>(device, bindings);
 }
 
-DescriptorSetLayout::~DescriptorSetLayout()
+void DescriptorSetLayout::destroyVk()
 {
     if(m_descriptorSetLayout)
+    {
         vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
+        m_descriptorSetLayout = VK_NULL_HANDLE;
+    }
+}
+
+DescriptorSetLayout::~DescriptorSetLayout()
+{
+    destroyVk();
 }
 
 ELIX_NESTED_NAMESPACE_END

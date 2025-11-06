@@ -11,11 +11,10 @@
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 //VkImage + VkImageView handler
-template<typename Deleter = ImageDeleter>
 class Texture
 {
 public:    
-    using SharedPtr = std::shared_ptr<Texture<Deleter>>;
+    using SharedPtr = std::shared_ptr<Texture>;
     
     Texture(VkDevice device, VkPhysicalDevice physicalDevice,
             VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
@@ -23,16 +22,16 @@ public:
             VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t mipLevels = 0, uint32_t arrayLayers = 1,
             VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT) : m_device(device), m_aspect(aspect), m_format(format), m_physicalDevice(physicalDevice)
     {
-        m_image = Image<Deleter>::createCustom(device, physicalDevice, extent.width, extent.height, usage, memoryProperties, format, tiling);
+        m_image = Image::create(device, physicalDevice, extent.width, extent.height, usage, memoryProperties, format, tiling);
     }
 
-    Texture(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat format, VkImageAspectFlags aspect, core::Image<Deleter>::SharedPtr image) :
+    Texture(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat format, VkImageAspectFlags aspect, core::Image::SharedPtr image) :
     m_device(device), m_physicalDevice(physicalDevice), m_format(format), m_aspect(aspect), m_image(image)
     {
         createVkImageView();
     }
 
-    void resetVkImage(core::Image<core::ImageNoDelete>::SharedPtr image)
+    void resetVkImage(core::Image::SharedPtr image)
     {
         m_image = image;
     }
@@ -81,7 +80,7 @@ public:
         return m_imageView;
     }
 
-    core::Image<Deleter>::SharedPtr getImage() const
+    core::Image::SharedPtr getImage() const
     {
         return m_image;
     }
@@ -94,7 +93,7 @@ public:
 private:
     VkDevice m_device{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
-    core::Image<Deleter>::SharedPtr m_image{nullptr};
+    core::Image::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};
     VkFormat m_format{VK_FORMAT_UNDEFINED};
     VkImageAspectFlags m_aspect;

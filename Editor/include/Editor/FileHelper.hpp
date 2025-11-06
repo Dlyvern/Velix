@@ -1,16 +1,12 @@
 #ifndef ELIX_FILE_HELPER_EDITOR_HPP
 #define ELIX_FILE_HELPER_EDITOR_HPP 
 
-#include "Core/Macros.hpp"
-
-#include <string>
-#include <cstdlib>
-#include <iostream>
-#include <filesystem>
-#include <array>
-
 #if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
     #include <windows.h>
+    #undef near
+    #undef far
     #include <shlobj.h>
 #elif defined(__linux__)
     #include <unistd.h>
@@ -22,6 +18,14 @@
     #include <unistd.h>
     #include <pwd.h>
 #endif
+
+#include "Core/Macros.hpp"
+
+#include <string>
+#include <cstdlib>
+#include <iostream>
+#include <filesystem>
+#include <array>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 

@@ -16,34 +16,34 @@ class Buffer
 public:
     using SharedPtr = std::shared_ptr<Buffer>;
 
-    Buffer(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags);
+    Buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memFlags, VkBufferCreateFlags flags = 0);
 
     void upload(const void* data, VkDeviceSize size);
 
     void bind(VkDeviceSize memoryOffset = 0);
 
-    //!Broken function
-    void map(VkDeviceSize offset, VkDeviceSize size,  VkMemoryMapFlags flags, void* data);
+    void map(void*& data, VkDeviceSize offset = 0, VkMemoryMapFlags flags = 0);
+    void map(VkDeviceSize offset, VkDeviceSize size,  VkMemoryMapFlags flags, void*& data);
 
     void unmap();
 
-    void destroy();
+    void destroyVk();
 
-    static SharedPtr create(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags);
+    static SharedPtr create(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memFlags, VkBufferCreateFlags flags = 0);
 
     static CommandBuffer::SharedPtr copy(SharedPtr srcBuffer,  SharedPtr dstBuffer, CommandPool::SharedPtr commandPool,  VkDeviceSize size);
     
-    static SharedPtr createCopied(VkDevice device, VkPhysicalDevice physicalDevice, const void* data, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags flags, VkMemoryPropertyFlags memFlags, CommandPool::SharedPtr commandPool, VkQueue queue);
+    static SharedPtr createCopied(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memFlags, CommandPool::SharedPtr commandPool, VkQueue queue);
 
     VkBuffer vkBuffer();
     VkDeviceMemory vkDeviceMemory();
 
     ~Buffer();
 private:
-    bool m_isDestroyed{false};
     VkBuffer m_buffer{VK_NULL_HANDLE};
     VkDeviceMemory m_bufferMemory{VK_NULL_HANDLE};
     VkDevice m_device{VK_NULL_HANDLE};
+    VkDeviceSize m_size;
 };
 
 ELIX_NESTED_NAMESPACE_END

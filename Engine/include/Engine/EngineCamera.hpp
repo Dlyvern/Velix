@@ -7,7 +7,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-class EngineCamera : public Camera
+class EngineCamera
 {
 public:
     EngineCamera(Camera::SharedPtr camera);

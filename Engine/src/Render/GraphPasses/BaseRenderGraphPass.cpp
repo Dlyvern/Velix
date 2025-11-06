@@ -2,8 +2,9 @@
 
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
-#include "Engine/GraphicsPipelineBuilder.hpp"
 #include "Engine/ShaderDataExtractor.hpp"
+
+#include "Engine/ShaderFamily.hpp"
 
 #include "Core/Shader.hpp"
 #include "Core/VulkanHelpers.hpp"
@@ -17,25 +18,36 @@ struct ModelPushConstant
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-BaseRenderGraphPass::BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, 
-core::PipelineLayout::SharedPtr pipelineLayout) 
-: m_device(device), m_swapchain(swapchain), m_pipelineLayout(pipelineLayout)
+BaseRenderGraphPass::BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, VkDescriptorPool descriptorPool, SceneRenderMask usageMask) 
+: m_device(device), m_swapchain(swapchain), m_descriptorPool(descriptorPool), m_usageMask(usageMask)
 {
-    auto queueFamilyIndices = core::VulkanContext::findQueueFamilies(core::VulkanContext::getContext()->getPhysicalDevice(), core::VulkanContext::getContext()->getSurface());
-    m_commandPool = core::CommandPool::create(device, queueFamilyIndices.graphicsFamily.value());
+    m_commandPool = core::CommandPool::create(device, core::VulkanContext::getContext()->getGraphicsFamily());
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     m_clearValues[1].depthStencil = {1.0f, 0};
+    m_pipelineLayout = engineShaderFamilies::staticMeshShaderFamily.pipelineLayout;
 }
 
 void BaseRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const
 {
     renderPassBeginInfo = VkRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    // renderPassBeginInfo.renderPass = m_offscreenRenderPass->vk();
+    // renderPassBeginInfo.framebuffer = m_offscreenFramebuffers[m_imageIndex]->vk();
     renderPassBeginInfo.renderPass = m_renderPass->vk();
     renderPassBeginInfo.framebuffer = m_framebuffers[m_imageIndex]->vk();
     renderPassBeginInfo.renderArea.offset = {0, 0};
     renderPassBeginInfo.renderArea.extent = m_swapchain->getExtent();
     renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(m_clearValues.size());
     renderPassBeginInfo.pClearValues = m_clearValues.data();
+}
+
+void BaseRenderGraphPass::setupOffscreenResources(RenderGraphPassRecourceBuilder& graphPassBuilder)
+{
+
+}
+
+void BaseRenderGraphPass::setupSwapChainResources(RenderGraphPassRecourceBuilder& graphPassBuilder)
+{
+    
 }
 
 void BaseRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuilder)
@@ -68,36 +80,37 @@ void BaseRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuilder
     depthAttachmentReference.attachment = 1;
     depthAttachmentReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachmentReference;
-    subpass.pDepthStencilAttachment = &depthAttachmentReference;
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    std::vector<VkSubpassDependency> dependency;
-    dependency.resize(1);
-    dependency[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency[0].dstSubpass = 0;
-    dependency[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dependency[0].srcAccessMask = 0;
-    dependency[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dependency[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-    std::vector<VkAttachmentDescription> attachments{colorAttachment, depthAttachment};
-
-    m_renderPass = core::RenderPass::create(m_device, attachments, {subpass}, dependency);
+    RenderGraphPassResourceTypes::RenderPassDescription::SubpassDescription subpassDescription
+    {
+        .colorAttachmentCount = 1,
+        .colorAttachments = {colorAttachmentReference},
+        .depthStencilAttachments = {depthAttachmentReference}
+    };
 
     RenderGraphPassResourceTypes::RenderPassDescription renderPassDescription
     {
         .name = "__ELIX_SWAP_CHAIN_RENDER_PASS__",
-        .attachments = attachments,
-        .subpassDescriptions = {},
-        .subpassDependencies = dependency,
-        .colorAttachments = {{colorAttachmentReference}},
-        .depthAttachments = {{depthAttachmentReference}},
+        .attachments = {colorAttachment, depthAttachment},
+        .subpassDescriptions = {subpassDescription},
+        .subpassDependencies = {dependency},
     };
 
     m_renderPassHash = graphPassBuilder.createRenderPass(renderPassDescription);
+
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    renderPassDescription.name = "__ELIX_OFFSCREEN_RENDER_PASS__";
+    renderPassDescription.attachments = {colorAttachment, depthAttachment};
+
+    m_offscreenRenderPassHash = graphPassBuilder.createRenderPass(renderPassDescription);
 
     RenderGraphPassResourceTypes::SizeSpec sizeSpec
     {
@@ -124,6 +137,17 @@ void BaseRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuilder
         .source = RenderGraphPassResourceTypes::TextureDescription::FormatSource::Swapchain
     };
 
+    RenderGraphPassResourceTypes::TextureDescription offscreenColorTexture{
+        .format = m_swapchain->getImageFormat(),
+        .size = sizeSpec,
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+        .properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        .tiling = VK_IMAGE_TILING_LINEAR,
+    };
+
     m_depthImageHash = graphPassBuilder.createTexture(textureDescription, {.access = ResourceAccess::WRITE, .user = this});
     auto colorImageBaseHash = graphPassBuilder.createTexture(colorTexture, {.access = ResourceAccess::WRITE, .user = this});
 
@@ -134,19 +158,91 @@ void BaseRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuilder
         RenderGraphPassResourceTypes::FramebufferDescription framebufferDescription{
             .name = name,
             .attachmentsHash = {colorImageBaseHash + i, m_depthImageHash},
-            .renderPass = m_renderPass,
+            .renderPassHash = m_renderPassHash,
             .size = sizeSpec,
             .layers = 1
         };
 
         m_framebufferHashes.push_back(graphPassBuilder.createFramebuffer(framebufferDescription));
     }
+
+    for(int i = 0; i < m_swapchain->getImages().size(); ++i)
+    {
+        const std::string name = "__ELIX_OFFSCREEN_COLOR_" + std::to_string(i) + "__";
+        offscreenColorTexture.name = name;
+        m_colorTextureHashes.push_back(graphPassBuilder.createTexture(offscreenColorTexture, {.access = ResourceAccess::WRITE, .user = this}));
+    }
+
+    for(size_t i = 0; i < m_colorTextureHashes.size(); ++i)
+    {
+        const std::string name = "__ELIX_OFFSCREEN_FRAMEBUFFER_" + std::to_string(i) + "__";
+
+        RenderGraphPassResourceTypes::FramebufferDescription framebufferDescription{
+            .name = name,
+            .attachmentsHash = {m_colorTextureHashes[i], m_depthImageHash},
+            .renderPassHash = m_offscreenRenderPassHash,
+            .size = sizeSpec,
+            .layers = 1
+        };
+
+        m_offscreenFramebufferHashes.push_back(graphPassBuilder.createFramebuffer(framebufferDescription));
+    }
+
+    auto shader = std::make_shared<core::Shader>("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
+
+    RenderGraphPassResourceTypes::GraphicsPipelineDescription graphicsPipeline
+    {
+        .name = "__ELIX_SWAP_CHAIN_GRAPHICS_PIPELINE__",
+        .vertexBindingDescriptions = {engine::Vertex3D::getBindingDescription()},
+        .vertexAttributeDescriptions = engine::Vertex3D::getAttributeDescriptions(),
+        .layout = m_pipelineLayout->vk(),
+        .renderPassHash = m_renderPassHash
+    };
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment
+    {
+        .blendEnable = VK_FALSE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
+    };
+
+    graphicsPipeline.colorBlendingAttachments.push_back(colorBlendAttachment);
+
+    graphicsPipeline.colorBlending.blendConstants[0] = 0.0f;
+    graphicsPipeline.colorBlending.blendConstants[1] = 0.0f;
+    graphicsPipeline.colorBlending.blendConstants[2] = 0.0f;
+    graphicsPipeline.colorBlending.blendConstants[3] = 0.0f;
+    graphicsPipeline.dynamicStates = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    graphicsPipeline.viewport = m_swapchain->getViewport();
+    graphicsPipeline.scissor= m_swapchain->getScissor();
+    graphicsPipeline.shader = shader;
+
+    m_graphicsPipelineHash = graphPassBuilder.createGraphicsPipeline(graphicsPipeline);
+
+    graphicsPipeline.renderPassHash = m_offscreenRenderPassHash;
+
+    m_offscreenGraphicsPipelineHash = graphPassBuilder.createGraphicsPipeline(graphicsPipeline);
 }
 
 void BaseRenderGraphPass::compile(RenderGraphPassResourceHash& storage)
 {
+    m_graphicsPipeline = storage.getGraphicsPipeline(m_graphicsPipelineHash);
+    m_renderPass = storage.getRenderPass(m_renderPassHash);
+
+    m_offscreenGraphicsPipeline = storage.getGraphicsPipeline(m_offscreenGraphicsPipelineHash);
+    m_offscreenRenderPass = storage.getRenderPass(m_offscreenRenderPassHash);
+
+    if(!m_graphicsPipeline)
+        std::cerr << "Failed to find a graphics pipeline for BaseRenderGraphPass" << std::endl;
+    if(!m_renderPass)
+        std::cerr << "Failed to find a render pass for BaseRenderGraphPass" << std::endl;
+
     auto depthTexture = storage.getTexture(m_depthImageHash);
-    // m_renderPass = storage.getRenderPass(m_renderPassHash);
 
     //TODO add transition on swapChain recreation
     if(depthTexture)
@@ -154,7 +250,7 @@ void BaseRenderGraphPass::compile(RenderGraphPassResourceHash& storage)
         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, m_commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
     else
         std::cerr << "Failed to find a depth texture for BaseRenderGraphPass" << std::endl;
-    
+
     for(const auto& framebufferCache : m_framebufferHashes)
     {
         auto framebuffer = storage.getFramebuffer(framebufferCache);
@@ -168,32 +264,51 @@ void BaseRenderGraphPass::compile(RenderGraphPassResourceHash& storage)
         m_framebuffers.push_back(framebuffer);
     }
 
-    core::Shader shader("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
+    for(const auto& framebufferCache : m_offscreenFramebufferHashes)
+    {
+        auto framebuffer = storage.getFramebuffer(framebufferCache);
 
-    const auto& vertexHandler = shader.getVertexHandler();
+        if(!framebuffer)
+        {
+            std::cerr << "Failed to find a framebuffer for BaseRenderGraphPass" << std::endl;
+            continue;
+        }
 
-    ShaderDataExtractor::parse(vertexHandler, "./resources/shaders/static_mesh.vert.spv");
+        m_offscreenFramebuffers.push_back(framebuffer);
+    }
 
-    auto bindingDescription = engine::Vertex3D::getBindingDescription();
-    auto attributeDescription = engine::Vertex3D::getAttributeDescriptions();
+    for(const auto& colorHash : m_colorTextureHashes)
+    {
+        auto colorTexture = storage.getTexture(colorHash);
 
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescription.size());
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescription.data();
+        if(!colorTexture)
+        {
+            std::cerr << "Failed to find a color texture for OffscreenRenderGraphPass" << std::endl;
+            continue;
+        }
 
-    auto viewport = m_swapchain->getViewport();
-    auto scissor = m_swapchain->getScissor();
+        colorTexture->getImage()->insertImageMemoryBarrier(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VkImageSubresourceRange{
+            VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, m_commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
 
-    engine::GraphicsPipelineBuilder graphicsPipelineBuilder;
-    graphicsPipelineBuilder.layout = m_pipelineLayout->vk();
-    graphicsPipelineBuilder.renderPass = m_renderPass->vk();
-    graphicsPipelineBuilder.viewportState.pViewports = &viewport;
-    graphicsPipelineBuilder.viewportState.pScissors = &scissor;
-    graphicsPipelineBuilder.shaderStages = shader.getShaderStages();
+        m_offscreenColorImages.push_back(colorTexture);
+    }   
 
-    m_graphicsPipeline = graphicsPipelineBuilder.build(m_device, vertexInputInfo);
+    std::array<std::string, 6> cubemaps
+    {
+        "./resources/textures/right.jpg",
+        "./resources/textures/left.jpg",
+        "./resources/textures/top.jpg",
+        "./resources/textures/bottom.jpg",
+        "./resources/textures/front.jpg",
+        "./resources/textures/back.jpg",
+    };
+
+    m_skybox = std::make_unique<Skybox>(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), m_commandPool, m_renderPass,
+    cubemaps, m_descriptorPool);
+
+    m_offscreenSkybox = std::make_unique<Skybox>(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), m_commandPool, 
+    m_offscreenRenderPass, cubemaps, m_descriptorPool);
 }
 
 void BaseRenderGraphPass::update(const RenderGraphPassContext& renderData)
@@ -204,38 +319,45 @@ void BaseRenderGraphPass::update(const RenderGraphPassContext& renderData)
 
 void BaseRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data)
 {
-    vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline->vk());
-
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &data.swapChainViewport);
     vkCmdSetScissor(commandBuffer->vk(), 0, 1, &data.swapChainScissor);
 
-    for(const auto [entity, gpuEntity] : data.meshes)
+    vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline->vk());
+    // vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_offscreenGraphicsPipeline->vk());
+
+    for(const auto& [entity, gpuEntity] : data.meshes)
     {
-        VkBuffer vertexBuffers[] = {gpuEntity.mesh->vertexBuffer->vkBuffer()};
-        VkDeviceSize offset[] = {0};
-
-        vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
-        vkCmdBindIndexBuffer(commandBuffer->vk(), gpuEntity.mesh->indexBuffer->vkBuffer(), 0, gpuEntity.mesh->indexType);
-
-        ModelPushConstant modelPushConstant
+        for(const auto& mesh : gpuEntity.meshes)
         {
-            .model = gpuEntity.transform
-        };
+            VkBuffer vertexBuffers[] = {mesh->vertexBuffer->vkBuffer()};
+            VkDeviceSize offset[] = {0};
 
-        vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
+            vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
+            vkCmdBindIndexBuffer(commandBuffer->vk(), mesh->indexBuffer->vkBuffer(), 0, mesh->indexType);
 
-        const std::array<VkDescriptorSet, 3> descriptorSets = 
-        {
-            data.cameraDescriptorSet, // set 0: camera
-            gpuEntity.materialDescriptorSet,  // set 1: material
-            data.lightDescriptorSet // set 2: lighting
-        };
+            ModelPushConstant modelPushConstant
+            {
+                .model = gpuEntity.transform
+            };
 
-        vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout->vk(), 0, static_cast<uint32_t>(descriptorSets.size()), 
-        descriptorSets.data(), 0, nullptr);
+            vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
 
-        vkCmdDrawIndexed(commandBuffer->vk(), gpuEntity.mesh->indicesCount, 1, 0, 0, 0);
+            const std::array<VkDescriptorSet, 3> descriptorSets = 
+            {
+                data.cameraDescriptorSet, // set 0: camera
+                mesh->material->getDescriptorSet(m_currentFrame),  // set 1: material
+                data.lightDescriptorSet // set 2: lighting
+            };
+
+            vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout->vk(), 0, static_cast<uint32_t>(descriptorSets.size()), 
+            descriptorSets.data(), 0, nullptr);
+
+            vkCmdDrawIndexed(commandBuffer->vk(), mesh->indicesCount, 1, 0, 0, 0);
+        }
     }
+    
+    m_skybox->render(commandBuffer, data.view, data.projection);
+    // m_offscreenSkybox->render(commandBuffer, data.view, data.projection);
 }
 
 ELIX_NESTED_NAMESPACE_END

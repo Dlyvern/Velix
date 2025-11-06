@@ -43,7 +43,7 @@ private:
     core::CommandPool::SharedPtr m_commandPool{nullptr};
 
     core::RenderPass::SharedPtr m_renderPass{nullptr};
-    core::Image<core::ImageDeleter>::SharedPtr m_depthImage{nullptr};
+    core::Image::SharedPtr m_depthImage{nullptr};
     core::GraphicsPipeline::SharedPtr m_graphicsPipeline{nullptr};
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
@@ -51,8 +51,15 @@ private:
     VkImageView m_depthImageView{VK_NULL_HANDLE};
     VkFramebuffer m_framebuffer{VK_NULL_HANDLE};
 
-    uint32_t m_width{2048};
-    uint32_t m_height{2048};
+    std::size_t m_graphicsPipelineHash;
+    std::size_t m_depthImageHash;
+    std::size_t m_framebufferHash;
+
+    VkViewport m_viewport{};
+    VkRect2D m_scissor{};
+
+    uint32_t m_width{4096};
+    uint32_t m_height{4096};
 
     VkClearValue m_clearValue;
 };

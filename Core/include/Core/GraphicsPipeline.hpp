@@ -18,7 +18,7 @@ public:
     GraphicsPipeline(VkDevice device, VkRenderPass renderPass, VkPipelineShaderStageCreateInfo* shaderStages, size_t stageCount, VkPipelineLayout pipelineLayout,
     VkPipelineDynamicStateCreateInfo dynamicState, VkPipelineColorBlendStateCreateInfo colorBlending, VkPipelineMultisampleStateCreateInfo multisampling,
     VkPipelineRasterizationStateCreateInfo rasterizer, VkPipelineViewportStateCreateInfo viewportState, VkPipelineInputAssemblyStateCreateInfo inputAssembly,
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo, uint32_t subpass);
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo, uint32_t subpass, VkPipelineDepthStencilStateCreateInfo depthStencil);
     ~GraphicsPipeline();
 
     VkPipeline vk();

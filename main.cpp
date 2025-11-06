@@ -19,6 +19,10 @@
 #include "Engine/Assets/OBJAssetLoader.hpp"
 #include "Engine/Assets/FBXAssetLoader.hpp"
 
+#include "Engine/ShaderFamily.hpp"
+
+#include <filesystem>
+
 #include <GLFW/glfw3.h>
 
 #include <chrono>
@@ -37,15 +41,25 @@ int main(int argc, char** argv)
     auto testEntity = scene->addEntity("test");
     auto secondTestEntity = scene->addEntity("test2");
     auto testPlane = scene->addEntity("plane");
+    // std::vector<elix::engine::Mesh3D> meshes = elix::engine::AssetsLoader::loadModel("./resources/models/sematary.fbx");
 
-    elix::engine::Mesh3D meshModel = elix::engine::AssetsLoader::loadModel("./resources/models/concrete_wall.obj");
+    // for(auto& mesh : meshes)
+    //     if(!mesh.material.name.empty())
+    //         mesh.material.albedoTexture = "./resources/textures/" + mesh.material.name + "_diff.png";
+
+    // auto meshModel = elix::engine::AssetsLoader::loadModel("./resources/models/sponza.obj");
     elix::engine::Mesh3D mesh{elix::engine::cube::vertices, elix::engine::cube::indices};
 
-    testEntity->addComponent<elix::engine::StaticMeshComponent>(meshModel);
-    secondTestEntity->addComponent<elix::engine::StaticMeshComponent>(mesh);
-    testPlane->addComponent<elix::engine::StaticMeshComponent>(mesh);
+    testEntity->addComponent<elix::engine::StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
+    secondTestEntity->addComponent<elix::engine::StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
+    testPlane->addComponent<elix::engine::StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
+
+    testEntity->getComponent<elix::engine::Transform3DComponent>()->setScale({0.01, 0.01, 0.01});
+    testEntity->getComponent<elix::engine::Transform3DComponent>()->setEulerDegrees({-90.0f, 0.0f, 0.0f});
 
     secondTestEntity->getComponent<elix::engine::Transform3DComponent>()->setPosition({0.8f, 1.8f, -2.0f});
+    // secondTestEntity->getComponent<elix::engine::Transform3DComponent>()->setScale({0.01f, 0.01f, 0.01f});
+    secondTestEntity->getComponent<elix::engine::Transform3DComponent>()->setEulerDegrees({-90.0f, 0.0f, 0.0f});
 
     testPlane->getComponent<elix::engine::Transform3DComponent>()->setPosition({0.0f, 0.0f, 0.0f});
     testPlane->getComponent<elix::engine::Transform3DComponent>()->setScale({10.0f, 0.2f, 10.0f});
@@ -59,37 +73,31 @@ int main(int argc, char** argv)
     auto editor = std::make_shared<elix::editor::Editor>();
     editor->setScene(scene);
 
-    elix::engine::RenderGraph renderGraph(vulkanContext->getDevice(), vulkanContext->getSwapchain(), scene);
-    auto shadowRenderPass = renderGraph.addPass<elix::engine::ShadowRenderGraphPass>(vulkanContext->getDevice());
-    
-    renderGraph.createDescriptorSetPool();
-    renderGraph.createDescriptorSetLayouts();
-    renderGraph.createCameraDescriptorSets(shadowRenderPass->getSampler(), shadowRenderPass->getImageView());
-    renderGraph.createDirectionalLightDescriptorSets();
-    renderGraph.createGraphicsPipeline();
+
+    auto renderGraph = new elix::engine::RenderGraph(vulkanContext->getDevice(), vulkanContext->getSwapchain(), scene);
+    auto shadowRenderPass = renderGraph->addPass<elix::engine::ShadowRenderGraphPass>(vulkanContext->getDevice());
+
+    renderGraph->createDescriptorSetPool();
+    renderGraph->createCameraDescriptorSets(shadowRenderPass->getSampler(), shadowRenderPass->getImageView());
+    renderGraph->createDirectionalLightDescriptorSets();
 
     //TODO: Change order to see if RenderGraph compile works
-    renderGraph.addPass<elix::editor::ImGuiRenderGraphPass>(editor);
-    renderGraph.addPass<elix::engine::BaseRenderGraphPass>(vulkanContext->getDevice(), vulkanContext->getSwapchain(), renderGraph.getPipelineLayout());
-    renderGraph.addPass<elix::engine::OffscreenRenderGraphPass>(vulkanContext->getDevice(), renderGraph.getPipelineLayout());
+    renderGraph->addPass<elix::editor::ImGuiRenderGraphPass>(editor);
+    renderGraph->addPass<elix::engine::BaseRenderGraphPass>(vulkanContext->getDevice(), vulkanContext->getSwapchain(), renderGraph->getDescriptorPool());
+    renderGraph->addPass<elix::engine::OffscreenRenderGraphPass>(renderGraph->getDescriptorPool());
 
-    renderGraph.createRenderGraphResources();
+    renderGraph->createRenderGraphResources();
 
-    auto textureImage = std::make_shared<elix::engine::TextureImage>();
-    textureImage->load(vulkanContext->getDevice(), vulkanContext->getPhysicalDevice(), "./resources/textures/ConcreteWall.png", renderGraph.getCommandPool(), vulkanContext->getGraphicsQueue());
-
-    auto material = elix::engine::Material::create(vulkanContext->getDevice(), vulkanContext->getPhysicalDevice(), renderGraph.getDescriptorPool(),
-    renderGraph.MAX_FRAMES_IN_FLIGHT, textureImage, renderGraph.getMaterialDescriptorSetLayout());
-
-    testEntity->getComponent<elix::engine::StaticMeshComponent>()->setMaterial(material);
+    testEntity->getComponent<elix::engine::StaticMeshComponent>()->getMesh(0).material = elix::engine::CPUMaterial{.albedoTexture = "./resources/textures/ConcreteWall.png"};
 
     elix::engine::TextureImage::SharedPtr dummyTexture = std::make_shared<elix::engine::TextureImage>();
-    dummyTexture->create(vulkanContext->getDevice(), vulkanContext->getPhysicalDevice(), renderGraph.getCommandPool(), vulkanContext->getGraphicsQueue());
+    dummyTexture->create(vulkanContext->getDevice(), vulkanContext->getPhysicalDevice(), renderGraph->getCommandPool(), vulkanContext->getGraphicsQueue());
 
-    elix::engine::Material::createDefaultMaterial(vulkanContext->getDevice(), vulkanContext->getPhysicalDevice(), renderGraph.getDescriptorPool(),
-    renderGraph.MAX_FRAMES_IN_FLIGHT, dummyTexture, renderGraph.getMaterialDescriptorSetLayout());
+    elix::engine::Material::createDefaultMaterial(renderGraph->getDescriptorPool(), dummyTexture);
 
-    renderGraph.setup();
+    renderGraph->createDataFromScene();
+
+    renderGraph->setup();
     float lastFrame = 0.0f;
     float deltaTime = 0.0f;
     const float fixedStep = 1.0f / 60.0f;
@@ -124,10 +132,21 @@ int main(int argc, char** argv)
             accumulator -= fixedStep;
         }
 
-        renderGraph.prepareFrame(camera);
-        renderGraph.draw();
+        renderGraph->prepareFrame(camera);
+        renderGraph->draw();
     }
 
-    renderGraph.cleanResources();
+    //To clean all needed Vulakn resources before VulkanContex is cleared
+    renderGraph->cleanResources();
+    delete renderGraph; 
+    editor.reset();
+    scene.reset();
+    elix::engine::Material::deleteDefaultMaterial();
+    dummyTexture.reset();
+    //
+
+
     vulkanContext->cleanup();
+
+    return 0;
 }

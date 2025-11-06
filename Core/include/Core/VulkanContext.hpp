@@ -17,7 +17,8 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 class VulkanContext
 {
 public:
-    explicit VulkanContext(std::shared_ptr<platform::Window> window);
+    explicit VulkanContext(platform::Window::SharedPtr window);
+
     VulkanContext(const VulkanContext&) = delete;
     VulkanContext& operator=(const VulkanContext&) = delete;
 
@@ -33,8 +34,22 @@ public:
     VkQueue getPresentQueue() const;
     VkPhysicalDeviceProperties getPhysicalDevicePoperties();
     VkPhysicalDeviceFeatures getPhysicalDeviceFeatures();
+    uint32_t getGraphicsFamily() const;
 
-    //TODO FIX THAT(we need it for Render and SwapChain classes)
+    struct SwapChainSupportDetails
+    {
+        VkSurfaceCapabilitiesKHR capabilities;
+        std::vector<VkSurfaceFormatKHR> formats;
+        std::vector<VkPresentModeKHR> presentModes;
+    };
+
+    static SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface);
+
+    void cleanup();
+    
+    ~VulkanContext();
+
+private:
     struct QueueFamilyIndices
     {
         std::optional<uint32_t> graphicsFamily;
@@ -46,23 +61,10 @@ public:
         }
     };
 
-    struct SwapChainSupportDetails
-    {
-        VkSurfaceCapabilitiesKHR capabilities;
-        std::vector<VkSurfaceFormatKHR> formats;
-        std::vector<VkPresentModeKHR> presentModes;
-    };
-
-    static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface);
-    static SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface);
-
     const QueueFamilyIndices& getQueueFamilyIndices() const;
 
-    void cleanup();
-    
-    ~VulkanContext();
+    static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface);
 
-private:
     bool m_isCleanedUp{false};
 
     std::shared_ptr<platform::Window> m_window{nullptr};

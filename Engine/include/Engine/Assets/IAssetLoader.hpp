@@ -20,9 +20,10 @@ public:
 class ModelAsset : public IAsset
 {
 public:
-    Mesh3D mesh;
+    std::vector<Mesh3D> meshes;
+    std::vector<std::string> materialPaths;
 
-    ModelAsset(Mesh3D mesh) : mesh(mesh) 
+    ModelAsset(const std::vector<Mesh3D>& meshes) : meshes(meshes) 
     {
 
     }

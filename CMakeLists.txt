@@ -43,7 +43,6 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     INSTALL_RPATH "$ORIGIN/lib"
 )
 
-
 if(WIN32)
     set(DYNAMIC_LIB_EXTENSION ".dll")
 elseif(APPLE)

@@ -84,9 +84,9 @@ struct Vertex3D
         return binding;
     }
 
-    static constexpr std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions()
+    static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions()
     {
-        std::array<VkVertexInputAttributeDescription, 3> attributes{};
+        std::vector<VkVertexInputAttributeDescription> attributes(3);
 
         attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex3D, position)};
         attributes[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex3D, textureCoordinates)};

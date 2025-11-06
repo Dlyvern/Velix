@@ -17,6 +17,8 @@ public:
     Shader(const std::string& vertexPath, const std::string& fragmentPath);
     Shader(const std::vector<uint32_t>& vertexCode, const std::vector<uint32_t>& fragmentCode);
 
+    static SharedPtr create(const std::string& vertexPath, const std::string& fragmentPath);
+
     ~Shader();
     Shader(const Shader&) = delete;
     Shader& operator=(const Shader&) = delete;

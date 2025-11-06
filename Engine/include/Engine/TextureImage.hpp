@@ -20,17 +20,16 @@ public:
 
     void create(VkDevice device, VkPhysicalDevice physicalDevice, core::CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t pixels = 0xFFFFFFFF);
 
-    bool load(VkDevice device, VkPhysicalDevice physicalDevice, const std::string& path, core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad = true);
+    bool load(const std::string& path, core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad = true);
     void freePixels();
 
-    bool loadCubemap(VkDevice device, VkPhysicalDevice physicalDevice, const std::array<std::string, 6>& cubemaps, 
-    core::CommandPool::SharedPtr commandPool, VkQueue queue, bool freePixelsOnLoad = true);
+    bool loadCubemap(const std::array<std::string, 6>& cubemaps, core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad = true);
 
     unsigned char* getPixels() const;
     int getWidth() const;
     int getHeight() const;
     int getChannels() const;
-    core::Image<core::ImageDeleter>::SharedPtr getImage();
+    core::Image::SharedPtr getImage();
     VkImageView vkImageView();
     VkSampler vkSampler();
 
@@ -41,7 +40,7 @@ private:
     int m_width{1};
     int m_height{1};
     int m_channels{0};
-    core::Image<core::ImageDeleter>::SharedPtr m_image{nullptr};
+    core::Image::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};
     VkSampler m_sampler{VK_NULL_HANDLE};
 };

@@ -34,11 +34,13 @@ public:
     using RGPRDBuffer = RenderGraphPassResourceTypes::BufferDescription;
     using RGPRDFramebuffer = RenderGraphPassResourceTypes::FramebufferDescription;
     using RGPRDRenderPass = RenderGraphPassResourceTypes::RenderPassDescription;
+    using RGPRDGraphicsPipeline = RenderGraphPassResourceTypes::GraphicsPipelineDescription;
 
     std::size_t createTexture(const RGPRDTexture& textureDescription, const ResourceUserData& userData = {});
     std::size_t createBuffer(const RGPRDBuffer& bufferDescription);
     std::size_t createFramebuffer(const RGPRDFramebuffer& framebufferDescription);
     std::size_t createRenderPass(const RGPRDRenderPass& renderPassDescription);
+    std::size_t createGraphicsPipeline(const RGPRDGraphicsPipeline& graphicsPipelineDescription);
 
     void forceTextureCache(std::size_t hash, const RGPRDTexture& textureDescription);
     void forceFramebufferCache(std::size_t, const RGPRDFramebuffer& framebufferDescription);
@@ -47,13 +49,17 @@ public:
     const std::unordered_map<std::size_t, RGPRDBuffer>& getBufferHashes() const;
     const std::unordered_map<std::size_t, RGPRDFramebuffer>& getFramebufferHashes() const;
     const std::unordered_map<std::size_t, RGPRDRenderPass>& getRenderPassHashes() const;
+    const std::unordered_map<std::size_t, RGPRDGraphicsPipeline>& getGraphicsPipelineHashes() const;
+
+    void cleanup();
 private:
-    std::unordered_map<std::size_t, RGPRDTexture> m_textureHashes;
     std::unordered_map<std::size_t, std::vector<ResourceUserData>> m_textureUsers;
 
+    std::unordered_map<std::size_t, RGPRDTexture> m_textureHashes;
     std::unordered_map<std::size_t, RGPRDRenderPass> m_renderPasHashes;
     std::unordered_map<std::size_t, RGPRDBuffer> m_bufferHashes;
     std::unordered_map<std::size_t, RGPRDFramebuffer> m_framebufferHashes;
+    std::unordered_map<std::size_t, RGPRDGraphicsPipeline> m_graphicsPipelineHashes;
 };
 
 ELIX_NESTED_NAMESPACE_END

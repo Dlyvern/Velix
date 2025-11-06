@@ -7,8 +7,12 @@
 #include <cstdint>
 #include "Engine/Hash.hpp"
 
+#include "Engine/Material.hpp"
+
 #include "Core/VulkanContext.hpp"
 #include <memory>
+
+#include <glm/glm.hpp>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -16,6 +20,8 @@ struct Mesh3D
 {
     std::vector<Vertex3D> vertices;
     std::vector<uint32_t> indices;
+    CPUMaterial material;
+    glm::mat4 localTransform{1.0f};
 
     Mesh3D(const std::vector<Vertex3D>& vertices, const std::vector<uint32_t>& indices)
     {
@@ -28,6 +34,7 @@ struct Mesh2D
 {
     std::vector<Vertex2D> vertices;
     std::vector<uint32_t> indices;
+    CPUMaterial material;
 
     Mesh2D(const std::vector<Vertex2D>& vertices, const std::vector<uint32_t>& indices)
     {
@@ -38,14 +45,20 @@ struct Mesh2D
 
 struct GPUMesh
 {
+    using SharedPtr = std::shared_ptr<GPUMesh>;
+
     core::Buffer::SharedPtr indexBuffer{nullptr};
     core::Buffer::SharedPtr vertexBuffer{nullptr};
     uint32_t indicesCount{0};
     VkIndexType indexType{VK_INDEX_TYPE_UINT32};
     uint64_t vertexLayoutHash{0};
 
+    VkDescriptorSet materialDescriptorSet;
+
     VkVertexInputBindingDescription bindingDescription;
     std::vector<VkVertexInputAttributeDescription> attributeDescriptions;
+
+    Material::SharedPtr material{nullptr};
 
     GPUMesh() = default;
 
@@ -56,8 +69,8 @@ struct GPUMesh
         VkDeviceSize indexSize = sizeof(mesh.indices[0]) * mesh.indices.size();
         VkDeviceSize vertexSize = sizeof(mesh.vertices[0]) * mesh.vertices.size();
 
-        gpuMesh->indexBuffer = core::Buffer::createCopied(device, physicalDevice, mesh.indices.data(), indexSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, commandPool, queue);
-        gpuMesh->vertexBuffer = core::Buffer::createCopied(device, physicalDevice, mesh.vertices.data(), vertexSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, commandPool, queue);
+        gpuMesh->indexBuffer = core::Buffer::createCopied(mesh.indices.data(), indexSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, commandPool, queue);
+        gpuMesh->vertexBuffer = core::Buffer::createCopied(mesh.vertices.data(), vertexSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, commandPool, queue);
 
         gpuMesh->indicesCount = static_cast<uint32_t>(mesh.indices.size());
         gpuMesh->indexType = VK_INDEX_TYPE_UINT32;
@@ -90,8 +103,8 @@ struct GPUMesh
         VkDeviceSize indexSize = sizeof(mesh.indices[0]) * mesh.indices.size();
         VkDeviceSize vertexSize = sizeof(mesh.vertices[0]) * mesh.vertices.size();
 
-        gpuMesh->indexBuffer = core::Buffer::createCopied(device, physicalDevice, mesh.indices.data(), indexSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, commandPool, queue);
-        gpuMesh->vertexBuffer = core::Buffer::createCopied(device, physicalDevice, mesh.vertices.data(), vertexSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, commandPool, queue);
+        gpuMesh->indexBuffer = core::Buffer::createCopied(mesh.indices.data(), indexSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, commandPool, queue);
+        gpuMesh->vertexBuffer = core::Buffer::createCopied(mesh.vertices.data(), vertexSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, commandPool, queue);
         
         gpuMesh->indicesCount = static_cast<uint32_t>(mesh.indices.size());
         gpuMesh->indexType = VK_INDEX_TYPE_UINT32;

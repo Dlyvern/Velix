@@ -105,16 +105,24 @@ void Editor::initStyle()
     io.Fonts->AddFontFromFileTTF("./resources/fonts/JetBrainsMono-Regular.ttf", 16.0f);
 
     auto vulkanContext = core::VulkanContext::getContext();
+    auto device = vulkanContext->getDevice();
+    auto physicalDevice = vulkanContext->getPhysicalDevice();
+    auto graphicsQueue = vulkanContext->getGraphicsQueue();
 
-    auto queueFamilyIndices = core::VulkanContext::findQueueFamilies(vulkanContext->getPhysicalDevice(), 
-    vulkanContext->getSurface());
-    auto commandPool = core::CommandPool::create(vulkanContext->getDevice(), queueFamilyIndices.graphicsFamily.value());
+    auto commandPool = core::CommandPool::create(vulkanContext->getDevice(), core::VulkanContext::getContext()->getGraphicsFamily());
 
     m_logoTexture = std::make_shared<engine::TextureImage>();
+    m_folderTexture = std::make_shared<engine::TextureImage>();
+    m_fileTexture = std::make_shared<engine::TextureImage>();
 
-    m_logoTexture->load(vulkanContext->getDevice(), vulkanContext->getPhysicalDevice(), "./resources/textures/VelixFire.png", commandPool, vulkanContext->getGraphicsQueue());
-
+    m_logoTexture->load("./resources/textures/VelixFire.png", commandPool);
     m_logoDescriptorSet = ImGui_ImplVulkan_AddTexture(m_logoTexture->vkSampler(), m_logoTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    m_folderTexture->load("./resources/textures/folder.png", commandPool);
+    m_folderDescriptorSet = ImGui_ImplVulkan_AddTexture(m_folderTexture->vkSampler(), m_folderTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    m_fileTexture->load("./resources/textures/file.png", commandPool);
+    m_fileDescriptorSet = ImGui_ImplVulkan_AddTexture(m_fileTexture->vkSampler(), m_fileTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 void Editor::showDockSpace()
@@ -226,10 +234,12 @@ void Editor::drawCustomTitleBar()
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
 
         static bool isNewProjectPopUpOpened = false;
+        static bool isOpenProjectPopUpOpened = false;
 
+        //TODO REMOVE THIS WHEN VELIX_INSTALLER IS READY, THIS IS TEMPORARY SOLUTION FOR DEVELOPMENT
         if(ImGui::Button("Open project"))
         {
-
+            isOpenProjectPopUpOpened = true;
         }
 
         if(ImGui::Button("Create project"))
@@ -237,13 +247,57 @@ void Editor::drawCustomTitleBar()
             isNewProjectPopUpOpened = true;
         };
 
+        if(isOpenProjectPopUpOpened)
+        {
+            ImGui::OpenPopup("Open project");
+            isOpenProjectPopUpOpened = false;
+        }
+
         if(isNewProjectPopUpOpened)
         {
             ImGui::OpenPopup("Create New Project");
             isNewProjectPopUpOpened = false;
         }
 
-        //TODO REMOVE THIS WHEN VELIX_INSTALLER IS READY, THIS IS TEMPORARY SOLUTION FOR DEVELOPMENT
+        if (ImGui::BeginPopupModal("Open project", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            static std::filesystem::path documentDirectory = FileHelper::getDocumentsDirectory() + "/";
+            static std::string tmpClickedDirectory;
+
+            for(const auto& entry : std::filesystem::recursive_directory_iterator(documentDirectory))
+            {
+                if(entry.is_directory())
+                    continue;
+                else if(entry.is_regular_file())
+                    if(entry.path().extension() == ".elixirproject")
+                    {
+                        auto parentPath = entry.path().parent_path();
+
+                        if(parentPath.string() == m_currentProject.directory)
+                            continue;
+
+                        if(ImGui::Button(parentPath.string().c_str()))
+                            tmpClickedDirectory = entry.path().parent_path().string();
+                    }
+            }
+
+            ImGui::Spacing();
+
+            if(ImGui::Button("Open", ImVec2(120, 0)))
+            {
+                m_currentProject.directory = tmpClickedDirectory;
+                tmpClickedDirectory.clear();
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancel", ImVec2(120, 0)))
+                ImGui::CloseCurrentPopup();
+
+            ImGui::EndPopup();
+        }
+
         if (ImGui::BeginPopupModal("Create New Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
             static bool firstTime = true;
@@ -265,7 +319,6 @@ void Editor::drawCustomTitleBar()
 
             if (ImGui::Button("Create", ImVec2(120, 0)))
             {
-                std::string extension = SHARED_LIB_EXTENSION;
                 std::string projectTemplateDir = FileHelper::getExecutablePath().string() + "/resources/projectTemplate";
                 
                 std::string executablePath = FileHelper::getExecutablePath();
@@ -550,6 +603,13 @@ void Editor::drawBottomPanel()
         engine::PluginLoader::closeLibrary(library);
     }
 
+    ImGui::SameLine();
+    
+    if(ImGui::Button("Assets"))
+    {
+        m_showAssetsWindow = !m_showAssetsWindow;
+    }
+
     ImGui::End();
 }
 
@@ -639,7 +699,7 @@ void Editor::drawDetails()
                         transformComponent->setScale(scale);
 
                     ImGui::EndTable();
-                        }
+                }
             }
         }
         else if(auto lightComponent = dynamic_cast<engine::LightComponent*>(component.get()))
@@ -727,7 +787,73 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 
 void Editor::drawAssets()
 {
+    if(!m_showAssetsWindow)
+        return;
+    
     ImGui::Begin("Assets");
+
+    if(m_currentProject.directory.empty())
+    {
+        ImGui::End();
+        return;
+    }
+
+    float windowWidth = ImGui::GetContentRegionAvail().x;
+    float itemWidth = 80.0f;
+    int columns = (int)(windowWidth / itemWidth);
+    
+    if (columns < 1) 
+        columns = 1;
+
+    ImGui::Columns(columns, "AssetsColumns", false);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+
+    for(const auto& entry : std::filesystem::recursive_directory_iterator(m_currentProject.directory))
+    {
+        std::string id = entry.path().string();
+        ImGui::PushID(id.c_str());
+
+        ImGui::BeginGroup();
+
+        if(entry.is_directory())
+        {
+            ImGui::ImageButton(id.c_str(), m_folderDescriptorSet, ImVec2(50, 50));
+
+            std::string folderName = entry.path().filename().string();
+
+            ImGui::TextWrapped("%s", folderName.c_str());
+        }
+        else if(entry.is_regular_file())
+        {
+            //Todo later
+            // VkDescriptorSet fileIcon = getFileIconForExtension(entry.path().extension().string());
+
+            ImGui::ImageButton(id.c_str(), m_fileDescriptorSet, ImVec2(50, 50));
+
+            std::string fileName = entry.path().filename().string();
+
+            ImGui::TextWrapped("%s", fileName.c_str());
+        }
+
+        ImGui::EndGroup();
+
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("%s", entry.path().filename().string().c_str());
+        }
+
+        ImGui::PopID();
+
+        ImGui::NextColumn();
+    }
+
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+
+    ImGui::Columns(1);
 
     ImGui::End();
 }

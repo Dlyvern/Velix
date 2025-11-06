@@ -2,24 +2,19 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-StaticMeshComponent::StaticMeshComponent(const Mesh3D& mesh) : m_mesh(mesh)
+StaticMeshComponent::StaticMeshComponent(const std::vector<Mesh3D>& meshes) : m_meshes(meshes)
 {
     
 }
 
-const Mesh3D& StaticMeshComponent::getMesh() const
+const std::vector<Mesh3D>& StaticMeshComponent::getMeshes() const
 {
-    return m_mesh;
+    return m_meshes;
 }
 
-void StaticMeshComponent::setMaterial(Material::SharedPtr material)
+Mesh3D& StaticMeshComponent::getMesh(int index)
 {
-    m_material = material;
-}
-
-Material::SharedPtr StaticMeshComponent::getMaterial() const
-{
-    return m_material;
+    return m_meshes[index];
 }
 
 ELIX_NESTED_NAMESPACE_END

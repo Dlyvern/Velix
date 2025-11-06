@@ -9,6 +9,7 @@
 #include <set>
 #include <limits>
 #include <algorithm>
+#include <unordered_map>
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
@@ -47,7 +48,7 @@ std::shared_ptr<VulkanContext> VulkanContext::getContext()
     return GLOBAL_VULKAN_CONTEXT;
 }
 
-VulkanContext::VulkanContext(std::shared_ptr<platform::Window> window)
+VulkanContext::VulkanContext(platform::Window::SharedPtr window)
 {
 #ifdef DEBUG_BUILD
     m_isValidationLayersEnabled = true;
@@ -128,6 +129,11 @@ void VulkanContext::createLogicalDevice()
     volkLoadDevice(m_device);
 }
 
+uint32_t VulkanContext::getGraphicsFamily() const
+{
+    return m_queueFamilyIndices.graphicsFamily.value();
+}
+
 const VulkanContext::QueueFamilyIndices& VulkanContext::getQueueFamilyIndices() const
 {
     return m_queueFamilyIndices;
@@ -200,6 +206,25 @@ VkPhysicalDeviceFeatures VulkanContext::getPhysicalDeviceFeatures()
     return features;
 }
 
+bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device)
+{
+    uint32_t extensionCount{0};
+
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+    std::set<std::string> requiredExtensions(m_deviceExtensions.begin(), m_deviceExtensions.end());
+
+    for(const auto& extension : availableExtensions)
+        requiredExtensions.erase(extension.extensionName);
+
+    return requiredExtensions.empty();
+}
+
+
 bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device)
 {
     QueueFamilyIndices indices = findQueueFamilies(device, m_surface);
@@ -214,6 +239,9 @@ bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device)
 
         swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
     }
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(device, &properties);
 
     VkPhysicalDeviceFeatures features{};
     vkGetPhysicalDeviceFeatures(device, &features);
@@ -234,8 +262,62 @@ void VulkanContext::pickPhysicalDevice()
 
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
 
+    // struct Candidate
+    // {
+    //     VkPhysicalDevice device;
+    //     VkPhysicalDeviceProperties props;
+    //     int score;
+    //     bool canPresent;
+    // };
+
+    // std::vector<Candidate> candidates;
+
     for(const auto& device : devices)
     {
+        // if (!isDeviceSuitable(device))
+        //     continue;
+
+        // VkPhysicalDeviceProperties props{};
+        // vkGetPhysicalDeviceProperties(device, &props);
+
+        // uint32_t queueFamilyCount = 0;
+        // vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+        // bool canPresent = false;
+
+        // for (uint32_t i = 0; i < queueFamilyCount; ++i)
+        // {
+        //     VkBool32 support = VK_FALSE;
+        //     vkGetPhysicalDeviceSurfaceSupportKHR(device, i, m_surface, &support);
+
+        //     if (support)
+        //     {
+        //         canPresent = true;
+        //         break;
+        //     }
+        // }
+
+        // if (!canPresent)
+        // {
+        //     std::cout << "[Vulkan] Skipping GPU " << props.deviceName << " because it cannot present to this surface.\n";
+        //     continue;
+        // }
+
+        // int score = 0;
+        // if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+        //     score += 1000;
+        // else if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+        //     score += 500;
+        // else
+        //     score += 100;
+
+        // VkPhysicalDeviceMemoryProperties memProps{};
+        // vkGetPhysicalDeviceMemoryProperties(device, &memProps);
+        // for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i)
+        //     if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+        //         score += static_cast<int>(memProps.memoryHeaps[i].size / (1024 * 1024 * 1024));
+
+        // candidates.push_back({device, props, score, canPresent});
         if(isDeviceSuitable(device))
         {
             m_physicalDevice = device;
@@ -243,11 +325,30 @@ void VulkanContext::pickPhysicalDevice()
         }
     }
 
+    // if(candidates.empty())
+    //     throw std::runtime_error("Failed to find a suitable GPU");
+
+    // std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {return a.score > b.score; });
+
+    // for(const auto& candidate : candidates)
+    // {
+    //     std::cout << "GPU: " << candidate.props.deviceName << std::endl;
+    //     std::cout << "Score: " << candidate.score << std::endl;
+
+    //     std::cout << "[Vulkan] Selected GPU: " << candidates.front().props.deviceName
+    //             << " ("
+    //             << (candidates.front().props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete" :
+    //                 candidates.front().props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated" : "Other")
+    //             << ")\n";
+    // }
+
+    // m_physicalDevice = candidates.front().device;
+
     if(!m_physicalDevice)
         throw std::runtime_error("Failed to find a suitable GPU");
 }
 
-void VulkanContext::createSurface(std::shared_ptr<platform::Window> window)
+void VulkanContext::createSurface(platform::Window::SharedPtr window)
 {
     if(glfwCreateWindowSurface(m_instance, window->getRawHandler(), nullptr, &m_surface) != VK_SUCCESS)
         throw std::runtime_error("Failed to create window surface");
@@ -255,8 +356,7 @@ void VulkanContext::createSurface(std::shared_ptr<platform::Window> window)
 
 void VulkanContext::createInstance()
 {
-    VkApplicationInfo applicationInfo{};
-    applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    VkApplicationInfo applicationInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     applicationInfo.pApplicationName = "VelixCore";
     applicationInfo.pEngineName = "VelixEngine";
     applicationInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 1);
@@ -275,15 +375,33 @@ void VulkanContext::createInstance()
 
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
 
-    //TODO check if all glfw extensions are represented in vulkan extensions
-    for(const auto& extension : extensions)
-        std::cout << ("Vulkan extension: ") << extension.extensionName << std::endl;  
+    std::unordered_map<std::string, bool> presentedExtensions;
 
     for(int index = 0; index < glfwExtensionCount; ++index)
+    {
+        std::string glfwExtension{glfwExtensions[index]};
+        presentedExtensions[glfwExtension] = false;
+#ifdef DEBUG_BUILD
         std::cout << ("GLFW extension: ") << glfwExtensions[index] << std::endl;
+#endif
+    }
 
-    VkInstanceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    for(const auto& extension : extensions)
+    {
+#ifdef DEBUG_BUILD
+        std::cout << ("Vulkan extension: ") << extension.extensionName << std::endl;  
+#endif
+        auto it = presentedExtensions.find(extension.extensionName);
+
+        if(it != presentedExtensions.end())
+            it->second = true;
+    }
+
+    for(const auto& [name, found] : presentedExtensions)
+        if(!found)
+            throw std::runtime_error("Failed to find GLFW extension in Vulkan " + name);
+
+    VkInstanceCreateInfo createInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     createInfo.pApplicationInfo = &applicationInfo;
     createInfo.enabledExtensionCount = glfwExtensionCount;
     createInfo.ppEnabledExtensionNames = glfwExtensions;
@@ -339,23 +457,6 @@ bool VulkanContext::checkValidationLayers()
     return layerFound;
 }
 
-bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device)
-{
-    uint32_t extensionCount{0};
-
-    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
-
-    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
-
-    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
-
-    std::set<std::string> requiredExtensions(m_deviceExtensions.begin(), m_deviceExtensions.end());
-
-    for(const auto& extension : availableExtensions)
-        requiredExtensions.erase(extension.extensionName);
-
-    return requiredExtensions.empty();
-}
 
 VkPhysicalDeviceProperties VulkanContext::getPhysicalDevicePoperties()
 {
@@ -381,9 +482,7 @@ std::vector<const char*> VulkanContext::getRequiredExtensions()
 void VulkanContext::createDebugger()
 {
 #ifdef DEBUG_BUILD
-    VkDebugUtilsMessengerCreateInfoEXT createInfo{};
-
-    createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    VkDebugUtilsMessengerCreateInfoEXT createInfo{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
     createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | 
     VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
     VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;

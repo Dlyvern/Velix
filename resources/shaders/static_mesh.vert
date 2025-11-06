@@ -27,19 +27,17 @@ layout(location = 3) out vec4 fragPositionLightSpace;
 
 void main() 
 {
-    mat4 model = modelPushConstant.model;
-    mat4 view = cameraUniformObject.view;
-    mat4 modelView = view * model;
-
-    vec4 positionView = view * model * vec4(inPosition, 1.0);
-    fragPositionView = positionView.xyz;
-
-    mat3 normalMatrix = transpose(inverse(mat3(model)));
-    fragNormalView = normalize(normalMatrix * inNormal);
-
-    fragPositionLightSpace = lightSpaceMatrixUniformObject.lightSpaceMatrix * modelPushConstant.model * vec4(inPosition, 1.0);
-
-    gl_Position = cameraUniformObject.projection * positionView;
-    
     fragTextureCoordinates = inTextures;
+
+    vec4 worldPos = modelPushConstant.model * vec4(inPosition, 1.0);
+    vec4 viewPos = cameraUniformObject.view * worldPos;
+    mat3 normalMatrix = transpose(inverse(mat3(modelPushConstant.model)));
+    vec3 worldNormal = normalize(normalMatrix * inNormal);
+
+    fragPositionView = viewPos.xyz;
+    fragNormalView = mat3(cameraUniformObject.view) * worldNormal;
+
+    fragPositionLightSpace = lightSpaceMatrixUniformObject.lightSpaceMatrix * worldPos;
+
+    gl_Position = cameraUniformObject.projection * viewPos;
 }
