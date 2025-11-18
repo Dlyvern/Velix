@@ -6,6 +6,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <cstdint>
+#include <algorithm>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 

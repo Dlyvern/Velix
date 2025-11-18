@@ -52,8 +52,6 @@ public:
         return ptr;
     }
 
-    
-
     template<typename T>
     T* getComponent()
     {
@@ -90,7 +88,7 @@ public:
                 for (auto& comp : it->second)
                     result.push_back(static_cast<T*>(comp.get()));
         } 
-        else 
+        else
         {
             auto it = m_components.find(type);
 
