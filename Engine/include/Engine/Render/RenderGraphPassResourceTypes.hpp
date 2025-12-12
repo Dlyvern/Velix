@@ -53,6 +53,8 @@ namespace RenderGraphPassResourceTypes
         VkMemoryPropertyFlags properties;
         VkImageTiling tiling;
 
+        VkSampler sampler{VK_NULL_HANDLE};
+
         FormatSource source = FormatSource::Explicit;
 
         VkImageLayout targetLayout{VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};

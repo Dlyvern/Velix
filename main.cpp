@@ -18,6 +18,7 @@
 #include "Engine/EngineCamera.hpp"
 #include "Engine/Assets/OBJAssetLoader.hpp"
 #include "Engine/Assets/FBXAssetLoader.hpp"
+#include "Engine/Physics/PhysXCore.hpp"
 
 #include "Engine/ShaderFamily.hpp"
 
@@ -29,6 +30,8 @@
 
 int main(int argc, char** argv)
 {
+    elix::engine::PhysXCore::init();
+    
     elix::engine::AssetsLoader::registerAssetLoader(std::make_shared<elix::engine::OBJAssetLoader>());
     elix::engine::AssetsLoader::registerAssetLoader(std::make_shared<elix::engine::FBXAssetLoader>());
 
@@ -72,7 +75,6 @@ int main(int argc, char** argv)
 
     auto editor = std::make_shared<elix::editor::Editor>();
     editor->setScene(scene);
-
 
     auto renderGraph = new elix::engine::RenderGraph(vulkanContext->getDevice(), vulkanContext->getSwapchain(), scene);
     auto shadowRenderPass = renderGraph->addPass<elix::engine::ShadowRenderGraphPass>(vulkanContext->getDevice());

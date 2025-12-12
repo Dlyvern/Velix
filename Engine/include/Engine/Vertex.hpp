@@ -3,7 +3,6 @@
 
 #include "Core/Macros.hpp"
 
-
 #include <vector>
 #include <volk.h>
 #include <array>
@@ -94,7 +93,6 @@ struct Vertex3D
 
         return attributes;
     }
-
 };
 
 ELIX_NESTED_NAMESPACE_END

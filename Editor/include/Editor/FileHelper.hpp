@@ -5,6 +5,7 @@
     #define WIN32_LEAN_AND_MEAN
     #define NOMINMAX
     #include <windows.h>
+    #include <cstdio>
     #undef near
     #undef far
     #include <shlobj.h>
@@ -26,23 +27,24 @@
 #include <iostream>
 #include <filesystem>
 #include <array>
+#include <cstdint>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 #if defined(_WIN32)
-    #define SHARED_LIB_EXTENSION ".dll";
+    #define SHARED_LIB_EXTENSION ".dll"
 #elif defined(__linux__)
-    #define SHARED_LIB_EXTENSION ".so";
+    #define SHARED_LIB_EXTENSION ".so"
 #elif defined(__APPLE__)
-    #define SHARED_LIB_EXTENSION ".dylib";
+    #define SHARED_LIB_EXTENSION ".dylib"
 #else
-    #define SHARED_LIB_EXTENSION "";
+    #define SHARED_LIB_EXTENSION ""
 #endif
 
 
-static constexpr const char* WINDOW_SHARED_LIB_EXTENSION = ".dll";
-static constexpr const char* MACOS_SHARED_LIB_EXTENSION = ".dylib";
-static constexpr const char* LINUX_SHARED_LIB_EXTENSION = ".so";
+// static constexpr const char* WINDOW_SHARED_LIB_EXTENSION = ".dll";
+// static constexpr const char* MACOS_SHARED_LIB_EXTENSION = ".dylib";
+// static constexpr const char* LINUX_SHARED_LIB_EXTENSION = ".so";
 
 class FileHelper
 {

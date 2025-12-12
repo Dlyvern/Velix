@@ -32,7 +32,7 @@ jobs:
           sudo apt install -y pkg-config
 
       - name: Configure and Build
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVELIX_USE_PHYSX=ON -DPHYSX_BUILD_TYPE=checked && cmake --build build
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPHYSX_BUILD_TYPE=checked && cmake --build build
       
       - name: Install to Staging Dir
         run: |
@@ -76,7 +76,7 @@ jobs:
 
       - name: Configure and Build
         run: |
-          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DCMAKE_BUILD_TYPE=Release -DPHYSX_BUILD_TYPE=checked -DVulkan_ROOT="$env:VULKAN_SDK"
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DPHYSX_BUILD_TYPE=checked -DVulkan_ROOT="$env:VULKAN_SDK"
           cmake --build build --config Release
 
       - name: Install to Staging Dir
@@ -135,67 +135,67 @@ jobs:
           name: Velix-windows
           path: Velix-windows.tar.gz
 
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
-          fetch-depth: 0
+  # build-macos:
+  #   runs-on: macos-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #       with:
+  #         submodules: 'recursive'
+  #         fetch-depth: 0
 
-      - name: Verify and Update Submodules
-        run: |
-          git submodule update --init --recursive
-          git submodule status
-          ls -la external/
+  #     - name: Verify and Update Submodules
+  #       run: |
+  #         git submodule update --init --recursive
+  #         git submodule status
+  #         ls -la external/
 
-      - name: Install Dependencies
-        run: |
-          brew uninstall cmake || true
-          brew install cmake ninja freetype glfw
+  #     - name: Install Dependencies
+  #       run: |
+  #         brew uninstall cmake || true
+  #         brew install cmake ninja freetype glfw
 
-      - name: Install Vulkan SDK
-        run: |
-          curl -Lo vulkan-sdk.zip https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.zip
-          unzip -q vulkan-sdk.zip -d vulkan-sdk-extracted
-          cd vulkan-sdk-extracted
-          SDK_APP=$(find . -name "*.app" | head -n 1)
-          echo "Found installer: $SDK_APP"
+  #     - name: Install Vulkan SDK
+  #       run: |
+  #         curl -Lo vulkan-sdk.zip https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.zip
+  #         unzip -q vulkan-sdk.zip -d vulkan-sdk-extracted
+  #         cd vulkan-sdk-extracted
+  #         SDK_APP=$(find . -name "*.app" | head -n 1)
+  #         echo "Found installer: $SDK_APP"
 
-          VERSION_DIR="$HOME/VulkanSDK/1.4.321.0"
-          mkdir -p "$VERSION_DIR"
+  #         VERSION_DIR="$HOME/VulkanSDK/1.4.321.0"
+  #         mkdir -p "$VERSION_DIR"
 
-          sudo "$SDK_APP/Contents/MacOS/$(basename "$SDK_APP" .app)" \
-            --root "$VERSION_DIR" \
-            --accept-licenses --default-answer --confirm-command install \
-            com.lunarg.vulkan.core com.lunarg.vulkan.usr com.lunarg.vulkan.volk com.lunarg.vulkan.vma
+  #         sudo "$SDK_APP/Contents/MacOS/$(basename "$SDK_APP" .app)" \
+  #           --root "$VERSION_DIR" \
+  #           --accept-licenses --default-answer --confirm-command install \
+  #           com.lunarg.vulkan.core com.lunarg.vulkan.usr com.lunarg.vulkan.volk com.lunarg.vulkan.vma
           
-          echo "VULKAN_SDK=$VERSION_DIR/macOS" >> $GITHUB_ENV
-          echo "$VERSION_DIR/macOS/bin" >> $GITHUB_PATH
+  #         echo "VULKAN_SDK=$VERSION_DIR/macOS" >> $GITHUB_ENV
+  #         echo "$VERSION_DIR/macOS/bin" >> $GITHUB_PATH
 
-      - name: Configure and Build
-        run: |
-          cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DVulkan_ROOT="$VULKAN_SDK"
-          cmake --build build
+  #     - name: Configure and Build
+  #       run: |
+  #         cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DVulkan_ROOT="$VULKAN_SDK"
+  #         cmake --build build
 
-      - name: Install to Staging Dir
-        run: |
-          cmake --install build --prefix staging/Velix
+  #     - name: Install to Staging Dir
+  #       run: |
+  #         cmake --install build --prefix staging/Velix
 
-      - name: Copy MoltenVK Runtime Libraries
-        run: |
-          mkdir -p staging/Velix/lib/
-          cp "/usr/local/lib/libMoltenVK.dylib" "staging/Velix/lib/"
-          cp "/usr/local/share/vulkan/icd.d/MoltenVK_icd.json" "staging/Velix/lib/"
-          cp "/usr/local/lib/libvulkan.dylib" "staging/Velix/lib/" 2>/dev/null || true
+  #     - name: Copy MoltenVK Runtime Libraries
+  #       run: |
+  #         mkdir -p staging/Velix/lib/
+  #         cp "/usr/local/lib/libMoltenVK.dylib" "staging/Velix/lib/"
+  #         cp "/usr/local/share/vulkan/icd.d/MoltenVK_icd.json" "staging/Velix/lib/"
+  #         cp "/usr/local/lib/libvulkan.dylib" "staging/Velix/lib/" 2>/dev/null || true
 
-      - name: Create Archive
-        run: |
-          tar -czvf Velix-macos.tar.gz -C staging Velix
+  #     - name: Create Archive
+  #       run: |
+  #         tar -czvf Velix-macos.tar.gz -C staging Velix
 
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Velix-macos
-          path: Velix-macos.tar.gz
+  #     - name: Upload Build Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: Velix-macos
+  #         path: Velix-macos.tar.gz

@@ -58,6 +58,4 @@ void RenderGraphPassResourceHash::cleanup()
     m_textures.clear();
 }
 
-
-
 ELIX_NESTED_NAMESPACE_END

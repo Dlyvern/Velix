@@ -123,7 +123,7 @@ void RenderGraphPassResourceCompiler::compileTextures(RenderGraphPassRecourceBui
         textureDescription.usage, textureDescription.properties, textureDescription.format, textureDescription.tiling);
 
         auto texture = std::make_shared<core::Texture>(m_device, m_physicalDevice, textureDescription.format, textureDescription.aspect, image);
-
+        texture->setSampler(textureDescription.sampler);
         storage.addTexture(hash, texture);
     }
 }

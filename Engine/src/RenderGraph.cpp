@@ -21,21 +21,14 @@
 
 #include "Engine/ShaderFamily.hpp"
 
-#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-
-struct ModelPushConstant
-{
-    glm::mat4 model;
-};
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene) : m_device(device), 
 m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanContext::getContext()->getPhysicalDevice(), swapchain)
 {
-    // m_syncObject = std::make_unique<core::SyncObject>(m_device, MAX_FRAMES_IN_FLIGHT);
     m_physicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
 
     m_commandPool = core::CommandPool::create(m_device, core::VulkanContext::getContext()->getGraphicsFamily());
@@ -156,8 +149,6 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
     std::memcpy(m_cameraMapped[m_currentFrame], &cameraUBO, sizeof(CameraUBO));
 
-    // m_cameraUniformObjects[m_currentFrame]->update();
-    
     //TODO NEEDS TO BE REDESIGNED
     // size_t requiredSize = sizeof(LightData) * lights.size();
 

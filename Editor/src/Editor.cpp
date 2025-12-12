@@ -233,124 +233,124 @@ void Editor::drawCustomTitleBar()
     {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
 
-        static bool isNewProjectPopUpOpened = false;
-        static bool isOpenProjectPopUpOpened = false;
+        // static bool isNewProjectPopUpOpened = false;
+        // static bool isOpenProjectPopUpOpened = false;
 
-        //TODO REMOVE THIS WHEN VELIX_INSTALLER IS READY, THIS IS TEMPORARY SOLUTION FOR DEVELOPMENT
-        if(ImGui::Button("Open project"))
-        {
-            isOpenProjectPopUpOpened = true;
-        }
+        // //TODO REMOVE THIS WHEN VELIX_INSTALLER IS READY, THIS IS TEMPORARY SOLUTION FOR DEVELOPMENT
+        // if(ImGui::Button("Open project"))
+        // {
+        //     isOpenProjectPopUpOpened = true;
+        // }
 
-        if(ImGui::Button("Create project"))
-        {
-            isNewProjectPopUpOpened = true;
-        };
+        // if(ImGui::Button("Create project"))
+        // {
+        //     isNewProjectPopUpOpened = true;
+        // };
 
-        if(isOpenProjectPopUpOpened)
-        {
-            ImGui::OpenPopup("Open project");
-            isOpenProjectPopUpOpened = false;
-        }
+        // if(isOpenProjectPopUpOpened)
+        // {
+        //     ImGui::OpenPopup("Open project");
+        //     isOpenProjectPopUpOpened = false;
+        // }
 
-        if(isNewProjectPopUpOpened)
-        {
-            ImGui::OpenPopup("Create New Project");
-            isNewProjectPopUpOpened = false;
-        }
+        // if(isNewProjectPopUpOpened)
+        // {
+        //     ImGui::OpenPopup("Create New Project");
+        //     isNewProjectPopUpOpened = false;
+        // }
 
-        if (ImGui::BeginPopupModal("Open project", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            static std::filesystem::path documentDirectory = FileHelper::getDocumentsDirectory() + "/";
-            static std::string tmpClickedDirectory;
+        // if (ImGui::BeginPopupModal("Open project", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        // {
+        //     static std::filesystem::path documentDirectory = FileHelper::getDocumentsDirectory() + "/";
+        //     static std::string tmpClickedDirectory;
 
-            for(const auto& entry : std::filesystem::recursive_directory_iterator(documentDirectory))
-            {
-                if(entry.is_directory())
-                    continue;
-                else if(entry.is_regular_file())
-                    if(entry.path().extension() == ".elixirproject")
-                    {
-                        auto parentPath = entry.path().parent_path();
+        //     for(const auto& entry : std::filesystem::recursive_directory_iterator(documentDirectory))
+        //     {
+        //         if(entry.is_directory())
+        //             continue;
+        //         else if(entry.is_regular_file())
+        //             if(entry.path().extension() == ".elixirproject")
+        //             {
+        //                 auto parentPath = entry.path().parent_path();
 
-                        if(parentPath.string() == m_currentProject.directory)
-                            continue;
+        //                 if(parentPath.string() == m_currentProject.directory)
+        //                     continue;
 
-                        if(ImGui::Button(parentPath.string().c_str()))
-                            tmpClickedDirectory = entry.path().parent_path().string();
-                    }
-            }
+        //                 if(ImGui::Button(parentPath.string().c_str()))
+        //                     tmpClickedDirectory = entry.path().parent_path().string();
+        //             }
+        //     }
 
-            ImGui::Spacing();
+        //     ImGui::Spacing();
 
-            if(ImGui::Button("Open", ImVec2(120, 0)))
-            {
-                m_currentProject.directory = tmpClickedDirectory;
-                tmpClickedDirectory.clear();
-                ImGui::CloseCurrentPopup();
-            }
+        //     if(ImGui::Button("Open", ImVec2(120, 0)))
+        //     {
+        //         m_currentProject.directory = tmpClickedDirectory;
+        //         tmpClickedDirectory.clear();
+        //         ImGui::CloseCurrentPopup();
+        //     }
 
-            ImGui::SameLine();
+        //     ImGui::SameLine();
 
-            if (ImGui::Button("Cancel", ImVec2(120, 0)))
-                ImGui::CloseCurrentPopup();
+        //     if (ImGui::Button("Cancel", ImVec2(120, 0)))
+        //         ImGui::CloseCurrentPopup();
 
-            ImGui::EndPopup();
-        }
+        //     ImGui::EndPopup();
+        // }
 
-        if (ImGui::BeginPopupModal("Create New Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            static bool firstTime = true;
+        // if (ImGui::BeginPopupModal("Create New Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        // {
+        //     static bool firstTime = true;
 
-            static char projectName[128] = "";
-            static char projectPath[256] = "";
+        //     static char projectName[128] = "";
+        //     static char projectPath[256] = "";
 
-            if(firstTime)
-            {
-                std::string documentDirectory = FileHelper::getDocumentsDirectory() + "/";
-                std::strncpy(projectPath, documentDirectory.c_str(), sizeof(projectPath) - 1);
-                projectPath[sizeof(projectPath) - 1] = '\0';
-            }
+        //     if(firstTime)
+        //     {
+        //         std::string documentDirectory = FileHelper::getDocumentsDirectory() + "/";
+        //         std::strncpy(projectPath, documentDirectory.c_str(), sizeof(projectPath) - 1);
+        //         projectPath[sizeof(projectPath) - 1] = '\0';
+        //     }
 
-            ImGui::InputText("Project Name", projectName, IM_ARRAYSIZE(projectName));
-            ImGui::InputText("Project Path", projectPath, IM_ARRAYSIZE(projectPath));
+        //     ImGui::InputText("Project Name", projectName, IM_ARRAYSIZE(projectName));
+        //     ImGui::InputText("Project Path", projectPath, IM_ARRAYSIZE(projectPath));
 
-            ImGui::Spacing();
+        //     ImGui::Spacing();
 
-            if (ImGui::Button("Create", ImVec2(120, 0)))
-            {
-                std::string projectTemplateDir = FileHelper::getExecutablePath().string() + "/resources/projectTemplate";
+        //     if (ImGui::Button("Create", ImVec2(120, 0)))
+        //     {
+        //         std::string projectTemplateDir = FileHelper::getExecutablePath().string() + "/resources/projectTemplate";
                 
-                std::string executablePath = FileHelper::getExecutablePath();
-                std::string projectDir(projectPath);
-                projectDir += projectName;
+        //         std::string executablePath = FileHelper::getExecutablePath();
+        //         std::string projectDir(projectPath);
+        //         projectDir += projectName;
 
-                try
-                {
-                    std::filesystem::copy(projectTemplateDir, projectDir,
-                    std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
+        //         try
+        //         {
+        //             std::filesystem::copy(projectTemplateDir, projectDir,
+        //             std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
 
-                    std::cout << "Directory copied successfully\n";
-                }
-                catch (const std::filesystem::filesystem_error& e)
-                {
-                    std::cerr << "Error copying directory: " << e.what() << '\n';
-                }
+        //             std::cout << "Directory copied successfully\n";
+        //         }
+        //         catch (const std::filesystem::filesystem_error& e)
+        //         {
+        //             std::cerr << "Error copying directory: " << e.what() << '\n';
+        //         }
 
-                m_currentProject.directory = projectDir;
+        //         m_currentProject.directory = projectDir;
 
-                ImGui::CloseCurrentPopup();
-            }
+        //         ImGui::CloseCurrentPopup();
+        //     }
 
-            ImGui::SameLine();
+        //     ImGui::SameLine();
 
-            if (ImGui::Button("Cancel", ImVec2(120, 0)))
-            {
-                ImGui::CloseCurrentPopup();
-            }
+        //     if (ImGui::Button("Cancel", ImVec2(120, 0)))
+        //     {
+        //         ImGui::CloseCurrentPopup();
+        //     }
 
-            ImGui::EndPopup();
-        }
+        //     ImGui::EndPopup();
+        // }
 
         if (ImGui::Button("New Scene")) {}
         if (ImGui::Button("Open...")) {}
