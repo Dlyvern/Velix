@@ -31,7 +31,7 @@ m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanC
 {
     m_physicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
 
-    m_commandPool = core::CommandPool::create(m_device, core::VulkanContext::getContext()->getGraphicsFamily());
+    m_commandPool = core::CommandPool::createShared(m_device, core::VulkanContext::getContext()->getGraphicsFamily());
 
     m_commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
     m_secondaryCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
@@ -71,8 +71,6 @@ m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanC
 
 void RenderGraph::createDataFromScene()
 {
-    VkQueue graphicsQueue = core::VulkanContext::getContext()->getGraphicsQueue();
-
     for(const auto& entity : m_scene->getEntities())
     {
         if(auto staticMeshComponent = entity->getComponent<StaticMeshComponent>())
@@ -84,7 +82,7 @@ void RenderGraph::createDataFromScene()
 
             for(const auto& mesh : meshes)
             {
-                auto gpuMesh = GPUMesh::createFromMesh(m_device, m_physicalDevice, mesh, graphicsQueue, m_commandPool);
+                auto gpuMesh = GPUMesh::createFromMesh(m_device, m_physicalDevice, mesh);
 
                 if(mesh.material.albedoTexture.empty())
                     gpuMesh->material = Material::getDefaultMaterial();
@@ -182,15 +180,15 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
     if(lights.empty())
     {
-        std::cerr << "NO LIGHTS" << std::endl;
+        // std::cerr << "NO LIGHTS" << std::endl;
         return;
     }
 
     size_t requiredSize = sizeof(LightData) * (lights.size() * sizeof(LightData));
 
     void* mapped;
-    vkMapMemory(m_device, m_lightSSBOs[m_currentFrame]->vkDeviceMemory(), 0, requiredSize, 0, &mapped);
-
+    m_lightSSBOs[m_currentFrame]->map(mapped);
+    
     LightSSBO* ssboData = static_cast<LightSSBO*>(mapped);
     ssboData->lightCount = static_cast<int>(lights.size());
 
@@ -221,7 +219,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
         }
     }
 
-    vkUnmapMemory(m_device, m_lightSSBOs[m_currentFrame]->vkDeviceMemory());
+    m_lightSSBOs[m_currentFrame]->unmap();
 
     for(size_t i = 0; i < lights.size(); ++i)
     {
@@ -468,8 +466,8 @@ void RenderGraph::createDirectionalLightDescriptorSets()
 
     for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        auto ssboBuffer = m_lightSSBOs.emplace_back(core::Buffer::create(INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+        auto ssboBuffer = m_lightSSBOs.emplace_back(core::Buffer::createShared(INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        core::memory::MemoryUsage::CPU_TO_GPU));
 
         m_directionalLightDescriptorSets[i] = DescriptorSetBuilder::begin()
         .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
@@ -488,11 +486,11 @@ void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imag
 
     for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        auto& cameraBuffer = m_cameraUniformObjects.emplace_back(core::Buffer::create(sizeof(CameraUBO),
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+        auto& cameraBuffer = m_cameraUniformObjects.emplace_back(core::Buffer::createShared(sizeof(CameraUBO),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
         
-        auto& lightBuffer = m_lightSpaceMatrixUniformObjects.emplace_back(core::Buffer::create(sizeof(LightSpaceMatrixUBO),
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+        auto& lightBuffer = m_lightSpaceMatrixUniformObjects.emplace_back(core::Buffer::createShared(sizeof(LightSpaceMatrixUBO),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
 
         cameraBuffer->map(m_cameraMapped[i]);
         lightBuffer->map(m_lightMapped[i]);
@@ -509,12 +507,12 @@ void RenderGraph::createRenderGraphResources()
 {
     for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
     {
-        m_commandBuffers.emplace_back(core::CommandBuffer::create(m_device, m_commandPool->vk()));
+        m_commandBuffers.emplace_back(core::CommandBuffer::createShared(m_commandPool));
 
         m_secondaryCommandBuffers[frame].resize(m_renderGraphPasses.size());
         
         for (size_t pass = 0; pass < m_renderGraphPasses.size(); ++pass)
-            m_secondaryCommandBuffers[frame][pass] = core::CommandBuffer::create(m_device, m_commandPool->vk(), VK_COMMAND_BUFFER_LEVEL_SECONDARY);
+            m_secondaryCommandBuffers[frame][pass] = core::CommandBuffer::createShared(m_commandPool, VK_COMMAND_BUFFER_LEVEL_SECONDARY);
     }
 }
 

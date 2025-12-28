@@ -1,9 +1,11 @@
 #ifndef VULKAN_CONTEXT_HPP
 #define VULKAN_CONTEXT_HPP
 
-#include "Macros.hpp"
-#include "Window.hpp"
-#include "SwapChain.hpp"
+#include "Core/Macros.hpp"
+#include "Core/Window.hpp"
+#include "Core/SwapChain.hpp"
+#include "Core/CommandPool.hpp"
+#include "Core/Device.hpp"
 
 #include <volk.h>
 
@@ -17,8 +19,6 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 class VulkanContext
 {
 public:
-    explicit VulkanContext(platform::Window::SharedPtr window);
-
     VulkanContext(const VulkanContext&) = delete;
     VulkanContext& operator=(const VulkanContext&) = delete;
 
@@ -28,32 +28,50 @@ public:
     VkInstance getInstance() const;
     VkSurfaceKHR getSurface() const;
     VkPhysicalDevice getPhysicalDevice() const;
-    VkDevice getDevice() const;
+    Device::SPtr getDevice() const;
     std::shared_ptr<SwapChain> getSwapchain() const;
-    VkQueue getGraphicsQueue() const;
-    VkQueue getPresentQueue() const;
     VkPhysicalDeviceProperties getPhysicalDevicePoperties();
     VkPhysicalDeviceFeatures getPhysicalDeviceFeatures();
     uint32_t getGraphicsFamily() const;
 
-    struct SwapChainSupportDetails
-    {
-        VkSurfaceCapabilitiesKHR capabilities;
-        std::vector<VkSurfaceFormatKHR> formats;
-        std::vector<VkPresentModeKHR> presentModes;
-    };
+    VkQueue getGraphicsQueue() const;
+    VkQueue getPresentQueue() const;
+    VkQueue getTransferQueue() const;
+    VkQueue getComputeQueue() const;
 
-    static SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface);
+    CommandPool::SharedPtr getTransferCommandPool() const;
+    CommandPool::SharedPtr getGraphicsCommandPool() const;
 
     void cleanup();
     
-    ~VulkanContext();
+    explicit VulkanContext(platform::Window::SharedPtr window);
 
+    ~VulkanContext();
 private:
+
+    static inline std::shared_ptr<VulkanContext> s_vulkanContext{nullptr};
+
     struct QueueFamilyIndices
     {
-        std::optional<uint32_t> graphicsFamily;
-        std::optional<uint32_t> presentFamily;
+        std::optional<uint32_t> graphicsFamily{std::nullopt};
+        std::optional<uint32_t> presentFamily{std::nullopt};
+        std::optional<uint32_t> computeFamily{std::nullopt};
+        std::optional<uint32_t> transferFamily{std::nullopt};
+
+        bool hasGraphics()
+        {
+            return graphicsFamily.has_value();
+        }
+
+        bool hasCompute() 
+        {
+            return computeFamily.has_value();
+        }
+
+        bool hasTransfer()
+        {
+            return transferFamily.has_value();
+        }
 
         bool isComplete() const
         {
@@ -67,7 +85,7 @@ private:
 
     bool m_isCleanedUp{false};
 
-    std::shared_ptr<platform::Window> m_window{nullptr};
+    platform::Window::SharedPtr m_window{nullptr};
 
     bool m_isValidationLayersEnabled{true};
 
@@ -84,11 +102,19 @@ private:
 
     VkInstance m_instance{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
-    VkDevice m_device{VK_NULL_HANDLE};
     VkDebugUtilsMessengerEXT m_debugMessenger{VK_NULL_HANDLE};
     VkSurfaceKHR m_surface{VK_NULL_HANDLE};
+    VkDevice m_vkDevice{VK_NULL_HANDLE};
+
+    Device::SPtr m_device{nullptr};
+
+    VkQueue m_transferQueue{VK_NULL_HANDLE};
+    VkQueue m_computeQueue{VK_NULL_HANDLE};
     VkQueue m_graphicsQueue{VK_NULL_HANDLE};
     VkQueue m_presentQueue{VK_NULL_HANDLE};
+
+    CommandPool::SharedPtr m_transferCommandPool{nullptr};
+    CommandPool::SharedPtr m_graphicsCommandPool{nullptr};
 
     QueueFamilyIndices m_queueFamilyIndices;
 

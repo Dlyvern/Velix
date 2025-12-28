@@ -11,9 +11,11 @@ class ScriptComponent : public ECS
 public:
     ScriptComponent(Script* script);
 
+    void onAttach() override;
+
     void update(float deltaTime) override;
 
-    void destroy() override;
+    void onDetach() override;
 private:
     Script* m_script{nullptr};
 };

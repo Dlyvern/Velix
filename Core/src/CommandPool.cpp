@@ -1,35 +1,30 @@
 #include "Core/CommandPool.hpp"
+#include "Core/VulkanHelpers.hpp"
 #include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 CommandPool::CommandPool(VkDevice device, uint32_t queueFamiliIndices, VkCommandPoolCreateFlags flags) : m_device(device)
 {
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     poolInfo.flags = flags;
     poolInfo.queueFamilyIndex = queueFamiliIndices;
 
-    if(vkCreateCommandPool(device, &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create command pool");
+    if(VkResult result = vkCreateCommandPool(device, &poolInfo, nullptr, &m_handle); result != VK_SUCCESS)
+        throw std::runtime_error("Failed to create command pool " + helpers::vulkanResultToString(result));
 }
 
-CommandPool::SharedPtr CommandPool::create(VkDevice device, uint32_t queueFamiliIndices, VkCommandPoolCreateFlags flags)
+void CommandPool::reset(VkCommandPoolResetFlags flags)
 {
-    return std::make_shared<CommandPool>(device, queueFamiliIndices, flags);
-}
-
-VkCommandPool CommandPool::vk()
-{
-    return m_commandPool;
+    vkResetCommandPool(m_device, m_handle, flags);
 }
 
 CommandPool::~CommandPool()
 {
-    if(m_commandPool)
+    if(m_handle)
     {
-        vkDestroyCommandPool(m_device, m_commandPool, nullptr);
-        m_commandPool = VK_NULL_HANDLE;
+        vkDestroyCommandPool(m_device, m_handle, nullptr);
+        m_handle = VK_NULL_HANDLE;
     }
 }
 

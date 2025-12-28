@@ -109,7 +109,7 @@ void Editor::initStyle()
     auto physicalDevice = vulkanContext->getPhysicalDevice();
     auto graphicsQueue = vulkanContext->getGraphicsQueue();
 
-    auto commandPool = core::CommandPool::create(vulkanContext->getDevice(), core::VulkanContext::getContext()->getGraphicsFamily());
+    auto commandPool = core::CommandPool::createShared(vulkanContext->getDevice(), core::VulkanContext::getContext()->getGraphicsFamily());
 
     m_logoTexture = std::make_shared<engine::TextureImage>();
     m_folderTexture = std::make_shared<engine::TextureImage>();
@@ -397,32 +397,33 @@ void Editor::drawCustomTitleBar()
     float buttonSize = ImGui::GetFrameHeight();
     ImGui::SameLine(windowWidth - buttonSize * 3 - 30);
     
-    GLFWwindow* window = core::VulkanContext::getContext()->getSwapchain()->getWindow()->getRawHandler();
+    auto window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
+    GLFWwindow* windowHandler = window->getRawHandler();
 
     if (ImGui::Button("_", ImVec2(buttonSize, buttonSize * 0.9f)))
-        glfwIconifyWindow(window);
+        window->iconify();
     
     ImGui::SameLine();
 
     if (ImGui::Button("[]", ImVec2(buttonSize, buttonSize * 0.9f)))
     {
         m_isDockingWindowFullscreen = !m_isDockingWindowFullscreen;
-        glfwSetWindowAttrib(window, GLFW_DECORATED, !m_isDockingWindowFullscreen);
+        glfwSetWindowAttrib(windowHandler, GLFW_DECORATED, !m_isDockingWindowFullscreen);
         if (m_isDockingWindowFullscreen)
         {
             GLFWmonitor* monitor = glfwGetPrimaryMonitor();
             const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-            glfwSetWindowPos(window, 0, 0);
-            glfwSetWindowSize(window, mode->width, mode->height);
+            glfwSetWindowPos(windowHandler, 0, 0);
+            glfwSetWindowSize(windowHandler, mode->width, mode->height);
         }
         else
-            glfwSetWindowSize(window, 1600, 900);
+            window->setSize(1280, 720);
     }
 
     ImGui::SameLine();
 
     if (ImGui::Button("X", ImVec2(buttonSize, buttonSize * 0.9f)))
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
+        window->close();
 
     ImGui::Dummy(ImVec2(0, 10));
     ImGui::End();

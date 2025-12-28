@@ -1,10 +1,11 @@
 #ifndef ELIX_COMMAND_BUFFER_HPP
 #define ELIX_COMMAND_BUFFER_HPP
 
+#include "Core/Macros.hpp"
+#include "Core/CommandPool.hpp"
+
 #include <memory>
 #include <vector>
-
-#include "Macros.hpp"
 
 #include <volk.h>
 
@@ -12,28 +13,23 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 class CommandBuffer
 {
+    DECLARE_VK_HANDLE_METHODS(VkCommandBuffer)
+    DECLARE_VK_SMART_PTRS(CommandBuffer, VkCommandBuffer)
+    ELIX_DECLARE_VK_LIFECYCLE()
 public:
-    using SharedPtr = std::shared_ptr<CommandBuffer>;
-
-    CommandBuffer(VkDevice device, VkCommandPool commandPool, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-    static SharedPtr create(VkDevice device, VkCommandPool commandPool, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+    CommandBuffer(CommandPool::SharedPtr commandPool, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
     ~CommandBuffer();
+
+    void createVk(CommandPool::SharedPtr commandPool, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+
     bool begin(VkCommandBufferUsageFlags flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, VkCommandBufferInheritanceInfo* inheritance = nullptr);
     bool end();
     void reset(VkCommandBufferResetFlags flags = 0);
-    void submit(VkQueue queue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkPipelineStageFlags>& waitStages,
-    const std::vector<VkSemaphore>& signalSemaphores, VkFence fence);
-
-    void destroyVk();
-    VkCommandBuffer vk();
-    VkCommandBuffer* pVk();
-
+    bool submit(VkQueue queue, const std::vector<VkSemaphore>& waitSemaphores = {}, const std::vector<VkPipelineStageFlags>& waitStages = {},
+    const std::vector<VkSemaphore>& signalSemaphores = {}, VkFence fence = VK_NULL_HANDLE);
 private:
-    VkCommandBuffer m_commandBuffer{VK_NULL_HANDLE};
-    VkCommandPool m_commandPool{VK_NULL_HANDLE};
-    VkDevice m_device{VK_NULL_HANDLE};
+    std::weak_ptr<CommandPool> m_commandPool;
 };
-
 
 ELIX_NESTED_NAMESPACE_END
 

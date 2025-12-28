@@ -3,6 +3,7 @@
 
 #include "Core/Macros.hpp"
 #include "Core/Image.hpp"
+#include "Core/Memory/MemoryFlags.hpp"
 
 #include <volk.h>
 
@@ -18,11 +19,11 @@ public:
     
     Texture(VkDevice device, VkPhysicalDevice physicalDevice,
             VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
-            VkMemoryPropertyFlags memoryProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t mipLevels = 0, uint32_t arrayLayers = 1,
-            VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT) : m_device(device), m_aspect(aspect), m_format(format), m_physicalDevice(physicalDevice)
+            memory::MemoryUsage memFlags = memory::MemoryUsage::GPU_ONLY, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, 
+            uint32_t mipLevels = 0, uint32_t arrayLayers = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT) :
+    m_device(device), m_aspect(aspect), m_format(format), m_physicalDevice(physicalDevice)
     {
-        m_image = Image::create(device, physicalDevice, extent.width, extent.height, usage, memoryProperties, format, tiling);
+        m_image = Image::createShared(extent.width, extent.height, usage, memFlags, format, tiling);
     }
 
     Texture(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat format, VkImageAspectFlags aspect, core::Image::SharedPtr image) :
@@ -36,9 +37,9 @@ public:
         m_image = image;
     }
 
-    void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkFormat format, VkImageTiling tiling)
+    void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling)
     {
-        m_image->createVk(m_physicalDevice, extent, usage, properties, format, tiling);
+        m_image->createVk(m_physicalDevice, extent, usage, memFlags, format, tiling);
     }
 
     void destroyVkImage()

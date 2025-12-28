@@ -57,7 +57,7 @@ void DescriptorSetBuilder::createWriters(VkDescriptorSet dstSet, std::vector<VkW
     for(const auto& buffer : m_bufferInfos)
     {
         VkDescriptorBufferInfo& descriptorBufferInfo = bufferInfos.emplace_back();
-        descriptorBufferInfo.buffer = buffer.buffer->vkBuffer();
+        descriptorBufferInfo.buffer = buffer.buffer->vk();
         descriptorBufferInfo.offset = 0;
         descriptorBufferInfo.range = buffer.range;
 

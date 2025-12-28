@@ -2,33 +2,41 @@
 #include <iostream>
 #include <string>
 #include <stdexcept>
+#include "Core/VulkanContext.hpp"
+#include "Core/VulkanHelpers.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-CommandBuffer::CommandBuffer(VkDevice device, VkCommandPool commandPool, VkCommandBufferLevel level) : m_commandPool(commandPool), m_device(device)
+CommandBuffer::CommandBuffer(CommandPool::SharedPtr commandPool, VkCommandBufferLevel level)
 {
+    createVk(commandPool, level);
+}
+
+void CommandBuffer::createVk(CommandPool::SharedPtr commandPool, VkCommandBufferLevel level)
+{
+    ELIX_VK_CREATE_GUARD()
+    m_commandPool = commandPool;
+
     VkCommandBufferAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     allocateInfo.commandBufferCount = 1;
     allocateInfo.pNext = nullptr;
-    allocateInfo.commandPool = commandPool;
+    allocateInfo.commandPool = m_commandPool.lock()->vk();
     allocateInfo.level = level;
 
-    if(VkResult result = vkAllocateCommandBuffers(m_device, &allocateInfo, &m_commandBuffer); result != VK_SUCCESS)
+    if(VkResult result = vkAllocateCommandBuffers(VulkanContext::getContext()->getDevice(), &allocateInfo, &m_handle); 
+    result != VK_SUCCESS)
         throw std::runtime_error("Failed to allocate memory for command buffer: " + std::to_string(result));
+
+    ELIX_VK_CREATE_GUARD_DONE()
 }
 
-CommandBuffer::SharedPtr CommandBuffer::create(VkDevice device, VkCommandPool commandPool, VkCommandBufferLevel level)
+void CommandBuffer::destroyVkImpl()
 {
-    return std::make_shared<CommandBuffer>(device, commandPool, level);
-}
-
-void CommandBuffer::destroyVk()
-{
-    if(m_commandBuffer)
+    if(m_handle)
     {
         reset();
-        vkFreeCommandBuffers(m_device, m_commandPool, 1, &m_commandBuffer);
-        m_commandBuffer = VK_NULL_HANDLE;
+        vkFreeCommandBuffers(VulkanContext::getContext()->getDevice(), m_commandPool.lock()->vk(), 1, &m_handle);
+        m_handle = VK_NULL_HANDLE;
     }
 }
 
@@ -39,10 +47,10 @@ CommandBuffer::~CommandBuffer()
 
 void CommandBuffer::reset(VkCommandBufferResetFlags flags)
 {
-    vkResetCommandBuffer(m_commandBuffer, flags);
+    vkResetCommandBuffer(m_handle, flags);
 }
 
-void CommandBuffer::submit(VkQueue queue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkPipelineStageFlags>& waitStages,
+bool CommandBuffer::submit(VkQueue queue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkPipelineStageFlags>& waitStages,
 const std::vector<VkSemaphore>& signalSemaphores, VkFence fence)
 {
     VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
@@ -50,22 +58,17 @@ const std::vector<VkSemaphore>& signalSemaphores, VkFence fence)
     submitInfo.pWaitSemaphores = waitSemaphores.data();
     submitInfo.pWaitDstStageMask = waitStages.data();
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &m_commandBuffer;
+    submitInfo.pCommandBuffers = &m_handle;
     submitInfo.signalSemaphoreCount = signalSemaphores.size();
     submitInfo.pSignalSemaphores = signalSemaphores.data();
 
-    if(vkQueueSubmit(queue, 1, &submitInfo, fence) != VK_SUCCESS)
-        throw std::runtime_error("Failed to submit draw command buffer");
-}
+    if(VkResult result = vkQueueSubmit(queue, 1, &submitInfo, fence); result != VK_SUCCESS)
+    {
+        std::cerr << "Failed to submit command buffer: " + helpers::vulkanResultToString(result) << std::endl;
+        return false;
+    }
 
-VkCommandBuffer CommandBuffer::vk()
-{
-    return m_commandBuffer;
-}
-
-VkCommandBuffer* CommandBuffer::pVk()
-{
-    return &m_commandBuffer;
+    return true;
 }
 
 bool CommandBuffer::begin(VkCommandBufferUsageFlags flags, VkCommandBufferInheritanceInfo* inheritance)
@@ -74,9 +77,9 @@ bool CommandBuffer::begin(VkCommandBufferUsageFlags flags, VkCommandBufferInheri
     beginInfo.pInheritanceInfo = inheritance;
     beginInfo.flags = flags;
 
-    if(VkResult result = vkBeginCommandBuffer(m_commandBuffer, &beginInfo); result != VK_SUCCESS)
+    if(VkResult result = vkBeginCommandBuffer(m_handle, &beginInfo); result != VK_SUCCESS)
     {
-        std::cerr << ("Failed to begin command buffer: " + std::to_string(result)) << std::endl;
+        std::cerr << "Failed to begin command buffer: " + helpers::vulkanResultToString(result) << std::endl;
         return false;
     }
 
@@ -85,9 +88,9 @@ bool CommandBuffer::begin(VkCommandBufferUsageFlags flags, VkCommandBufferInheri
 
 bool CommandBuffer::end()
 {
-    if(VkResult result = vkEndCommandBuffer(m_commandBuffer); result != VK_SUCCESS)
+    if(VkResult result = vkEndCommandBuffer(m_handle); result != VK_SUCCESS)
     {
-        std::cerr << ("Failed to end command buffer: " + std::to_string(result)) << std::endl;
+        std::cerr << "Failed to end command buffer: " + helpers::vulkanResultToString(result) << std::endl;
         return false;
     }
 

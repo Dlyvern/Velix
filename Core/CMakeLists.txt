@@ -36,6 +36,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
         volk
         stb
         glm::glm
+        VulkanMemoryAllocator
 )
 
 if (WIN32)

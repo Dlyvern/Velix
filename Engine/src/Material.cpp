@@ -29,8 +29,8 @@ Material::Material(VkDescriptorPool descriptorPool, engine::TextureImage::Shared
 
     for(uint32_t i = 0; i < m_maxFramesInFlight; ++i)
     {
-        auto colorBuffer = m_colorBuffers.emplace_back(core::Buffer::create(sizeof(MaterialColor), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+        auto colorBuffer = m_colorBuffers.emplace_back(core::Buffer::createShared(sizeof(MaterialColor), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+        core::memory::MemoryUsage::CPU_TO_GPU));
 
         colorBuffer->upload(&m_color, sizeof(MaterialColor));
 

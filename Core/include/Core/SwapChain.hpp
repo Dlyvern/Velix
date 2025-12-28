@@ -4,7 +4,6 @@
 #include "Core/Window.hpp"
 #include "Core/Macros.hpp"
 
-#include "Core/Image.hpp"
 #include <vector>
 
 #include <volk.h>
@@ -19,8 +18,8 @@ class SwapChain
 public:
     using SharedPtr = std::shared_ptr<SwapChain>;
 
-    SwapChain(const std::shared_ptr<platform::Window> window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
-    static SharedPtr create(std::shared_ptr<platform::Window> window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
+    SwapChain(const platform::Window::SharedPtr window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
+    static SharedPtr create(const platform::Window::SharedPtr window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
 
     VkSwapchainKHR vk() const;
     VkExtent2D getExtent() const;
@@ -34,10 +33,21 @@ public:
     void recreate();
 
     void cleanup();
+
+    ~SwapChain();
 private:
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
     VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, std::shared_ptr<platform::Window> window);
+
+    struct SwapChainSupportDetails
+    {
+        VkSurfaceCapabilitiesKHR capabilities;
+        std::vector<VkSurfaceFormatKHR> formats;
+        std::vector<VkPresentModeKHR> presentModes;
+    };
+
+    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface);
 
     void createSwapChain();
     VkDevice m_device{VK_NULL_HANDLE};  

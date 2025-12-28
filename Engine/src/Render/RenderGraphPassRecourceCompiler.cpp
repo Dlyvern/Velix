@@ -93,10 +93,10 @@ void RenderGraphPassResourceCompiler::compileTextures(RenderGraphPassRecourceBui
             std::size_t copyHash = hash;
 
             int index = 0;
-            
+
             for(const auto& image : m_swapChain.lock()->getImages())
             {
-                auto wrapImage = core::Image::wrap(m_device, image);
+                auto wrapImage = core::Image::createShared(image);
 
                 auto texture = std::make_shared<core::Texture>(m_device, m_physicalDevice, m_swapChain.lock()->getImageFormat(),
                 textureDescription.aspect, wrapImage);
@@ -119,8 +119,8 @@ void RenderGraphPassResourceCompiler::compileTextures(RenderGraphPassRecourceBui
         else
             size = {textureDescription.size.width, textureDescription.size.height};
 
-        auto image = core::Image::create(m_device, m_physicalDevice, size.width, size.height,
-        textureDescription.usage, textureDescription.properties, textureDescription.format, textureDescription.tiling);
+        auto image = core::Image::createShared(size.width, size.height,
+        textureDescription.usage, textureDescription.memoryFlags, textureDescription.format, textureDescription.tiling);
 
         auto texture = std::make_shared<core::Texture>(m_device, m_physicalDevice, textureDescription.format, textureDescription.aspect, image);
         texture->setSampler(textureDescription.sampler);
@@ -191,7 +191,7 @@ void RenderGraphPassResourceCompiler::onSwapChainResize(const RenderGraphPassRec
 
             texture->destroyVkImageView();
 
-            auto wrapImage = core::Image::wrap(m_device, image);
+            auto wrapImage = core::Image::createShared(image);
 
             texture->resetVkImage(wrapImage);
 
@@ -219,7 +219,7 @@ void RenderGraphPassResourceCompiler::onSwapChainResize(const RenderGraphPassRec
         texture->destroyVkImage();
 
         texture->createVkImage(m_swapChain.lock()->getExtent(), textureDescription.usage,
-                                textureDescription.properties, textureDescription.format,
+                                textureDescription.memoryFlags, textureDescription.format,
                                 textureDescription.tiling);
 
         texture->createVkImageView();

@@ -9,14 +9,23 @@ ScriptComponent::ScriptComponent(Script* script) : m_script(script)
     
 }
 
-void ScriptComponent::destroy()
+void ScriptComponent::onAttach()
 {
+    ECS::onAttach();
+    m_script->onStart();
+}
+
+void ScriptComponent::onDetach()
+{
+    ECS::onDetach();
     delete m_script;
     m_script = nullptr;
 }
 
 void ScriptComponent::update(float deltaTime)
 {
+    ECS::update(deltaTime);
+    
     if(!m_script)
     {
         std::cerr << "Script is not valid. Something is weird" << std::endl;

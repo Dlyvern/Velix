@@ -23,12 +23,12 @@ void TextureImage::create(VkDevice device, VkPhysicalDevice physicalDevice, core
 
     VkDeviceSize imageSize = sizeof(pixels);
 
-    auto buffer = core::Buffer::create(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto buffer = core::Buffer::createShared(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
 
     buffer->upload(&pixels, imageSize);
 
-    m_image = core::Image::create(m_device, physicalDevice, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
-    VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    m_image = core::Image::createShared(static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
+    VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY);
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, queue);
     m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, queue);
@@ -89,15 +89,15 @@ bool TextureImage::load(const std::string& path, core::CommandPool::SharedPtr co
         return false;
     }
 
-    auto buffer = core::Buffer::create(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto buffer = core::Buffer::createShared(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
 
     buffer->upload(m_pixels, imageSize);
 
     if(freePixelsOnLoad)
         freePixels();
 
-    m_image = core::Image::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
-    VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    m_image = core::Image::createShared(static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
+    VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY);
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
     m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
@@ -178,12 +178,11 @@ core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
     VkDeviceSize layerSize = imageSize;
     VkDeviceSize totalSize = layerSize * 6;
 
-    auto buffer = core::Buffer::create(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | 
-    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto buffer = core::Buffer::createShared(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
 
     void* data;
 
-    vkMapMemory(m_device, buffer->vkDeviceMemory(), 0, totalSize, 0, &data);
+    buffer->map(data);
 
     for(int face = 0; face < 6; ++face)
     {
@@ -194,9 +193,11 @@ core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
         if(freePixelsOnLoad)
             stbi_image_free(facePixels[face]);
     }
+    
+    buffer->unmap();
 
-    m_image = core::Image::create(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), static_cast<uint32_t>(m_width), 
-    static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_FORMAT_R8G8B8A8_SRGB,
+    m_image = core::Image::createShared(static_cast<uint32_t>(m_width), 
+    static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY, VK_FORMAT_R8G8B8A8_SRGB,
     VK_IMAGE_TILING_OPTIMAL, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
@@ -237,6 +238,7 @@ core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
 
     if (vkCreateSampler(m_device, &samplerCI, nullptr, &m_sampler) != VK_SUCCESS)
         throw std::runtime_error("failed to create cubemap sampler!");
+    
     
     return true;
 }

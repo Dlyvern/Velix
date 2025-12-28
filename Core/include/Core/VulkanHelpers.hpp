@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <vector>
 
 //!!!! FOR PRODUCTION THIS FILE IS NOT SUITABLE. FIX IT
 

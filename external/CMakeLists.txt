@@ -6,6 +6,7 @@ add_subdirectory(fbx_sdk)
 add_subdirectory(glm) #glm::glm
 add_subdirectory(SPIRV-Cross)
 add_subdirectory(physx)
+add_subdirectory(VulkanMemoryAllocator)
 
 target_compile_definitions(glm INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS)
 

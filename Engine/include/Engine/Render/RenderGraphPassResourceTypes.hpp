@@ -3,6 +3,7 @@
 
 #include "Core/Macros.hpp"
 #include "Core/RenderPass.hpp"
+#include "Core/Memory/MemoryFlags.hpp"
 
 #include <functional>
 #include <cstdint>
@@ -50,7 +51,7 @@ namespace RenderGraphPassResourceTypes
         VkSampleCountFlagBits samples{VK_SAMPLE_COUNT_1_BIT}; //TODO later for render pass
         VkImageAspectFlags aspect;
         uint32_t arrayLayers{1};
-        VkMemoryPropertyFlags properties;
+        core::memory::MemoryUsage memoryFlags;
         VkImageTiling tiling;
 
         VkSampler sampler{VK_NULL_HANDLE};

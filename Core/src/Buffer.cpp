@@ -8,59 +8,72 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-//TODO maybe throw here is not a good idea
-Buffer::Buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memFlags, VkBufferCreateFlags flags) :
-m_device(core::VulkanContext::getContext()->getDevice()), m_size(size)
+Buffer::Buffer(VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, VkBufferCreateFlags flags) : m_size(size)
 {
+    createVk(size, usage, memFlags, flags);
+}
+
+void Buffer::createVk(VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, VkBufferCreateFlags flags)
+{
+    ELIX_VK_CREATE_GUARD()
+
+    m_size = size;
+
     VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bufferInfo.flags = flags;
-    bufferInfo.size = size;
-    bufferInfo.usage = usage;
+    bufferInfo.size = m_size;
+    bufferInfo.usage = usage;   
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if(vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_buffer) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create buffer");
+    m_bufferAllocation = core::VulkanContext::getContext()->getDevice()->createBuffer(bufferInfo, memFlags);
+    m_handle = m_bufferAllocation.buffer;
 
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(m_device, m_buffer, &memRequirements);
-
-    VkMemoryAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    allocateInfo.allocationSize = memRequirements.size;
-    allocateInfo.memoryTypeIndex = helpers::findMemoryType(core::VulkanContext::getContext()->getPhysicalDevice(), memRequirements.memoryTypeBits, memFlags);
-
-    if(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_bufferMemory) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate buffer memory");
-
-    bind(0);
+    ELIX_VK_CREATE_GUARD_DONE()
 }
 
 void Buffer::map(void*& data, VkDeviceSize offset, VkMemoryMapFlags flags)
 {
-    vkMapMemory(m_device, m_bufferMemory, offset, m_size, flags, &data);
+    map(data, m_size, offset, flags);
 }
 
-void Buffer::map(VkDeviceSize offset, VkDeviceSize size,  VkMemoryMapFlags flags, void*& data)
+void Buffer::map(void*& data, VkDeviceSize size, VkDeviceSize offset, VkMemoryMapFlags flags)
 {
-    vkMapMemory(m_device, m_bufferMemory, offset, size, flags, &data);
+    core::VulkanContext::getContext()->getDevice()->mapMemory(m_bufferAllocation.allocation, offset, size, flags, data);
 }
 
 void Buffer::unmap()
 {
-    vkUnmapMemory(m_device, m_bufferMemory);
+    core::VulkanContext::getContext()->getDevice()->unmapMemory(m_bufferAllocation.allocation);
 }
 
 void Buffer::upload(const void* data, VkDeviceSize size)
 {
     void* dst;
-    map(0, size, 0, dst);
+    map(dst, size, 0, 0);
     std::memcpy(dst, data, static_cast<size_t>(size));
     unmap();
 }
 
-CommandBuffer::SharedPtr Buffer::copy(Buffer::SharedPtr srcBuffer,  Buffer::SharedPtr dstBuffer, CommandPool::SharedPtr commandPool, VkDeviceSize size)
+void Buffer::upload(const void* data)
 {
-    auto commandBuffer = CommandBuffer::create(VulkanContext::getContext()->getDevice(), commandPool->vk());
-    commandBuffer->begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+    upload(data, m_size);
+}
+
+void Buffer::bind(VkDeviceSize memoryOffset)
+{
+    core::VulkanContext::getContext()->getDevice()->bindBufferMemory(m_bufferAllocation, memoryOffset);
+}
+
+void Buffer::destroyVkImpl()
+{
+    core::VulkanContext::getContext()->getDevice()->destroyBuffer(m_bufferAllocation);
+    m_handle = m_bufferAllocation.buffer;
+}
+
+CommandBuffer Buffer::copy(Ptr srcBuffer, Ptr dstBuffer, CommandPool::SharedPtr commandPool,  VkDeviceSize size)
+{
+    auto commandBuffer = CommandBuffer::create(commandPool);
+    commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
     VkBufferCopy copyRegion{
         .srcOffset = 0,
@@ -68,60 +81,47 @@ CommandBuffer::SharedPtr Buffer::copy(Buffer::SharedPtr srcBuffer,  Buffer::Shar
         .size = size
     };
 
-    vkCmdCopyBuffer(commandBuffer->vk(), srcBuffer->vkBuffer(), dstBuffer->vkBuffer(), 1, &copyRegion);
+    vkCmdCopyBuffer(commandBuffer, *srcBuffer, *dstBuffer, 1, &copyRegion);
 
-    commandBuffer->end();
+    commandBuffer.end();
 
     return commandBuffer;
 }
 
-void Buffer::bind(VkDeviceSize memoryOffset)
+Buffer::SharedPtr Buffer::createCopied(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, CommandPool::SharedPtr commandPool)
 {
-    vkBindBufferMemory(m_device, m_buffer, m_bufferMemory, memoryOffset);
-}
+    auto queue = core::VulkanContext::getContext()->getTransferQueue();
+        
+    if(!commandPool)
+        commandPool = core::VulkanContext::getContext()->getTransferCommandPool();
 
-VkBuffer Buffer::vkBuffer()
-{
-    return m_buffer;
-}
+    auto staging = Buffer::create(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, memory::MemoryUsage::CPU_TO_GPU);
+    staging.upload(data, size);
 
-void Buffer::destroyVk()
-{
-    if(m_buffer)
+    auto gpuBuffer = Buffer::createShared(size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, memFlags);
+
+    auto cmd = Buffer::copy(&staging, gpuBuffer.get(), commandPool, size);
+
+    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    fenceInfo.flags = 0;
+
+    VkFence fence = VK_NULL_HANDLE;
+
+    if (vkCreateFence(core::VulkanContext::getContext()->getDevice(), &fenceInfo, nullptr, &fence) != VK_SUCCESS)
+        std::cerr << "Failed to create fence for buffer copy. Falling back to vkQueueWaitIdle\n";
+
+    if (!cmd.submit(queue, {}, {}, {}, fence))
+        std::cerr << "Failed to submit buffer copy\n";
+
+    if (fence)
     {
-        vkDestroyBuffer(m_device, m_buffer, nullptr);
-        m_buffer = VK_NULL_HANDLE;
+        vkWaitForFences(core::VulkanContext::getContext()->getDevice(), 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(core::VulkanContext::getContext()->getDevice(), fence, nullptr);
     }
-    
-    if(m_bufferMemory)
-    {
-        vkFreeMemory(m_device, m_bufferMemory, nullptr);
-        m_bufferMemory = VK_NULL_HANDLE;
-    }
-}
-
-Buffer::SharedPtr Buffer::createCopied(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memFlags, CommandPool::SharedPtr commandPool, VkQueue queue)
-{
-    auto staging = Buffer::create(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    staging->upload(data, size);
-
-    auto gpuBuffer = Buffer::create(size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, memFlags);
-
-    auto cmd = Buffer::copy(staging, gpuBuffer, commandPool, size);
-    cmd->submit(queue, {}, {}, {}, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue);
+    else
+        vkQueueWaitIdle(queue);
 
     return gpuBuffer;
-}
-
-VkDeviceMemory Buffer::vkDeviceMemory()
-{
-    return m_bufferMemory;
-}
-
-std::shared_ptr<Buffer> Buffer::create(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memFlags, VkBufferCreateFlags flags)
-{
-    return std::make_shared<Buffer>(size, usage, memFlags, flags);
 }
 
 Buffer::~Buffer()

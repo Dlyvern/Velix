@@ -20,7 +20,7 @@
 #include "Engine/Assets/FBXAssetLoader.hpp"
 #include "Engine/Physics/PhysXCore.hpp"
 
-#include "Engine/ShaderFamily.hpp"
+#include "Core/Logger.hpp"
 
 #include <filesystem>
 
@@ -30,47 +30,42 @@
 
 int main(int argc, char** argv)
 {
+    auto start = std::chrono::high_resolution_clock::now();
+
+    if(!glfwInit())
+        throw std::runtime_error("Failed to initialize");
+
+    elix::core::Logger::createDefaultLogger();
     elix::engine::PhysXCore::init();
     
     elix::engine::AssetsLoader::registerAssetLoader(std::make_shared<elix::engine::OBJAssetLoader>());
     elix::engine::AssetsLoader::registerAssetLoader(std::make_shared<elix::engine::FBXAssetLoader>());
 
-    auto start = std::chrono::high_resolution_clock::now();
-
-    auto window = elix::platform::Window::create(1280, 720, "Window");
+    auto window = elix::platform::Window::create(1280, 720, "Velix", elix::platform::Window::WindowFlags::EWINDOW_FLAGS_DEFAULT);
     auto vulkanContext = elix::core::VulkanContext::create(window);
 
     auto scene = std::make_shared<elix::engine::Scene>();
-    auto testEntity = scene->addEntity("test");
-    auto secondTestEntity = scene->addEntity("test2");
-    auto testPlane = scene->addEntity("plane");
-    // std::vector<elix::engine::Mesh3D> meshes = elix::engine::AssetsLoader::loadModel("./resources/models/sematary.fbx");
+    // auto testEntity = scene->addEntity("test");
+    // auto secondTestEntity = scene->addEntity("test2");
+    // auto testPlane = scene->addEntity("plane");
+    // elix::engine::Mesh3D mesh{elix::engine::cube::vertices, elix::engine::cube::indices};
 
-    // for(auto& mesh : meshes)
-    //     if(!mesh.material.name.empty())
-    //         mesh.material.albedoTexture = "./resources/textures/" + mesh.material.name + "_diff.png";
+    // testEntity->addComponent<elix::engine::StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
+    // secondTestEntity->addComponent<elix::engine::StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
+    // testPlane->addComponent<elix::engine::StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
 
-    // auto meshModel = elix::engine::AssetsLoader::loadModel("./resources/models/sponza.obj");
-    elix::engine::Mesh3D mesh{elix::engine::cube::vertices, elix::engine::cube::indices};
+    // testEntity->getComponent<elix::engine::Transform3DComponent>()->setEulerDegrees({-90.0f, 0.0f, 0.0f});
 
-    testEntity->addComponent<elix::engine::StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
-    secondTestEntity->addComponent<elix::engine::StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
-    testPlane->addComponent<elix::engine::StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
+    // secondTestEntity->getComponent<elix::engine::Transform3DComponent>()->setPosition({0.8f, 1.8f, -2.0f});
+    // secondTestEntity->getComponent<elix::engine::Transform3DComponent>()->setEulerDegrees({-90.0f, 0.0f, 0.0f});
 
-    testEntity->getComponent<elix::engine::Transform3DComponent>()->setScale({0.01, 0.01, 0.01});
-    testEntity->getComponent<elix::engine::Transform3DComponent>()->setEulerDegrees({-90.0f, 0.0f, 0.0f});
+    // testPlane->getComponent<elix::engine::Transform3DComponent>()->setPosition({0.0f, 0.0f, 0.0f});
+    // testPlane->getComponent<elix::engine::Transform3DComponent>()->setScale({10.0f, 0.2f, 10.0f});
 
-    secondTestEntity->getComponent<elix::engine::Transform3DComponent>()->setPosition({0.8f, 1.8f, -2.0f});
-    // secondTestEntity->getComponent<elix::engine::Transform3DComponent>()->setScale({0.01f, 0.01f, 0.01f});
-    secondTestEntity->getComponent<elix::engine::Transform3DComponent>()->setEulerDegrees({-90.0f, 0.0f, 0.0f});
+    // testEntity->getComponent<elix::engine::Transform3DComponent>()->setPosition({1.0f, 2.0f, 1.0f});
 
-    testPlane->getComponent<elix::engine::Transform3DComponent>()->setPosition({0.0f, 0.0f, 0.0f});
-    testPlane->getComponent<elix::engine::Transform3DComponent>()->setScale({10.0f, 0.2f, 10.0f});
-
-    testEntity->getComponent<elix::engine::Transform3DComponent>()->setPosition({1.0f, 2.0f, 1.0f});
-
-    //TEST MORE THAN 2 Lights
-    testEntity->addComponent<elix::engine::LightComponent>(elix::engine::LightComponent::LightType::DIRECTIONAL);
+    // //TEST MORE THAN 2 Lights
+    // testEntity->addComponent<elix::engine::LightComponent>(elix::engine::LightComponent::LightType::DIRECTIONAL);
     // secondTestEntity->addComponent<elix::engine::LightComponent>(elix::engine::LightComponent::LightType::POINT);
 
     auto editor = std::make_shared<elix::editor::Editor>();
@@ -90,7 +85,7 @@ int main(int argc, char** argv)
 
     renderGraph->createRenderGraphResources();
 
-    testEntity->getComponent<elix::engine::StaticMeshComponent>()->getMesh(0).material = elix::engine::CPUMaterial{.albedoTexture = "./resources/textures/ConcreteWall.png"};
+    // testEntity->getComponent<elix::engine::StaticMeshComponent>()->getMesh(0).material = elix::engine::CPUMaterial{.albedoTexture = "./resources/textures/ConcreteWall.png"};
 
     elix::engine::TextureImage::SharedPtr dummyTexture = std::make_shared<elix::engine::TextureImage>();
     dummyTexture->create(vulkanContext->getDevice(), vulkanContext->getPhysicalDevice(), renderGraph->getCommandPool(), vulkanContext->getGraphicsQueue());
@@ -138,7 +133,7 @@ int main(int argc, char** argv)
         renderGraph->draw();
     }
 
-    //To clean all needed Vulakn resources before VulkanContex is cleared
+    //To clean all needed Vulkan resources before VulkanContex is cleared
     renderGraph->cleanResources();
     delete renderGraph; 
     editor.reset();
@@ -147,8 +142,9 @@ int main(int argc, char** argv)
     dummyTexture.reset();
     //
 
-
     vulkanContext->cleanup();
+
+    glfwTerminate();
 
     return 0;
 }

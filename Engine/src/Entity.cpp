@@ -51,4 +51,14 @@ int Entity::getLayer() const
     return m_layer;
 }
 
+Entity::~Entity()
+{
+    for(const auto& [id, component] : m_components)
+        component->onDetach();
+
+    for(const auto& [id, components] : m_multiComponents)
+        for(const auto& component : components)
+            component->onDetach();
+}
+
 ELIX_NESTED_NAMESPACE_END

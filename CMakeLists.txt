@@ -88,7 +88,7 @@ endif()
 install(FILES ${FBX_DLL} DESTINATION lib)
 
 set(CPACK_PACKAGE_NAME "VelixEngine")
-set(CPACK_PACKAGE_VERSION "0.0.0")
+set(CPACK_PACKAGE_VERSION ".0.0")
 set(CPACK_PACKAGE_VENDOR "Dlyvern")
 set(CPACK_PACKAGE_DESCRIPTION "Velix Game Engine")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/Dlyvern/Velix")

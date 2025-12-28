@@ -44,6 +44,7 @@ public:
         auto comp = std::make_shared<T>(std::forward<Args>(args)...);
         T* ptr = comp.get();
         // comp->setOwner(this);
+        comp->onAttach();
 
         if constexpr (IsMultiComponent<T>::value)
             m_multiComponents[type].emplace_back(std::move(comp));
@@ -63,10 +64,21 @@ public:
     void removeComponent()
     {
         const auto type = std::type_index(typeid(T));
+
         if constexpr (IsMultiComponent<T>::value)
+        {
             m_multiComponents.erase(type);
+        }
         else
-            m_components.erase(type);
+        {
+            auto it = m_components.find(type);
+
+            if(it == m_components.end())
+                return;
+
+            it->second->onDetach();
+            m_components.erase(it);
+        }
     }
 
     const std::unordered_map<std::type_index, std::shared_ptr<ECS>>& getSingleComponents() const
@@ -114,6 +126,8 @@ public:
 
     void setLayer(int layerID);
     int getLayer() const;
+
+    virtual ~Entity();
 private:
     std::unordered_map<std::type_index, std::shared_ptr<ECS>> m_components;
     std::unordered_map<std::type_index, std::vector<std::shared_ptr<ECS>>> m_multiComponents;

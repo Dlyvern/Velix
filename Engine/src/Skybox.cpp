@@ -61,13 +61,11 @@ core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6>& cubema
          1.0f, -1.0f,  1.0f
     };
 
-    auto graphicsQueue = core::VulkanContext::getContext()->getGraphicsQueue();
-
     VkDeviceSize skyboxSize = sizeof(skyboxVertices[0]) * skyboxVertices.size();
     m_vertexCount = static_cast<uint32_t>(skyboxVertices.size()) / 3;
 
     m_vertexBuffer = core::Buffer::createCopied(skyboxVertices.data(), skyboxSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
-    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, commandPool, graphicsQueue);
+    core::memory::MemoryUsage::CPU_TO_GPU);
 
     m_skyboxTexture = std::make_shared<TextureImage>();
     m_skyboxTexture->loadCubemap(cubemaps, commandPool);
@@ -208,7 +206,6 @@ core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6>& cubema
 
     m_graphicsPipeline = std::make_shared<core::GraphicsPipeline>(device, renderPass->vk(), shaderStages.data(), static_cast<uint32_t>(shaderStages.size()), m_pipelineLayout->vk(), dynamicState, colorBlending, multisampling, 
     rasterizer, viewportState, inputAssembly, vertexInputStateCI, subpass, depthStencil);
-
 }
 
 void Skybox::render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat4& view, const glm::mat4& projection)
@@ -223,7 +220,7 @@ void Skybox::render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat
         .projection = projection
     };
 
-    VkBuffer vertexBuffers[] = {m_vertexBuffer->vkBuffer()};
+    VkBuffer vertexBuffers[] = {m_vertexBuffer->vk()};
     VkDeviceSize offset[] = {0};
 
     vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);

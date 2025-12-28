@@ -11,7 +11,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-SwapChain::SwapChain(std::shared_ptr<platform::Window> window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily) :
+SwapChain::SwapChain(platform::Window::SharedPtr window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily) :
 m_device(device), m_physicalDevice(physicalDevice), m_window(window), m_surface(surface), m_graphicsFamily(graphicsFamily), m_presentFamily(presentFamily)
 {
     createSwapChain();
@@ -19,7 +19,7 @@ m_device(device), m_physicalDevice(physicalDevice), m_window(window), m_surface(
 
 void SwapChain::createSwapChain()
 {   
-    VulkanContext::SwapChainSupportDetails swapChainSupport = VulkanContext::querySwapChainSupport(m_physicalDevice, m_surface);
+    SwapChainSupportDetails swapChainSupport = querySwapChainSupport(m_physicalDevice, m_surface);
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
     VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
     VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities, m_window);
@@ -68,6 +68,35 @@ void SwapChain::createSwapChain()
     m_extent = extent;
 }
 
+SwapChain::SwapChainSupportDetails SwapChain::querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface)
+{
+    SwapChainSupportDetails details;
+
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+    uint32_t formatCount{0};
+
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+    if(formatCount != 0)
+    {
+        details.formats.resize(formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+    }
+
+    uint32_t presentModeCount{0};
+
+    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+
+    if(presentModeCount != 0)
+    {
+        details.presentModes.resize(presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+    }
+
+    return details;
+}
+
 const std::vector<VkImage>& SwapChain::getImages() const
 {
     return m_swapChainImages;
@@ -99,7 +128,7 @@ VkViewport SwapChain::getViewport(float x, float y, float minDepth, float maxDep
 
 VkRect2D SwapChain::getScissor(VkOffset2D offset)
 {
-    return VkRect2D{{0, 0}, m_extent};
+    return VkRect2D{offset, m_extent};
 }
 
 std::shared_ptr<platform::Window> SwapChain::getWindow()
@@ -155,7 +184,10 @@ VkExtent2D SwapChain::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilit
 void SwapChain::cleanup()
 {
     if (m_swapChain)
+    {
         vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
+        m_swapChain = VK_NULL_HANDLE;
+    }
 }
 
 VkSwapchainKHR SwapChain::vk() const
@@ -171,6 +203,11 @@ VkExtent2D SwapChain::getExtent() const
 VkFormat SwapChain::getImageFormat() const
 {
     return m_imageFormat;
+}
+
+SwapChain::~SwapChain()
+{
+    cleanup();
 }
 
 ELIX_NESTED_NAMESPACE_END

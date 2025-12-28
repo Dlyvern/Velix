@@ -21,7 +21,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 BaseRenderGraphPass::BaseRenderGraphPass(VkDevice device, core::SwapChain::SharedPtr swapchain, VkDescriptorPool descriptorPool, SceneRenderMask usageMask) 
 : m_device(device), m_swapchain(swapchain), m_descriptorPool(descriptorPool), m_usageMask(usageMask)
 {
-    m_commandPool = core::CommandPool::create(device, core::VulkanContext::getContext()->getGraphicsFamily());
+    m_commandPool = core::CommandPool::createShared(device, core::VulkanContext::getContext()->getGraphicsFamily());
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     m_clearValues[1].depthStencil = {1.0f, 0};
     m_pipelineLayout = engineShaderFamilies::staticMeshShaderFamily.pipelineLayout;
@@ -125,7 +125,7 @@ void BaseRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuilder
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
-        .properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        .memoryFlags = core::memory::MemoryUsage::GPU_ONLY,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
     };
     
@@ -144,7 +144,8 @@ void BaseRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuilder
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
-        .properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        .memoryFlags = core::memory::MemoryUsage::CPU_TO_GPU,
+        // .properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         .tiling = VK_IMAGE_TILING_LINEAR,
     };
 
@@ -329,11 +330,11 @@ void BaseRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, 
     {
         for(const auto& mesh : gpuEntity.meshes)
         {
-            VkBuffer vertexBuffers[] = {mesh->vertexBuffer->vkBuffer()};
+            VkBuffer vertexBuffers[] = {mesh->vertexBuffer->vk()};
             VkDeviceSize offset[] = {0};
 
             vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
-            vkCmdBindIndexBuffer(commandBuffer->vk(), mesh->indexBuffer->vkBuffer(), 0, mesh->indexType);
+            vkCmdBindIndexBuffer(commandBuffer->vk(), mesh->indexBuffer->vk(), 0, mesh->indexType);
 
             ModelPushConstant modelPushConstant
             {
