@@ -2,13 +2,11 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-RenderGraphPassResourceCompiler::RenderGraphPassResourceCompiler(VkDevice device, VkPhysicalDevice physicalDevice, core::SwapChain::SharedPtr swapChain) : 
-m_device(device), m_physicalDevice(physicalDevice), m_swapChain(swapChain)
+RenderGraphPassResourceCompiler::RenderGraphPassResourceCompiler(VkDevice device, VkPhysicalDevice physicalDevice, core::SwapChain::SharedPtr swapChain) : m_device(device), m_physicalDevice(physicalDevice), m_swapChain(swapChain)
 {
-    
 }
 
-void RenderGraphPassResourceCompiler::compile(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
+void RenderGraphPassResourceCompiler::compile(RenderGraphPassRecourceBuilder &builder, RenderGraphPassResourceHash &storage)
 {
     compileTextures(builder, storage);
     compileRenderPasses(builder, storage);
@@ -16,9 +14,9 @@ void RenderGraphPassResourceCompiler::compile(RenderGraphPassRecourceBuilder& bu
     compileGraphicsPipelines(builder, storage);
 }
 
-void RenderGraphPassResourceCompiler::compileGraphicsPipelines(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
+void RenderGraphPassResourceCompiler::compileGraphicsPipelines(RenderGraphPassRecourceBuilder &builder, RenderGraphPassResourceHash &storage)
 {
-    for(auto [hash, graphicsPipelineDescription] : builder.getGraphicsPipelineHashes())
+    for (auto [hash, graphicsPipelineDescription] : builder.getGraphicsPipelineHashes())
     {
         VkPipelineVertexInputStateCreateInfo vertexInputStateCI{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
         vertexInputStateCI.vertexBindingDescriptionCount = static_cast<uint32_t>(graphicsPipelineDescription.vertexBindingDescriptions.size());
@@ -29,7 +27,7 @@ void RenderGraphPassResourceCompiler::compileGraphicsPipelines(RenderGraphPassRe
         graphicsPipelineDescription.viewportState.pViewports = &graphicsPipelineDescription.viewport;
         graphicsPipelineDescription.viewportState.pScissors = &graphicsPipelineDescription.scissor;
 
-        if(!graphicsPipelineDescription.colorBlendingAttachments.empty())
+        if (!graphicsPipelineDescription.colorBlendingAttachments.empty())
         {
             graphicsPipelineDescription.colorBlending.attachmentCount = static_cast<uint32_t>(graphicsPipelineDescription.colorBlendingAttachments.size());
             graphicsPipelineDescription.colorBlending.pAttachments = graphicsPipelineDescription.colorBlendingAttachments.data();
@@ -42,27 +40,27 @@ void RenderGraphPassResourceCompiler::compileGraphicsPipelines(RenderGraphPassRe
 
         VkRenderPass renderPass;
 
-        if(!graphicsPipelineDescription.renderPass)
+        if (!graphicsPipelineDescription.renderPass)
             renderPass = storage.getRenderPass(graphicsPipelineDescription.renderPassHash)->vk();
         else
             renderPass = graphicsPipelineDescription.renderPass;
 
-        auto graphicsPipeline = std::make_shared<core::GraphicsPipeline>(m_device, renderPass, shaderStages.data(), 
-        static_cast<uint32_t>(graphicsPipelineDescription.shader->getShaderStages().size()), graphicsPipelineDescription.layout, graphicsPipelineDescription.dynamicState, graphicsPipelineDescription.colorBlending,
-        graphicsPipelineDescription.multisampling, graphicsPipelineDescription.rasterizer, graphicsPipelineDescription.viewportState, graphicsPipelineDescription.inputAssembly,
-        vertexInputStateCI, graphicsPipelineDescription.subpass, graphicsPipelineDescription.depthStencil);
+        auto graphicsPipeline = std::make_shared<core::GraphicsPipeline>(m_device, renderPass, shaderStages.data(),
+                                                                         static_cast<uint32_t>(graphicsPipelineDescription.shader->getShaderStages().size()), graphicsPipelineDescription.layout, graphicsPipelineDescription.dynamicState, graphicsPipelineDescription.colorBlending,
+                                                                         graphicsPipelineDescription.multisampling, graphicsPipelineDescription.rasterizer, graphicsPipelineDescription.viewportState, graphicsPipelineDescription.inputAssembly,
+                                                                         vertexInputStateCI, graphicsPipelineDescription.subpass, graphicsPipelineDescription.depthStencil);
 
         storage.addGraphicsPipeline(hash, graphicsPipeline);
     }
 }
 
-void RenderGraphPassResourceCompiler::compileRenderPasses(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
+void RenderGraphPassResourceCompiler::compileRenderPasses(RenderGraphPassRecourceBuilder &builder, RenderGraphPassResourceHash &storage)
 {
-    for(const auto& [hash, renderPassDescription] : builder.getRenderPassHashes())
+    for (const auto &[hash, renderPassDescription] : builder.getRenderPassHashes())
     {
         std::vector<VkSubpassDescription> subpassDescriptions;
 
-        for(const auto& subpassDescription : renderPassDescription.subpassDescriptions)
+        for (const auto &subpassDescription : renderPassDescription.subpassDescriptions)
         {
             VkSubpassDescription description{};
             description.pipelineBindPoint = subpassDescription.pipelineBindPoint;
@@ -73,20 +71,20 @@ void RenderGraphPassResourceCompiler::compileRenderPasses(RenderGraphPassRecourc
             subpassDescriptions.push_back(description);
         }
 
-        auto renderPass = core::RenderPass::create(renderPassDescription.attachments, subpassDescriptions, 
-        renderPassDescription.subpassDependencies);
+        auto renderPass = core::RenderPass::create(renderPassDescription.attachments, subpassDescriptions,
+                                                   renderPassDescription.subpassDependencies);
 
         storage.addRenderPass(hash, renderPass);
     }
 }
 
-void RenderGraphPassResourceCompiler::compileTextures(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
+void RenderGraphPassResourceCompiler::compileTextures(RenderGraphPassRecourceBuilder &builder, RenderGraphPassResourceHash &storage)
 {
     const auto textureHashes = builder.getTextureHashes();
 
-    for(const auto& [hash, textureDescription] : textureHashes)
+    for (const auto &[hash, textureDescription] : textureHashes)
     {
-        if(textureDescription.source == RenderGraphPassResourceTypes::TextureDescription::FormatSource::Swapchain)
+        if (textureDescription.source == RenderGraphPassResourceTypes::TextureDescription::FormatSource::Swapchain)
         {
             std::cout << "SWAPCHAIN_TEXTURE" << std::endl;
 
@@ -94,12 +92,12 @@ void RenderGraphPassResourceCompiler::compileTextures(RenderGraphPassRecourceBui
 
             int index = 0;
 
-            for(const auto& image : m_swapChain.lock()->getImages())
+            for (const auto &image : m_swapChain.lock()->getImages())
             {
                 auto wrapImage = core::Image::createShared(image);
 
-                auto texture = std::make_shared<core::Texture>(m_device, m_physicalDevice, m_swapChain.lock()->getImageFormat(),
-                textureDescription.aspect, wrapImage);
+                auto texture = std::make_shared<RenderTarget>(m_device, m_physicalDevice, m_swapChain.lock()->getImageFormat(),
+                                                              textureDescription.aspect, wrapImage);
 
                 storage.addTexture(copyHash, texture);
                 builder.forceTextureCache(copyHash, textureDescription);
@@ -114,31 +112,31 @@ void RenderGraphPassResourceCompiler::compileTextures(RenderGraphPassRecourceBui
 
         VkExtent2D size;
 
-        if(textureDescription.size.type == RenderGraphPassResourceTypes::SizeClass::SwapchainRelative)
+        if (textureDescription.size.type == RenderGraphPassResourceTypes::SizeClass::SwapchainRelative)
             size = m_swapChain.lock()->getExtent();
         else
             size = {textureDescription.size.width, textureDescription.size.height};
 
         auto image = core::Image::createShared(size.width, size.height,
-        textureDescription.usage, textureDescription.memoryFlags, textureDescription.format, textureDescription.tiling);
+                                               textureDescription.usage, textureDescription.memoryFlags, textureDescription.format, textureDescription.tiling);
 
-        auto texture = std::make_shared<core::Texture>(m_device, m_physicalDevice, textureDescription.format, textureDescription.aspect, image);
+        auto texture = std::make_shared<RenderTarget>(m_device, m_physicalDevice, textureDescription.format, textureDescription.aspect, image);
         texture->setSampler(textureDescription.sampler);
         storage.addTexture(hash, texture);
     }
 }
 
-void RenderGraphPassResourceCompiler::compileFramebuffers(RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
+void RenderGraphPassResourceCompiler::compileFramebuffers(RenderGraphPassRecourceBuilder &builder, RenderGraphPassResourceHash &storage)
 {
-    for(const auto& [hash, framebufferDescription] : builder.getFramebufferHashes())
+    for (const auto &[hash, framebufferDescription] : builder.getFramebufferHashes())
     {
         std::vector<VkImageView> attachments;
 
-        for(const auto& attachmentHash : framebufferDescription.attachmentsHash)
+        for (const auto &attachmentHash : framebufferDescription.attachmentsHash)
         {
             auto texture = storage.getTexture(attachmentHash);
 
-            if(!texture)
+            if (!texture)
             {
                 std::cerr << "Failed to find framebuffer attachment" << std::endl;
                 continue;
@@ -147,43 +145,43 @@ void RenderGraphPassResourceCompiler::compileFramebuffers(RenderGraphPassRecourc
             attachments.push_back(texture->vkImageView());
         }
 
-        if(attachments.empty())
+        if (attachments.empty())
         {
             std::cerr << "Attachments for framebuffer are empty" << std::endl;
         }
 
         VkExtent2D size;
 
-        if(framebufferDescription.size.type == RenderGraphPassResourceTypes::SizeClass::SwapchainRelative)
+        if (framebufferDescription.size.type == RenderGraphPassResourceTypes::SizeClass::SwapchainRelative)
             size = m_swapChain.lock()->getExtent();
         else
             size = {framebufferDescription.size.width, framebufferDescription.size.height};
 
         core::RenderPass::SharedPtr renderPass{nullptr};
 
-        if(!framebufferDescription.renderPass)
+        if (!framebufferDescription.renderPass)
             renderPass = storage.getRenderPass(framebufferDescription.renderPassHash);
         else
             renderPass = framebufferDescription.renderPass;
 
-        auto framebuffer = std::make_shared<core::Framebuffer>(m_device, attachments, renderPass, 
-        VkExtent2D{size.width, size.height}, framebufferDescription.layers);
+        auto framebuffer = std::make_shared<core::Framebuffer>(m_device, attachments, renderPass,
+                                                               VkExtent2D{size.width, size.height}, framebufferDescription.layers);
 
         storage.addFramebuffer(hash, framebuffer);
     }
 }
 
-void RenderGraphPassResourceCompiler::onSwapChainResize(const RenderGraphPassRecourceBuilder& builder, RenderGraphPassResourceHash& storage)
+void RenderGraphPassResourceCompiler::onSwapChainResize(const RenderGraphPassRecourceBuilder &builder, RenderGraphPassResourceHash &storage)
 {
-    for(const auto& [imageIndex, swapChainRelatedHash] : m_swapChainHash)
+    for (const auto &[imageIndex, swapChainRelatedHash] : m_swapChainHash)
     {
-        for(const auto& swapHash : swapChainRelatedHash)
+        for (const auto &swapHash : swapChainRelatedHash)
         {
             auto image = m_swapChain.lock()->getImages()[imageIndex];
 
             auto texture = storage.getTexture(swapHash);
 
-            if(!texture)
+            if (!texture)
             {
                 std::cerr << "Failed to find a swap chain related texture" << std::endl;
                 continue;
@@ -199,17 +197,17 @@ void RenderGraphPassResourceCompiler::onSwapChainResize(const RenderGraphPassRec
         }
     }
 
-    for(const auto& [hash, textureDescription] : builder.getTextureHashes())
+    for (const auto &[hash, textureDescription] : builder.getTextureHashes())
     {
-        if(textureDescription.size.type != RenderGraphPassResourceTypes::SizeClass::SwapchainRelative)
+        if (textureDescription.size.type != RenderGraphPassResourceTypes::SizeClass::SwapchainRelative)
             continue;
 
-        if(textureDescription.source == RenderGraphPassResourceTypes::TextureDescription::FormatSource::Swapchain)
+        if (textureDescription.source == RenderGraphPassResourceTypes::TextureDescription::FormatSource::Swapchain)
             continue;
 
-        auto texture =  storage.getTexture(hash);
+        auto texture = storage.getTexture(hash);
 
-        if(!texture)
+        if (!texture)
         {
             std::cerr << "Failed to find non-swapchain texture hash " << std::endl;
             continue;
@@ -219,15 +217,15 @@ void RenderGraphPassResourceCompiler::onSwapChainResize(const RenderGraphPassRec
         texture->destroyVkImage();
 
         texture->createVkImage(m_swapChain.lock()->getExtent(), textureDescription.usage,
-                                textureDescription.memoryFlags, textureDescription.format,
-                                textureDescription.tiling);
+                               textureDescription.memoryFlags, textureDescription.format,
+                               textureDescription.tiling);
 
         texture->createVkImageView();
     }
 
-    for(const auto& [hash, framebufferDescription] : builder.getFramebufferHashes())
+    for (const auto &[hash, framebufferDescription] : builder.getFramebufferHashes())
     {
-        if(framebufferDescription.size.type != RenderGraphPassResourceTypes::SizeClass::SwapchainRelative)
+        if (framebufferDescription.size.type != RenderGraphPassResourceTypes::SizeClass::SwapchainRelative)
             continue;
 
         std::vector<VkImageView> attachments;
@@ -247,7 +245,7 @@ void RenderGraphPassResourceCompiler::onSwapChainResize(const RenderGraphPassRec
 
         auto framebuffer = storage.getFramebuffer(hash);
 
-        if(!framebuffer)
+        if (!framebuffer)
         {
             std::cerr << "Failed to find framebuffer" << std::endl;
             continue;

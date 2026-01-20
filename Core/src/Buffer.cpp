@@ -22,7 +22,7 @@ void Buffer::createVk(VkDeviceSize size, VkBufferUsageFlags usage, memory::Memor
     VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bufferInfo.flags = flags;
     bufferInfo.size = m_size;
-    bufferInfo.usage = usage;   
+    bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     m_bufferAllocation = core::VulkanContext::getContext()->getDevice()->createBuffer(bufferInfo, memFlags);
@@ -31,12 +31,12 @@ void Buffer::createVk(VkDeviceSize size, VkBufferUsageFlags usage, memory::Memor
     ELIX_VK_CREATE_GUARD_DONE()
 }
 
-void Buffer::map(void*& data, VkDeviceSize offset, VkMemoryMapFlags flags)
+void Buffer::map(void *&data, VkDeviceSize offset, VkMemoryMapFlags flags)
 {
     map(data, m_size, offset, flags);
 }
 
-void Buffer::map(void*& data, VkDeviceSize size, VkDeviceSize offset, VkMemoryMapFlags flags)
+void Buffer::map(void *&data, VkDeviceSize size, VkDeviceSize offset, VkMemoryMapFlags flags)
 {
     core::VulkanContext::getContext()->getDevice()->mapMemory(m_bufferAllocation.allocation, offset, size, flags, data);
 }
@@ -46,15 +46,15 @@ void Buffer::unmap()
     core::VulkanContext::getContext()->getDevice()->unmapMemory(m_bufferAllocation.allocation);
 }
 
-void Buffer::upload(const void* data, VkDeviceSize size)
+void Buffer::upload(const void *data, VkDeviceSize size)
 {
-    void* dst;
+    void *dst;
     map(dst, size, 0, 0);
     std::memcpy(dst, data, static_cast<size_t>(size));
     unmap();
 }
 
-void Buffer::upload(const void* data)
+void Buffer::upload(const void *data)
 {
     upload(data, m_size);
 }
@@ -70,7 +70,7 @@ void Buffer::destroyVkImpl()
     m_handle = m_bufferAllocation.buffer;
 }
 
-CommandBuffer Buffer::copy(Ptr srcBuffer, Ptr dstBuffer, CommandPool::SharedPtr commandPool,  VkDeviceSize size)
+CommandBuffer Buffer::copy(Ptr srcBuffer, Ptr dstBuffer, CommandPool::SharedPtr commandPool, VkDeviceSize size)
 {
     auto commandBuffer = CommandBuffer::create(commandPool);
     commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
@@ -78,8 +78,7 @@ CommandBuffer Buffer::copy(Ptr srcBuffer, Ptr dstBuffer, CommandPool::SharedPtr 
     VkBufferCopy copyRegion{
         .srcOffset = 0,
         .dstOffset = 0,
-        .size = size
-    };
+        .size = size};
 
     vkCmdCopyBuffer(commandBuffer, *srcBuffer, *dstBuffer, 1, &copyRegion);
 
@@ -88,11 +87,11 @@ CommandBuffer Buffer::copy(Ptr srcBuffer, Ptr dstBuffer, CommandPool::SharedPtr 
     return commandBuffer;
 }
 
-Buffer::SharedPtr Buffer::createCopied(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, CommandPool::SharedPtr commandPool)
+Buffer::SharedPtr Buffer::createCopied(const void *data, VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, CommandPool::SharedPtr commandPool)
 {
     auto queue = core::VulkanContext::getContext()->getTransferQueue();
-        
-    if(!commandPool)
+
+    if (!commandPool)
         commandPool = core::VulkanContext::getContext()->getTransferCommandPool();
 
     auto staging = Buffer::create(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, memory::MemoryUsage::CPU_TO_GPU);

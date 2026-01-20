@@ -13,6 +13,11 @@ public:
     EngineCamera(Camera::SharedPtr camera);
     void update(float deltaTime);
 
+    Camera::SharedPtr getCamera() const
+    {
+        return m_camera;
+    }
+
 private:
     float m_movementSpeed{3.0f};
 
@@ -24,4 +29,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_ENGINE_CAMERA_HPP
+#endif // ELIX_ENGINE_CAMERA_HPP

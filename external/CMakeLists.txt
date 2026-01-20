@@ -37,3 +37,18 @@ if(UNIX AND NOT APPLE)
 endif()
 
 target_link_libraries(imgui PUBLIC volk glfw  $<$<PLATFORM_ID:Linux>:${X11_LIBRARIES}> $<$<PLATFORM_ID:Linux>:Threads::Threads>)
+
+
+add_library(imguizmo STATIC
+    ${CMAKE_CURRENT_LIST_DIR}/ImGuizmo/ImGuizmo.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ImGuizmo/ImGradient.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ImGuizmo/ImCurveEdit.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ImGuizmo/GraphEditor.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ImGuizmo/ImSequencer.cpp
+)
+
+target_include_directories(imguizmo PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/ImGuizmo/
+)
+
+target_link_libraries(imguizmo PUBLIC imgui)

@@ -19,8 +19,8 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 class VulkanContext
 {
 public:
-    VulkanContext(const VulkanContext&) = delete;
-    VulkanContext& operator=(const VulkanContext&) = delete;
+    VulkanContext(const VulkanContext &) = delete;
+    VulkanContext &operator=(const VulkanContext &) = delete;
 
     static std::shared_ptr<VulkanContext> create(std::shared_ptr<platform::Window> window);
     static std::shared_ptr<VulkanContext> getContext();
@@ -43,12 +43,12 @@ public:
     CommandPool::SharedPtr getGraphicsCommandPool() const;
 
     void cleanup();
-    
+
     explicit VulkanContext(platform::Window::SharedPtr window);
 
     ~VulkanContext();
-private:
 
+private:
     static inline std::shared_ptr<VulkanContext> s_vulkanContext{nullptr};
 
     struct QueueFamilyIndices
@@ -63,7 +63,7 @@ private:
             return graphicsFamily.has_value();
         }
 
-        bool hasCompute() 
+        bool hasCompute()
         {
             return computeFamily.has_value();
         }
@@ -79,7 +79,7 @@ private:
         }
     };
 
-    const QueueFamilyIndices& getQueueFamilyIndices() const;
+    const QueueFamilyIndices &getQueueFamilyIndices() const;
 
     static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface);
 
@@ -91,9 +91,8 @@ private:
 
     uint32_t m_graphicsQueueFamilyIndex{0};
 
-    const std::vector<const char*> m_validationLayers{"VK_LAYER_KHRONOS_validation"};
-    const std::vector<const char*> m_deviceExtensions
-    {
+    const std::vector<const char *> m_validationLayers{"VK_LAYER_KHRONOS_validation"};
+    const std::vector<const char *> m_deviceExtensions{
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 #ifdef __APPLE__
         "VK_KHR_portability_subset",
@@ -122,7 +121,7 @@ private:
 
     bool checkValidationLayers();
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
-    std::vector<const char*> getRequiredExtensions();
+    std::vector<const char *> getRequiredExtensions();
     void pickPhysicalDevice();
     bool isDeviceSuitable(VkPhysicalDevice device);
 
@@ -135,4 +134,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //VULKAN_CONTEXT_HPP
+#endif // VULKAN_CONTEXT_HPP

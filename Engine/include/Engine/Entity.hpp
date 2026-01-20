@@ -117,6 +117,11 @@ public:
         return m_components.contains(std::type_index(typeid(T)));
     }
 
+    bool hasComponents() const
+    {
+        return !m_components.empty() && !m_multiComponents.empty();
+    }
+
     void addTag(const std::string& tag);
     bool removeTag(const std::string& tag);
     bool hasTag(const std::string& tag) const;

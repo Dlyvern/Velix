@@ -8,7 +8,7 @@
 #include "Core/RenderPass.hpp"
 #include "Core/CommandPool.hpp"
 #include "Core/Framebuffer.hpp"
-#include "Core/Texture.hpp"
+#include "Engine/Render/RenderTarget.hpp"
 
 #include "Engine/Skybox.hpp"
 
@@ -23,26 +23,30 @@ class OffscreenRenderGraphPass : public IRenderGraphPass
 {
 public:
     OffscreenRenderGraphPass(VkDescriptorPool descriptorPool);
-    void setup(RenderGraphPassRecourceBuilder& graphPassBuilder) override;
-    void compile(RenderGraphPassResourceHash& storage) override;
-    void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data) override;
-    void update(const RenderGraphPassContext& renderData) override;
-    void getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const override;
+    void setup(RenderGraphPassRecourceBuilder &graphPassBuilder) override;
+    void compile(RenderGraphPassResourceHash &storage) override;
+    void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data) override;
+    void update(const RenderGraphPassContext &renderData) override;
+    void getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const override;
 
     void beginRenderPass() override {}
     void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer) override {}
     void cleanup() override {}
+
+    void setViewport(VkViewport viewport);
+    void setScissor(VkRect2D scissor);
 
     std::vector<VkImageView> getImageViews() const
     {
         std::vector<VkImageView> imageViews;
         imageViews.reserve(m_colorImages.size());
 
-        for(const auto& texture : m_colorImages)
+        for (const auto &texture : m_colorImages)
             imageViews.push_back(texture->vkImageView());
 
         return imageViews;
     }
+
 private:
     std::array<VkClearValue, 2> m_clearValues;
     uint32_t m_imageIndex{0};
@@ -60,14 +64,16 @@ private:
     std::vector<std::size_t> m_framebufferHashes;
     std::vector<std::size_t> m_colorTextureHashes;
 
-    std::vector<core::Texture::SharedPtr> m_colorImages;
-    core::Texture::SharedPtr m_depthImageTexture;
+    std::vector<RenderTarget::SharedPtr> m_colorImages;
     std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
 
     std::unique_ptr<Skybox> m_skybox{nullptr};
+
+    VkViewport m_viewport{};
+    VkRect2D m_scissor{};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_OFFSCREEN_RENDER_GRAPH_PASS_HPP
+#endif // ELIX_OFFSCREEN_RENDER_GRAPH_PASS_HPP

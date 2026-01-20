@@ -9,7 +9,7 @@
 #include "Core/DescriptorSetLayout.hpp"
 #include "Core/PipelineLayout.hpp"
 
-#include "Engine/TextureImage.hpp"
+#include "Engine/Texture.hpp"
 #include "Engine/Render/RenderGraphPassResourceBuilder.hpp"
 #include "Engine/Render/RenderGraphPassRecourceCompiler.hpp"
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
@@ -26,15 +26,15 @@ class RenderGraph
 public:
     RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene);
 
-    template<typename T, typename... Args>
-    T* addPass(Args&&... args)
+    template <typename T, typename... Args>
+    T *addPass(Args &&...args)
     {
         static_assert(!std::is_abstract_v<T>, "RenderGraph::addPass() Cannot add abstract render pass!");
         static_assert(std::is_base_of_v<IRenderGraphPass, T>, "RenderGraph::addPass() T must derive from IRenderGraphPass class");
 
         const auto type = std::type_index(typeid(T));
         auto renderPass = std::make_shared<T>(std::forward<Args>(args)...);
-        T* ptr = renderPass.get();
+        T *ptr = renderPass.get();
 
         m_renderGraphPasses[type] = std::move(renderPass);
 
@@ -90,21 +90,21 @@ private:
         int lightCount;
         glm::vec3 padding{0.0f};
         LightData lights[];
-    };  
+    };
 
     struct LightSpaceMatrixUBO
     {
         glm::mat4 lightSpaceMatrix;
     };
 
-    void begin();
+    bool begin();
     void end();
 
     Scene::SharedPtr m_scene{nullptr};
 
     void compile();
     std::unordered_map<std::type_index, IRenderGraphPass::SharedPtr> m_renderGraphPasses;
-    
+
     VkDevice m_device{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
 
@@ -124,16 +124,17 @@ private:
     std::vector<VkDescriptorSet> m_directionalLightDescriptorSets;
     std::vector<core::Buffer::SharedPtr> m_lightSSBOs;
 
-    std::vector<void*> m_cameraMapped;
+    std::vector<void *> m_cameraMapped;
     std::vector<core::Buffer::SharedPtr> m_cameraUniformObjects;
     core::DescriptorSetLayout::SharedPtr m_cameraSetLayout{nullptr};
     std::vector<VkDescriptorSet> m_cameraDescriptorSets;
 
-    std::vector<void*> m_lightMapped;
+    std::vector<void *> m_lightMapped;
     std::vector<core::Buffer::SharedPtr> m_lightSpaceMatrixUniformObjects;
 
     std::vector<core::CommandBuffer::SharedPtr> m_commandBuffers;
     std::vector<std::vector<core::CommandBuffer::SharedPtr>> m_secondaryCommandBuffers;
+    std::vector<core::CommandPool::SharedPtr> m_commandPools;
 
     RenderGraphPassRecourceBuilder m_resourceBuilder;
     RenderGraphPassResourceHash m_resourceStorage;
@@ -149,4 +150,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_RENDER_GRAPH_HPP
+#endif // ELIX_RENDER_GRAPH_HPP

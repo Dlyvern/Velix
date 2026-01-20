@@ -25,9 +25,9 @@ namespace engineShaderFamilies
     extern core::DescriptorSetLayout::SharedPtr staticMeshMaterialLayout;
 
     void initEngineShaderFamilies();
-} //engineShaderFamilies
-
+    void cleanEngineShaderFamilies();
+} // engineShaderFamilies
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_SHADER_FAMILY_HPP
+#endif // ELIX_SHADER_FAMILY_HPP

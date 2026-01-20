@@ -11,20 +11,20 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 class PipelineLayout
 {
+    DECLARE_VK_HANDLE_METHODS(VkPipelineLayout)
+    ELIX_DECLARE_VK_LIFECYCLE()
+    DECLARE_VK_SMART_PTRS(PipelineLayout, VkPipelineLayout)
 public:
-    using SharedPtr = std::shared_ptr<PipelineLayout>;
+    PipelineLayout(VkDevice device, const std::vector<DescriptorSetLayout::SharedPtr> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants = {});
 
-    PipelineLayout(VkDevice device, const std::vector<DescriptorSetLayout::SharedPtr>& setLayouts, const std::vector<VkPushConstantRange>& pushConstants = {});
+    void createVk(const std::vector<DescriptorSetLayout::SharedPtr> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants = {});
+
     ~PipelineLayout();
 
-    static SharedPtr create(VkDevice device, const std::vector<DescriptorSetLayout::SharedPtr>& setLayouts, const std::vector<VkPushConstantRange>& pushConstants = {});
-
-    VkPipelineLayout vk();
 private:
     VkDevice m_device{VK_NULL_HANDLE};
-    VkPipelineLayout m_pipelineLayout{VK_NULL_HANDLE};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_PIPELINE_LAYOUT_HPP
+#endif // ELIX_PIPELINE_LAYOUT_HPP

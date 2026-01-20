@@ -1,4 +1,4 @@
-#include "Core/GraphicsPipeline.hpp"
+ #include "Core/GraphicsPipeline.hpp"
 #include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)

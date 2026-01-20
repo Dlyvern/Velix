@@ -26,8 +26,8 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene) : m_device(device), 
-m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanContext::getContext()->getPhysicalDevice(), swapchain)
+RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene) : m_device(device),
+                                                                                                          m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanContext::getContext()->getPhysicalDevice(), swapchain)
 {
     m_physicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
 
@@ -35,34 +35,37 @@ m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanC
 
     m_commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
     m_secondaryCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    m_commandPools.reserve(MAX_FRAMES_IN_FLIGHT);
 
     int imageCount = swapchain->getImages().size();
 
     m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
     m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    m_renderFinishedSemaphores.resize(imageCount);
+    m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     m_imagesInFlight.resize(imageCount, VK_NULL_HANDLE);
 
     VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
 
     VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;  // Start signaled
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // Start signaled
+    fenceInfo.pNext = nullptr;
 
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) 
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
-            vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
+            vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS)
+        {
             throw std::runtime_error("Failed to create synchronization objects for a frame!");
         }
     }
 
-    for (int i = 0; i < imageCount; ++i)
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
         if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS)
             throw std::runtime_error("Failed to create renderFinished semaphore for image!");
     }
 
-    elix::engine::engineShaderFamilies::initEngineShaderFamilies();
+    engineShaderFamilies::initEngineShaderFamilies();
 
     m_cameraSetLayout = engineShaderFamilies::staticMeshCameraLayout;
     m_directionalLightSetLayout = engineShaderFamilies::staticMeshLightLayout;
@@ -71,24 +74,24 @@ m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanC
 
 void RenderGraph::createDataFromScene()
 {
-    for(const auto& entity : m_scene->getEntities())
+    for (const auto &entity : m_scene->getEntities())
     {
-        if(auto staticMeshComponent = entity->getComponent<StaticMeshComponent>())
+        if (auto staticMeshComponent = entity->getComponent<StaticMeshComponent>())
         {
-            const auto& meshes = staticMeshComponent->getMeshes();
+            const auto &meshes = staticMeshComponent->getMeshes();
             std::vector<GPUMesh::SharedPtr> gpuMeshes;
 
             size_t hashData{0};
 
-            for(const auto& mesh : meshes)
+            for (const auto &mesh : meshes)
             {
                 auto gpuMesh = GPUMesh::createFromMesh(m_device, m_physicalDevice, mesh);
 
-                if(mesh.material.albedoTexture.empty())
+                if (mesh.material.albedoTexture.empty())
                     gpuMesh->material = Material::getDefaultMaterial();
                 else
                 {
-                    auto textureImage = std::make_shared<TextureImage>();
+                    auto textureImage = std::make_shared<Texture>();
                     textureImage->load(mesh.material.albedoTexture, m_commandPool);
 
                     auto material = Material::create(getDescriptorPool(), textureImage);
@@ -98,8 +101,7 @@ void RenderGraph::createDataFromScene()
                 gpuMeshes.push_back(gpuMesh);
             }
 
-            GPUEntity gpuEntity
-            {
+            GPUEntity gpuEntity{
                 .meshes = gpuMeshes,
                 .transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f),
             };
@@ -122,18 +124,18 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     m_perFrameData.lightDescriptorSet = m_directionalLightDescriptorSets[m_currentFrame];
     m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
 
-    for(const auto& entity : m_scene->getEntities())
+    for (const auto &entity : m_scene->getEntities())
     {
         auto en = m_perFrameData.meshes.find(entity);
 
-        if(en == m_perFrameData.meshes.end())
+        if (en == m_perFrameData.meshes.end())
         {
             std::cerr << "Failed to find entity" << std::endl;
             continue;
         }
 
-        m_perFrameData.meshes[entity].transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() 
-        : glm::mat4(1.0f);
+        m_perFrameData.meshes[entity].transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix()
+                                                                                               : glm::mat4(1.0f);
     }
 
     CameraUBO cameraUBO{};
@@ -147,8 +149,8 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
     std::memcpy(m_cameraMapped[m_currentFrame], &cameraUBO, sizeof(CameraUBO));
 
-    //TODO NEEDS TO BE REDESIGNED
-    // size_t requiredSize = sizeof(LightData) * lights.size();
+    // TODO NEEDS TO BE REDESIGNED
+    //  size_t requiredSize = sizeof(LightData) * lights.size();
 
     // if (requiredSize > m_lightSSBOs[m_currentFrame]->getSize()) {
     //     m_lightSSBOs[m_currentFrame] = core::Buffer::create(
@@ -157,7 +159,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     //         0,
     //         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     //     );
-        
+
     //     // Update descriptor set with new buffer
     //     VkDescriptorBufferInfo bufferInfo{};
     //     bufferInfo.buffer = m_lightSSBOs[frameIndex]->vkBuffer();
@@ -178,7 +180,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
     auto lights = m_scene->getLights();
 
-    if(lights.empty())
+    if (lights.empty())
     {
         // std::cerr << "NO LIGHTS" << std::endl;
         return;
@@ -186,13 +188,13 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
     size_t requiredSize = sizeof(LightData) * (lights.size() * sizeof(LightData));
 
-    void* mapped;
+    void *mapped;
     m_lightSSBOs[m_currentFrame]->map(mapped);
-    
-    LightSSBO* ssboData = static_cast<LightSSBO*>(mapped);
+
+    LightSSBO *ssboData = static_cast<LightSSBO *>(mapped);
     ssboData->lightCount = static_cast<int>(lights.size());
 
-    for(size_t i = 0; i < lights.size(); ++i)
+    for (size_t i = 0; i < lights.size(); ++i)
     {
         auto lightComponent = lights[i];
 
@@ -200,17 +202,17 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
         ssboData->lights[i].parameters = glm::vec4(1.0f);
         ssboData->lights[i].colorStrength = glm::vec4(lightComponent->color, lightComponent->strength);
 
-        if(auto directionalLight = dynamic_cast<DirectionalLight*>(lightComponent.get()))
+        if (auto directionalLight = dynamic_cast<DirectionalLight *>(lightComponent.get()))
         {
             ssboData->lights[i].direction = glm::vec4{glm::normalize(directionalLight->direction), 0.0f};
             ssboData->lights[i].parameters.w = 0;
         }
-        else if(auto pointLight = dynamic_cast<PointLight*>(lightComponent.get()))
+        else if (auto pointLight = dynamic_cast<PointLight *>(lightComponent.get()))
         {
             ssboData->lights[i].parameters.z = pointLight->radius;
             ssboData->lights[i].parameters.w = 2;
         }
-        else if(auto spotLight = dynamic_cast<SpotLight*>(lightComponent.get()))
+        else if (auto spotLight = dynamic_cast<SpotLight *>(lightComponent.get()))
         {
             ssboData->lights[i].direction = glm::vec4(glm::normalize(spotLight->direction), 0.0f);
             ssboData->lights[i].parameters.w = 1;
@@ -221,11 +223,11 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
     m_lightSSBOs[m_currentFrame]->unmap();
 
-    for(size_t i = 0; i < lights.size(); ++i)
+    for (size_t i = 0; i < lights.size(); ++i)
     {
         auto light = lights[i];
 
-        if(auto directionalLight = dynamic_cast<DirectionalLight*>(light.get()))
+        if (auto directionalLight = dynamic_cast<DirectionalLight *>(light.get()))
         {
             LightSpaceMatrixUBO lightSpaceMatrixUBO{};
 
@@ -234,7 +236,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
             glm::vec3 lightTarget{0.0f};
             float nearPlane = 50.0f;
             float farPlane = 1000.0f;
-            //Position 'light camera' 20 units away from the target 
+            // Position 'light camera' 20 units away from the target
             glm::vec3 lightPosition = lightTarget - lightDirection * 20.0f;
 
             glm::mat4 lightView = glm::lookAt(lightPosition, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -253,7 +255,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
             m_perFrameData.lightSpaceMatrix = lightMatrix;
 
-            //!Only one directional light. Fix it later
+            //! Only one directional light. Fix it later
             break;
         }
     }
@@ -261,16 +263,14 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
 void RenderGraph::createDescriptorSetPool()
 {
-    const std::vector<VkDescriptorPoolSize> poolSizes
-    {
+    const std::vector<VkDescriptorPoolSize> poolSizes{
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
-        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
-        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
-        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
-        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000}
-    };
+        {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000}};
 
     VkDescriptorPoolCreateInfo descriptorPoolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     descriptorPoolCI.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
@@ -278,62 +278,83 @@ void RenderGraph::createDescriptorSetPool()
     descriptorPoolCI.pPoolSizes = poolSizes.data();
     descriptorPoolCI.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
-    if(vkCreateDescriptorPool(m_device, &descriptorPoolCI, nullptr, &m_descriptorPool) != VK_SUCCESS)
+    if (vkCreateDescriptorPool(m_device, &descriptorPoolCI, nullptr, &m_descriptorPool) != VK_SUCCESS)
         throw std::runtime_error("Failed to create descriptor pool");
 }
 
-void RenderGraph::begin()
-{    
+bool RenderGraph::begin()
+{
+    // vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
     // auto& lock = m_syncObject->getSync(m_currentFrame);
 
     // vkWaitForFences(m_device, 1, &lock.inFlightFence, VK_TRUE, UINT64_MAX);
 
-    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+    // vkGetFenceStatus
+    if (VkResult result = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX); result != VK_SUCCESS)
+    {
+        std::cerr << "Failed to wait for fences: " << core::helpers::vulkanResultToString(result) << '\n';
+        return false;
+    }
+
+    if (VkResult result = vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]); result != VK_SUCCESS)
+    {
+        std::cerr << "Failed to reset fences: " << core::helpers::vulkanResultToString(result) << '\n';
+        return false;
+    }
+
+    m_commandPools[m_currentFrame]->reset(VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT);
 
     // VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, lock.imageAvailableSemaphore, VK_NULL_HANDLE, &m_imageIndex);
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
 
-    if(result == VK_ERROR_OUT_OF_DATE_KHR)
+    if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
         m_swapchain->recreate();
         m_resourceCompiler.onSwapChainResize(m_resourceBuilder, m_resourceStorage);
 
-        for(const auto& renderPass : m_renderGraphPasses)
+        for (const auto &renderPass : m_renderGraphPasses)
         {
-            if(auto s = dynamic_cast<OffscreenRenderGraphPass*>(renderPass.second.get()))
+            if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.get()))
             {
                 m_perFrameData.viewportImageViews = s->getImageViews();
                 m_perFrameData.isViewportImageViewsDirty = true;
                 break;
             }
         }
+
+        return false;
     }
-    else if(result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
-        throw std::runtime_error("Failed to acquire swap chain image");
+    else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+    {
+        std::cerr << "Failed to acquire swap chain image: " << core::helpers::vulkanResultToString(result) << '\n';
+        return false;
+    }
 
-    //Remove
-    if (m_imagesInFlight[m_imageIndex] != VK_NULL_HANDLE)
-        vkWaitForFences(m_device, 1, &m_imagesInFlight[m_imageIndex], VK_TRUE, UINT64_MAX);
+    // Remove
+    //  if (m_imagesInFlight[m_imageIndex] != VK_NULL_HANDLE)
+    //      vkWaitForFences(m_device, 1, &m_imagesInFlight[m_imageIndex], VK_TRUE, UINT64_MAX);
 
-    m_imagesInFlight[m_imageIndex] = m_inFlightFences[m_currentFrame];
+    // m_imagesInFlight[m_imageIndex] = m_inFlightFences[m_currentFrame];
     //
 
-    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+    // vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
 
     // vkResetFences(m_device, 1, &lock.inFlightFence);
 
     // Create a pool of secondary command buffers per frame: maybe 2–4 per frame (depending on how many threads you want to use).
 
-    const auto& primaryCommandBuffer = m_commandBuffers.at(m_currentFrame);
+    const auto &primaryCommandBuffer = m_commandBuffers.at(m_currentFrame);
 
-    primaryCommandBuffer->reset();
+    // primaryCommandBuffer->reset();
+
+    // for (size_t passIdx = 0; passIdx < m_renderGraphPasses.size(); ++passIdx)
+    //     m_secondaryCommandBuffers[m_currentFrame][passIdx]->reset();
+
+    // m_commandPools[m_currentFrame]->reset(0);
+
     primaryCommandBuffer->begin();
 
-
-    for (size_t passIdx = 0; passIdx < m_renderGraphPasses.size(); ++passIdx)
-        m_secondaryCommandBuffers[m_currentFrame][passIdx]->reset();
-
-    // std::vector<VkCommandBuffer> vkSecondaries; 
+    // std::vector<VkCommandBuffer> vkSecondaries;
     // vkSecondaries.reserve(m_renderGraphPasses.size());
 
     size_t passIndex = 0;
@@ -341,8 +362,9 @@ void RenderGraph::begin()
     std::vector<IRenderGraphPass::SharedPtr> shadowPasses;
     std::vector<IRenderGraphPass::SharedPtr> otherPasses;
 
-    for (const auto& [_, pass] : m_renderGraphPasses) {
-        if (dynamic_cast<ShadowRenderGraphPass*>(pass.get()))
+    for (const auto &[_, pass] : m_renderGraphPasses)
+    {
+        if (dynamic_cast<ShadowRenderGraphPass *>(pass.get()))
             shadowPasses.push_back(pass);
         else
             otherPasses.push_back(pass);
@@ -353,20 +375,18 @@ void RenderGraph::begin()
     orderedPasses.insert(orderedPasses.end(), shadowPasses.begin(), shadowPasses.end());
     orderedPasses.insert(orderedPasses.end(), otherPasses.begin(), otherPasses.end());
 
-    RenderGraphPassContext frameData
-    {
+    RenderGraphPassContext frameData{
         .currentFrame = m_currentFrame,
-        .currentImageIndex = m_imageIndex
-    };
+        .currentImageIndex = m_imageIndex};
 
-    for(const auto& renderGraphPass : orderedPasses)
+    for (const auto &renderGraphPass : orderedPasses)
     {
         renderGraphPass->update(frameData);
 
         VkRenderPassBeginInfo beginRenderPassInfo;
         renderGraphPass->getRenderPassBeginInfo(beginRenderPassInfo);
 
-        const auto& secCB = m_secondaryCommandBuffers[m_currentFrame][passIndex];
+        const auto &secCB = m_secondaryCommandBuffers[m_currentFrame][passIndex];
 
         VkCommandBufferInheritanceInfo inherit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
         inherit.renderPass = beginRenderPassInfo.renderPass;
@@ -375,7 +395,8 @@ void RenderGraph::begin()
 
         vkCmdBeginRenderPass(primaryCommandBuffer->vk(), &beginRenderPassInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
 
-        secCB->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT | VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT, &inherit);
+        // TODO what is VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT flag
+        secCB->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inherit);
 
         renderGraphPass->execute(secCB, m_perFrameData);
 
@@ -399,22 +420,24 @@ void RenderGraph::begin()
     primaryCommandBuffer->end();
 
     m_perFrameData.isViewportImageViewsDirty = false;
+
+    return true;
 }
 
 void RenderGraph::end()
 {
-    const auto& currentCommandBuffer = m_commandBuffers.at(m_currentFrame);
+    const auto &currentCommandBuffer = m_commandBuffers.at(m_currentFrame);
     const std::vector<VkSemaphore> waitSemaphores = {m_imageAvailableSemaphores[m_currentFrame]};
     const std::vector<VkPipelineStageFlags> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    const std::vector<VkSemaphore> signalSemaphores = {m_renderFinishedSemaphores[m_imageIndex]};
+    const std::vector<VkSemaphore> signalSemaphores = {m_renderFinishedSemaphores[m_currentFrame]};
     const std::vector<VkSwapchainKHR> swapChains = {m_swapchain->vk()};
 
     currentCommandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue(), waitSemaphores, waitStages, signalSemaphores,
-    m_inFlightFences[m_currentFrame]);
-    
+                                 m_inFlightFences[m_currentFrame]);
+
     VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     presentInfo.waitSemaphoreCount = static_cast<uint32_t>(signalSemaphores.size());
-    presentInfo.pWaitSemaphores = signalSemaphores.data(); 
+    presentInfo.pWaitSemaphores = signalSemaphores.data();
     presentInfo.swapchainCount = static_cast<uint32_t>(swapChains.size());
     presentInfo.pSwapchains = swapChains.data();
     presentInfo.pImageIndices = &m_imageIndex;
@@ -422,13 +445,13 @@ void RenderGraph::end()
 
     VkResult result = vkQueuePresentKHR(core::VulkanContext::getContext()->getPresentQueue(), &presentInfo);
 
-    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
     {
         m_swapchain->recreate();
         m_resourceCompiler.onSwapChainResize(m_resourceBuilder, m_resourceStorage);
-        for(const auto& renderPass : m_renderGraphPasses)
+        for (const auto &renderPass : m_renderGraphPasses)
         {
-            if(auto s = dynamic_cast<OffscreenRenderGraphPass*>(renderPass.second.get()))
+            if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.get()))
             {
                 m_perFrameData.viewportImageViews = s->getImageViews();
                 m_perFrameData.isViewportImageViewsDirty = true;
@@ -436,21 +459,21 @@ void RenderGraph::end()
             }
         }
     }
-    else if(result != VK_SUCCESS)
+    else if (result != VK_SUCCESS)
         throw std::runtime_error("Failed to present swap chain image");
-
-    m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 void RenderGraph::draw()
 {
-    begin();
-    end();
+    if (begin())
+        end();
+
+    m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 void RenderGraph::setup()
 {
-    for(const auto& pass : m_renderGraphPasses)
+    for (const auto &pass : m_renderGraphPasses)
         pass.second->setup(m_resourceBuilder);
 
     compile();
@@ -464,14 +487,14 @@ void RenderGraph::createDirectionalLightDescriptorSets()
     static constexpr uint8_t INIT_LIGHTS_COUNT = 2;
     static constexpr VkDeviceSize INITIAL_SIZE = sizeof(LightData) * (INIT_LIGHTS_COUNT * sizeof(LightData));
 
-    for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
         auto ssboBuffer = m_lightSSBOs.emplace_back(core::Buffer::createShared(INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        core::memory::MemoryUsage::CPU_TO_GPU));
+                                                                               core::memory::MemoryUsage::CPU_TO_GPU));
 
         m_directionalLightDescriptorSets[i] = DescriptorSetBuilder::begin()
-        .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-        .build(m_device, m_descriptorPool, m_directionalLightSetLayout->vk());
+                                                  .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                                                  .build(m_device, m_descriptorPool, m_directionalLightSetLayout->vk());
     }
 }
 
@@ -484,22 +507,22 @@ void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imag
     m_lightSpaceMatrixUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
     m_cameraUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
 
-    for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        auto& cameraBuffer = m_cameraUniformObjects.emplace_back(core::Buffer::createShared(sizeof(CameraUBO),
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
-        
-        auto& lightBuffer = m_lightSpaceMatrixUniformObjects.emplace_back(core::Buffer::createShared(sizeof(LightSpaceMatrixUBO),
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
+        auto &cameraBuffer = m_cameraUniformObjects.emplace_back(core::Buffer::createShared(sizeof(CameraUBO),
+                                                                                            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
+
+        auto &lightBuffer = m_lightSpaceMatrixUniformObjects.emplace_back(core::Buffer::createShared(sizeof(LightSpaceMatrixUBO),
+                                                                                                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
 
         cameraBuffer->map(m_cameraMapped[i]);
         lightBuffer->map(m_lightMapped[i]);
 
         m_cameraDescriptorSets[i] = DescriptorSetBuilder::begin()
-        .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-        .addBuffer(lightBuffer, sizeof(LightSpaceMatrixUBO), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-        .addImage(imageView, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
-        .build(m_device, m_descriptorPool, m_cameraSetLayout->vk());
+                                        .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                                        .addBuffer(lightBuffer, sizeof(LightSpaceMatrixUBO), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                                        .addImage(imageView, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
+                                        .build(m_device, m_descriptorPool, m_cameraSetLayout->vk());
     }
 }
 
@@ -507,25 +530,28 @@ void RenderGraph::createRenderGraphResources()
 {
     for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
     {
-        m_commandBuffers.emplace_back(core::CommandBuffer::createShared(m_commandPool));
+        auto commandPool = m_commandPools.emplace_back(core::CommandPool::createShared(core::VulkanContext::getContext()->getDevice(),
+                                                                                       core::VulkanContext::getContext()->getGraphicsFamily()));
+
+        m_commandBuffers.emplace_back(core::CommandBuffer::createShared(commandPool));
 
         m_secondaryCommandBuffers[frame].resize(m_renderGraphPasses.size());
-        
+
         for (size_t pass = 0; pass < m_renderGraphPasses.size(); ++pass)
-            m_secondaryCommandBuffers[frame][pass] = core::CommandBuffer::createShared(m_commandPool, VK_COMMAND_BUFFER_LEVEL_SECONDARY);
+            m_secondaryCommandBuffers[frame][pass] = core::CommandBuffer::createShared(commandPool, VK_COMMAND_BUFFER_LEVEL_SECONDARY);
     }
 }
 
 void RenderGraph::compile()
 {
     m_resourceCompiler.compile(m_resourceBuilder, m_resourceStorage);
-    
-    for(const auto& pass : m_renderGraphPasses)
+
+    for (const auto &pass : m_renderGraphPasses)
         pass.second->compile(m_resourceStorage);
 
-    for(const auto& renderPass : m_renderGraphPasses)
+    for (const auto &renderPass : m_renderGraphPasses)
     {
-        if(auto s = dynamic_cast<OffscreenRenderGraphPass*>(renderPass.second.get()))
+        if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.get()))
         {
             m_perFrameData.viewportImageViews = s->getImageViews();
             m_perFrameData.isViewportImageViewsDirty = true;
@@ -539,25 +565,33 @@ void RenderGraph::cleanResources()
     vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
     vkDeviceWaitIdle(m_device);
 
-    for(const auto& primary : m_commandBuffers)
+    for (const auto &primary : m_commandBuffers)
         primary->destroyVk();
-    for(const auto& secondary : m_secondaryCommandBuffers)
-        for(const auto& cb : secondary)
+    for (const auto &secondary : m_secondaryCommandBuffers)
+        for (const auto &cb : secondary)
             cb->destroyVk();
 
-    for(const auto& renderPass : m_renderGraphPasses)
+    for (const auto &renderPass : m_renderGraphPasses)
         renderPass.second->cleanup();
 
-    for(const auto& light : m_lightSpaceMatrixUniformObjects)
+    for (const auto &light : m_lightSpaceMatrixUniformObjects)
+    {
+        light->unmap();
         light->destroyVk();
-    
-    for(const auto& camera : m_cameraUniformObjects)
+    }
+
+    for (const auto &camera : m_cameraUniformObjects)
+    {
+        camera->unmap();
         camera->destroyVk();
+    }
 
     m_perFrameData.meshes.clear();
 
     m_resourceStorage.cleanup();
     m_resourceBuilder.cleanup();
+
+    engineShaderFamilies::cleanEngineShaderFamilies();
 }
 
 ELIX_NESTED_NAMESPACE_END

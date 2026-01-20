@@ -4,7 +4,7 @@
 #include "Core/Macros.hpp"
 #include "Core/DescriptorSetLayout.hpp"
 
-#include "Engine/TextureImage.hpp"
+#include "Engine/Texture.hpp"
 
 #include <cstdint>
 
@@ -27,30 +27,31 @@ class Material
 public:
     using SharedPtr = std::shared_ptr<Material>;
 
-    Material(VkDescriptorPool descriptorPool, engine::TextureImage::SharedPtr texture);
+    Material(VkDescriptorPool descriptorPool, engine::Texture::SharedPtr texture);
 
     void updateDescriptorSets();
 
     VkDescriptorSet getDescriptorSet(uint32_t frameIndex) const;
 
-    void setTexture(TextureImage::SharedPtr texture);
-    void setColor(const glm::vec4& color);
+    void setTexture(Texture::SharedPtr texture);
+    void setColor(const glm::vec4 &color);
 
-    const glm::vec4& getColor() const;
-    TextureImage::SharedPtr getTexture() const;
+    const glm::vec4 &getColor() const;
+    Texture::SharedPtr getTexture() const;
 
     static Material::SharedPtr getDefaultMaterial()
     {
         return s_defaultMaterial;
     }
 
-    static void createDefaultMaterial(VkDescriptorPool descriptorPool, engine::TextureImage::SharedPtr texture);
+    static void createDefaultMaterial(VkDescriptorPool descriptorPool, engine::Texture::SharedPtr texture);
     static void deleteDefaultMaterial();
-    static SharedPtr create(VkDescriptorPool descriptorPool, engine::TextureImage::SharedPtr texture);
+    static SharedPtr create(VkDescriptorPool descriptorPool, engine::Texture::SharedPtr texture);
+
 private:
     uint32_t m_maxFramesInFlight;
     std::vector<VkDescriptorSet> m_descriptorSets;
-    engine::TextureImage::SharedPtr m_texture{nullptr};
+    engine::Texture::SharedPtr m_texture{nullptr};
     VkDevice m_device{VK_NULL_HANDLE};
     std::vector<core::Buffer::SharedPtr> m_colorBuffers;
     static inline Material::SharedPtr s_defaultMaterial{nullptr};
@@ -59,4 +60,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_MATERIAL_HPP
+#endif // ELIX_MATERIAL_HPP

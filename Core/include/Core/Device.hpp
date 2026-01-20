@@ -15,16 +15,18 @@ class Device
 public:
     Device(VkDevice device, VkPhysicalDevice physicalDevice, std::unique_ptr<allocators::IAllocator> allocator = nullptr);
 
-    void mapMemory(void* allocation, VkDeviceSize offset, VkDeviceSize size,  VkMemoryMapFlags flags, void*& data);
-    void unmapMemory(void* allocation);
+    void mapMemory(void *allocation, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void *&data);
+    void unmapMemory(void *allocation);
 
-    allocators::AllocatedImage createImage(const VkImageCreateInfo& createInfo, memory::MemoryUsage memFlags);
-    void destroyImage(allocators::AllocatedImage& image);
-    void bindImageMemory(const allocators::AllocatedImage& image, VkDeviceSize memoryOffset = 0);
+    allocators::AllocatedImage createImage(const VkImageCreateInfo &createInfo, memory::MemoryUsage memFlags);
+    void destroyImage(allocators::AllocatedImage &image);
+    void bindImageMemory(const allocators::AllocatedImage &image, VkDeviceSize memoryOffset = 0);
 
-    allocators::AllocatedBuffer createBuffer(const VkBufferCreateInfo& createInfo, memory::MemoryUsage memFlags);
-    void destroyBuffer(allocators::AllocatedBuffer& buffer);
-    void bindBufferMemory(const allocators::AllocatedBuffer& buffer, VkDeviceSize memoryOffset = 0);
+    allocators::AllocatedBuffer createBuffer(const VkBufferCreateInfo &createInfo, memory::MemoryUsage memFlags);
+    void destroyBuffer(allocators::AllocatedBuffer &buffer);
+    void bindBufferMemory(const allocators::AllocatedBuffer &buffer, VkDeviceSize memoryOffset = 0);
+
+    void clean();
 
 private:
     std::unique_ptr<allocators::IAllocator> m_allocator{nullptr};
@@ -33,4 +35,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_DEVICE_HPP
+#endif // ELIX_DEVICE_HPP

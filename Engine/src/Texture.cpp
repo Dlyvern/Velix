@@ -1,4 +1,4 @@
-#include "Engine/TextureImage.hpp"
+#include "Engine/Texture.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -13,13 +13,13 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-TextureImage::TextureImage() = default;
+Texture::Texture() = default;
 
-void TextureImage::create(VkDevice device, VkPhysicalDevice physicalDevice, core::CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t pixels)
+void Texture::create(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t pixels, core::CommandPool::SharedPtr commandPool, VkQueue queue)
 {
     m_width = 1;
     m_height = 1;
-    m_device = device;
+    m_device = core::VulkanContext::getContext()->getDevice();
 
     VkDeviceSize imageSize = sizeof(pixels);
 
@@ -27,8 +27,13 @@ void TextureImage::create(VkDevice device, VkPhysicalDevice physicalDevice, core
 
     buffer->upload(&pixels, imageSize);
 
-    m_image = core::Image::createShared(static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
-    VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY);
+    m_image = core::Image::createShared(static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY);
+
+    if (!commandPool)
+        commandPool = core::VulkanContext::getContext()->getTransferCommandPool();
+
+    if (!queue)
+        queue = core::VulkanContext::getContext()->getTransferQueue();
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, queue);
     m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, queue);
@@ -44,8 +49,8 @@ void TextureImage::create(VkDevice device, VkPhysicalDevice physicalDevice, core
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
 
-    if(vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create image view");
+    if (VkResult result = vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView); result != VK_SUCCESS)
+        throw std::runtime_error("Failed to create image view: " + core::helpers::vulkanResultToString(result));
 
     VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -54,7 +59,7 @@ void TextureImage::create(VkDevice device, VkPhysicalDevice physicalDevice, core
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.anisotropyEnable = VK_TRUE;
-    //!TODO Fix it later
+    //! TODO Fix it later
     samplerInfo.maxAnisotropy = core::VulkanContext::getContext()->getPhysicalDevicePoperties().limits.maxSamplerAnisotropy;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
@@ -65,17 +70,11 @@ void TextureImage::create(VkDevice device, VkPhysicalDevice physicalDevice, core
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = 0.0f;
 
-    if(VkResult result = vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler); result != VK_SUCCESS)
-    {
-        std::string errorMsg = "Failed to create sampler: ";
-
-        errorMsg += core::helpers::vulkanResultToString(result);
-
-        throw std::runtime_error(errorMsg);
-    }
+    if (VkResult result = vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler); result != VK_SUCCESS)
+        throw std::runtime_error("Failed to create sampler: " + core::helpers::vulkanResultToString(result));
 }
 
-bool TextureImage::load(const std::string& path, core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
+bool Texture::load(const std::string &path, core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
 {
     m_device = core::VulkanContext::getContext()->getDevice();
 
@@ -83,7 +82,7 @@ bool TextureImage::load(const std::string& path, core::CommandPool::SharedPtr co
 
     VkDeviceSize imageSize = m_width * m_height * 4;
 
-    if(!m_pixels)
+    if (!m_pixels)
     {
         std::cerr << "Failed to load image: " << path << std::endl;
         return false;
@@ -93,11 +92,10 @@ bool TextureImage::load(const std::string& path, core::CommandPool::SharedPtr co
 
     buffer->upload(m_pixels, imageSize);
 
-    if(freePixelsOnLoad)
+    if (freePixelsOnLoad)
         freePixels();
 
-    m_image = core::Image::createShared(static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | 
-    VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY);
+    m_image = core::Image::createShared(static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY);
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
     m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, core::VulkanContext::getContext()->getGraphicsQueue());
@@ -113,7 +111,7 @@ bool TextureImage::load(const std::string& path, core::CommandPool::SharedPtr co
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
 
-    if(vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView) != VK_SUCCESS)
+    if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView) != VK_SUCCESS)
         throw std::runtime_error("Failed to create image view");
 
     VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -123,7 +121,7 @@ bool TextureImage::load(const std::string& path, core::CommandPool::SharedPtr co
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.anisotropyEnable = VK_TRUE;
-    //!TODO Fix it later
+    //! TODO Fix it later
     samplerInfo.maxAnisotropy = core::VulkanContext::getContext()->getPhysicalDevicePoperties().limits.maxSamplerAnisotropy;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
@@ -134,7 +132,7 @@ bool TextureImage::load(const std::string& path, core::CommandPool::SharedPtr co
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = 0.0f;
 
-    if(VkResult result = vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler); result != VK_SUCCESS)
+    if (VkResult result = vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler); result != VK_SUCCESS)
     {
         std::string errorMsg = "Failed to create sampler: ";
 
@@ -142,18 +140,18 @@ bool TextureImage::load(const std::string& path, core::CommandPool::SharedPtr co
 
         throw std::runtime_error(errorMsg);
     }
-    
+
     return true;
 }
 
-bool TextureImage::loadCubemap(const std::array<std::string, 6>& cubemaps, 
-core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
+bool Texture::loadCubemap(const std::array<std::string, 6> &cubemaps,
+                          core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
 {
     m_device = core::VulkanContext::getContext()->getDevice();
-    
-    std::array<stbi_uc*, 6> facePixels{};
 
-    for (int i = 0; i < 6; ++i) 
+    std::array<stbi_uc *, 6> facePixels{};
+
+    for (int i = 0; i < 6; ++i)
     {
         facePixels[i] = stbi_load(cubemaps[i].c_str(), &m_width, &m_height, &m_channels, STBI_rgb_alpha);
 
@@ -164,7 +162,7 @@ core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
 
             throw std::runtime_error("failed to load texture image: " + cubemaps[i]);
         }
-        
+
         if (i > 0 && (m_width != m_height))
         {
             for (int j = 0; j <= i; ++j)
@@ -180,31 +178,31 @@ core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
 
     auto buffer = core::Buffer::createShared(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
 
-    void* data;
+    void *data;
 
     buffer->map(data);
 
-    for(int face = 0; face < 6; ++face)
+    for (int face = 0; face < 6; ++face)
     {
         size_t offset = face * layerSize;
 
-        memcpy(static_cast<char*>(data) + offset, facePixels[face], layerSize);
+        memcpy(static_cast<char *>(data) + offset, facePixels[face], layerSize);
 
-        if(freePixelsOnLoad)
+        if (freePixelsOnLoad)
             stbi_image_free(facePixels[face]);
     }
-    
+
     buffer->unmap();
 
-    m_image = core::Image::createShared(static_cast<uint32_t>(m_width), 
-    static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY, VK_FORMAT_R8G8B8A8_SRGB,
-    VK_IMAGE_TILING_OPTIMAL, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
+    m_image = core::Image::createShared(static_cast<uint32_t>(m_width),
+                                        static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY, VK_FORMAT_R8G8B8A8_SRGB,
+                                        VK_IMAGE_TILING_OPTIMAL, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
 
-    m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
-    commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
+    m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                   commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
     m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
+                                   commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
 
     VkImageViewCreateInfo imageViewCI{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     imageViewCI.image = m_image->vk();
@@ -238,57 +236,56 @@ core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
 
     if (vkCreateSampler(m_device, &samplerCI, nullptr, &m_sampler) != VK_SUCCESS)
         throw std::runtime_error("failed to create cubemap sampler!");
-    
-    
+
     return true;
 }
 
-VkSampler TextureImage::vkSampler()
+VkSampler Texture::vkSampler()
 {
     return m_sampler;
 }
 
-VkImageView TextureImage::vkImageView()
+VkImageView Texture::vkImageView()
 {
     return m_imageView;
 }
 
-core::Image::SharedPtr TextureImage::getImage()
+core::Image::SharedPtr Texture::getImage()
 {
     return m_image;
 }
 
-TextureImage::~TextureImage()
+Texture::~Texture()
 {
-    if(m_imageView)
+    if (m_imageView)
         vkDestroyImageView(m_device, m_imageView, nullptr);
-    if(m_sampler)
+    if (m_sampler)
         vkDestroySampler(m_device, m_sampler, nullptr);
 }
 
-unsigned char* TextureImage::getPixels() const
+unsigned char *Texture::getPixels() const
 {
     return m_pixels;
 }
 
-int TextureImage::getWidth() const
+int Texture::getWidth() const
 {
     return m_width;
 }
 
-int TextureImage::getHeight() const
+int Texture::getHeight() const
 {
     return m_height;
 }
 
-int TextureImage::getChannels() const
+int Texture::getChannels() const
 {
     return m_channels;
 }
 
-void TextureImage::freePixels()
+void Texture::freePixels()
 {
-    if(!m_pixels)
+    if (!m_pixels)
         return;
 
     stbi_image_free(m_pixels);

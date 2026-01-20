@@ -29,11 +29,12 @@ public:
 
     void setYaw(float yaw);
     void setPitch(float pitch);
-    void setPosition(const glm::vec3& position);
+    void setPosition(const glm::vec3 &position);
 
     void updateCameraVectors();
 
     virtual ~Camera() = default;
+
 private:
     glm::vec3 m_position{2.0f, 2.0f, 2.0f};
     glm::vec3 m_up{glm::vec3(0.0f, 1.0f, 0.0f)};
@@ -44,17 +45,14 @@ private:
     float m_pitch{0.0f};
 
     float m_fov{60.0f};
-    float m_aspect{1.77f};
+    float m_aspect{16.0f / 9.0f};
     float m_near{0.1f};
     float m_far{1000.0f};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_CAMERA_HPP
-
-
-
+#endif // ELIX_CAMERA_HPP
 
 // #ifndef CAMERA_HPP
 // #define CAMERA_HPP
@@ -67,7 +65,7 @@ ELIX_NESTED_NAMESPACE_END
 //     explicit Camera(elix::components::CameraComponent* camera);
 
 //     void update(float deltaTime);
-    
+
 //     elix::components::CameraComponent* getCamera();
 // private:
 //     elix::components::CameraComponent* m_camera;
@@ -76,6 +74,5 @@ ELIX_NESTED_NAMESPACE_END
 //     float m_mouseSensitivity{0.1f};
 //     bool m_firstClick{true};
 // };
-
 
 // #endif //CAMERA_HPP

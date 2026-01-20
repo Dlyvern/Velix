@@ -13,61 +13,60 @@ struct PushConstantView
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-Skybox::Skybox(VkDevice device, VkPhysicalDevice physicalDevice, core::CommandPool::SharedPtr commandPool, 
-core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6>& cubemaps, VkDescriptorPool descriptorPool)
+Skybox::Skybox(VkDevice device, VkPhysicalDevice physicalDevice, core::CommandPool::SharedPtr commandPool,
+               core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6> &cubemaps, VkDescriptorPool descriptorPool)
 {
-    std::vector<float> skyboxVertices = 
-    {
-        -1.0f,  1.0f, -1.0f,
-        -1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,
-         1.0f,  1.0f, -1.0f,
-        -1.0f,  1.0f, -1.0f,
+    std::vector<float> skyboxVertices =
+        {
+            -1.0f, 1.0f, -1.0f,
+            -1.0f, -1.0f, -1.0f,
+            1.0f, -1.0f, -1.0f,
+            1.0f, -1.0f, -1.0f,
+            1.0f, 1.0f, -1.0f,
+            -1.0f, 1.0f, -1.0f,
 
-        -1.0f, -1.0f,  1.0f,
-        -1.0f, -1.0f, -1.0f,
-        -1.0f,  1.0f, -1.0f,
-        -1.0f,  1.0f, -1.0f,
-        -1.0f,  1.0f,  1.0f,
-        -1.0f, -1.0f,  1.0f,
+            -1.0f, -1.0f, 1.0f,
+            -1.0f, -1.0f, -1.0f,
+            -1.0f, 1.0f, -1.0f,
+            -1.0f, 1.0f, -1.0f,
+            -1.0f, 1.0f, 1.0f,
+            -1.0f, -1.0f, 1.0f,
 
-         1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,
+            1.0f, -1.0f, -1.0f,
+            1.0f, -1.0f, 1.0f,
+            1.0f, 1.0f, 1.0f,
+            1.0f, 1.0f, 1.0f,
+            1.0f, 1.0f, -1.0f,
+            1.0f, -1.0f, -1.0f,
 
-        -1.0f, -1.0f,  1.0f,
-        -1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f, -1.0f,  1.0f,
-        -1.0f, -1.0f,  1.0f,
+            -1.0f, -1.0f, 1.0f,
+            -1.0f, 1.0f, 1.0f,
+            1.0f, 1.0f, 1.0f,
+            1.0f, 1.0f, 1.0f,
+            1.0f, -1.0f, 1.0f,
+            -1.0f, -1.0f, 1.0f,
 
-        -1.0f,  1.0f, -1.0f,
-         1.0f,  1.0f, -1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-        -1.0f,  1.0f,  1.0f,
-        -1.0f,  1.0f, -1.0f,
+            -1.0f, 1.0f, -1.0f,
+            1.0f, 1.0f, -1.0f,
+            1.0f, 1.0f, 1.0f,
+            1.0f, 1.0f, 1.0f,
+            -1.0f, 1.0f, 1.0f,
+            -1.0f, 1.0f, -1.0f,
 
-        -1.0f, -1.0f, -1.0f,
-        -1.0f, -1.0f,  1.0f,
-         1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,
-        -1.0f, -1.0f,  1.0f,
-         1.0f, -1.0f,  1.0f
-    };
+            -1.0f, -1.0f, -1.0f,
+            -1.0f, -1.0f, 1.0f,
+            1.0f, -1.0f, -1.0f,
+            1.0f, -1.0f, -1.0f,
+            -1.0f, -1.0f, 1.0f,
+            1.0f, -1.0f, 1.0f};
 
     VkDeviceSize skyboxSize = sizeof(skyboxVertices[0]) * skyboxVertices.size();
     m_vertexCount = static_cast<uint32_t>(skyboxVertices.size()) / 3;
 
-    m_vertexBuffer = core::Buffer::createCopied(skyboxVertices.data(), skyboxSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
-    core::memory::MemoryUsage::CPU_TO_GPU);
+    m_vertexBuffer = core::Buffer::createCopied(skyboxVertices.data(), skyboxSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                core::memory::MemoryUsage::CPU_TO_GPU);
 
-    m_skyboxTexture = std::make_shared<TextureImage>();
+    m_skyboxTexture = std::make_shared<Texture>();
     m_skyboxTexture->loadCubemap(cubemaps, commandPool);
 
     VkDescriptorSetLayoutBinding cubemapBinding{};
@@ -77,15 +76,15 @@ core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6>& cubema
     cubemapBinding.pImmutableSamplers = nullptr;
     cubemapBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    m_descriptorSetLayout = core::DescriptorSetLayout::create(device, {cubemapBinding});
+    m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{cubemapBinding});
 
     auto pushConstant = PushConstant<PushConstantView>::getRange(VK_SHADER_STAGE_VERTEX_BIT);
 
-    m_pipelineLayout = core::PipelineLayout::create(device, {m_descriptorSetLayout}, {pushConstant});
+    m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{m_descriptorSetLayout}, std::vector<VkPushConstantRange>{pushConstant});
 
     m_descriptorSet = DescriptorSetBuilder::begin()
-    .addImage(m_skyboxTexture->vkImageView(), m_skyboxTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
-    .build(device, descriptorPool, m_descriptorSetLayout->vk());
+                          .addImage(m_skyboxTexture->vkImageView(), m_skyboxTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
+                          .build(device, descriptorPool, m_descriptorSetLayout->vk());
 
     core::Shader shader("./resources/shaders/skybox.vert.spv", "./resources/shaders/skybox.frag.spv");
 
@@ -100,13 +99,6 @@ core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6>& cubema
     attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
     attributeDescription.offset = 0;
 
-
-
-
-
-
-
-
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     VkPipelineMultisampleStateCreateInfo multisampling{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
@@ -119,7 +111,6 @@ core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6>& cubema
 
     std::vector<VkVertexInputBindingDescription> vertexBindingDescriptions;
     std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions;
-
 
     VkPipelineLayout layout = VK_NULL_HANDLE;
     uint32_t subpass = 0;
@@ -177,15 +168,14 @@ core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6>& cubema
     viewportState.viewportCount = 1;
     viewportState.scissorCount = 1;
 
-    dynamicStates = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = (uint32_t)dynamicStates.size();
     dynamicState.pDynamicStates = dynamicStates.data();
 
-
     depthStencil.depthWriteEnable = VK_FALSE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL; 
-    
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
     rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT;
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
@@ -204,21 +194,19 @@ core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6>& cubema
     viewportState.pViewports = &viewport;
     viewportState.pScissors = &scissor;
 
-    m_graphicsPipeline = std::make_shared<core::GraphicsPipeline>(device, renderPass->vk(), shaderStages.data(), static_cast<uint32_t>(shaderStages.size()), m_pipelineLayout->vk(), dynamicState, colorBlending, multisampling, 
-    rasterizer, viewportState, inputAssembly, vertexInputStateCI, subpass, depthStencil);
+    m_graphicsPipeline = std::make_shared<core::GraphicsPipeline>(device, renderPass->vk(), shaderStages.data(), static_cast<uint32_t>(shaderStages.size()), m_pipelineLayout->vk(), dynamicState, colorBlending, multisampling,
+                                                                  rasterizer, viewportState, inputAssembly, vertexInputStateCI, subpass, depthStencil);
 }
 
-void Skybox::render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat4& view, const glm::mat4& projection)
+void Skybox::render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat4 &view, const glm::mat4 &projection)
 {
     vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline->vk());
 
     glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
 
-    PushConstantView skyboxPushConstant
-    {
+    PushConstantView skyboxPushConstant{
         .view = skyboxView,
-        .projection = projection
-    };
+        .projection = projection};
 
     VkBuffer vertexBuffers[] = {m_vertexBuffer->vk()};
     VkDeviceSize offset[] = {0};

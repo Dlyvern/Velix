@@ -2,7 +2,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-void RenderGraphPassResourceHash::addTexture(std::size_t hash, core::Texture::SharedPtr texture)
+void RenderGraphPassResourceHash::addTexture(std::size_t hash, RenderTarget::SharedPtr texture)
 {
     m_textures[hash] = texture;
 }
@@ -22,7 +22,7 @@ void RenderGraphPassResourceHash::addRenderPass(std::size_t hash, core::RenderPa
     m_renderPasses[hash] = renderPass;
 }
 
-core::Texture::SharedPtr RenderGraphPassResourceHash::getTexture(std::size_t hash) const
+RenderTarget::SharedPtr RenderGraphPassResourceHash::getTexture(std::size_t hash) const
 {
     auto it = m_textures.find(hash);
 

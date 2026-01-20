@@ -25,7 +25,7 @@ public:
     Entity::SharedPtr addEntity(const std::string& name);
     void destroyEntity(Entity::SharedPtr entity);
 
-    void loadSceneFromFile(const std::string& filePath);
+    bool loadSceneFromFile(const std::string& filePath);
     void saveSceneToFile(const std::string& filePath);
 
     void update(float deltaTime);

@@ -1,33 +1,27 @@
-#ifndef ELIX_TEXTURE_HPP
-#define ELIX_TEXTURE_HPP
+#ifndef ELIX_RENDER_TARGET_HPP
+#define ELIX_RENDER_TARGET_HPP
 
 #include "Core/Macros.hpp"
 #include "Core/Image.hpp"
 #include "Core/Memory/MemoryFlags.hpp"
 
-#include <volk.h>
+ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-#include <memory>
-
-ELIX_NESTED_NAMESPACE_BEGIN(core)
-
-//VkImage + VkImageView handler(+ VkSampler for now...)
-class Texture
+// VkImage + VkImageView handler(+ VkSampler for now...)
+class RenderTarget
 {
-public:    
-    using SharedPtr = std::shared_ptr<Texture>;
-    
-    Texture(VkDevice device, VkPhysicalDevice physicalDevice,
-            VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
-            memory::MemoryUsage memFlags = memory::MemoryUsage::GPU_ONLY, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, 
-            uint32_t mipLevels = 0, uint32_t arrayLayers = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT) :
-    m_device(device), m_aspect(aspect), m_format(format), m_physicalDevice(physicalDevice)
+public:
+    using SharedPtr = std::shared_ptr<RenderTarget>;
+
+    RenderTarget(VkDevice device, VkPhysicalDevice physicalDevice,
+                 VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
+                 core::memory::MemoryUsage memFlags = core::memory::MemoryUsage::GPU_ONLY, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL,
+                 uint32_t mipLevels = 0, uint32_t arrayLayers = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT) : m_device(device), m_aspect(aspect), m_format(format), m_physicalDevice(physicalDevice)
     {
-        m_image = Image::createShared(extent.width, extent.height, usage, memFlags, format, tiling);
+        m_image = core::Image::createShared(extent.width, extent.height, usage, memFlags, format, tiling);
     }
 
-    Texture(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat format, VkImageAspectFlags aspect, core::Image::SharedPtr image) :
-    m_device(device), m_physicalDevice(physicalDevice), m_format(format), m_aspect(aspect), m_image(image)
+    RenderTarget(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat format, VkImageAspectFlags aspect, core::Image::SharedPtr image) : m_device(device), m_physicalDevice(physicalDevice), m_format(format), m_aspect(aspect), m_image(image)
     {
         createVkImageView();
     }
@@ -37,7 +31,7 @@ public:
         m_image = image;
     }
 
-    void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling)
+    void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, core::memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling)
     {
         m_image->createVk(m_physicalDevice, extent, usage, memFlags, format, tiling);
     }
@@ -63,13 +57,13 @@ public:
         imageViewCI.subresourceRange.baseArrayLayer = 0;
         imageViewCI.subresourceRange.layerCount = 1;
 
-        if(vkCreateImageView(m_device, &imageViewCI, nullptr, &m_imageView) != VK_SUCCESS)
+        if (vkCreateImageView(m_device, &imageViewCI, nullptr, &m_imageView) != VK_SUCCESS)
             throw std::runtime_error("Failed to create image views");
     }
 
     void destroyVkImageView()
     {
-        if(m_imageView)
+        if (m_imageView)
         {
             vkDestroyImageView(m_device, m_imageView, nullptr);
             m_imageView = VK_NULL_HANDLE;
@@ -96,11 +90,12 @@ public:
         return m_sampler;
     }
 
-    ~Texture()
+    ~RenderTarget()
     {
         destroyVkImage();
         destroyVkImageView();
     }
+
 private:
     VkDevice m_device{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
@@ -108,9 +103,9 @@ private:
     VkImageView m_imageView{VK_NULL_HANDLE};
     VkFormat m_format{VK_FORMAT_UNDEFINED};
     VkImageAspectFlags m_aspect;
-    VkSampler m_sampler{VK_NULL_HANDLE}; //TODO it needs to be fixed
+    VkSampler m_sampler{VK_NULL_HANDLE}; // TODO it needs to be fixed
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_TEXTURE_HPP
+#endif // ELIX_RENDER_TARGET_HPP

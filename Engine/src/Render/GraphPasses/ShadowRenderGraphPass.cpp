@@ -50,24 +50,23 @@ ShadowRenderGraphPass::ShadowRenderGraphPass(VkDevice device)
     subpassDependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
     subpassDependency.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     subpassDependency.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    subpassDependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+    // subpassDependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
     m_renderPass = core::RenderPass::create({depthAttachmentDescription}, {subpassDescription}, {subpassDependency});
 
     m_depthImage = core::Image::createShared(m_width, m_height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY,
-    depthFormat);
+                                             depthFormat);
 
     m_depthImage->insertImageMemoryBarrier(
-        0,                                      
-        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 
-        VK_IMAGE_LAYOUT_UNDEFINED,              
+        0,
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        VK_IMAGE_LAYOUT_UNDEFINED,
         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,      
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
         {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
         m_commandPool,
-        core::VulkanContext::getContext()->getGraphicsQueue()
-    );
+        core::VulkanContext::getContext()->getGraphicsQueue());
 
     VkImageViewCreateInfo imageViewCI{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     imageViewCI.format = depthFormat;
@@ -83,7 +82,7 @@ ShadowRenderGraphPass::ShadowRenderGraphPass(VkDevice device)
     imageViewCI.subresourceRange.baseArrayLayer = 0;
     imageViewCI.subresourceRange.layerCount = 1;
 
-    if(vkCreateImageView(device, &imageViewCI, nullptr, &m_depthImageView) != VK_SUCCESS)
+    if (vkCreateImageView(device, &imageViewCI, nullptr, &m_depthImageView) != VK_SUCCESS)
         throw std::runtime_error("Failed to create image view");
 
     VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -103,7 +102,7 @@ ShadowRenderGraphPass::ShadowRenderGraphPass(VkDevice device)
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = 1.0f;
 
-    if(vkCreateSampler(device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
+    if (vkCreateSampler(device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
         throw std::runtime_error("Failed to create a sample");
 
     std::vector<VkImageView> attachments{m_depthImageView};
@@ -116,12 +115,12 @@ ShadowRenderGraphPass::ShadowRenderGraphPass(VkDevice device)
     framebufferCI.pAttachments = attachments.data();
     framebufferCI.layers = 1;
 
-    if(vkCreateFramebuffer(device, &framebufferCI, nullptr, &m_framebuffer) != VK_SUCCESS)
+    if (vkCreateFramebuffer(device, &framebufferCI, nullptr, &m_framebuffer) != VK_SUCCESS)
         throw std::runtime_error("Failed to create framebuffer");
 
     m_clearValue.depthStencil = {1.0f, 0};
 
-    m_pipelineLayout = core::PipelineLayout::create(device, {}, {PushConstant<LightSpaceMatrixPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)});
+    m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{}, std::vector<VkPushConstantRange>{PushConstant<LightSpaceMatrixPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)});
 
     m_viewport.height = static_cast<float>(m_height);
     m_viewport.width = static_cast<float>(m_width);
@@ -138,7 +137,6 @@ void ShadowRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr co
 {
     // barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     // barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
 
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
@@ -161,14 +159,12 @@ void ShadowRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr co
         0,
         0, nullptr,
         0, nullptr,
-        1, &barrier
-    );
+        1, &barrier);
 }
 
-void ShadowRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuilder)
+void ShadowRenderGraphPass::setup(RenderGraphPassRecourceBuilder &graphPassBuilder)
 {
-    RenderGraphPassResourceTypes::SizeSpec sizeSpec
-    {
+    RenderGraphPassResourceTypes::SizeSpec sizeSpec{
         .type = RenderGraphPassResourceTypes::SizeClass::Custom,
         .width = m_width,
         .height = m_height,
@@ -196,16 +192,14 @@ void ShadowRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuild
         .renderPass = m_renderPass,
         // .renderPassHash = m_renderPassHash,
         .size = sizeSpec,
-        .layers = 1
-    };
+        .layers = 1};
 
     m_framebufferHash = graphPassBuilder.createFramebuffer(framebufferDescription);
 
     auto shader = core::Shader::create("./resources/shaders/static_mesh_shadow.vert.spv",
-    "./resources/shaders/empty.frag.spv");
+                                       "./resources/shaders/empty.frag.spv");
 
-    RenderGraphPassResourceTypes::GraphicsPipelineDescription graphicsPipeline
-    {
+    RenderGraphPassResourceTypes::GraphicsPipelineDescription graphicsPipeline{
         .name = "__ELIX_SHADOW_GRAPHICS_PIPELINE__",
         .vertexBindingDescriptions = {Vertex3D::getBindingDescription()},
         .vertexAttributeDescriptions = {Vertex3D::getAttributeDescriptions()},
@@ -213,14 +207,13 @@ void ShadowRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuild
         .renderPass = m_renderPass->vk(),
     };
 
-    graphicsPipeline.dynamicStates = 
-    {
-        VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
-        VK_DYNAMIC_STATE_DEPTH_BIAS
-    };
+    graphicsPipeline.dynamicStates =
+        {
+            VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+            VK_DYNAMIC_STATE_DEPTH_BIAS};
 
     graphicsPipeline.viewport = m_viewport;
-    graphicsPipeline.scissor= m_scissor;
+    graphicsPipeline.scissor = m_scissor;
     graphicsPipeline.shader = shader;
 
     graphicsPipeline.rasterizer.depthBiasEnable = VK_TRUE;
@@ -234,27 +227,26 @@ void ShadowRenderGraphPass::setup(RenderGraphPassRecourceBuilder& graphPassBuild
     m_graphicsPipelineHash = graphPassBuilder.createGraphicsPipeline(graphicsPipeline);
 }
 
-void ShadowRenderGraphPass::compile(RenderGraphPassResourceHash& storage)
+void ShadowRenderGraphPass::compile(RenderGraphPassResourceHash &storage)
 {
     m_graphicsPipeline = storage.getGraphicsPipeline(m_graphicsPipelineHash);
 
     // m_depthImage = storage.getTexture(m_depthImageHash);
 
     // m_depthImage->insertImageMemoryBarrier(
-    //     0,                                      
-    //     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 
-    //     VK_IMAGE_LAYOUT_UNDEFINED,              
+    //     0,
+    //     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    //     VK_IMAGE_LAYOUT_UNDEFINED,
     //     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    //     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,      
+    //     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
     //     VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
     //     {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
     //     m_commandPool,
     //     core::VulkanContext::getContext()->getGraphicsQueue()
     // );
-
 }
 
-void ShadowRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData& data)
+void ShadowRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data)
 {
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);
     vkCmdSetDepthBias(commandBuffer->vk(), 1.25f, 0.0f, 1.75f);
@@ -262,9 +254,9 @@ void ShadowRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer
 
     vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline->vk());
 
-    for(const auto& [entity, gpuEntity] : data.meshes)
+    for (const auto &[entity, gpuEntity] : data.meshes)
     {
-        for(const auto& mesh : gpuEntity.meshes)
+        for (const auto &mesh : gpuEntity.meshes)
         {
             VkBuffer vertexBuffers[] = {mesh->vertexBuffer->vk()};
             VkDeviceSize offset[] = {0};
@@ -272,11 +264,9 @@ void ShadowRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer
             vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
             vkCmdBindIndexBuffer(commandBuffer->vk(), mesh->indexBuffer->vk(), 0, mesh->indexType);
 
-            LightSpaceMatrixPushConstant lightSpaceMatrixPushConstant
-            {
+            LightSpaceMatrixPushConstant lightSpaceMatrixPushConstant{
                 .lightSpaceMatrix = data.lightSpaceMatrix,
-                .model = gpuEntity.transform
-            };
+                .model = gpuEntity.transform};
 
             vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(LightSpaceMatrixPushConstant), &lightSpaceMatrixPushConstant);
             vkCmdDrawIndexed(commandBuffer->vk(), mesh->indicesCount, 1, 0, 0, 0);
@@ -284,12 +274,11 @@ void ShadowRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer
     }
 }
 
-void ShadowRenderGraphPass::update(const RenderGraphPassContext& renderData)
+void ShadowRenderGraphPass::update(const RenderGraphPassContext &renderData)
 {
-
 }
 
-void ShadowRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const
+void ShadowRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const
 {
     renderPassBeginInfo = VkRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     renderPassBeginInfo.renderPass = m_renderPass->vk();

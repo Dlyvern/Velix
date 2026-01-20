@@ -5,12 +5,12 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 ShaderFamily engineShaderFamilies::staticMeshShaderFamily;
 core::DescriptorSetLayout::SharedPtr engineShaderFamilies::staticMeshCameraLayout = nullptr;
-core::DescriptorSetLayout::SharedPtr engineShaderFamilies::staticMeshLightLayout  = nullptr;
+core::DescriptorSetLayout::SharedPtr engineShaderFamilies::staticMeshLightLayout = nullptr;
 core::DescriptorSetLayout::SharedPtr engineShaderFamilies::staticMeshMaterialLayout = nullptr;
 
 void engineShaderFamilies::initEngineShaderFamilies()
 {
-    //!look at me
+    //! look at me
     // staticMeshShaderFamily.layouts.reserve(3);
 
     {
@@ -35,7 +35,7 @@ void engineShaderFamilies::initEngineShaderFamilies()
         lightMapBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         lightMapBinding.pImmutableSamplers = nullptr;
 
-        staticMeshCameraLayout = staticMeshShaderFamily.layouts.emplace_back(core::DescriptorSetLayout::create(core::VulkanContext::getContext()->getDevice(), {uboLayoutBinding, lightSpaceBinding, lightMapBinding}));
+        staticMeshCameraLayout = staticMeshShaderFamily.layouts.emplace_back(core::DescriptorSetLayout::createShared(core::VulkanContext::getContext()->getDevice(), std::vector<VkDescriptorSetLayoutBinding>{uboLayoutBinding, lightSpaceBinding, lightMapBinding}));
     }
 
     {
@@ -46,7 +46,7 @@ void engineShaderFamilies::initEngineShaderFamilies()
         lightSSBOLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         lightSSBOLayoutBinding.pImmutableSamplers = nullptr;
 
-        staticMeshLightLayout = staticMeshShaderFamily.layouts.emplace_back(core::DescriptorSetLayout::create(core::VulkanContext::getContext()->getDevice(), {lightSSBOLayoutBinding}));
+        staticMeshLightLayout = staticMeshShaderFamily.layouts.emplace_back(core::DescriptorSetLayout::createShared(core::VulkanContext::getContext()->getDevice(), std::vector<VkDescriptorSetLayoutBinding>{lightSSBOLayoutBinding}));
     }
 
     {
@@ -64,7 +64,7 @@ void engineShaderFamilies::initEngineShaderFamilies()
         colorLayoutBinding.pImmutableSamplers = nullptr;
         colorLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        staticMeshMaterialLayout = staticMeshShaderFamily.layouts.emplace_back(core::DescriptorSetLayout::create(core::VulkanContext::getContext()->getDevice(), {textureLayoutBinding, colorLayoutBinding}));
+        staticMeshMaterialLayout = staticMeshShaderFamily.layouts.emplace_back(core::DescriptorSetLayout::createShared(core::VulkanContext::getContext()->getDevice(), std::vector<VkDescriptorSetLayoutBinding>{textureLayoutBinding, colorLayoutBinding}));
     }
 
     struct ModelPushConstant
@@ -72,19 +72,23 @@ void engineShaderFamilies::initEngineShaderFamilies()
         glm::mat4 modelMatrix;
     };
 
-    const std::vector<VkPushConstantRange> pushConstants
-    {
-        PushConstant<ModelPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)
-    };
+    const std::vector<VkPushConstantRange> pushConstants{
+        PushConstant<ModelPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)};
 
-    const std::vector<core::DescriptorSetLayout::SharedPtr> setLayouts
-    {
+    const std::vector<core::DescriptorSetLayout::SharedPtr> setLayouts{
         staticMeshCameraLayout,
         staticMeshMaterialLayout,
         staticMeshLightLayout,
     };
 
-    staticMeshShaderFamily.pipelineLayout = core::PipelineLayout::create(core::VulkanContext::getContext()->getDevice(), setLayouts, pushConstants);
+    staticMeshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(core::VulkanContext::getContext()->getDevice(), setLayouts, pushConstants);
+}
 
+void engineShaderFamilies::cleanEngineShaderFamilies()
+{
+    staticMeshShaderFamily.pipelineLayout->destroyVk();
+
+    for (auto &descriptorSetLayout : staticMeshShaderFamily.layouts)
+        descriptorSetLayout->destroyVk();
 }
 ELIX_NESTED_NAMESPACE_END

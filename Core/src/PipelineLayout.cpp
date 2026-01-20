@@ -4,13 +4,21 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-PipelineLayout::PipelineLayout(VkDevice device, const std::vector<DescriptorSetLayout::SharedPtr>& setLayouts, const std::vector<VkPushConstantRange>& pushConstants)
-: m_device(device)
+PipelineLayout::PipelineLayout(VkDevice device, const std::vector<DescriptorSetLayout::SharedPtr> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants)
+    : m_device(device)
 {
+    createVk(setLayouts, pushConstants);
+}
+
+void PipelineLayout::createVk(const std::vector<DescriptorSetLayout::SharedPtr> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants)
+{
+    ELIX_VK_CREATE_GUARD()
+
     //*That is kinda sad...
+
     std::vector<VkDescriptorSetLayout> vkSetLayouts;
 
-    for(auto& des : setLayouts)
+    for (auto &des : setLayouts)
         vkSetLayouts.push_back(des->vk());
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -19,24 +27,24 @@ PipelineLayout::PipelineLayout(VkDevice device, const std::vector<DescriptorSetL
     pipelineLayoutInfo.pushConstantRangeCount = static_cast<uint32_t>(pushConstants.size());
     pipelineLayoutInfo.pPushConstantRanges = pushConstants.data();
 
-    if(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS)
+    if (vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_handle) != VK_SUCCESS)
         throw std::runtime_error("Failed to create pipeline layout");
+
+    ELIX_VK_CREATE_GUARD_DONE()
 }
 
-PipelineLayout::SharedPtr PipelineLayout::create(VkDevice device, const std::vector<DescriptorSetLayout::SharedPtr>& setLayouts, const std::vector<VkPushConstantRange>& pushConstants)
+void PipelineLayout::destroyVkImpl()
 {
-    return std::make_shared<PipelineLayout>(device, setLayouts, pushConstants);
-}
-
-VkPipelineLayout PipelineLayout::vk()
-{
-    return m_pipelineLayout;
+    if (m_handle)
+    {
+        vkDestroyPipelineLayout(m_device, m_handle, nullptr);
+        m_handle = VK_NULL_HANDLE;
+    }
 }
 
 PipelineLayout::~PipelineLayout()
 {
-    if(m_pipelineLayout)
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+    destroyVk();
 }
 
 ELIX_NESTED_NAMESPACE_END

@@ -14,15 +14,15 @@
 #include "Core/Memory/VMAAllocator.hpp"
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
+                                                    VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData)
 {
-    if(messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+    if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
         std::cerr << (std::string(pCallbackData->pMessage)) << std::endl;
     // else if(messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
     //     std::cout << (std::string(pCallbackData->pMessage)) << std::endl;
-    else if(messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
+    else if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
         std::cout << (std::string(pCallbackData->pMessage)) << std::endl;
-    else if(messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+    else if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
         std::cerr << (std::string(pCallbackData->pMessage)) << std::endl;
 
     return VK_FALSE;
@@ -32,9 +32,9 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 std::shared_ptr<VulkanContext> VulkanContext::create(std::shared_ptr<platform::Window> window)
 {
-    if(s_vulkanContext)
+    if (s_vulkanContext)
         return s_vulkanContext;
-    
+
     s_vulkanContext = std::make_shared<VulkanContext>(window);
 
     return s_vulkanContext;
@@ -42,9 +42,9 @@ std::shared_ptr<VulkanContext> VulkanContext::create(std::shared_ptr<platform::W
 
 std::shared_ptr<VulkanContext> VulkanContext::getContext()
 {
-    if(!s_vulkanContext)
+    if (!s_vulkanContext)
         throw std::runtime_error("NO VULKAN CONTEXT CREATED");
-    
+
     return s_vulkanContext;
 }
 
@@ -61,16 +61,16 @@ VulkanContext::VulkanContext(platform::Window::SharedPtr window)
 
 VulkanContext::~VulkanContext()
 {
-    if(!m_isCleanedUp)
+    if (!m_isCleanedUp)
     {
         std::cerr << "ERROR: VulkanContext destroyed without calling cleanup()!!!" << std::endl;
-        //DO NOT CALL cleanup here. It is too late...
+        // DO NOT CALL cleanup here. It is too late...
     }
 }
 
 void VulkanContext::initVulkan(std::shared_ptr<platform::Window> window)
 {
-    if(volkInitialize() != VK_SUCCESS)
+    if (volkInitialize() != VK_SUCCESS)
         throw std::runtime_error("Failed to initialize volk");
 
     createInstance();
@@ -88,17 +88,16 @@ void VulkanContext::createLogicalDevice()
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos{};
 
-    std::set<uint32_t> uniqueQueueFamilies = 
-    {
-        m_queueFamilyIndices.graphicsFamily.value(), 
-        m_queueFamilyIndices.presentFamily.value(),
-        m_queueFamilyIndices.computeFamily.value(),
-        m_queueFamilyIndices.transferFamily.value()
-    };
+    std::set<uint32_t> uniqueQueueFamilies =
+        {
+            m_queueFamilyIndices.graphicsFamily.value(),
+            m_queueFamilyIndices.presentFamily.value(),
+            m_queueFamilyIndices.computeFamily.value(),
+            m_queueFamilyIndices.transferFamily.value()};
 
     float queuePriority{1.0f};
 
-    for(uint32_t queueFamily : uniqueQueueFamilies)
+    for (uint32_t queueFamily : uniqueQueueFamilies)
     {
         VkDeviceQueueCreateInfo queueCreateInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
         queueCreateInfo.queueFamilyIndex = queueFamily;
@@ -120,27 +119,27 @@ void VulkanContext::createLogicalDevice()
     createInfo.ppEnabledExtensionNames = m_deviceExtensions.data();
     createInfo.enabledLayerCount = 0;
 
-    if(m_isValidationLayersEnabled)
+    if (m_isValidationLayersEnabled)
     {
         createInfo.enabledLayerCount = m_validationLayers.size();
         createInfo.ppEnabledLayerNames = m_validationLayers.data();
     }
 
-    if(vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_vkDevice) != VK_SUCCESS)
+    if (vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_vkDevice) != VK_SUCCESS)
         throw std::runtime_error("Failed to create logical device");
-    
+
     vkGetDeviceQueue(m_vkDevice, m_queueFamilyIndices.graphicsFamily.value(), 0, &m_graphicsQueue);
     vkGetDeviceQueue(m_vkDevice, m_queueFamilyIndices.presentFamily.value(), 0, &m_presentQueue);
     vkGetDeviceQueue(m_vkDevice, m_queueFamilyIndices.transferFamily.value(), 0, &m_transferQueue);
     vkGetDeviceQueue(m_vkDevice, m_queueFamilyIndices.computeFamily.value(), 0, &m_computeQueue);
-    
+
     volkLoadDevice(m_vkDevice);
 
-    m_transferCommandPool = CommandPool::createShared(m_vkDevice, m_queueFamilyIndices.transferFamily.value(), 
-    VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+    m_transferCommandPool = CommandPool::createShared(m_vkDevice, m_queueFamilyIndices.transferFamily.value(),
+                                                      VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
-    m_graphicsCommandPool = CommandPool::createShared(m_vkDevice, m_queueFamilyIndices.transferFamily.value(), 
-    VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+    m_graphicsCommandPool = CommandPool::createShared(m_vkDevice, m_queueFamilyIndices.transferFamily.value(),
+                                                      VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
     auto vmaAllocator = std::make_unique<allocators::VMAAllocator>(m_instance, m_physicalDevice, m_vkDevice);
     m_device = Device::createShared(m_vkDevice, m_physicalDevice, std::move(vmaAllocator));
@@ -151,7 +150,7 @@ uint32_t VulkanContext::getGraphicsFamily() const
     return m_queueFamilyIndices.graphicsFamily.value();
 }
 
-const VulkanContext::QueueFamilyIndices& VulkanContext::getQueueFamilyIndices() const
+const VulkanContext::QueueFamilyIndices &VulkanContext::getQueueFamilyIndices() const
 {
     return m_queueFamilyIndices;
 }
@@ -168,37 +167,37 @@ VulkanContext::QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDev
 
     QueueFamilyIndices indices;
 
-    for(int index = 0; index < queueFamilyCount; ++index)
+    for (int index = 0; index < queueFamilyCount; ++index)
     {
         VkBool32 presentSupport{VK_FALSE};
 
-        const auto& queueFamily = queueFamiles[index];
+        const auto &queueFamily = queueFamiles[index];
 
         vkGetPhysicalDeviceSurfaceSupportKHR(device, index, surface, &presentSupport);
 
-        if(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
         {
             indices.graphicsFamily = index;
 
-            if(presentSupport)
+            if (presentSupport)
                 indices.presentFamily = index;
         }
 
-        if(queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT))
+        if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT))
             indices.computeFamily = index;
 
-        if(queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) && 
-        !(queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT))
+        if (queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
+            !(queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT))
             indices.transferFamily = index;
 
         if (presentSupport && !indices.presentFamily.has_value())
             indices.presentFamily = index;
     }
 
-    if(!indices.hasCompute())
+    if (!indices.hasCompute())
         indices.computeFamily = indices.graphicsFamily;
-    
-    if(!indices.hasTransfer())
+
+    if (!indices.hasTransfer())
         indices.transferFamily = indices.graphicsFamily;
 
     return indices;
@@ -223,7 +222,7 @@ bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device)
 
     std::set<std::string> requiredExtensions(m_deviceExtensions.begin(), m_deviceExtensions.end());
 
-    for(const auto& extension : availableExtensions)
+    for (const auto &extension : availableExtensions)
         requiredExtensions.erase(extension.extensionName);
 
     return requiredExtensions.empty();
@@ -237,7 +236,7 @@ bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device)
 
     bool swapChainAdequate{false};
 
-    if(extensionsSupported)
+    if (extensionsSupported)
     {
         std::vector<VkSurfaceFormatKHR> formats;
         std::vector<VkPresentModeKHR> presentModes;
@@ -246,7 +245,7 @@ bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device)
 
         vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_surface, &formatCount, nullptr);
 
-        if(formatCount != 0)
+        if (formatCount != 0)
         {
             formats.resize(formatCount);
             vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_surface, &formatCount, formats.data());
@@ -256,12 +255,12 @@ bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device)
 
         vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_surface, &presentModeCount, nullptr);
 
-        if(presentModeCount != 0)
+        if (presentModeCount != 0)
         {
             presentModes.resize(presentModeCount);
             vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_surface, &presentModeCount, presentModes.data());
         }
-        
+
         swapChainAdequate = !formats.empty() && !presentModes.empty();
     }
 
@@ -280,7 +279,7 @@ void VulkanContext::pickPhysicalDevice()
 
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
 
-    if(deviceCount == 0)
+    if (deviceCount == 0)
         throw std::runtime_error("Failed to find GPUs with Vulkan support");
 
     std::vector<VkPhysicalDevice> devices(deviceCount);
@@ -299,7 +298,7 @@ void VulkanContext::pickPhysicalDevice()
 
     VkPhysicalDevice firstPickedDevice{VK_NULL_HANDLE};
 
-    for(const auto& device : devices)
+    for (const auto &device : devices)
     {
         if (!isDeviceSuitable(device))
             continue;
@@ -346,36 +345,37 @@ void VulkanContext::pickPhysicalDevice()
 
         candidates.push_back({device, props, score, canPresent});
 
-        if(isDeviceSuitable(device) && !firstPickedDevice)
+        if (isDeviceSuitable(device) && !firstPickedDevice)
             firstPickedDevice = device;
     }
 
-    if(candidates.empty())
+    if (candidates.empty())
         throw std::runtime_error("Failed to find a suitable GPU");
 
-    std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {return a.score > b.score; });
+    std::sort(candidates.begin(), candidates.end(), [](const auto &a, const auto &b)
+              { return a.score > b.score; });
 
-    for(const auto& candidate : candidates)
+    for (const auto &candidate : candidates)
     {
         std::cout << "GPU: " << candidate.props.deviceName << std::endl;
         std::cout << "Score: " << candidate.score << std::endl;
 
         std::cout << "[Vulkan] Selected GPU: " << candidate.props.deviceName
-                << " ("
-                << (candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete" :
-                    candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated" : "Other")
-                << ")\n";
+                  << " ("
+                  << (candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete" : candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated"
+                                                                                                                                                                             : "Other")
+                  << ")\n";
     }
 
     // m_physicalDevice = candidates.front().device;
     m_physicalDevice = firstPickedDevice;
-    if(!m_physicalDevice)
+    if (!m_physicalDevice)
         throw std::runtime_error("Failed to find a suitable GPU");
 }
 
 void VulkanContext::createSurface(platform::Window::SharedPtr window)
 {
-    if(glfwCreateWindowSurface(m_instance, window->getRawHandler(), nullptr, &m_surface) != VK_SUCCESS)
+    if (glfwCreateWindowSurface(m_instance, window->getRawHandler(), nullptr, &m_surface) != VK_SUCCESS)
         throw std::runtime_error("Failed to create window surface");
 }
 
@@ -390,9 +390,9 @@ void VulkanContext::createInstance()
 
     uint32_t glfwExtensionCount{0};
 
-    const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+    const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-    uint32_t extensionCount{0};    
+    uint32_t extensionCount{0};
 
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
 
@@ -402,7 +402,7 @@ void VulkanContext::createInstance()
 
     std::unordered_map<std::string, bool> presentedExtensions;
 
-    for(int index = 0; index < glfwExtensionCount; ++index)
+    for (int index = 0; index < glfwExtensionCount; ++index)
     {
         std::string glfwExtension{glfwExtensions[index]};
         presentedExtensions[glfwExtension] = false;
@@ -411,19 +411,19 @@ void VulkanContext::createInstance()
 #endif
     }
 
-    for(const auto& extension : extensions)
+    for (const auto &extension : extensions)
     {
 #ifdef DEBUG_BUILD
-        std::cout << ("Vulkan extension: ") << extension.extensionName << std::endl;  
+        std::cout << ("Vulkan extension: ") << extension.extensionName << std::endl;
 #endif
         auto it = presentedExtensions.find(extension.extensionName);
 
-        if(it != presentedExtensions.end())
+        if (it != presentedExtensions.end())
             it->second = true;
     }
 
-    for(const auto& [name, found] : presentedExtensions)
-        if(!found)
+    for (const auto &[name, found] : presentedExtensions)
+        if (!found)
             throw std::runtime_error("Failed to find GLFW extension in Vulkan " + name);
 
     VkInstanceCreateInfo createInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -431,13 +431,16 @@ void VulkanContext::createInstance()
     createInfo.enabledExtensionCount = glfwExtensionCount;
     createInfo.ppEnabledExtensionNames = glfwExtensions;
 
-    if(m_isValidationLayersEnabled)
+    if (m_isValidationLayersEnabled)
     {
-        if(!checkValidationLayers())
+        if (!checkValidationLayers())
+        {
             std::cerr << ("Validation layers required, but not available") << std::endl;
+            m_isValidationLayersEnabled = false;
+        }
         else
         {
-            createInfo.enabledLayerCount = m_validationLayers.size();
+            createInfo.enabledLayerCount = static_cast<uint32_t>(m_validationLayers.size());
             createInfo.ppEnabledLayerNames = m_validationLayers.data();
         }
     }
@@ -449,7 +452,7 @@ void VulkanContext::createInstance()
     createInfo.enabledExtensionCount = newExtensions.size();
     createInfo.ppEnabledExtensionNames = newExtensions.data();
 
-    if(vkCreateInstance(&createInfo, nullptr, &m_instance) != VK_SUCCESS)
+    if (vkCreateInstance(&createInfo, nullptr, &m_instance) != VK_SUCCESS)
         throw std::runtime_error("Failed to create Vulkan instance");
 
     volkLoadInstance(m_instance);
@@ -467,11 +470,11 @@ bool VulkanContext::checkValidationLayers()
 
     bool layerFound{false};
 
-    for(const auto& layerName : m_validationLayers)
+    for (const auto &layerName : m_validationLayers)
     {
-        for(const auto& availableLayer : availableLayers)
+        for (const auto &availableLayer : availableLayers)
         {
-            if(strcmp(layerName, availableLayer.layerName) == 0)
+            if (strcmp(layerName, availableLayer.layerName) == 0)
             {
                 layerFound = true;
                 break;
@@ -489,15 +492,15 @@ VkPhysicalDeviceProperties VulkanContext::getPhysicalDevicePoperties()
     return properties;
 }
 
-std::vector<const char*> VulkanContext::getRequiredExtensions()
+std::vector<const char *> VulkanContext::getRequiredExtensions()
 {
     uint32_t glfwExtensionCount{0};
 
-    const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+    const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-    std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+    std::vector<const char *> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
-    if(m_isValidationLayersEnabled)
+    if (m_isValidationLayersEnabled)
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
     return extensions;
@@ -507,13 +510,13 @@ void VulkanContext::createDebugger()
 {
 #ifdef DEBUG_BUILD
     VkDebugUtilsMessengerCreateInfoEXT createInfo{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
-    createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | 
-    VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
-    VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
+                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     createInfo.flags = 0;
 
     createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-    VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+                             VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
 
     createInfo.pfnUserCallback = debugCallback;
     createInfo.pUserData = nullptr;
@@ -528,7 +531,7 @@ void VulkanContext::createDebugger()
 
 void VulkanContext::cleanup()
 {
-    if(m_isCleanedUp)
+    if (m_isCleanedUp)
         return;
 
     if (m_device)
@@ -536,16 +539,19 @@ void VulkanContext::cleanup()
 
     m_swapChain->cleanup();
 
+    m_graphicsCommandPool->destroyVk();
+    m_transferCommandPool->destroyVk();
+
     if (m_device)
-        vkDestroyDevice(m_device, nullptr), m_device = VK_NULL_HANDLE;
+        m_device->clean();
 
     if (m_debugMessenger)
     {
-        auto fpDestroy = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT");\
+        auto fpDestroy = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT");
 
         if (fpDestroy)
             fpDestroy(m_instance, m_debugMessenger, nullptr);
-        
+
         m_debugMessenger = VK_NULL_HANDLE;
     }
 

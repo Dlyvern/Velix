@@ -3,14 +3,14 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-Image::Image(uint32_t width, uint32_t height, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format, 
-VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags) : m_device(VulkanContext::getContext()->getDevice())
+Image::Image(uint32_t width, uint32_t height, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
+             VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags) : m_device(VulkanContext::getContext()->getDevice())
 {
     createVk(VulkanContext::getContext()->getPhysicalDevice(), VkExtent2D{.width = width, .height = height}, usage, memFlags, format, tiling, arrayLayers, flags);
 }
 
-void Image::createVk(VkPhysicalDevice physicalDevice, VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format, 
-VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags)
+void Image::createVk(VkPhysicalDevice physicalDevice, VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
+                     VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags)
 {
     ELIX_VK_CREATE_GUARD()
 
@@ -66,30 +66,44 @@ void Image::copyBufferToImage(Buffer::SharedPtr buffer, uint32_t width, uint32_t
         region.imageSubresource.layerCount = 1;
         region.imageOffset = {0, 0, 0};
         region.imageExtent = {width, height, 1};
-        
+
         regions.push_back(region);
         offset += width * height * 4;
     }
-    
+
     vkCmdCopyBufferToImage(cb, buffer->vk(), m_handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()), regions.data());
-    
+
     cb->end();
 
-    cb->submit(queue);
+    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    fenceInfo.flags = 0;
 
-    vkQueueWaitIdle(queue);
+    VkFence fence = VK_NULL_HANDLE;
+
+    if (vkCreateFence(core::VulkanContext::getContext()->getDevice(), &fenceInfo, nullptr, &fence) != VK_SUCCESS)
+        std::cerr << "Failed to create fence for image memory barrier. Falling back to vkQueueWaitIdle\n";
+
+    cb->submit(queue, {}, {}, {}, fence);
+
+    if (fence)
+    {
+        vkWaitForFences(core::VulkanContext::getContext()->getDevice(), 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(core::VulkanContext::getContext()->getDevice(), fence, nullptr);
+    }
+    else
+        vkQueueWaitIdle(queue);
 }
 
 void Image::insertImageMemoryBarrier(VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,
-VkImageLayout oldImageLayout, VkImageLayout newImageLayout, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
-VkImageSubresourceRange subresourceRange, CommandPool::SharedPtr commandPool, VkQueue queue)
+                                     VkImageLayout oldImageLayout, VkImageLayout newImageLayout, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
+                                     VkImageSubresourceRange subresourceRange, CommandPool::SharedPtr commandPool, VkQueue queue)
 {
-    if(!commandPool)
+    if (!commandPool)
         commandPool = core::VulkanContext::getContext()->getGraphicsCommandPool();
 
-    if(!queue)
+    if (!queue)
         queue = VulkanContext::getContext()->getGraphicsQueue();
-    
+
     auto cb = CommandBuffer::createShared(commandPool);
     cb->begin();
 
@@ -107,15 +121,31 @@ VkImageSubresourceRange subresourceRange, CommandPool::SharedPtr commandPool, Vk
 
     cb->end();
 
-    cb->submit(queue);
+    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    fenceInfo.flags = 0;
+
+    VkFence fence = VK_NULL_HANDLE;
+
+    if (vkCreateFence(core::VulkanContext::getContext()->getDevice(), &fenceInfo, nullptr, &fence) != VK_SUCCESS)
+        std::cerr << "Failed to create fence for image memory barrier. Falling back to vkQueueWaitIdle\n";
+
+    cb->submit(queue, {}, {}, {}, fence);
+
+    if (fence)
+    {
+        vkWaitForFences(core::VulkanContext::getContext()->getDevice(), 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(core::VulkanContext::getContext()->getDevice(), fence, nullptr);
+    }
+    else
+        vkQueueWaitIdle(queue);
 }
 
 void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t layerCount)
 {
-    if(!commandPool)
+    if (!commandPool)
         commandPool = core::VulkanContext::getContext()->getGraphicsCommandPool();
 
-    if(!queue)
+    if (!queue)
         queue = VulkanContext::getContext()->getGraphicsQueue();
 
     auto cb = CommandBuffer::createShared(commandPool);
@@ -125,6 +155,7 @@ void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkIm
     barrier.oldLayout = oldLayout;
     barrier.newLayout = newLayout;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = m_handle;
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -138,17 +169,17 @@ void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkIm
     VkPipelineStageFlags sourceStage;
     VkPipelineStageFlags destinationStage;
 
-    if(newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+    if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
     {
         barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 
-        if(helpers::hasStencilComponent(format))
+        if (helpers::hasStencilComponent(format))
             barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
     }
-    else 
+    else
         barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 
-    if(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
     {
         barrier.srcAccessMask = 0;
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -156,7 +187,7 @@ void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkIm
         sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     }
-    else if(oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
     {
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -164,7 +195,7 @@ void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkIm
         sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
         destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     }
-    else if(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+    else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
     {
         barrier.srcAccessMask = 0;
         barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -179,12 +210,28 @@ void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkIm
 
     cb->end();
 
-    cb->submit(queue);
+    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    fenceInfo.flags = 0;
+
+    VkFence fence = VK_NULL_HANDLE;
+
+    if (vkCreateFence(core::VulkanContext::getContext()->getDevice(), &fenceInfo, nullptr, &fence) != VK_SUCCESS)
+        std::cerr << "Failed to create fence for image memory barrier. Falling back to vkQueueWaitIdle\n";
+
+    cb->submit(queue, {}, {}, {}, fence);
+
+    if (fence)
+    {
+        vkWaitForFences(core::VulkanContext::getContext()->getDevice(), 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(core::VulkanContext::getContext()->getDevice(), fence, nullptr);
+    }
+    else
+        vkQueueWaitIdle(queue);
 }
 
 void Image::destroyVkImpl()
 {
-    if(!m_isWrapped)
+    if (!m_isWrapped)
     {
         VulkanContext::getContext()->getDevice()->destroyImage(m_allocatedImage);
         m_handle = m_allocatedImage.image;
