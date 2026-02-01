@@ -30,6 +30,8 @@ public:
 
     VkMemoryPropertyFlags toVkMemoryFlags(core::memory::MemoryUsage usage) override;
 
+    VkDeviceSize getTotalAllocatedVRAM() const override;
+
     void clean() override;
 
     ~VMAAllocator() override;

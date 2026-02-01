@@ -7,9 +7,12 @@
 
 #include "Editor/EditorResourcesStorage.hpp"
 
+#include "Engine/Material.hpp"
+
 #include <string>
 #include <filesystem>
 #include <unordered_set>
+#include <unordered_map>
 #include <functional>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
@@ -17,7 +20,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 class AssetsWindow
 {
 public:
-    explicit AssetsWindow(EditorResourcesStorage *resourcesStorage);
+    AssetsWindow(EditorResourcesStorage *resourcesStorage, VkDescriptorPool descriptorPool);
 
     void setProject(engine::Project *project);
 
@@ -52,6 +55,8 @@ private:
     bool matchesSearch(const std::string &filename) const;
     void refreshCurrentDirectory();
 
+    void drawMaterialEditor();
+
     engine::Project *m_currentProject{nullptr};
     EditorResourcesStorage *m_resourcesStorage{nullptr};
     std::filesystem::path m_currentDirectory;
@@ -74,6 +79,23 @@ private:
     std::unordered_set<std::string> m_sceneExtensions = {".scene", ".json", ".yaml", ".yml"};
     std::unordered_set<std::string> m_shaderExtensions = {".glsl", ".vert", ".frag", ".geom", ".tesc", ".tese", ".comp", ".hlsl", ".fx"};
     std::unordered_set<std::string> m_configExtensions = {".ini", ".cfg", ".toml", ".xml", ".properties"};
+
+    // TODO remove this shit from here.....
+
+    struct MaterialAssetWindow
+    {
+        engine::Material::SharedPtr material{nullptr};
+        engine::Texture::SharedPtr texture{nullptr};
+        VkDescriptorSet previewTextureDescriptorSet{nullptr};
+    };
+
+    std::unordered_map<std::string, VkDescriptorSet> m_texturesPreview;
+
+    std::unordered_map<std::string, MaterialAssetWindow> m_materials;
+    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
+    std::string m_currentEditedMaterialPath;
+
+    bool m_shotTexturePopup{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

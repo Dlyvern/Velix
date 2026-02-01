@@ -4,6 +4,9 @@
 #include "Core/Macros.hpp"
 #include "Core/Memory/IAllocator.hpp"
 
+#include <cstdint>
+#include <fstream>
+
 #include <volk.h>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
@@ -26,11 +29,19 @@ public:
     void destroyBuffer(allocators::AllocatedBuffer &buffer);
     void bindBufferMemory(const allocators::AllocatedBuffer &buffer, VkDeviceSize memoryOffset = 0);
 
+    VkDeviceSize getTotalAllocatedVRAM() const;
+    size_t getTotalUsedRAM() const;
+
     void clean();
 
 private:
     std::unique_ptr<allocators::IAllocator> m_allocator{nullptr};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
+
+#ifdef __linux__
+    mutable bool m_isRAMFileOpened{false};
+    mutable FILE *m_ramFile{nullptr};
+#endif
 };
 
 ELIX_NESTED_NAMESPACE_END

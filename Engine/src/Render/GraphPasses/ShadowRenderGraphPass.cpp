@@ -16,12 +16,27 @@ struct LightSpaceMatrixPushConstant
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-ShadowRenderGraphPass::ShadowRenderGraphPass(VkDevice device)
+ShadowRenderGraphPass::ShadowRenderGraphPass()
 {
-    m_commandPool = core::CommandPool::createShared(device, core::VulkanContext::getContext()->getGraphicsFamily());
+}
 
+void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
+{
     const VkFormat depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
+
+    RGPTextureDescription depthTextureDescription{};
+    depthTextureDescription.setDebugName("__ELIX_SHADOW_DEPTH_TEXTURE__");
+    depthTextureDescription.setExtent(VkExtent2D{.width = m_width, .height = m_height});
+    depthTextureDescription.setFormat(depthFormat);
+    depthTextureDescription.setUsage(RGPTextureUsage::DEPTH_STENCIL);
+    depthTextureDescription.setIsSwapChainTarget(false);
+
+    m_depthTextureHandler = builder.createTexture(depthTextureDescription);
+    builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+
+    auto device = core::VulkanContext::getContext()->getDevice();
 
     VkAttachmentDescription depthAttachmentDescription{};
     depthAttachmentDescription.format = depthFormat;
@@ -50,40 +65,9 @@ ShadowRenderGraphPass::ShadowRenderGraphPass(VkDevice device)
     subpassDependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
     subpassDependency.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     subpassDependency.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    // subpassDependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+    subpassDependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
     m_renderPass = core::RenderPass::create({depthAttachmentDescription}, {subpassDescription}, {subpassDependency});
-
-    m_depthImage = core::Image::createShared(m_width, m_height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY,
-                                             depthFormat);
-
-    m_depthImage->insertImageMemoryBarrier(
-        0,
-        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-        m_commandPool,
-        core::VulkanContext::getContext()->getGraphicsQueue());
-
-    VkImageViewCreateInfo imageViewCI{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    imageViewCI.format = depthFormat;
-    imageViewCI.image = m_depthImage->vk();
-    imageViewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    imageViewCI.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-    imageViewCI.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-    imageViewCI.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-    imageViewCI.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-    imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    imageViewCI.subresourceRange.baseMipLevel = 0;
-    imageViewCI.subresourceRange.levelCount = 1;
-    imageViewCI.subresourceRange.baseArrayLayer = 0;
-    imageViewCI.subresourceRange.layerCount = 1;
-
-    if (vkCreateImageView(device, &imageViewCI, nullptr, &m_depthImageView) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create image view");
 
     VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -105,19 +89,6 @@ ShadowRenderGraphPass::ShadowRenderGraphPass(VkDevice device)
     if (vkCreateSampler(device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
         throw std::runtime_error("Failed to create a sample");
 
-    std::vector<VkImageView> attachments{m_depthImageView};
-
-    VkFramebufferCreateInfo framebufferCI{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    framebufferCI.renderPass = m_renderPass->vk();
-    framebufferCI.attachmentCount = static_cast<uint32_t>(attachments.size());
-    framebufferCI.width = m_width;
-    framebufferCI.height = m_height;
-    framebufferCI.pAttachments = attachments.data();
-    framebufferCI.layers = 1;
-
-    if (vkCreateFramebuffer(device, &framebufferCI, nullptr, &m_framebuffer) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create framebuffer");
-
     m_clearValue.depthStencil = {1.0f, 0};
 
     m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{}, std::vector<VkPushConstantRange>{PushConstant<LightSpaceMatrixPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)});
@@ -131,19 +102,118 @@ ShadowRenderGraphPass::ShadowRenderGraphPass(VkDevice device)
 
     m_scissor.extent = {m_width, m_height};
     m_scissor.offset = {0, 0};
+
+    //-------
+    auto shader = core::Shader::create("./resources/shaders/static_mesh_shadow.vert.spv",
+                                       "./resources/shaders/empty.frag.spv");
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    VkPipelineMultisampleStateCreateInfo multisampling{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    VkPipelineColorBlendStateCreateInfo colorBlending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    std::vector<VkDynamicState> dynamicStates;
+
+    std::vector<VkVertexInputBindingDescription> vertexBindingDescriptions;
+    std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions;
+
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    uint32_t subpass = 0;
+
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = 4.0f;
+    rasterizer.depthBiasSlopeFactor = 4.0f;
+    rasterizer.depthBiasClamp = 0.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisampling.minSampleShading = 1.0f;
+    multisampling.pSampleMask = nullptr;
+    multisampling.alphaToCoverageEnable = VK_FALSE;
+    multisampling.alphaToOneEnable = VK_FALSE;
+
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.minDepthBounds = 0.0f;
+    depthStencil.maxDepthBounds = 1.0f;
+    depthStencil.stencilTestEnable = VK_FALSE;
+    depthStencil.front = {};
+    depthStencil.back = {};
+
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 0;
+    colorBlending.pAttachments = nullptr;
+
+    VkViewport viewport = m_viewport;
+    VkRect2D scissor = m_scissor;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.pScissors = &scissor;
+
+    dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = (uint32_t)dynamicStates.size();
+    dynamicState.pDynamicStates = dynamicStates.data();
+
+    shaderStages = shader->getShaderStages();
+
+    vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D))};
+    vertexAttributeDescriptions = {vertex::Vertex3D::getAttributeDescriptions()};
+
+    VkPipelineVertexInputStateCreateInfo vertexInputStateCI{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vertexInputStateCI.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexBindingDescriptions.size());
+    vertexInputStateCI.pVertexBindingDescriptions = vertexBindingDescriptions.data();
+    vertexInputStateCI.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttributeDescriptions.size());
+    vertexInputStateCI.pVertexAttributeDescriptions = vertexAttributeDescriptions.data();
+
+    m_graphicsPipeline = std::make_shared<core::GraphicsPipeline>(device, m_renderPass->vk(), shaderStages.data(), static_cast<uint32_t>(shaderStages.size()),
+                                                                  m_pipelineLayout->vk(), dynamicState, colorBlending, multisampling, rasterizer, viewportState,
+                                                                  inputAssembly, vertexInputStateCI, subpass, depthStencil);
+}
+
+void ShadowRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
+{
+    m_renderTarget = storage.getTexture(m_depthTextureHandler);
+
+    m_renderTarget->getImage()->insertImageMemoryBarrier(
+        0,
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1});
+
+    std::vector<VkImageView> attachments{m_renderTarget->vkImageView()};
+
+    m_framebuffer = std::make_shared<core::Framebuffer>(core::VulkanContext::getContext()->getDevice(), attachments,
+                                                        m_renderPass, VkExtent2D{.width = m_width, .height = m_height});
 }
 
 void ShadowRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer)
 {
-    // barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    // barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = m_depthImage->vk();
+    barrier.image = m_renderTarget->getImage()->vk();
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
     barrier.subresourceRange.baseMipLevel = 0;
     barrier.subresourceRange.levelCount = 1;
@@ -160,90 +230,6 @@ void ShadowRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr co
         0, nullptr,
         0, nullptr,
         1, &barrier);
-}
-
-void ShadowRenderGraphPass::setup(RenderGraphPassRecourceBuilder &graphPassBuilder)
-{
-    RenderGraphPassResourceTypes::SizeSpec sizeSpec{
-        .type = RenderGraphPassResourceTypes::SizeClass::Custom,
-        .width = m_width,
-        .height = m_height,
-    };
-
-    RenderGraphPassResourceTypes::TextureDescription depthImage{
-        .name = "__ELIX_SHADOW_DEPTH__",
-        .format = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice()),
-        .size = sizeSpec,
-        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
-        .memoryFlags = core::memory::MemoryUsage::GPU_ONLY,
-        .tiling = VK_IMAGE_TILING_OPTIMAL,
-    };
-
-    m_depthImageHash = graphPassBuilder.createTexture(depthImage, {.access = ResourceAccess::WRITE, .user = this});
-
-    const std::string name = "__ELIX_SHADOW_FRAMEBUFFER__";
-
-    RenderGraphPassResourceTypes::FramebufferDescription framebufferDescription{
-        .name = name,
-        .attachmentsHash = {m_depthImageHash},
-        .renderPass = m_renderPass,
-        // .renderPassHash = m_renderPassHash,
-        .size = sizeSpec,
-        .layers = 1};
-
-    m_framebufferHash = graphPassBuilder.createFramebuffer(framebufferDescription);
-
-    auto shader = core::Shader::create("./resources/shaders/static_mesh_shadow.vert.spv",
-                                       "./resources/shaders/empty.frag.spv");
-
-    RenderGraphPassResourceTypes::GraphicsPipelineDescription graphicsPipeline{
-        .name = "__ELIX_SHADOW_GRAPHICS_PIPELINE__",
-        .vertexBindingDescriptions = {Vertex3D::getBindingDescription()},
-        .vertexAttributeDescriptions = {Vertex3D::getAttributeDescriptions()},
-        .layout = m_pipelineLayout->vk(),
-        .renderPass = m_renderPass->vk(),
-    };
-
-    graphicsPipeline.dynamicStates =
-        {
-            VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
-            VK_DYNAMIC_STATE_DEPTH_BIAS};
-
-    graphicsPipeline.viewport = m_viewport;
-    graphicsPipeline.scissor = m_scissor;
-    graphicsPipeline.shader = shader;
-
-    graphicsPipeline.rasterizer.depthBiasEnable = VK_TRUE;
-    graphicsPipeline.rasterizer.depthBiasConstantFactor = 1.25f;
-    graphicsPipeline.rasterizer.depthBiasSlopeFactor = 1.75f;
-    graphicsPipeline.rasterizer.depthBiasClamp = 0.0f;
-    graphicsPipeline.rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT;
-
-    graphicsPipeline.depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-
-    m_graphicsPipelineHash = graphPassBuilder.createGraphicsPipeline(graphicsPipeline);
-}
-
-void ShadowRenderGraphPass::compile(RenderGraphPassResourceHash &storage)
-{
-    m_graphicsPipeline = storage.getGraphicsPipeline(m_graphicsPipelineHash);
-
-    // m_depthImage = storage.getTexture(m_depthImageHash);
-
-    // m_depthImage->insertImageMemoryBarrier(
-    //     0,
-    //     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-    //     VK_IMAGE_LAYOUT_UNDEFINED,
-    //     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    //     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-    //     VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-    //     {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-    //     m_commandPool,
-    //     core::VulkanContext::getContext()->getGraphicsQueue()
-    // );
 }
 
 void ShadowRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data)
@@ -282,11 +268,12 @@ void ShadowRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo &render
 {
     renderPassBeginInfo = VkRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     renderPassBeginInfo.renderPass = m_renderPass->vk();
-    renderPassBeginInfo.framebuffer = m_framebuffer;
+    renderPassBeginInfo.framebuffer = m_framebuffer->vk();
     renderPassBeginInfo.renderArea.offset = {0, 0};
     renderPassBeginInfo.renderArea.extent = VkExtent2D{m_width, m_height};
     renderPassBeginInfo.clearValueCount = 1;
     renderPassBeginInfo.pClearValues = &m_clearValue;
 }
 
+ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END

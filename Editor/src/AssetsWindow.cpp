@@ -1,13 +1,19 @@
 #include "Editor/AssetsWindow.hpp"
 #include <imgui.h>
 #include <imgui_internal.h>
-
+#include <algorithm>
 #include <vector>
 #include <filesystem>
+#include <fstream>
+#include <glm/gtc/type_ptr.hpp>
+// Todo remove it...
+#include "Engine/Assets/AssetsLoader.hpp"
+#include <backends/imgui_impl_vulkan.h>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage) : m_resourcesStorage(resourcesStorage)
+AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage, VkDescriptorPool descriptorPool) : m_resourcesStorage(resourcesStorage),
+                                                                                                        m_descriptorPool(descriptorPool)
 {
 }
 
@@ -37,6 +43,35 @@ void AssetsWindow::draw()
 
     ImGui::BeginChild("AssetGrid", ImVec2(0, 0), true);
     drawAssetGrid();
+
+    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    ImGuiIO &io = ImGui::GetIO();
+
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+    {
+        if (ImGui::IsPopupOpen("CreateNewSomething"))
+            ImGui::CloseCurrentPopup();
+        else
+            ImGui::OpenPopup("CreateNewSomething");
+    }
+
+    if (ImGui::BeginPopup("CreateNewSomething"))
+    {
+        if (ImGui::Button("Material"))
+        {
+            std::ofstream newMaterialFile;
+
+            std::string currentDir = m_currentDirectory;
+
+            if (m_currentDirectory.string().back() != '/')
+                currentDir += '/';
+
+            std::cout << currentDir << std::endl;
+            newMaterialFile.open(currentDir + "newMaterial.elixmat");
+        }
+        ImGui::EndPopup();
+    }
+
     ImGui::EndChild();
 
     ImGui::EndChild();
@@ -242,11 +277,25 @@ void AssetsWindow::drawAssetGrid()
         {
             if (entry.is_directory())
                 navigateToDirectory(entry.path());
-            // else
-            // {
-            // Handle file click (open in editor, etc.)
-            // You can implement this based on your needs
-            // }
+            else
+            {
+                if (extension == ".elixmat")
+                {
+                    if (ImGui::IsPopupOpen("MaterialEditor"))
+                        ImGui::CloseCurrentPopup();
+                    else
+                    {
+                        m_currentEditedMaterialPath = entry.path();
+                        ImGui::OpenPopup("MaterialEditor");
+                    }
+                }
+            }
+        }
+
+        if (ImGui::BeginPopup("MaterialEditor"))
+        {
+            drawMaterialEditor();
+            ImGui::EndPopup();
         }
 
         ImGui::TextWrapped("%s", filename.c_str());
@@ -291,6 +340,130 @@ void AssetsWindow::drawAssetGrid()
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
     ImGui::Columns(1);
+}
+
+void AssetsWindow::drawMaterialEditor()
+{
+    if (m_materials.find(m_currentEditedMaterialPath) == m_materials.end())
+    {
+        auto materialAsset = engine::AssetsLoader::loadMaterial(m_currentEditedMaterialPath);
+
+        if (!materialAsset.has_value())
+        {
+            std::cerr << "Something is weird, failed to load material asset\n";
+            ImGui::CloseCurrentPopup();
+            return;
+        }
+
+        auto materialCPU = materialAsset.value().material;
+
+        auto texture = std::make_shared<engine::Texture>();
+
+        if (!texture->load(materialCPU.albedoTexture))
+        {
+            std::cerr << "Something is weird, failed to load texture for material\n";
+            ImGui::CloseCurrentPopup();
+            return;
+        }
+
+        MaterialAssetWindow materialAssetWindow;
+        materialAssetWindow.material = engine::Material::create(m_descriptorPool, texture);
+        materialAssetWindow.texture = texture;
+
+        materialAssetWindow.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        m_texturesPreview[materialCPU.albedoTexture] = materialAssetWindow.previewTextureDescriptorSet;
+        m_materials[m_currentEditedMaterialPath] = materialAssetWindow;
+    }
+
+    auto material = m_materials[m_currentEditedMaterialPath];
+
+    auto color = material.material->getColor();
+
+    if (ImGui::ColorEdit4("Base Color", glm::value_ptr(color)))
+    {
+        material.material->setColor(color);
+    }
+
+    ImGui::PushID("tex");
+
+    if (!material.previewTextureDescriptorSet)
+        material.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(material.texture->vkSampler(), material.texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    ImTextureID texId = (ImTextureID)(uintptr_t)material.previewTextureDescriptorSet;
+    if (ImGui::ImageButton("tex", texId, ImVec2(50, 50)))
+        m_shotTexturePopup = true;
+    ImGui::PopID();
+
+    ImGui::SameLine();
+
+    ImGui::Text("Albedo");
+
+    if (m_shotTexturePopup)
+    {
+        ImGui::OpenPopup("texture_selector");
+        m_shotTexturePopup = false;
+    }
+
+    if (ImGui::BeginPopup("texture_selector"))
+    {
+        ImGui::Text("Select Texture");
+        ImGui::Separator();
+
+        static char filter[128] = "";
+        ImGui::InputTextWithHint("##Search", "Search textures...", filter, sizeof(filter));
+        ImGui::Separator();
+
+        ImGui::BeginChild("TextureScroll", ImVec2(300, 200), true);
+
+        for (const auto &[texturePath, texture] : m_currentProject->cache.assetsCache.getTextures())
+        {
+            if (filter[0] != '\0' && texturePath.find(filter) == std::string::npos)
+                continue;
+
+            ImGui::PushID(texturePath.c_str());
+
+            if (m_texturesPreview.find(texturePath) == m_texturesPreview.end())
+            {
+                m_texturesPreview[texturePath] = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
+
+            ImTextureID imguiTexId = (ImTextureID)(uintptr_t)m_texturesPreview[texturePath];
+
+            if (ImGui::ImageButton(texturePath.c_str(), imguiTexId, ImVec2(50, 50)))
+            {
+                // selectedEntity->setTexture(texture);
+                ImGui::CloseCurrentPopup();
+            }
+
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", texturePath.c_str());
+                ImGui::EndTooltip();
+            }
+
+            const std::string fileName = std::filesystem::path(texturePath).filename();
+
+            ImGui::SameLine();
+
+            ImGui::TextWrapped("%s", fileName.c_str());
+
+            ImGui::PopID();
+        }
+
+        ImGui::EndChild();
+
+        // Close button
+        ImGui::Separator();
+        if (ImGui::Button("Close"))
+        {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::Button("Close"))
+        ImGui::CloseCurrentPopup();
 }
 
 std::vector<std::filesystem::directory_entry> AssetsWindow::getFilteredEntries()

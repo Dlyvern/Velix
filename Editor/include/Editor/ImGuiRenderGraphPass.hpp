@@ -13,29 +13,35 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-class ImGuiRenderGraphPass : public engine::IRenderGraphPass
+class ImGuiRenderGraphPass : public engine::renderGraph::IRenderGraphPass
 {
 public:
     using SharedPtr = std::shared_ptr<ImGuiRenderGraphPass>;
 
-    //!Maybe this is not a good idea
+    //! Maybe this is not a good idea
     ImGuiRenderGraphPass(std::shared_ptr<Editor> editor);
 
-    void setup(engine::RenderGraphPassRecourceBuilder& graphPassBuilder) override;
-    void compile(engine::RenderGraphPassResourceHash& storage) override;
-    void execute(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData& data) override;
+    void setup(engine::renderGraph::RGPResourcesBuilder &builder) override;
+    void compile(engine::renderGraph::RGPResourcesStorage &storage) override;
+    void execute(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data) override;
 
-    void update(const engine::RenderGraphPassContext& renderData) override;
+    void update(const engine::RenderGraphPassContext &renderData) override;
 
-    void getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const override;
+    void getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const override;
 
-    void setViewportImages(const std::vector<VkImageView>& imageViews);
+    void setViewportImages(const std::vector<VkImageView> &imageViews);
+
+    void onSwapChainResized(engine::renderGraph::RGPResourcesStorage &storage) override;
+
+    void cleanup();
+
 private:
+    void initImGui();
+
     VkDevice m_device{VK_NULL_HANDLE};
     std::array<VkClearValue, 2> m_clearValues;
     std::shared_ptr<Editor> m_editor{nullptr};
 
-    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
     VkSampler m_sampler;
 
     core::RenderPass::SharedPtr m_renderPass{nullptr};
@@ -46,8 +52,10 @@ private:
     std::vector<VkDescriptorSet> m_descriptorSets;
     std::vector<std::size_t> m_framebufferHashes;
     std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
+
+    engine::renderGraph::RGPResourceHandler m_colorTextureHandler;
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //IMGUI_RENDER_GRAPH_PASS_HPPs
+#endif // IMGUI_RENDER_GRAPH_PASS_HPPs

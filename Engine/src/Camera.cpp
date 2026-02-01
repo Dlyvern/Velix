@@ -40,17 +40,17 @@ float Camera::getYaw() const
     return m_yaw;
 }
 
-float Camera::getFOV() const 
+float Camera::getFOV() const
 {
     return m_fov;
 }
 
-float Camera::getNear() const 
+float Camera::getNear() const
 {
     return m_near;
 };
 
-float Camera::getFar() const 
+float Camera::getFar() const
 {
     return m_far;
 };
@@ -64,6 +64,11 @@ void Camera::setYaw(float yaw)
 {
     m_yaw = yaw;
     updateCameraVectors();
+}
+
+void Camera::setFOV(float fov)
+{
+    m_fov = fov;
 }
 
 void Camera::setPosition(const glm::vec3 &position)

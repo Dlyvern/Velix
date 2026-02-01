@@ -6,8 +6,11 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <optional>
 
 #include "Engine/Mesh.hpp"
+#include "Engine/Skeleton.hpp"
+#include "Engine/Material.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -17,15 +20,26 @@ public:
     virtual ~IAsset() = default;
 };
 
+class MaterialAsset : public IAsset
+{
+public:
+    CPUMaterial material;
+
+    MaterialAsset(const CPUMaterial &material) : material(material)
+    {
+    }
+};
+
 class ModelAsset : public IAsset
 {
 public:
-    std::vector<Mesh3D> meshes;
+    std::vector<CPUMesh> meshes;
     std::vector<std::string> materialPaths;
+    std::optional<Skeleton> skeleton{std::nullopt};
 
-    ModelAsset(const std::vector<Mesh3D>& meshes) : meshes(meshes) 
+    ModelAsset(const std::vector<CPUMesh> &meshes, const std::optional<Skeleton> skeleton = std::nullopt) : meshes(meshes),
+                                                                                                            skeleton(skeleton)
     {
-
     }
 };
 
@@ -33,14 +47,14 @@ class IAssetLoader
 {
 public:
     virtual const std::vector<std::string> getSupportedFormats() const = 0;
-    virtual std::shared_ptr<IAsset> load(const std::string& filePath) = 0;
+    virtual std::shared_ptr<IAsset> load(const std::string &filePath) = 0;
 
-    virtual bool canLoad(const std::string& extension)
+    virtual bool canLoad(const std::string &extension)
     {
         const auto supportedFormats = getSupportedFormats();
 
-        auto it = std::find_if(supportedFormats.begin(), supportedFormats.end(), [&extension](const auto& format)
-        {return format == extension; });
+        auto it = std::find_if(supportedFormats.begin(), supportedFormats.end(), [&extension](const auto &format)
+                               { return format == extension; });
 
         return it == supportedFormats.end() ? false : true;
     }
@@ -48,4 +62,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_IASSET_LOADER_HPP
+#endif // ELIX_IASSET_LOADER_HPP

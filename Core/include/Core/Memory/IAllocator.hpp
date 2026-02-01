@@ -31,6 +31,8 @@ public:
 
     virtual void clean() {}
 
+    virtual VkDeviceSize getTotalAllocatedVRAM() const = 0;
+
     virtual ~IAllocator() = default;
 
 protected:

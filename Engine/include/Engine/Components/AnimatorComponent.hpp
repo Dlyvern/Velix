@@ -37,12 +37,13 @@ struct Animation
     double ticksPerSecond;
     double duration;
     std::vector<AnimationTrack> boneAnimations;
-    Skeleton* skeletonForAnimation{nullptr};
-    Entity* gameObject{nullptr};
+    Skeleton *skeletonForAnimation{nullptr};
+    Entity *gameObject{nullptr};
 
-    AnimationTrack* getAnimationTrack(const std::string& name)
+    AnimationTrack *getAnimationTrack(const std::string &name)
     {
-        const auto it = std::find_if(boneAnimations.begin(), boneAnimations.end(), [&name](const auto& bone) {return bone.objectName == name;});
+        const auto it = std::find_if(boneAnimations.begin(), boneAnimations.end(), [&name](const auto &bone)
+                                     { return bone.objectName == name; });
         return it == boneAnimations.end() ? nullptr : &(*it);
     }
 };
@@ -52,14 +53,15 @@ class AnimatorComponent final : public ECS
 public:
     void update(float deltaTime) override;
 
-    void playAnimation(Animation* animation, bool repeat = true);
+    void playAnimation(Animation *animation, bool repeat = true);
 
     void stopAnimation();
 
     [[nodiscard]] bool isAnimationPlaying() const;
+
 private:
-    void calculateBoneTransform(Skeleton::BoneInfo* boneInfo, const glm::mat4 &parentTransform, Animation* animation, float currentTime);
-    void calculateObjectTransform(Animation* animation, float currentTime);
+    void calculateBoneTransform(Skeleton::BoneInfo *boneInfo, const glm::mat4 &parentTransform, Animation *animation, float currentTime);
+    void calculateObjectTransform(Animation *animation, float currentTime);
 
     bool m_isAnimationPaused{false};
     bool m_isAnimationLooped{true};
@@ -71,11 +73,11 @@ private:
     float m_haltTime{0.0f};
     float m_interTime{0.0f};
 
-    Animation* m_currentAnimation{nullptr};
-    Animation* m_nextAnimation{nullptr};
-    Animation* m_queueAnimation{nullptr};
+    Animation *m_currentAnimation{nullptr};
+    Animation *m_nextAnimation{nullptr};
+    Animation *m_queueAnimation{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_ANIMATOR_COMPONENT_HPP
+#endif // ELIX_ANIMATOR_COMPONENT_HPP

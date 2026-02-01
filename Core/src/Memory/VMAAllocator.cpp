@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 #include "Core/VulkanHelpers.hpp"
-
+#include <iomanip>
 #include <volk.h>
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
@@ -22,6 +22,8 @@ namespace
             return VMA_MEMORY_USAGE_GPU_TO_CPU;
         case elix::core::memory::MemoryUsage::CPU_ONLY:
             return VMA_MEMORY_USAGE_CPU_ONLY;
+        case elix::core::memory::MemoryUsage::AUTO:
+            return VMA_MEMORY_USAGE_AUTO;
         default:
             return VMA_MEMORY_USAGE_AUTO;
         }
@@ -115,6 +117,20 @@ AllocatedBuffer VMAAllocator::createBuffer(VkDevice device, VkPhysicalDevice phy
     return buffer;
 }
 
+VkDeviceSize VMAAllocator::getTotalAllocatedVRAM() const
+{
+    VmaTotalStatistics stats{};
+    vmaCalculateStatistics(m_allocator, &stats);
+
+    auto bytes = stats.total.statistics.allocationBytes;
+
+    double megabytes = static_cast<double>(bytes) / (1024.0 * 1024.0);
+
+    return megabytes;
+    // printf("Total allocation count: %u\n",
+    //        stats.total.statistics.allocationCount);
+}
+
 void VMAAllocator::destroyBuffer(VkDevice device, AllocatedBuffer &buffer)
 {
     vmaDestroyBuffer(m_allocator, buffer.buffer, reinterpret_cast<VmaAllocation>(buffer.allocation));
@@ -139,6 +155,8 @@ VkMemoryPropertyFlags VMAAllocator::toVkMemoryFlags(core::memory::MemoryUsage us
         return VMA_MEMORY_USAGE_GPU_TO_CPU;
     case memory::MemoryUsage::CPU_ONLY:
         return VMA_MEMORY_USAGE_CPU_ONLY;
+    case memory::MemoryUsage::AUTO:
+        return VMA_MEMORY_USAGE_AUTO;
     default:
         return VMA_MEMORY_USAGE_AUTO;
     }

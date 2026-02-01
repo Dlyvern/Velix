@@ -20,7 +20,14 @@ struct ShaderFamily
 namespace engineShaderFamilies
 {
     extern ShaderFamily staticMeshShaderFamily;
-    extern core::DescriptorSetLayout::SharedPtr staticMeshCameraLayout;
+    extern ShaderFamily wireframeMeshShaderFamily;
+    extern ShaderFamily skeletonMeshShaderFamily;
+
+    extern core::DescriptorSetLayout::SharedPtr wireframeMeshCameraLayout;
+
+    extern core::DescriptorSetLayout::SharedPtr skeletonMeshCameraLayout;
+
+    extern core::DescriptorSetLayout::SharedPtr cameraDescriptorSetLayout;
     extern core::DescriptorSetLayout::SharedPtr staticMeshLightLayout;
     extern core::DescriptorSetLayout::SharedPtr staticMeshMaterialLayout;
 

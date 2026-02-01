@@ -18,12 +18,12 @@ public:
 
     Texture();
 
-    void create(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t pixels = 0xFFFFFFFF, core::CommandPool::SharedPtr commandPool = nullptr, VkQueue queue = VK_NULL_HANDLE);
+    void createFromPixels(uint32_t pixels = 0xFFFFFFFF, core::CommandPool::SharedPtr commandPool = nullptr);
 
-    bool load(const std::string &path, core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad = true);
+    bool load(const std::string &path, core::CommandPool::SharedPtr commandPool = nullptr, bool freePixelsOnLoad = true);
     void freePixels();
 
-    bool loadCubemap(const std::array<std::string, 6> &cubemaps, core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad = true);
+    bool loadCubemap(const std::array<std::string, 6> &cubemaps, core::CommandPool::SharedPtr commandPool = nullptr, bool freePixelsOnLoad = true);
 
     unsigned char *getPixels() const;
     int getWidth() const;

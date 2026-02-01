@@ -1,0 +1,14 @@
+#ifndef {{ClassName}}_HPP
+#define {{ClassName}}_HPP
+
+class {{ClassName}}
+{
+public:
+    {{ClassName}}();
+    ~{{ClassName}}();
+
+    void onStart();
+    void onUpdate(float deltaTime);
+};
+
+#endif //{{ClassName}}_HPP

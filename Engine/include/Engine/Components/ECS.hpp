@@ -13,25 +13,30 @@ public:
     virtual void onDetach() {}
     virtual ~ECS() = default;
 
-    void setOwner(void* owner) 
+    void setOwner(void *owner)
     {
         m_owner = owner;
+        onOwnerAttached();
     }
 
-    template<typename T>
-    void* const getOwner() const
+    template <typename T>
+    T *const getOwner() const
     {
-        return static_cast<T*>(m_owner);
+        return static_cast<T *>(m_owner);
     }
 
-    void* const getOwner() const
+    void *const getOwner() const
     {
         return m_owner;
     }
+
+protected:
+    virtual void onOwnerAttached() {}
+
 private:
-    void* m_owner{nullptr};
+    void *m_owner{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_ECS_HPP
+#endif // ELIX_ECS_HPP

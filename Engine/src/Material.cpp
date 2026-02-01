@@ -8,8 +8,8 @@
 #include "Core/VulkanContext.hpp"
 
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
-#include "Engine/RenderGraph.hpp"
-#include "Engine/ShaderFamily.hpp"
+#include "Engine/Render/RenderGraph/RenderGraph.hpp"
+#include "Engine/Shaders/ShaderFamily.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -22,7 +22,7 @@ Material::Material(VkDescriptorPool descriptorPool, engine::Texture::SharedPtr t
 {
     m_device = core::VulkanContext::getContext()->getDevice();
 
-    m_maxFramesInFlight = RenderGraph::MAX_FRAMES_IN_FLIGHT;
+    m_maxFramesInFlight = renderGraph::RenderGraph::MAX_FRAMES_IN_FLIGHT;
 
     m_descriptorSets.resize(m_maxFramesInFlight);
     m_colorBuffers.reserve(m_maxFramesInFlight);

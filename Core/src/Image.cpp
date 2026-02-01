@@ -6,10 +6,10 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 Image::Image(uint32_t width, uint32_t height, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
              VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags) : m_device(VulkanContext::getContext()->getDevice())
 {
-    createVk(VulkanContext::getContext()->getPhysicalDevice(), VkExtent2D{.width = width, .height = height}, usage, memFlags, format, tiling, arrayLayers, flags);
+    createVk(VkExtent2D{.width = width, .height = height}, usage, memFlags, format, tiling, arrayLayers, flags);
 }
 
-void Image::createVk(VkPhysicalDevice physicalDevice, VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
+void Image::createVk(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
                      VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags)
 {
     ELIX_VK_CREATE_GUARD()

@@ -15,7 +15,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 Texture::Texture() = default;
 
-void Texture::create(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t pixels, core::CommandPool::SharedPtr commandPool, VkQueue queue)
+void Texture::createFromPixels(uint32_t pixels, core::CommandPool::SharedPtr commandPool)
 {
     m_width = 1;
     m_height = 1;
@@ -32,8 +32,7 @@ void Texture::create(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t 
     if (!commandPool)
         commandPool = core::VulkanContext::getContext()->getTransferCommandPool();
 
-    if (!queue)
-        queue = core::VulkanContext::getContext()->getTransferQueue();
+    auto queue = core::VulkanContext::getContext()->getTransferQueue();
 
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, commandPool, queue);
     m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, queue);
@@ -94,6 +93,9 @@ bool Texture::load(const std::string &path, core::CommandPool::SharedPtr command
 
     if (freePixelsOnLoad)
         freePixels();
+
+    if (!commandPool)
+        commandPool = core::VulkanContext::getContext()->getTransferCommandPool();
 
     m_image = core::Image::createShared(static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY);
 
@@ -193,6 +195,9 @@ bool Texture::loadCubemap(const std::array<std::string, 6> &cubemaps,
     }
 
     buffer->unmap();
+
+    if (!commandPool)
+        commandPool = core::VulkanContext::getContext()->getTransferCommandPool();
 
     m_image = core::Image::createShared(static_cast<uint32_t>(m_width),
                                         static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY, VK_FORMAT_R8G8B8A8_SRGB,

@@ -5,24 +5,31 @@
 #include "Core/SwapChain.hpp"
 #include "Core/CommandBuffer.hpp"
 #include "Core/CommandPool.hpp"
-#include "Core/SyncObject.hpp"
 #include "Core/DescriptorSetLayout.hpp"
 #include "Core/PipelineLayout.hpp"
 
 #include "Engine/Texture.hpp"
-#include "Engine/Render/RenderGraphPassResourceBuilder.hpp"
-#include "Engine/Render/RenderGraphPassRecourceCompiler.hpp"
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 #include "Engine/Scene.hpp"
 #include "Engine/Camera.hpp"
 
+#include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
+#include "Engine/Render/RenderGraph/RGPResourcesCompiler.hpp"
+#include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
 #include <typeindex>
 #include <unordered_map>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 class RenderGraph
 {
+    struct RenderGraphPassData
+    {
+        IRenderGraphPass::SharedPtr renderGraphPass{nullptr};
+        RGPPassInfo passInfo;
+    };
+
 public:
     RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene);
 
@@ -36,12 +43,19 @@ public:
         auto renderPass = std::make_shared<T>(std::forward<Args>(args)...);
         T *ptr = renderPass.get();
 
-        m_renderGraphPasses[type] = std::move(renderPass);
+        m_renderGraphPasses[type] = RenderGraphPassData(std::move(renderPass), {});
 
         return ptr;
     }
 
     void prepareFrame(Camera::SharedPtr camera);
+    void addAdditionalFrameData(const std::vector<AdditionalPerFrameData> &data)
+    {
+        if (data.empty())
+            return;
+
+        m_perFrameData.additionalData.insert(m_perFrameData.additionalData.begin(), data.begin(), data.end());
+    }
     void draw();
     void setup();
 
@@ -102,8 +116,12 @@ private:
 
     Scene::SharedPtr m_scene{nullptr};
 
+    RGPResourcesBuilder m_renderGraphPassesBuilder;
+    RGPResourcesCompiler m_renderGraphPassesCompiler;
+    RGPResourcesStorage m_renderGraphPassesStorage;
+
     void compile();
-    std::unordered_map<std::type_index, IRenderGraphPass::SharedPtr> m_renderGraphPasses;
+    std::unordered_map<std::type_index, RenderGraphPassData> m_renderGraphPasses;
 
     VkDevice m_device{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
@@ -136,18 +154,14 @@ private:
     std::vector<std::vector<core::CommandBuffer::SharedPtr>> m_secondaryCommandBuffers;
     std::vector<core::CommandPool::SharedPtr> m_commandPools;
 
-    RenderGraphPassRecourceBuilder m_resourceBuilder;
-    RenderGraphPassResourceHash m_resourceStorage;
-    RenderGraphPassResourceCompiler m_resourceCompiler;
-
     RenderGraphPassPerFrameData m_perFrameData;
 
     std::vector<VkFence> m_inFlightFences;
     std::vector<VkSemaphore> m_imageAvailableSemaphores;
     std::vector<VkSemaphore> m_renderFinishedSemaphores;
-    std::vector<VkFence> m_imagesInFlight;
 };
 
+ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
 #endif // ELIX_RENDER_GRAPH_HPP

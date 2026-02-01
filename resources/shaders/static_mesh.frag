@@ -4,6 +4,8 @@ const int DIRECTIONAL_LIGHT_TYPE = 0;
 const int SPOT_LIGHT_TYPE = 1;
 const int POINT_LIGHT_TYPE = 2;
 
+const int MAX_LIGHT_COUNT = 16;
+
 struct Light
 {
     vec4 position;        // w unused
@@ -29,7 +31,7 @@ layout(set = 1, binding = 1) uniform MaterialColor
 } materialColor;
 
 
-layout(set = 2, binding = 0) readonly buffer LightSSBO
+layout(std430, set = 2, binding = 0) readonly buffer LightSSBO
 {
     int lightCount;
     Light lights[];
@@ -134,7 +136,7 @@ void main()
     vec3 ambient = albedo * 0.05;
     vec3 totalLighting = vec3(0.0);
     
-    for(int i = 0; i < 16; ++i)
+    for(int i = 0; i < MAX_LIGHT_COUNT; ++i)
     {
         if (i >= lightData.lightCount)
             break;

@@ -13,33 +13,36 @@
 #include <memory>
 
 #include <glm/glm.hpp>
+#include <cstring>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-struct Mesh3D
+struct CPUMesh
 {
-    std::vector<Vertex3D> vertices;
+    std::vector<uint8_t> vertexData;
     std::vector<uint32_t> indices;
+
+    uint32_t vertexStride;
+    uint64_t vertexLayoutHash;
+
     CPUMaterial material;
     glm::mat4 localTransform{1.0f};
 
-    Mesh3D(const std::vector<Vertex3D>& vertices, const std::vector<uint32_t>& indices)
+    template <typename VertexT>
+    static CPUMesh build(const std::vector<VertexT> &vertices, const std::vector<uint32_t> &indices)
     {
-        this->vertices = vertices;
-        this->indices = indices;
-    }
-};
+        CPUMesh mesh{};
+        mesh.vertexStride = sizeof(VertexT);
+        mesh.indices = indices;
+        // mesh.material = material;
 
-struct Mesh2D
-{
-    std::vector<Vertex2D> vertices;
-    std::vector<uint32_t> indices;
-    CPUMaterial material;
+        auto layout = vertex::VertexTraits<VertexT>::layout();
+        mesh.vertexLayoutHash = layout.hash;
 
-    Mesh2D(const std::vector<Vertex2D>& vertices, const std::vector<uint32_t>& indices)
-    {
-        this->vertices = vertices;
-        this->indices = indices;
+        mesh.vertexData.resize(vertices.size() * sizeof(VertexT));
+        std::memcpy(mesh.vertexData.data(), vertices.data(), mesh.vertexData.size());
+
+        return mesh;
     }
 };
 
@@ -51,83 +54,43 @@ struct GPUMesh
     core::Buffer::SharedPtr vertexBuffer{nullptr};
     uint32_t indicesCount{0};
     VkIndexType indexType{VK_INDEX_TYPE_UINT32};
-    uint64_t vertexLayoutHash{0};
-
-    VkDescriptorSet materialDescriptorSet;
-
-    VkVertexInputBindingDescription bindingDescription;
-    std::vector<VkVertexInputAttributeDescription> attributeDescriptions;
 
     Material::SharedPtr material{nullptr};
 
     GPUMesh() = default;
 
-    static std::shared_ptr<GPUMesh> createFromMesh(VkDevice device, VkPhysicalDevice physicalDevice, const Mesh3D& mesh, core::CommandPool::SharedPtr commandPool = nullptr)
+    static std::shared_ptr<GPUMesh> create(const std::vector<uint8_t> &vertexData, std::vector<uint32_t> indices, core::CommandPool::SharedPtr commandPool = nullptr)
     {
-        auto gpuMesh = std::make_shared<GPUMesh>();
-        
-        VkDeviceSize indexSize = sizeof(mesh.indices[0]) * mesh.indices.size();
-        VkDeviceSize vertexSize = sizeof(mesh.vertices[0]) * mesh.vertices.size();
+        auto gpu = std::make_shared<GPUMesh>();
 
-        gpuMesh->indexBuffer = core::Buffer::createCopied(mesh.indices.data(), indexSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU, commandPool);
-        gpuMesh->vertexBuffer = core::Buffer::createCopied(mesh.vertices.data(), vertexSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU, commandPool);
+        VkDeviceSize indexSize = sizeof(indices[0]) * indices.size();
+        VkDeviceSize vertexSize = sizeof(vertexData[0]) * vertexData.size();
 
-        gpuMesh->indicesCount = static_cast<uint32_t>(mesh.indices.size());
-        gpuMesh->indexType = VK_INDEX_TYPE_UINT32;
+        gpu->vertexBuffer = core::Buffer::createCopied(
+            vertexData.data(),
+            vertexData.size(),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            core::memory::MemoryUsage::CPU_TO_GPU,
+            commandPool);
 
-        auto bindingDescription = engine::Vertex3D::getBindingDescription();
-        auto attributeDescription = engine::Vertex3D::getAttributeDescriptions();
+        gpu->indexBuffer = core::Buffer::createCopied(
+            indices.data(),
+            indexSize,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            core::memory::MemoryUsage::CPU_TO_GPU,
+            commandPool);
 
-        gpuMesh->bindingDescription = bindingDescription;
+        gpu->indicesCount = static_cast<uint32_t>(indices.size());
 
-        hashing::hash(gpuMesh->vertexLayoutHash, (bindingDescription.binding));
-        hashing::hash(gpuMesh->vertexLayoutHash, (bindingDescription.inputRate));
-        hashing::hash(gpuMesh->vertexLayoutHash, (bindingDescription.stride));
-
-        for(const auto& b : attributeDescription)
-        {
-            hashing::hash(gpuMesh->vertexLayoutHash, (b.binding));
-            hashing::hash(gpuMesh->vertexLayoutHash, (b.format));
-            hashing::hash(gpuMesh->vertexLayoutHash, (b.location));
-            hashing::hash(gpuMesh->vertexLayoutHash, (b.offset));
-            gpuMesh->attributeDescriptions.push_back(b);
-        }
-
-        return gpuMesh;
+        return gpu;
     }
 
-    static std::shared_ptr<GPUMesh> createFromMesh(VkDevice device, VkPhysicalDevice physicalDevice, const Mesh2D& mesh, core::CommandPool::SharedPtr commandPool = nullptr)
+    static std::shared_ptr<GPUMesh> createFromMesh(const CPUMesh &mesh, core::CommandPool::SharedPtr commandPool = nullptr)
     {
-        auto gpuMesh = std::make_shared<GPUMesh>();
-
-        VkDeviceSize indexSize = sizeof(mesh.indices[0]) * mesh.indices.size();
-        VkDeviceSize vertexSize = sizeof(mesh.vertices[0]) * mesh.vertices.size();
-
-        gpuMesh->indexBuffer = core::Buffer::createCopied(mesh.indices.data(), indexSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU, commandPool);
-        gpuMesh->vertexBuffer = core::Buffer::createCopied(mesh.vertices.data(), vertexSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU, commandPool);
-        
-        gpuMesh->indicesCount = static_cast<uint32_t>(mesh.indices.size());
-        gpuMesh->indexType = VK_INDEX_TYPE_UINT32;
-
-        auto bindingDescription = engine::Vertex2D::getBindingDescription();
-        auto attributeDescription = engine::Vertex2D::getAttributeDescriptions();
-
-        hashing::hash(gpuMesh->vertexLayoutHash, (bindingDescription.binding));
-        hashing::hash(gpuMesh->vertexLayoutHash, (bindingDescription.inputRate));
-        hashing::hash(gpuMesh->vertexLayoutHash, (bindingDescription.stride));
-
-        for(const auto& b : attributeDescription)
-        {
-            hashing::hash(gpuMesh->vertexLayoutHash, (b.binding));
-            hashing::hash(gpuMesh->vertexLayoutHash, (b.format));
-            hashing::hash(gpuMesh->vertexLayoutHash, (b.location));
-            hashing::hash(gpuMesh->vertexLayoutHash, (b.offset));
-        }
-
-        return gpuMesh;
+        return create(mesh.vertexData, mesh.indices, commandPool);
     }
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_MESH_HPP
+#endif // ELIX_MESH_HPP

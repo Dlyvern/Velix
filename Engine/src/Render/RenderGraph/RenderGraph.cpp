@@ -1,4 +1,4 @@
-#include "Engine/RenderGraph.hpp"
+#include "Engine/Render/RenderGraph/RenderGraph.hpp"
 #include "Core/VulkanContext.hpp"
 
 #include <iostream>
@@ -12,22 +12,23 @@
 
 #include "Engine/Render/GraphPasses/OffscreenRenderGraphPass.hpp"
 
-#include "Engine/Render/GraphPasses/BaseRenderGraphPass.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
+#include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/PushConstant.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
 
-#include "Engine/ShaderFamily.hpp"
+#include "Engine/Shaders/ShaderFamily.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene) : m_device(device),
-                                                                                                          m_swapchain(swapchain), m_scene(scene), m_resourceCompiler(device, core::VulkanContext::getContext()->getPhysicalDevice(), swapchain)
+                                                                                                          m_swapchain(swapchain), m_scene(scene)
 {
     m_physicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
 
@@ -42,7 +43,6 @@ RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, 
     m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
     m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    m_imagesInFlight.resize(imageCount, VK_NULL_HANDLE);
 
     VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
 
@@ -67,7 +67,7 @@ RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, 
 
     engineShaderFamilies::initEngineShaderFamilies();
 
-    m_cameraSetLayout = engineShaderFamilies::staticMeshCameraLayout;
+    m_cameraSetLayout = engineShaderFamilies::cameraDescriptorSetLayout;
     m_directionalLightSetLayout = engineShaderFamilies::staticMeshLightLayout;
     m_materialSetLayout = engineShaderFamilies::staticMeshMaterialLayout;
 }
@@ -76,38 +76,53 @@ void RenderGraph::createDataFromScene()
 {
     for (const auto &entity : m_scene->getEntities())
     {
-        if (auto staticMeshComponent = entity->getComponent<StaticMeshComponent>())
+        std::vector<CPUMesh> meshes;
+
+        if (auto component = entity->getComponent<StaticMeshComponent>())
+            meshes = component->getMeshes();
+        else if (auto component = entity->getComponent<SkeletalMeshComponent>())
+            meshes = component->getMeshes();
+
+        if (meshes.empty())
+            continue;
+
+        std::vector<GPUMesh::SharedPtr> gpuMeshes;
+
+        for (const auto &mesh : meshes)
         {
-            const auto &meshes = staticMeshComponent->getMeshes();
-            std::vector<GPUMesh::SharedPtr> gpuMeshes;
+            auto gpuMesh = GPUMesh::createFromMesh(mesh);
 
-            size_t hashData{0};
-
-            for (const auto &mesh : meshes)
+            if (mesh.material.albedoTexture.empty())
+                gpuMesh->material = Material::getDefaultMaterial();
+            else
             {
-                auto gpuMesh = GPUMesh::createFromMesh(m_device, m_physicalDevice, mesh);
+                auto textureImage = std::make_shared<Texture>();
+                textureImage->load(mesh.material.albedoTexture, m_commandPool);
 
-                if (mesh.material.albedoTexture.empty())
-                    gpuMesh->material = Material::getDefaultMaterial();
-                else
-                {
-                    auto textureImage = std::make_shared<Texture>();
-                    textureImage->load(mesh.material.albedoTexture, m_commandPool);
-
-                    auto material = Material::create(getDescriptorPool(), textureImage);
-                    gpuMesh->material = material;
-                }
-
-                gpuMeshes.push_back(gpuMesh);
+                auto material = Material::create(getDescriptorPool(), textureImage);
+                gpuMesh->material = material;
             }
 
-            GPUEntity gpuEntity{
-                .meshes = gpuMeshes,
-                .transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f),
-            };
-
-            m_perFrameData.meshes[entity] = gpuEntity;
+            gpuMeshes.push_back(gpuMesh);
         }
+
+        GPUEntity gpuEntity{
+            .meshes = gpuMeshes,
+            .transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f),
+        };
+
+        if (auto skeletalComponent = entity->getComponent<SkeletalMeshComponent>())
+            gpuEntity.finalBones = skeletalComponent->getSkeleton().getFinalMatrices();
+
+        m_perFrameData.meshes[entity] = gpuEntity;
+
+        // static bool test{false};
+
+        // if (!test)
+        // {
+        //     m_perFrameData.wireframeMeshes.push_back(gpuEntity);
+        //     test = true;
+        // }
     }
 }
 
@@ -140,12 +155,12 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
 
     CameraUBO cameraUBO{};
 
-    cameraUBO.view = camera->getViewMatrix();
-    cameraUBO.projection = camera->getProjectionMatrix();
+    cameraUBO.view = camera ? camera->getViewMatrix() : glm::mat4(1.0f);
+    cameraUBO.projection = camera ? camera->getProjectionMatrix() : glm::mat4(1.0f);
     cameraUBO.projection[1][1] *= -1;
 
     m_perFrameData.projection = cameraUBO.projection;
-    m_perFrameData.view = camera->getViewMatrix();
+    m_perFrameData.view = cameraUBO.view;
 
     std::memcpy(m_cameraMapped[m_currentFrame], &cameraUBO, sizeof(CameraUBO));
 
@@ -186,7 +201,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
         return;
     }
 
-    size_t requiredSize = sizeof(LightData) * (lights.size() * sizeof(LightData));
+    // size_t requiredSize = sizeof(LightData) * (lights.size() * sizeof(LightData));
 
     void *mapped;
     m_lightSSBOs[m_currentFrame]->map(mapped);
@@ -284,12 +299,6 @@ void RenderGraph::createDescriptorSetPool()
 
 bool RenderGraph::begin()
 {
-    // vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
-    // auto& lock = m_syncObject->getSync(m_currentFrame);
-
-    // vkWaitForFences(m_device, 1, &lock.inFlightFence, VK_TRUE, UINT64_MAX);
-
-    // vkGetFenceStatus
     if (VkResult result = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX); result != VK_SUCCESS)
     {
         std::cerr << "Failed to wait for fences: " << core::helpers::vulkanResultToString(result) << '\n';
@@ -304,17 +313,20 @@ bool RenderGraph::begin()
 
     m_commandPools[m_currentFrame]->reset(VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT);
 
-    // VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, lock.imageAvailableSemaphore, VK_NULL_HANDLE, &m_imageIndex);
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
         m_swapchain->recreate();
-        m_resourceCompiler.onSwapChainResize(m_resourceBuilder, m_resourceStorage);
+
+        m_renderGraphPassesCompiler.onSwapChainResized(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
+
+        for (const auto &[id, renderPass] : m_renderGraphPasses)
+            renderPass.renderGraphPass->onSwapChainResized(m_renderGraphPassesStorage);
 
         for (const auto &renderPass : m_renderGraphPasses)
         {
-            if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.get()))
+            if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.renderGraphPass.get()))
             {
                 m_perFrameData.viewportImageViews = s->getImageViews();
                 m_perFrameData.isViewportImageViewsDirty = true;
@@ -330,27 +342,7 @@ bool RenderGraph::begin()
         return false;
     }
 
-    // Remove
-    //  if (m_imagesInFlight[m_imageIndex] != VK_NULL_HANDLE)
-    //      vkWaitForFences(m_device, 1, &m_imagesInFlight[m_imageIndex], VK_TRUE, UINT64_MAX);
-
-    // m_imagesInFlight[m_imageIndex] = m_inFlightFences[m_currentFrame];
-    //
-
-    // vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
-
-    // vkResetFences(m_device, 1, &lock.inFlightFence);
-
-    // Create a pool of secondary command buffers per frame: maybe 2–4 per frame (depending on how many threads you want to use).
-
     const auto &primaryCommandBuffer = m_commandBuffers.at(m_currentFrame);
-
-    // primaryCommandBuffer->reset();
-
-    // for (size_t passIdx = 0; passIdx < m_renderGraphPasses.size(); ++passIdx)
-    //     m_secondaryCommandBuffers[m_currentFrame][passIdx]->reset();
-
-    // m_commandPools[m_currentFrame]->reset(0);
 
     primaryCommandBuffer->begin();
 
@@ -364,10 +356,10 @@ bool RenderGraph::begin()
 
     for (const auto &[_, pass] : m_renderGraphPasses)
     {
-        if (dynamic_cast<ShadowRenderGraphPass *>(pass.get()))
-            shadowPasses.push_back(pass);
+        if (dynamic_cast<ShadowRenderGraphPass *>(pass.renderGraphPass.get()))
+            shadowPasses.push_back(pass.renderGraphPass);
         else
-            otherPasses.push_back(pass);
+            otherPasses.push_back(pass.renderGraphPass);
     }
 
     std::vector<std::shared_ptr<IRenderGraphPass>> orderedPasses;
@@ -448,10 +440,15 @@ void RenderGraph::end()
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
     {
         m_swapchain->recreate();
-        m_resourceCompiler.onSwapChainResize(m_resourceBuilder, m_resourceStorage);
+
+        m_renderGraphPassesCompiler.onSwapChainResized(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
+
+        for (const auto &[id, renderPass] : m_renderGraphPasses)
+            renderPass.renderGraphPass->onSwapChainResized(m_renderGraphPassesStorage);
+
         for (const auto &renderPass : m_renderGraphPasses)
         {
-            if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.get()))
+            if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.renderGraphPass.get()))
             {
                 m_perFrameData.viewportImageViews = s->getImageViews();
                 m_perFrameData.isViewportImageViewsDirty = true;
@@ -461,6 +458,8 @@ void RenderGraph::end()
     }
     else if (result != VK_SUCCESS)
         throw std::runtime_error("Failed to present swap chain image");
+
+    m_perFrameData.additionalData.clear();
 }
 
 void RenderGraph::draw()
@@ -473,10 +472,33 @@ void RenderGraph::draw()
 
 void RenderGraph::setup()
 {
-    for (const auto &pass : m_renderGraphPasses)
-        pass.second->setup(m_resourceBuilder);
+    for (auto &[id, pass] : m_renderGraphPasses)
+    {
+        m_renderGraphPassesBuilder.setCurrentPass(&pass.passInfo);
+        pass.renderGraphPass->setup(m_renderGraphPassesBuilder);
+    }
 
     compile();
+}
+
+void RenderGraph::compile()
+{
+    m_renderGraphPassesCompiler.compile(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
+
+    for (const auto &[id, pass] : m_renderGraphPasses)
+    {
+        pass.renderGraphPass->compile(m_renderGraphPassesStorage);
+    }
+
+    for (const auto &renderPass : m_renderGraphPasses)
+    {
+        if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.renderGraphPass.get()))
+        {
+            m_perFrameData.viewportImageViews = s->getImageViews();
+            m_perFrameData.isViewportImageViewsDirty = true;
+            break;
+        }
+    }
 }
 
 void RenderGraph::createDirectionalLightDescriptorSets()
@@ -542,24 +564,6 @@ void RenderGraph::createRenderGraphResources()
     }
 }
 
-void RenderGraph::compile()
-{
-    m_resourceCompiler.compile(m_resourceBuilder, m_resourceStorage);
-
-    for (const auto &pass : m_renderGraphPasses)
-        pass.second->compile(m_resourceStorage);
-
-    for (const auto &renderPass : m_renderGraphPasses)
-    {
-        if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.get()))
-        {
-            m_perFrameData.viewportImageViews = s->getImageViews();
-            m_perFrameData.isViewportImageViewsDirty = true;
-            break;
-        }
-    }
-}
-
 void RenderGraph::cleanResources()
 {
     vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
@@ -572,7 +576,7 @@ void RenderGraph::cleanResources()
             cb->destroyVk();
 
     for (const auto &renderPass : m_renderGraphPasses)
-        renderPass.second->cleanup();
+        renderPass.second.renderGraphPass->cleanup();
 
     for (const auto &light : m_lightSpaceMatrixUniformObjects)
     {
@@ -588,10 +592,8 @@ void RenderGraph::cleanResources()
 
     m_perFrameData.meshes.clear();
 
-    m_resourceStorage.cleanup();
-    m_resourceBuilder.cleanup();
-
     engineShaderFamilies::cleanEngineShaderFamilies();
 }
+ELIX_CUSTOM_NAMESPACE_END
 
 ELIX_NESTED_NAMESPACE_END

@@ -14,16 +14,17 @@ class RenderPass
 {
 public:
     using SharedPtr = std::shared_ptr<RenderPass>;
-    
-    RenderPass(const std::vector<VkAttachmentDescription>& attachments, const std::vector<VkSubpassDescription>& subpasses, 
-    const std::vector<VkSubpassDependency>& dependencies);
 
-    static SharedPtr create(const std::vector<VkAttachmentDescription>& attachments, const std::vector<VkSubpassDescription>& subpasses, 
-    const std::vector<VkSubpassDependency>& dependencies);
+    RenderPass(const std::vector<VkAttachmentDescription> &attachments, const std::vector<VkSubpassDescription> &subpasses,
+               const std::vector<VkSubpassDependency> &dependencies);
+
+    static SharedPtr create(const std::vector<VkAttachmentDescription> &attachments, const std::vector<VkSubpassDescription> &subpasses,
+                            const std::vector<VkSubpassDependency> &dependencies);
 
     VkRenderPass vk();
 
     ~RenderPass();
+
 private:
     VkDevice m_device{VK_NULL_HANDLE};
     VkRenderPass m_renderPass{VK_NULL_HANDLE};
@@ -31,5 +32,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-
-#endif //ELIX_RENDER_PASS_HPP
+#endif // ELIX_RENDER_PASS_HPP

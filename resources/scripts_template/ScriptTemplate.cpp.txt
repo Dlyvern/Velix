@@ -1,0 +1,22 @@
+#include "{{ClassName}}.hpp"
+
+{{ClassName}}::{{ClassName}}()
+{
+
+}
+
+{{ClassName}}::~{{ClassName}}
+{
+
+}
+
+void {{ClassName}}::onStart()
+{
+
+
+}
+
+void {{ClassName}}::onUpdate(float deltaTime)
+{
+    
+}

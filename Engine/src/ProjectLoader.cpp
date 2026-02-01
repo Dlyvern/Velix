@@ -4,6 +4,8 @@
 #include <iostream>
 #include <fstream>
 
+#include "Engine/Assets/AssetsLoader.hpp"
+
 #include "nlohmann/json.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -92,6 +94,28 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
     project->fullPath = json["path"];
     project->resourcesDir = json["resources_path"];
     project->sourcesDir = json["sources_path"];
+
+    auto &assetsCache = project->cache.assetsCache;
+
+    for (auto &entry : std::filesystem::recursive_directory_iterator(project->fullPath))
+    {
+        const auto &extension = entry.path().extension();
+
+        if (extension == ".png" || extension == ".jpg")
+        {
+            auto texture = std::make_shared<Texture>();
+
+            if (!texture->load(entry.path()))
+            {
+                std::cerr << "Failed to load some assets cache texture: " << entry.path() << '\n';
+                continue;
+            }
+
+            std::cout << "Loaded texture: " << entry.path() << '\n';
+
+            assetsCache.addTexture(entry.path(), std::move(texture));
+        }
+    }
 
     return project;
 }

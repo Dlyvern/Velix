@@ -1,4 +1,4 @@
-#include "Engine/ShaderDataExtractor.hpp"
+#include "Engine/Shaders/ShaderDataExtractor.hpp"
 #include <vector>
 #include <fstream>
 #include <iostream>
@@ -8,11 +8,11 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandler& handler, const std::string& filePath)
+std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandler &handler)
 {
     std::vector<ShaderReflection> reflections;
 
-    if(handler.getCode().empty())
+    if (handler.getCode().empty())
     {
         std::cerr << "SPIRV from shader is empty" << std::endl;
         return reflections;
@@ -21,7 +21,7 @@ std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandl
     spirv_cross::CompilerGLSL compiler(handler.getCode());
     spirv_cross::ShaderResources resources = compiler.get_shader_resources();
 
-    for(const auto& uniformBuffer : resources.uniform_buffers)
+    for (const auto &uniformBuffer : resources.uniform_buffers)
     {
         auto set = compiler.get_decoration(uniformBuffer.id, spv::DecorationDescriptorSet);
         auto binding = compiler.get_decoration(uniformBuffer.id, spv::DecorationBinding);
@@ -30,10 +30,10 @@ std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandl
         auto size = compiler.get_declared_struct_size(type);
 
         std::cout << "UBO: " << name << " set=" << set << " binding=" << binding
-              << " size=" << size << std::endl;
+                  << " size=" << size << std::endl;
     }
-    
-    for (auto& sampler : resources.sampled_images)
+
+    for (auto &sampler : resources.sampled_images)
     {
         auto set = compiler.get_decoration(sampler.id, spv::DecorationDescriptorSet);
         auto binding = compiler.get_decoration(sampler.id, spv::DecorationBinding);
@@ -42,21 +42,20 @@ std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandl
         std::cout << "Texture: " << name << " set=" << set << " binding=" << binding << std::endl;
     }
 
-    for (auto& pushConstant : resources.push_constant_buffers)
+    for (auto &pushConstant : resources.push_constant_buffers)
     {
-        auto& type = compiler.get_type(pushConstant.base_type_id);
+        auto &type = compiler.get_type(pushConstant.base_type_id);
         size_t size = compiler.get_declared_struct_size(type);
         std::cout << "PushConstant: " << compiler.get_name(pushConstant.id)
-                << " size=" << size << std::endl;
+                  << " size=" << size << std::endl;
     }
 
-    for (auto& input : resources.stage_inputs)
+    for (auto &input : resources.stage_inputs)
     {
         auto location = compiler.get_decoration(input.id, spv::DecorationLocation);
         auto name = compiler.get_name(input.id);
         std::cout << "Vertex Input: " << name << " location=" << location << std::endl;
     }
-
 
     // auto& type = compiler.get_type(resource.type_id);
     // if (type.basetype == spirv_cross::SPIRType::SampledImage)
@@ -67,7 +66,6 @@ std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandl
     //     descriptor.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     // else if (type.storage == spv::StorageClassStorageBuffer)
     //     descriptor.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-
 
     return reflections;
 }

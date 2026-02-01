@@ -13,15 +13,16 @@ class RenderTarget
 public:
     using SharedPtr = std::shared_ptr<RenderTarget>;
 
-    RenderTarget(VkDevice device, VkPhysicalDevice physicalDevice,
+    RenderTarget() = default;
+
+    RenderTarget(VkDevice device,
                  VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
-                 core::memory::MemoryUsage memFlags = core::memory::MemoryUsage::GPU_ONLY, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL,
-                 uint32_t mipLevels = 0, uint32_t arrayLayers = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT) : m_device(device), m_aspect(aspect), m_format(format), m_physicalDevice(physicalDevice)
+                 core::memory::MemoryUsage memFlags = core::memory::MemoryUsage::GPU_ONLY, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL) : m_device(device), m_aspect(aspect), m_format(format)
     {
         m_image = core::Image::createShared(extent.width, extent.height, usage, memFlags, format, tiling);
     }
 
-    RenderTarget(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat format, VkImageAspectFlags aspect, core::Image::SharedPtr image) : m_device(device), m_physicalDevice(physicalDevice), m_format(format), m_aspect(aspect), m_image(image)
+    RenderTarget(VkDevice device, VkFormat format, VkImageAspectFlags aspect, core::Image::SharedPtr image) : m_device(device), m_format(format), m_aspect(aspect), m_image(image)
     {
         createVkImageView();
     }
@@ -33,7 +34,7 @@ public:
 
     void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, core::memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling)
     {
-        m_image->createVk(m_physicalDevice, extent, usage, memFlags, format, tiling);
+        m_image->createVk(extent, usage, memFlags, format, tiling);
     }
 
     void destroyVkImage()
@@ -98,7 +99,6 @@ public:
 
 private:
     VkDevice m_device{VK_NULL_HANDLE};
-    VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
     core::Image::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};
     VkFormat m_format{VK_FORMAT_UNDEFINED};

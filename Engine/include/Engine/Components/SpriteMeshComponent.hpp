@@ -10,13 +10,13 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class SpriteMeshComponent : public ECS
 {
 public:
-    explicit SpriteMeshComponent(const Mesh2D& mesh);
-    const Mesh2D& getMesh() const;
+    explicit SpriteMeshComponent(const CPUMesh &mesh);
+    const CPUMesh &getMesh() const;
 
 private:
-    Mesh2D m_mesh;
+    CPUMesh m_mesh;
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_SPRITE_MESH_COMPONENT_HPP
+#endif // ELIX_SPRITE_MESH_COMPONENT_HPP

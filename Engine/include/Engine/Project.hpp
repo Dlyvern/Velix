@@ -5,12 +5,19 @@
 
 #include "Core/Macros.hpp"
 #include "Engine/PluginSystem/PluginLoader.hpp"
+#include "Engine/Assets/AssetsCache.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+
+struct ProjectCache
+{
+    AssetsCache assetsCache;
+};
 
 struct Project
 {
 public:
+    ProjectCache cache;
     LibraryHandle projectLibrary;
     std::string resourcesDir;
     std::string entryScene;

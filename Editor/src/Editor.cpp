@@ -5,7 +5,13 @@
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Components/LightComponent.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
+#include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
+#include "Engine/Components/CameraComponent.hpp"
+#include "Engine/Components/RigidBodyComponent.hpp"
+
+#include "Engine/Primitives.hpp"
+#include "Engine/Components/CollisionComponent.hpp"
 
 #include "Engine/PluginSystem/PluginLoader.hpp"
 
@@ -21,12 +27,15 @@
 
 #include <GLFW/glfw3.h>
 
+#include <fstream>
+
 #include "ImGuizmo.h"
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-Editor::Editor()
+Editor::Editor(VkDescriptorPool descriptorPool) : m_descriptorPool(descriptorPool)
 {
+    m_editorCamera = std::make_shared<engine::Camera>();
 }
 
 void Editor::drawGuizmo()
@@ -64,8 +73,8 @@ void Editor::drawGuizmo()
     }
 
     ImGuizmo::Manipulate(
-        glm::value_ptr(m_engineCamera->getCamera()->getViewMatrix()),
-        glm::value_ptr(m_engineCamera->getCamera()->getProjectionMatrix()),
+        glm::value_ptr(m_editorCamera->getViewMatrix()),
+        glm::value_ptr(m_editorCamera->getProjectionMatrix()),
         operation,
         ImGuizmo::LOCAL, // or WORLD
         glm::value_ptr(model));
@@ -166,7 +175,7 @@ void Editor::initStyle()
 
     m_resourceStorage.loadNeededResources();
 
-    m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage);
+    m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage, m_descriptorPool);
 
     // auto commandPool = core::CommandPool::createShared(vulkanContext->getDevice(), core::VulkanContext::getContext()->getGraphicsFamily());
 
@@ -182,6 +191,11 @@ void Editor::initStyle()
 
     // m_fileTexture->load("./resources/textures/file.png", commandPool);
     // m_fileDescriptorSet = ImGui_ImplVulkan_AddTexture(m_fileTexture->vkSampler(), m_fileTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+void Editor::addOnModeChangedCallback(const std::function<void(EditorMode)> &function)
+{
+    m_onModeChangedCallbacks.push_back(function);
 }
 
 void Editor::showDockSpace()
@@ -226,23 +240,20 @@ void Editor::showDockSpace()
 
         ImGuiID dockMainId = dockspaceId;
 
-        ImGuiID titleBarDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Up, 0.06f, nullptr, &dockMainId);
+        ImGuiID titleBarDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Up, 0.04f, nullptr, &dockMainId);
         ImGui::DockBuilderDockWindow("TitleBar", titleBarDock);
 
-        ImGuiID toolbarDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Up, 0.06f, nullptr, &dockMainId);
+        ImGuiID toolbarDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Up, 0.03f, nullptr, &dockMainId);
         ImGui::DockBuilderDockWindow("Toolbar", toolbarDock);
 
-        ImGuiID dockIdRight = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Right, 0.25f, nullptr, &dockMainId);
+        ImGuiID dockIdRight = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Right, 0.18f, nullptr, &dockMainId);
 
         ImGuiID dockIdRightTop = dockIdRight;
         ImGuiID dockIdRightBottom = ImGui::DockBuilderSplitNode(dockIdRightTop, ImGuiDir_Down, 0.5f, nullptr, &dockIdRightTop);
 
-        ImGuiID dockIdDown = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Down, 0.25f, nullptr, &dockMainId);
-        ImGuiID dockIdAssets = dockIdDown;
-        ImGuiID dockIdBottomPanel = ImGui::DockBuilderSplitNode(dockIdAssets, ImGuiDir_Down, 0.3f, nullptr, &dockIdAssets);
+        ImGuiID dockIdBottomPanel = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Down, 0.08f, nullptr, &dockMainId);
 
         ImGui::DockBuilderDockWindow("BottomPanel", dockIdBottomPanel);
-        ImGui::DockBuilderDockWindow("Assets", dockIdAssets);
         ImGui::DockBuilderDockWindow("Hierarchy", dockIdRightTop);
         ImGui::DockBuilderDockWindow("Details", dockIdRightBottom);
         ImGui::DockBuilderDockWindow("Viewport", dockMainId);
@@ -283,8 +294,181 @@ void Editor::drawCustomTitleBar()
             ImGui::OpenPopup("FilePopup");
     }
 
+    ImGui::SameLine(0, 10);
+
+    if (ImGui::Button("Tools"))
+    {
+        if (ImGui::IsPopupOpen("CreateNewClassPopup"))
+            ImGui::CloseCurrentPopup();
+        else
+            ImGui::OpenPopup("CreateNewClassPopup");
+    }
+
     ImGui::PopStyleColor(1);
     ImGui::PopStyleVar();
+
+    // ImGui::SetNextWindowPos(ImVec2(ImGui::GetItemRectMin().x, ImGui:s:GetItemRectMin().y + ImGui::GetItemRectSize().y));
+
+    if (ImGui::BeginPopup("CreateNewClassPopup"))
+    {
+        // ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+
+        if (ImGui::Button("Create new C++ class"))
+        {
+            if (ImGui::IsPopupOpen("CreateNewClass"))
+                ImGui::CloseCurrentPopup();
+            else
+                ImGui::OpenPopup("CreateNewClass");
+        }
+
+        if (ImGui::BeginPopup("CreateNewClass"))
+        {
+            static char newClassName[256];
+
+            ImGui::InputTextWithHint("##CreateClass", "New c++ class name...", newClassName, sizeof(newClassName));
+            ImGui::Separator();
+
+            if (ImGui::Button("Create"))
+            {
+                std::ifstream hppFileTemplate("./resources/scripts_template/ScriptTemplate.hpp.txt");
+                std::ifstream cppFileTemplate("./resources/scripts_template/ScriptTemplate.cpp.txt");
+
+                std::string hppString(std::istreambuf_iterator<char>{hppFileTemplate}, {});
+                std::string cppString(std::istreambuf_iterator<char>{cppFileTemplate}, {});
+
+                hppFileTemplate.close();
+                cppFileTemplate.close();
+
+                std::size_t pos = 0;
+
+                std::string token = "ClassName";
+                std::string className(newClassName);
+
+                while ((pos = hppString.find(token, pos)) != std::string::npos)
+                {
+                    hppString.replace(pos, token.length(), className);
+                    pos += className.length();
+                }
+
+                pos = 0;
+
+                while ((pos = cppString.find(token, pos)) != std::string::npos)
+                {
+                    cppString.replace(pos, token.length(), className);
+                    pos += className.length();
+                }
+
+                std::string sourceFolder = m_currentProject.lock()->sourcesDir;
+
+                if (sourceFolder.back() != '/')
+                    sourceFolder += '/';
+
+                std::ofstream hppCreateFile(sourceFolder + className + ".hpp");
+                std::ofstream cppCreateFile(sourceFolder + className + ".cpp");
+
+                hppCreateFile << hppString << std::endl;
+                cppCreateFile << cppString << std::endl;
+
+                hppCreateFile.close();
+                cppCreateFile.close();
+            }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancel"))
+                ImGui::CloseCurrentPopup();
+
+            // ImGui::PopStyleColor(1);
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::Button("Build Project"))
+        {
+            // if(m_currentProject.directory.empty())
+            // {
+            //     std::cerr << "Project directory is empty" << std::endl;
+            //     ImGui::End();
+            //     return;
+            // }
+
+            // //!It won't work on machine wihtout cmake, we need to provide a compiler along with the engine
+            // std::string cmakeBuildCommand = "cmake --build " + m_currentProject.directory + "/build" + " --config Release";
+
+            // std::string cmakeCommand =
+            // "cmake -S " + m_currentProject.directory + "/build" +
+            // " -B " + m_currentProject.directory + "/build" +
+            // " -DCMAKE_PREFIX_PATH=" + FileHelper::getExecutablePath().string();
+
+            // std::cout << cmakeCommand << std::endl;
+
+            // auto cmakeResult = FileHelper::executeCommand(cmakeCommand);
+
+            // std::cout << cmakeResult.second << std::endl;
+
+            // if(cmakeResult.first != 0)
+            // {
+            //     ImGui::End();
+            //     return;
+            // }
+
+            // auto cmakeBuildResult = FileHelper::executeCommand(cmakeBuildCommand);
+
+            // std::cerr << cmakeBuildResult.second << std::endl;
+
+            // if(cmakeBuildResult.first != 0)
+            // {
+            //     std::cerr << "Failed to build project" << std::endl;
+            //     // std::cerr << cmakeBuildResult.second << std::endl;
+            //     ImGui::End();
+            //     return;
+            // }
+
+            // std::cout << "Successfully built project" << std::endl;
+
+            // std::string extension = SHARED_LIB_EXTENSION;
+
+            // engine::LibraryHandle library = engine::PluginLoader::loadLibrary(m_currentProject.directory + "/build/" + "libGameModule" + extension);
+
+            // if(!library)
+            // {
+            //     std::cerr << "Failed to get a library" << std::endl;
+            //     ImGui::End();
+            //     return;
+            // }
+
+            // auto function = engine::PluginLoader::getFunction<engine::ScriptsRegister&(*)()>("getScriptsRegister", library);
+
+            // if(function)
+            // {
+            //     engine::ScriptsRegister& scriptsRegister = function();
+
+            //     if(scriptsRegister.getScripts().empty())
+            //         std::cerr << "Sripts are empty" << std::endl;
+
+            //     for(const auto& scriptRegister : scriptsRegister.getScripts())
+            //     {
+            //         auto script = scriptsRegister.createScript(scriptRegister.first);
+
+            //         if(!script)
+            //         {
+            //             std::cerr << "Failed to get script" << std::endl;
+            //             continue;
+            //         }
+
+            //         script->onStart();
+            //         script->onUpdate(0.0f);
+            //     }
+            // }
+            // else
+            //     std::cerr << "Failed to get hello function" << std::endl;
+
+            // engine::PluginLoader::closeLibrary(library);
+        }
+
+        ImGui::EndPopup();
+
+        // ImGui::PopStyleColor(1);
+    }
 
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y + ImGui::GetItemRectSize().y));
 
@@ -292,11 +476,35 @@ void Editor::drawCustomTitleBar()
     {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
 
-        if (ImGui::Button("New Scene"))
+        if (ImGui::Button("New scene"))
         {
+            if (ImGui::IsPopupOpen("CreateNewScene"))
+                ImGui::CloseCurrentPopup();
+            else
+                ImGui::OpenPopup("CreateNewScene");
         }
-        if (ImGui::Button("Open..."))
+
+        if (ImGui::BeginPopup("CreateNewScene"))
         {
+            // ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            static char sceneBuffer[256];
+            ImGui::InputTextWithHint("##NewScene", "New scene name...", sceneBuffer, sizeof(sceneBuffer));
+            ImGui::Separator();
+
+            ImGui::Button("Create");
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancel"))
+                ImGui::CloseCurrentPopup();
+
+            // ImGui::PopStyleColor(1);
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::Button("Open scene"))
+        {
+            // TODO open my own file editor
         }
         if (ImGui::Button("Save"))
         {
@@ -306,8 +514,7 @@ void Editor::drawCustomTitleBar()
 
         ImGui::Separator();
         if (ImGui::Button("Exit"))
-        {
-        }
+            std::abort(); // Ha-ha-ha-ha Kill it slower dumbass
         ImGui::PopStyleColor(1);
 
         ImGui::EndPopup();
@@ -378,6 +585,15 @@ void Editor::drawCustomTitleBar()
     ImGui::PopStyleVar(2);
 }
 
+void Editor::changeMode(EditorMode mode)
+{
+    m_currentMode = mode;
+
+    for (const auto &callback : m_onModeChangedCallbacks)
+        if (callback)
+            callback(mode);
+}
+
 void Editor::drawToolBar()
 {
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
@@ -394,18 +610,42 @@ void Editor::drawToolBar()
 
     if (ImGui::BeginMenuBar())
     {
+        // TODO make it better
         const std::vector<std::string> selectionModes = {"Translate", "Rotate", "Scale"};
-        static int gizmoMode = 0;
+        static int guizmoMode = 0;
 
+        switch (m_currentGuizmoOperation)
+        {
+        case GuizmoOperation::TRANSLATE:
+            guizmoMode = 0;
+            break;
+        case GuizmoOperation::ROTATE:
+            guizmoMode = 1;
+            break;
+        case GuizmoOperation::SCALE:
+            guizmoMode = 2;
+            break;
+        }
+
+        ImGui::PushItemWidth(120.0f);
         // ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(50, 200));
-        if (ImGui::BeginCombo("##Selection mode", selectionModes[gizmoMode].c_str()))
+        if (ImGui::BeginCombo("##Selection mode", selectionModes[guizmoMode].c_str()))
         {
             for (int i = 0; i < selectionModes.size(); ++i)
             {
-                const bool isSelected = (gizmoMode == i);
+                const bool isSelected = (guizmoMode == i);
 
                 if (ImGui::Selectable(selectionModes[i].c_str(), isSelected))
-                    gizmoMode = i;
+                {
+                    guizmoMode = i;
+
+                    if (guizmoMode == 0)
+                        m_currentGuizmoOperation = GuizmoOperation::TRANSLATE;
+                    else if (guizmoMode == 1)
+                        m_currentGuizmoOperation = GuizmoOperation::ROTATE;
+                    else if (guizmoMode == 2)
+                        m_currentGuizmoOperation = GuizmoOperation::SCALE;
+                }
                 if (isSelected)
                     ImGui::SetItemDefaultFocus();
             }
@@ -416,17 +656,31 @@ void Editor::drawToolBar()
         // ImGui::SameLine(200);
         ImGui::SameLine();
 
-        static bool isPlaying = false;
-        if (ImGui::Button(isPlaying ? "Pause" : "Play"))
+        std::string playText;
+
+        if (m_currentMode == EditorMode::PAUSE || m_currentMode == EditorMode::EDIT)
+            playText = "Play";
+
+        else if (m_currentMode == EditorMode::PLAY)
+            playText = "Pause";
+
+        if (ImGui::Button(playText.c_str()))
         {
-            isPlaying = !isPlaying;
+            if (m_currentMode == Editor::EDIT || m_currentMode == EditorMode::PAUSE)
+            {
+                changeMode(EditorMode::PLAY);
+            }
+            else if (m_currentMode == EditorMode::PLAY)
+            {
+                changeMode(EditorMode::PAUSE);
+            }
         }
 
         ImGui::SameLine();
 
         if (ImGui::Button("Stop"))
         {
-            isPlaying = false;
+            changeMode(EditorMode::EDIT);
         }
 
         if (ImGui::Button("Benchmark"))
@@ -446,6 +700,8 @@ void Editor::drawToolBar()
             float fps = ImGui::GetIO().Framerate;
             ImGui::Text("FPS: %.1f", fps);
             ImGui::Text("Frame time: %.3f ms", 1000.0f / fps);
+            ImGui::Text("VRAM usage: %d mB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
+            ImGui::Text("RAM usage: %d mB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
 
             ImGui::EndPopup();
         }
@@ -467,95 +723,13 @@ void Editor::drawBottomPanel()
 
     ImGui::Begin("BottomPanel", nullptr, flags);
 
-    if (ImGui::Button("Build Project"))
-    {
-        // if(m_currentProject.directory.empty())
-        // {
-        //     std::cerr << "Project directory is empty" << std::endl;
-        //     ImGui::End();
-        //     return;
-        // }
-
-        // //!It won't work on machine wihtout cmake, we need to provide a compiler along with the engine
-        // std::string cmakeBuildCommand = "cmake --build " + m_currentProject.directory + "/build" + " --config Release";
-
-        // std::string cmakeCommand =
-        // "cmake -S " + m_currentProject.directory + "/build" +
-        // " -B " + m_currentProject.directory + "/build" +
-        // " -DCMAKE_PREFIX_PATH=" + FileHelper::getExecutablePath().string();
-
-        // std::cout << cmakeCommand << std::endl;
-
-        // auto cmakeResult = FileHelper::executeCommand(cmakeCommand);
-
-        // std::cout << cmakeResult.second << std::endl;
-
-        // if(cmakeResult.first != 0)
-        // {
-        //     ImGui::End();
-        //     return;
-        // }
-
-        // auto cmakeBuildResult = FileHelper::executeCommand(cmakeBuildCommand);
-
-        // std::cerr << cmakeBuildResult.second << std::endl;
-
-        // if(cmakeBuildResult.first != 0)
-        // {
-        //     std::cerr << "Failed to build project" << std::endl;
-        //     // std::cerr << cmakeBuildResult.second << std::endl;
-        //     ImGui::End();
-        //     return;
-        // }
-
-        // std::cout << "Successfully built project" << std::endl;
-
-        // std::string extension = SHARED_LIB_EXTENSION;
-
-        // engine::LibraryHandle library = engine::PluginLoader::loadLibrary(m_currentProject.directory + "/build/" + "libGameModule" + extension);
-
-        // if(!library)
-        // {
-        //     std::cerr << "Failed to get a library" << std::endl;
-        //     ImGui::End();
-        //     return;
-        // }
-
-        // auto function = engine::PluginLoader::getFunction<engine::ScriptsRegister&(*)()>("getScriptsRegister", library);
-
-        // if(function)
-        // {
-        //     engine::ScriptsRegister& scriptsRegister = function();
-
-        //     if(scriptsRegister.getScripts().empty())
-        //         std::cerr << "Sripts are empty" << std::endl;
-
-        //     for(const auto& scriptRegister : scriptsRegister.getScripts())
-        //     {
-        //         auto script = scriptsRegister.createScript(scriptRegister.first);
-
-        //         if(!script)
-        //         {
-        //             std::cerr << "Failed to get script" << std::endl;
-        //             continue;
-        //         }
-
-        //         script->onStart();
-        //         script->onUpdate(0.0f);
-        //     }
-        // }
-        // else
-        //     std::cerr << "Failed to get hello function" << std::endl;
-
-        // engine::PluginLoader::closeLibrary(library);
-    }
+    if (ImGui::Button("Assets"))
+        m_showAssetsWindow = !m_showAssetsWindow;
 
     ImGui::SameLine();
 
-    if (ImGui::Button("Assets"))
-    {
-        m_showAssetsWindow = !m_showAssetsWindow;
-    }
+    if (ImGui::Button("Terminal with logs"))
+        m_showTerminal = !m_showTerminal;
 
     ImGui::End();
 }
@@ -578,6 +752,66 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet)
     drawDetails();
 }
 
+std::vector<engine::AdditionalPerFrameData> Editor::getRenderData()
+{
+    if (!m_selectedEntity)
+        return {};
+
+    static engine::Entity *prevEntity{nullptr};
+
+    if (prevEntity == m_selectedEntity.get())
+    {
+        engine::AdditionalPerFrameData data;
+
+        engine::GPUEntity entity;
+        entity.transform = m_selectedEntity->getComponent<engine::Transform3DComponent>()->getMatrix();
+        entity.transform = glm::scale(entity.transform, glm::vec3(1.15f));
+        entity.meshes.push_back(m_selectedObjectMesh);
+
+        data.stencilMeshes.push_back(entity);
+
+        return {data};
+    }
+
+    prevEntity = m_selectedEntity.get();
+
+    engine::AdditionalPerFrameData data;
+
+    engine::GPUEntity entity;
+
+    entity.transform = m_selectedEntity->getComponent<engine::Transform3DComponent>()->getMatrix();
+    entity.transform = glm::scale(entity.transform, glm::vec3(1.15f));
+
+    std::vector<elix::engine::CPUMesh> meshes;
+    if (auto c = m_selectedEntity->getComponent<engine::StaticMeshComponent>())
+        meshes = c->getMeshes();
+    else if (auto c = m_selectedEntity->getComponent<engine::SkeletalMeshComponent>())
+        meshes = c->getMeshes();
+
+    struct VertexStruct
+    {
+        glm::vec3 position{1.0f};
+
+        VertexStruct(const glm::vec3 &pos) : position(pos) {}
+    };
+
+    std::vector<VertexStruct> test;
+
+    for (const auto &cubeVert : engine::cube::vertices)
+        test.emplace_back(VertexStruct{cubeVert.position});
+
+    std::vector<uint8_t> vertexData;
+    vertexData.resize(test.size() * sizeof(VertexStruct));
+    std::memcpy(vertexData.data(), test.data(), vertexData.size());
+
+    m_selectedObjectMesh = engine::GPUMesh::create(vertexData, engine::cube::indices);
+    entity.meshes.push_back(m_selectedObjectMesh);
+
+    data.stencilMeshes.push_back(entity);
+
+    return {data};
+}
+
 void Editor::handleInput()
 {
     ImGuiIO &io = ImGui::GetIO();
@@ -588,6 +822,9 @@ void Editor::handleInput()
 
     const bool ctrl_down = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
     const bool s_pressed = ImGui::IsKeyPressed(ImGuiKey_S, false);
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) && m_currentMode != EditorMode::EDIT)
+        changeMode(EditorMode::EDIT);
 
     if (ctrl_down && s_pressed)
     {
@@ -622,6 +859,85 @@ void Editor::drawDetails()
     std::strncpy(buffer, m_selectedEntity->getName().c_str(), sizeof(buffer));
     if (ImGui::InputText("##Name", buffer, sizeof(buffer)))
         m_selectedEntity->setName(std::string(buffer));
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Add component"))
+    {
+        if (ImGui::IsPopupOpen("AddComponentPopup"))
+            ImGui::CloseCurrentPopup();
+        else
+            ImGui::OpenPopup("AddComponentPopup");
+    }
+
+    if (ImGui::BeginPopup("AddComponentPopup"))
+    {
+        ImGui::Text("Scripting");
+
+        ImGui::Button("New C++ class");
+
+        ImGui::Separator();
+
+        ImGui::Text("Common");
+
+        if (ImGui::Button("Camera"))
+        {
+            m_selectedEntity->addComponent<engine::CameraComponent>();
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (ImGui::Button("RigidBody"))
+        {
+            auto transformation = m_selectedEntity->getComponent<engine::Transform3DComponent>();
+            auto position = transformation->getPosition();
+            physx::PxTransform transform(physx::PxVec3(position.x, position.y, position.z));
+            auto rigid = m_scene->getPhysicsScene().createDynamic(transform);
+            auto rigidComponent = m_selectedEntity->addComponent<engine::RigidBodyComponent>(rigid);
+
+            if (auto collisionComponent = m_selectedEntity->getComponent<engine::CollisionComponent>())
+            {
+                if (collisionComponent->getActor())
+                {
+                    m_scene->getPhysicsScene().removeActor(*collisionComponent->getActor(), true, true);
+                    collisionComponent->removeActor();
+                }
+
+                rigidComponent->getRigidActor()->attachShape(*collisionComponent->getShape());
+
+                physx::PxRigidBodyExt::updateMassAndInertia(*rigid, 10.0f);
+            }
+        }
+
+        if (ImGui::Button("Collision"))
+        {
+            auto transformation = m_selectedEntity->getComponent<engine::Transform3DComponent>();
+            auto position = transformation->getPosition();
+            auto shape = m_scene->getPhysicsScene().createShape(physx::PxBoxGeometry(transformation->getScale().x * 0.5f,
+                                                                                     transformation->getScale().y * 0.5f, transformation->getScale().z * 0.5f));
+
+            physx::PxTransform transform(physx::PxVec3(position.x, position.y, position.z));
+
+            if (auto rigidComponent = m_selectedEntity->getComponent<engine::RigidBodyComponent>())
+            {
+                rigidComponent->getRigidActor()->attachShape(*shape);
+                auto collisionComponent = m_selectedEntity->addComponent<engine::CollisionComponent>(shape);
+            }
+            else
+            {
+                auto staticActor = m_scene->getPhysicsScene().createStatic(transform);
+                staticActor->attachShape(*shape);
+                auto collisionComponent = m_selectedEntity->addComponent<engine::CollisionComponent>(shape, staticActor);
+            }
+        }
+
+        ImGui::Button("Audio");
+
+        ImGui::Button("Light");
+
+        ImGui::Separator();
+
+        ImGui::EndPopup();
+    }
 
     for (const auto &[_, component] : m_selectedEntity->getSingleComponents())
     {
@@ -753,9 +1069,61 @@ void Editor::drawDetails()
             {
             }
         }
+        else if (auto skeletalMeshComponent = dynamic_cast<engine::SkeletalMeshComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Skeletal mesh", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+            }
+        }
+        else if (auto cameraComponent = dynamic_cast<engine::CameraComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                auto camera = cameraComponent->getCamera();
+                float yaw = camera->getYaw();
+                float pitch = camera->getPitch();
+                glm::vec3 position = camera->getPosition();
+                float fov = camera->getFOV();
+
+                if (ImGui::DragFloat("Yaw", &yaw))
+                    camera->setYaw(yaw);
+
+                if (ImGui::DragFloat("Pitch", &pitch))
+                    camera->setPitch(pitch);
+
+                if (ImGui::DragFloat("FOV", &fov))
+                    camera->setFOV(fov);
+
+                if (ImGui::DragFloat3("Camera position", &position.x, 0.1f, 0.0f))
+                    camera->setPosition(position);
+            }
+        }
+        else if (auto rigidBodyComponent = dynamic_cast<engine::RigidBodyComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("RigidBody", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                bool isKinematic = true;
+
+                if (ImGui::Checkbox("Kinematic", &isKinematic))
+                {
+                    rigidBodyComponent->setKinematic(isKinematic);
+                }
+            }
+        }
+        else if (auto collisionComponent = dynamic_cast<engine::CollisionComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Collision", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+            }
+        }
     }
 
     ImGui::End();
+}
+
+engine::Camera::SharedPtr Editor::getCurrentCamera()
+{
+    return m_editorCamera;
 }
 
 void Editor::addOnViewportChangedCallback(const std::function<void(float width, float height)> &function)
@@ -790,6 +1158,50 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
         for (const auto &function : m_onViewportWindowResized)
             if (function)
                 function(m_viewportSizeX, m_viewportSizeY);
+    }
+
+    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    ImGuiIO &io = ImGui::GetIO();
+
+    if (hovered && ImGui::IsMouseDown(ImGuiMouseButton_Right))
+    {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+
+        glm::vec2 mouseDelta(io.MouseDelta.x, io.MouseDelta.y);
+
+        float yaw = m_editorCamera->getYaw();
+        float pitch = m_editorCamera->getPitch();
+
+        yaw += mouseDelta.x * m_mouseSensitivity;
+        pitch -= mouseDelta.y * m_mouseSensitivity;
+
+        m_editorCamera->setYaw(yaw);
+        m_editorCamera->setPitch(pitch);
+
+        float velocity = m_movementSpeed * io.DeltaTime;
+        glm::vec3 position = m_editorCamera->getPosition();
+
+        const glm::vec3 forward = m_editorCamera->getForward();
+        const glm::vec3 right = glm::normalize(glm::cross(forward, m_editorCamera->getUp()));
+
+        if (ImGui::IsKeyDown(ImGuiKey_W))
+            position += forward * velocity;
+        if (ImGui::IsKeyDown(ImGuiKey_S))
+            position -= forward * velocity;
+        if (ImGui::IsKeyDown(ImGuiKey_A))
+            position -= right * velocity;
+        if (ImGui::IsKeyDown(ImGuiKey_D))
+            position += right * velocity;
+        if (ImGui::IsKeyDown(ImGuiKey_E))
+            position += m_editorCamera->getUp() * velocity;
+        if (ImGui::IsKeyDown(ImGuiKey_Q))
+            position -= m_editorCamera->getUp() * velocity;
+
+        m_editorCamera->setPosition(position);
+        m_editorCamera->updateCameraVectors();
+
+        io.WantCaptureMouse = true;
+        io.WantCaptureKeyboard = true;
     }
 
     ImGui::End();

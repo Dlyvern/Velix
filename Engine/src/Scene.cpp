@@ -17,12 +17,17 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-Scene::Scene()
+Scene::Scene() : m_physicsScene(PhysXCore::getInstance()->getPhysics())
 {
 }
 
 Scene::~Scene()
 {
+}
+
+PhysicsScene &Scene::getPhysicsScene()
+{
+    return m_physicsScene;
 }
 
 const std::vector<Entity::SharedPtr> &Scene::getEntities() const
@@ -88,9 +93,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
 
             auto gameObject = addEntity(name);
 
-            Mesh3D mesh{cube::vertices, cube::indices};
-
-            gameObject->addComponent<StaticMeshComponent>(std::vector<elix::engine::Mesh3D>{mesh});
+            CPUMesh mesh = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
+            gameObject->addComponent<StaticMeshComponent>(std::vector<CPUMesh>{mesh});
 
             auto transformation = gameObject->getComponent<Transform3DComponent>();
 
@@ -283,6 +287,8 @@ void Scene::update(float deltaTime)
 {
     for (auto &entity : m_entities)
         entity->update(deltaTime);
+
+    m_physicsScene.update(deltaTime);
 }
 
 void Scene::fixedUpdate(float fixedDelta)

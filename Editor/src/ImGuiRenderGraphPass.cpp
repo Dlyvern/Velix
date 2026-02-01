@@ -11,24 +11,53 @@
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor)
-: m_editor(editor), m_device(core::VulkanContext::getContext()->getDevice())
+    : m_editor(editor), m_device(core::VulkanContext::getContext()->getDevice())
 {
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     m_clearValues[1].depthStencil = {1.0f, 0};
 }
 
-void ImGuiRenderGraphPass::setViewportImages(const std::vector<VkImageView>& imageViews)
+void ImGuiRenderGraphPass::setViewportImages(const std::vector<VkImageView> &imageViews)
 {
     m_descriptorSets.clear();
 
-    for(int index = 0; index < imageViews.size(); ++index)
+    for (int index = 0; index < imageViews.size(); ++index)
     {
-        m_descriptorSets.push_back(ImGui_ImplVulkan_AddTexture(m_sampler, imageViews[index], 
-        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+        m_descriptorSets.push_back(ImGui_ImplVulkan_AddTexture(m_sampler, imageViews[index],
+                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
     }
 }
 
-void ImGuiRenderGraphPass::setup(engine::RenderGraphPassRecourceBuilder& graphPassBuilder)
+void ImGuiRenderGraphPass::compile(engine::renderGraph::RGPResourcesStorage &storage)
+{
+    for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
+    {
+        auto colorTexture = storage.getSwapChainTexture(m_colorTextureHandler, imageIndex);
+        std::vector<VkImageView> attachments{colorTexture->vkImageView()};
+
+        auto framebuffer = std::make_shared<core::Framebuffer>(core::VulkanContext::getContext()->getDevice(), attachments,
+                                                               m_renderPass, core::VulkanContext::getContext()->getSwapchain()->getExtent());
+
+        m_framebuffers.push_back(framebuffer);
+    }
+
+    initImGui();
+}
+
+void ImGuiRenderGraphPass::onSwapChainResized(engine::renderGraph::RGPResourcesStorage &storage)
+{
+    for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
+    {
+        auto frameBuffer = m_framebuffers[imageIndex];
+
+        auto colorTexture = storage.getSwapChainTexture(m_colorTextureHandler, imageIndex);
+        std::vector<VkImageView> attachments{colorTexture->vkImageView()};
+
+        frameBuffer->resize(core::VulkanContext::getContext()->getSwapchain()->getExtent(), attachments);
+    }
+}
+
+void ImGuiRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder &builder)
 {
     VkAttachmentDescription attachment = {};
     attachment.format = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();
@@ -69,37 +98,6 @@ void ImGuiRenderGraphPass::setup(engine::RenderGraphPassRecourceBuilder& graphPa
 
     m_renderPass = core::RenderPass::create({attachment}, {subpass}, {dependency});
 
-    engine::RenderGraphPassResourceTypes::SizeSpec sizeSpec
-    {
-        .type = engine::RenderGraphPassResourceTypes::SizeClass::SwapchainRelative,
-    };
-    
-    engine::RenderGraphPassResourceTypes::TextureDescription colorTexture{
-        // .name = "__ELIX_SWAP_CHAIN_COLOR__",
-        .name = "__ELIX_IMGUI_COLOR__",
-        .size = sizeSpec,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
-        .source = engine::RenderGraphPassResourceTypes::TextureDescription::FormatSource::Swapchain
-    };
-
-    auto colorImageHash = graphPassBuilder.createTexture(colorTexture);
-
-    for(size_t i = 0; i < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++i)
-    {
-        const std::string name = "__ELIX_IMGUI_FRAMEBUFFER_" + std::to_string(i) + "__";
-
-        engine::RenderGraphPassResourceTypes::FramebufferDescription framebufferDescription{
-            .name = name,
-            .attachmentsHash = {colorImageHash + i},
-            .renderPass = m_renderPass,
-            .size = sizeSpec,
-            .layers = 1
-        };
-
-        m_framebufferHashes.push_back(graphPassBuilder.createFramebuffer(framebufferDescription));
-    }
-
     VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
@@ -119,23 +117,20 @@ void ImGuiRenderGraphPass::setup(engine::RenderGraphPassRecourceBuilder& graphPa
 
     if (vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
         throw std::runtime_error("failed to create texture sampler!");
+
+    engine::renderGraph::RGPTextureDescription colorTextureDescription{};
+    colorTextureDescription.setDebugName("__ELIX_IMGUI_COLOR__");
+    colorTextureDescription.setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    colorTextureDescription.setFormat(core::VulkanContext::getContext()->getSwapchain()->getImageFormat());
+    colorTextureDescription.setUsage(engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
+    colorTextureDescription.setIsSwapChainTarget(true);
+
+    m_colorTextureHandler = builder.createTexture(colorTextureDescription);
+    builder.write(m_colorTextureHandler, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
 }
 
-void ImGuiRenderGraphPass::compile(engine::RenderGraphPassResourceHash& storage)
+void ImGuiRenderGraphPass::initImGui()
 {
-    for(const auto& framebufferCache : m_framebufferHashes)
-    {
-        auto framebuffer = storage.getFramebuffer(framebufferCache);
-
-        if(!framebuffer)
-        {
-            std::cerr << "Failed to find a framebuffer for BaseRenderGraphPass" << std::endl;
-            continue;
-        }
-
-        m_framebuffers.push_back(framebuffer);
-    }
-
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
 
@@ -145,7 +140,7 @@ void ImGuiRenderGraphPass::compile(engine::RenderGraphPassResourceHash& storage)
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
     io.ConfigDockingWithShift = true;
-    io.ConfigWindowsResizeFromEdges = true; 
+    io.ConfigWindowsResizeFromEdges = true;
     // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
     ImGui::StyleColorsDark();
@@ -157,30 +152,6 @@ void ImGuiRenderGraphPass::compile(engine::RenderGraphPassResourceHash& storage)
         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
 
-    VkDescriptorPoolSize poolSizes[] =
-	{
-		{ VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
-		{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
-		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
-		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
-		{ VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
-		{ VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
-		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
-		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
-		{ VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
-	};
-
-	VkDescriptorPoolCreateInfo poolInfo = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-	poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-	poolInfo.maxSets = 1000;
-	poolInfo.poolSizeCount = std::size(poolSizes);
-	poolInfo.pPoolSizes = poolSizes;
-
-	if(vkCreateDescriptorPool(core::VulkanContext::getContext()->getDevice(), &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create descriptor pool");
-
     ImGui_ImplGlfw_InitForVulkan(core::VulkanContext::getContext()->getSwapchain()->getWindow()->getRawHandler(), true);
 
     ImGui_ImplVulkan_InitInfo imguiInitInfo{};
@@ -190,7 +161,7 @@ void ImGuiRenderGraphPass::compile(engine::RenderGraphPassResourceHash& storage)
     imguiInitInfo.QueueFamily = core::VulkanContext::getContext()->getGraphicsFamily();
     imguiInitInfo.Queue = core::VulkanContext::getContext()->getGraphicsQueue();
     imguiInitInfo.PipelineCache = VK_NULL_HANDLE;
-    imguiInitInfo.DescriptorPool = m_descriptorPool;
+    imguiInitInfo.DescriptorPoolSize = 1000;
     imguiInitInfo.MinImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     imguiInitInfo.ImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     imguiInitInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
@@ -204,62 +175,76 @@ void ImGuiRenderGraphPass::compile(engine::RenderGraphPassResourceHash& storage)
     m_editor->initStyle();
 }
 
-void ImGuiRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo& renderPassBeginInfo) const
+void ImGuiRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const
 {
+    VkExtent2D extent{
+        .width = m_editor->getViewportX(),
+        .height = m_editor->getViewportY(),
+    };
+
     renderPassBeginInfo = VkRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     renderPassBeginInfo.renderPass = m_renderPass->vk();
     renderPassBeginInfo.framebuffer = m_framebuffers[m_currentImageIndex]->vk();
     renderPassBeginInfo.renderArea.offset = {0, 0};
-    renderPassBeginInfo.renderArea.extent = core::VulkanContext::getContext()->getSwapchain()->getExtent();
+    renderPassBeginInfo.renderArea.extent = extent;
     renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(m_clearValues.size());
     renderPassBeginInfo.pClearValues = m_clearValues.data();
 }
 
-void ImGuiRenderGraphPass::update(const engine::RenderGraphPassContext& renderData)
+void ImGuiRenderGraphPass::update(const engine::RenderGraphPassContext &renderData)
 {
     m_currentFrame = renderData.currentFrame;
     m_currentImageIndex = renderData.currentImageIndex;
 }
 
-void ImGuiRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData& data)
+void ImGuiRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data)
 {
-    if(data.isViewportImageViewsDirty)
+    if (data.isViewportImageViewsDirty)
         setViewportImages(data.viewportImageViews);
+
+    // float width = m_editor->getViewportX() <= 0.0f ? 1.0 : m_editor->getViewportX()
 
     VkViewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
-    viewport.width = static_cast<float>(core::VulkanContext::getContext()->getSwapchain()->getExtent().width);
-    viewport.height = static_cast<float>(core::VulkanContext::getContext()->getSwapchain()->getExtent().height);
+    viewport.width = static_cast<float>(m_editor->getViewportX());
+    viewport.height = static_cast<float>(m_editor->getViewportY());
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &viewport);
-    
+
+    VkExtent2D extent{
+        .width = m_editor->getViewportX(),
+        .height = m_editor->getViewportY(),
+    };
+
     VkRect2D scissor{};
     scissor.offset = {0, 0};
-    scissor.extent = core::VulkanContext::getContext()->getSwapchain()->getExtent();
+    scissor.extent = extent;
     vkCmdSetScissor(commandBuffer->vk(), 0, 1, &scissor);
 
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    m_editor->drawFrame(!m_descriptorSets.empty() && m_descriptorSets.size() > m_currentFrame ?
-    m_descriptorSets.at(m_currentFrame) : VK_NULL_HANDLE);
+    m_editor->drawFrame(!m_descriptorSets.empty() && m_descriptorSets.size() > m_currentFrame ? m_descriptorSets.at(m_currentFrame) : VK_NULL_HANDLE);
 
     ImGui::Render();
 
-    if (ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+    if (ImGuiIO &io = ImGui::GetIO(); io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
     {
         ImGui::UpdatePlatformWindows();
         ImGui::RenderPlatformWindowsDefault();
     }
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer->vk());
+}
 
-    // ImGui_ImplVulkan_Shutdown();
-    // ImGui_ImplGlfw_Shutdown();
-    // ImGui::DestroyContext();
+void ImGuiRenderGraphPass::cleanup()
+{
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
 }
 
 ELIX_NESTED_NAMESPACE_END

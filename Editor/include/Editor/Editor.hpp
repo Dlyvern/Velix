@@ -4,8 +4,11 @@
 #include "Core/Macros.hpp"
 #include "Core/Window.hpp"
 #include "Engine/Texture.hpp"
+#include "Engine/Camera.hpp"
 #include "Core/CommandBuffer.hpp"
 #include "Engine/Project.hpp"
+
+#include "Engine/Render/RenderGraphPassPerFrameData.hpp"
 
 #include "Engine/Scene.hpp"
 #include <volk.h>
@@ -14,21 +17,25 @@
 
 #include "Editor/EditorResourcesStorage.hpp"
 #include "Editor/AssetsWindow.hpp"
-#include "Engine/EngineCamera.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 class Editor
 {
 public:
-    Editor();
+    enum EditorMode
+    {
+        EDIT = 0,
+        PLAY = 1,
+        PAUSE = 2
+    };
+
+    Editor(VkDescriptorPool descriptorPool);
 
     void initStyle();
 
-    void setCamera(std::shared_ptr<engine::EngineCamera> engineCamera)
-    {
-        m_engineCamera = engineCamera;
-    }
+    engine::Camera::SharedPtr getCurrentCamera();
+
     //! Maybe we can do something better here
     void setScene(engine::Scene::SharedPtr scene)
     {
@@ -47,7 +54,31 @@ public:
 
     void addOnViewportChangedCallback(const std::function<void(float width, float height)> &function);
 
+    void addOnModeChangedCallback(const std::function<void(EditorMode)> &function);
+
+    std::vector<engine::AdditionalPerFrameData> getRenderData();
+
+    float getViewportX() const
+    {
+        return m_viewportSizeX;
+    }
+
+    float getViewportY() const
+    {
+        return m_viewportSizeY;
+    }
+
 private:
+    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
+
+    engine::GPUMesh::SharedPtr m_selectedObjectMesh{nullptr};
+
+    EditorMode m_currentMode{EditorMode::EDIT};
+
+    std::vector<std::function<void(EditorMode)>> m_onModeChangedCallbacks;
+
+    void changeMode(EditorMode mode);
+
     enum class GuizmoOperation
     {
         TRANSLATE,
@@ -61,20 +92,17 @@ private:
 
     void drawGuizmo();
 
-    bool m_showAssetsWindow{true};
+    float m_movementSpeed{3.0f};
 
-    // engine::Texture::SharedPtr m_logoTexture{nullptr};
-    // VkDescriptorSet m_logoDescriptorSet{VK_NULL_HANDLE};
+    float m_mouseSensitivity{0.1f};
+    bool m_firstClick{true};
 
-    // engine::Texture::SharedPtr m_folderTexture{nullptr};
-    // VkDescriptorSet m_folderDescriptorSet{VK_NULL_HANDLE};
+    bool m_showAssetsWindow{false};
+    bool m_showTerminal{false};
 
-    // engine::Texture::SharedPtr m_fileTexture{nullptr};
-    // VkDescriptorSet m_fileDescriptorSet{VK_NULL_HANDLE};
+    engine::Camera::SharedPtr m_editorCamera{nullptr};
 
     std::weak_ptr<engine::Project> m_currentProject;
-
-    std::shared_ptr<engine::EngineCamera> m_engineCamera{nullptr};
 
     EditorResourcesStorage m_resourceStorage;
     std::shared_ptr<AssetsWindow> m_assetsWindow{nullptr};
