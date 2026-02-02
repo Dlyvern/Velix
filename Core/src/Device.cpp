@@ -107,11 +107,13 @@ void Device::clean()
         m_handle = VK_NULL_HANDLE;
     }
 
+#ifdef __linux__
     if (m_isRAMFileOpened)
     {
         fclose(m_ramFile);
         m_isRAMFileOpened = false;
     }
+#endif
 }
 
 ELIX_NESTED_NAMESPACE_END
