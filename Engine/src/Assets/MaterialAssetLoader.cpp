@@ -38,7 +38,7 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
     {
         material.albedoTexture = json["texture_path"];
 
-        material.name = std::filesystem::path(material.albedoTexture).filename();
+        // material.name = std::filesystem::path(material.albedoTexture).filename();
     }
 
     if (json.contains("color"))

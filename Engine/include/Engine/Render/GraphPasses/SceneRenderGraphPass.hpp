@@ -15,8 +15,7 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 class SceneRenderGraphPass : public IRenderGraphPass
 {
 public:
-    // SceneRenderGraphPass(renderGraph::RGPResourceHandler &shadowHandler);
-    SceneRenderGraphPass();
+    SceneRenderGraphPass(renderGraph::RGPResourceHandler &shadowHandler);
 
     void setup(RGPResourcesBuilder &builder) override;
 
@@ -28,12 +27,12 @@ public:
 
     void getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const override;
 
-    void onSwapChainResized(renderGraph::RGPResourcesStorage &storage) override;
+    void onSwapChainResized(RGPResourcesStorage &storage) override;
 
 private:
     void createGraphicsPipeline();
 
-    std::array<VkClearValue, 2> m_clearValues;
+    std::array<VkClearValue, 3> m_clearValues;
 
     core::GraphicsPipeline::SharedPtr m_graphicsPipeline{nullptr};
 
@@ -43,9 +42,10 @@ private:
     uint32_t m_imageIndex{0};
     uint32_t m_currentFrame{0};
 
-    // renderGraph::RGPResourceHandler &m_shadowHandler;
-    renderGraph::RGPResourceHandler m_depthTextureHandler;
-    renderGraph::RGPResourceHandler m_colorTextureHandler;
+    RGPResourceHandler &m_shadowHandler;
+    RGPResourceHandler m_depthTextureHandler;
+    RGPResourceHandler m_colorTextureHandler;
+    RGPResourceHandler m_objectIdTextureHandler;
 
     // VkDescriptorPool m_descriptorPool;
     // std::unique_ptr<Skybox> m_skybox{nullptr};

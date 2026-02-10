@@ -8,6 +8,7 @@
 #include <vector>
 #include <volk.h>
 #include <array>
+#include <string>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include "glm/glm.hpp"
@@ -123,13 +124,13 @@ struct VertexSkinned
     glm::vec3 normal{1.0f};
     glm::vec3 tangent{1.0f};
     glm::vec3 bitangent{1.0f};
-    glm::uvec4 boneIds{glm::uvec4(0)};
+    glm::ivec4 boneIds{-1};
     glm::vec4 weights{1.0f};
 
     VertexSkinned() = default;
 
     VertexSkinned(glm::vec3 position, glm::vec2 textureCoordinates, glm::vec3 normal,
-                  glm::vec3 tangent, glm::vec3 bitangent, glm::uvec4 boneIds, glm::vec4 weights)
+                  glm::vec3 tangent, glm::vec3 bitangent, glm::ivec4 boneIds, glm::vec4 weights)
     {
         this->position = position;
         this->textureCoordinates = textureCoordinates;

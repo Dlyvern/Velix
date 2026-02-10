@@ -12,6 +12,7 @@ class RGPResourcesBuilder
 {
 public:
     RGPResourceHandler createTexture(const RGPTextureDescription &description);
+    RGPResourceHandler createTexture(const RGPTextureDescription &description, RGPResourceHandler &handler);
 
     void setCurrentPass(RGPPassInfo *pass);
 

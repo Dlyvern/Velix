@@ -30,6 +30,7 @@ private:
     void processMaterials(FbxNode *node, CPUMesh &mesh);
     std::optional<Skeleton> processSkeleton(FbxMesh *mesh);
     void processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshData &meshData);
+    void processFbxSkeleton(FbxNode *node, FbxSkeleton *skeleton);
     std::vector<Animation> processAnimations(FbxScene *scene);
 
     FbxManager *m_fbxManager{nullptr};

@@ -1,5 +1,7 @@
 #include "Core/ShaderHandler.hpp"
 
+#include "Core/VulkanContext.hpp"
+
 #include <stdexcept>
 #include <fstream>
 #include <iostream>
@@ -114,7 +116,6 @@ VkShaderModule ShaderHandler::createShaderModule(const std::vector<uint32_t> &co
 
     VkShaderModuleCreateInfo createInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     createInfo.codeSize = code.size() * sizeof(uint32_t);
-    ;
     createInfo.pCode = code.data();
 
     VkShaderModule shaderModule;

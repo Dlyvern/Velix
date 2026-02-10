@@ -22,6 +22,7 @@ void main()
     
     vec4 worldPos = modelPushConstant.model * vec4(inPosition, 1.0);
     vec4 viewPos = cameraUniformObject.view * worldPos;
+    
 
     gl_Position = cameraUniformObject.projection * viewPos;
 }

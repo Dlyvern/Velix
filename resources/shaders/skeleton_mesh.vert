@@ -1,11 +1,11 @@
 #version 450
 
-// const int MAX_BONES = 100;
 const int MAX_BONE_INFLUENCE = 4;
 
 layout(push_constant) uniform ModelPushConstant
 {
     mat4 model;
+    uint objectId;
 } modelPushConstant;
 
 layout(set = 0, binding = 0) uniform CameraUniformObject
@@ -19,9 +19,8 @@ layout(set = 0, binding = 1) uniform LightSpaceMatrixUniformObject
     mat4 lightSpaceMatrix;
 } lightSpaceMatrixUniformObject;
 
-layout(std430, set = 0, binding = 3) readonly buffer BonesSSBO
+layout(std430, set = 2, binding = 0) readonly buffer BonesSSBO
 {
-    int bonesCount;
     mat4 boneMatrices[];
 } bonesData;
 
@@ -74,4 +73,9 @@ void main()
     fragPositionLightSpace = lightSpaceMatrixUniformObject.lightSpaceMatrix * worldPos;
 
     gl_Position = cameraUniformObject.projection * viewPos;
+
+    // gl_Position = cameraUniformObject.projection *
+    //           cameraUniformObject.view *
+    //           modelPushConstant.model *
+    //           vec4(inPosition, 1.0);
 }

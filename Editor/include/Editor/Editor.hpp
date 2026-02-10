@@ -7,6 +7,7 @@
 #include "Engine/Camera.hpp"
 #include "Core/CommandBuffer.hpp"
 #include "Engine/Project.hpp"
+#include "Engine/Render/RenderTarget.hpp"
 
 #include "Engine/Render/RenderGraphPassPerFrameData.hpp"
 
@@ -50,6 +51,11 @@ public:
             m_assetsWindow->setProject(project.get());
     }
 
+    void setObjectIdColorImage(const engine::RenderTarget *renderTarget)
+    {
+        m_objectIdColorImage = renderTarget;
+    }
+
     void drawFrame(VkDescriptorSet viewportDescriptorSet = VK_NULL_HANDLE);
 
     void addOnViewportChangedCallback(const std::function<void(float width, float height)> &function);
@@ -68,7 +74,13 @@ public:
         return m_viewportSizeY;
     }
 
+    void setTest(VkImageView imageView);
+
 private:
+    const engine::RenderTarget *m_objectIdColorImage{nullptr};
+
+    core::Buffer::SharedPtr m_entityIdBuffer{nullptr};
+
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
 
     engine::GPUMesh::SharedPtr m_selectedObjectMesh{nullptr};
@@ -116,13 +128,17 @@ private:
     void drawViewport(VkDescriptorSet viewportDescriptorSet);
     void drawHierarchy();
     engine::Scene::SharedPtr m_scene{nullptr};
-    engine::Entity::SharedPtr m_selectedEntity{nullptr};
-    bool m_isDockingWindowFullscreen{false};
+    engine::Entity *m_selectedEntity{nullptr};
+    bool m_isDockingWindowFullscreen{true};
 
     std::vector<std::function<void(float width, float height)>> m_onViewportWindowResized{nullptr};
 
     float m_viewportSizeX{0.0f};
     float m_viewportSizeY{0.0f};
+
+    VkSampler m_defaultSampler{VK_NULL_HANDLE};
+
+    VkDescriptorSet m_test;
 };
 
 ELIX_NESTED_NAMESPACE_END

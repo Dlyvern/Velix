@@ -11,6 +11,7 @@
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
 
 #include <memory>
+#include <string>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -43,6 +44,19 @@ public:
     virtual void onSwapChainResized(renderGraph::RGPResourcesStorage &storage) {}
 
     virtual ~IRenderGraphPass() = default;
+
+    void setDebugName(const std::string &name)
+    {
+        m_debugName = name;
+    }
+
+    const std::string &getDebugName() const
+    {
+        return m_debugName;
+    }
+
+private:
+    std::string m_debugName;
 };
 
 ELIX_CUSTOM_NAMESPACE_END

@@ -10,6 +10,7 @@
 
 #include <vector>
 #include <memory>
+#include <unordered_map>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -20,12 +21,17 @@ public:
     Scene();
     ~Scene();
 
+    Scene::SharedPtr copy();
+
     const std::vector<Entity::SharedPtr> &getEntities() const;
 
     std::vector<std::shared_ptr<BaseLight>> getLights() const;
 
     Entity::SharedPtr addEntity(const std::string &name);
-    void destroyEntity(Entity::SharedPtr entity);
+
+    Entity *getEntityById(uint32_t id);
+
+    bool destroyEntity(Entity *entity);
 
     bool loadSceneFromFile(const std::string &filePath);
     void saveSceneToFile(const std::string &filePath);
@@ -39,6 +45,7 @@ private:
     std::vector<Entity::SharedPtr> m_entities;
     std::string m_name;
     PhysicsScene m_physicsScene;
+    uint64_t m_nextEntityId{0}; // TODO fix it
 };
 
 ELIX_NESTED_NAMESPACE_END

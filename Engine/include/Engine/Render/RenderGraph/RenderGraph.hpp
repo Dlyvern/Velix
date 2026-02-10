@@ -18,6 +18,8 @@
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
 #include <typeindex>
 #include <unordered_map>
+#include <vector>
+#include <queue>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -27,11 +29,14 @@ class RenderGraph
     struct RenderGraphPassData
     {
         IRenderGraphPass::SharedPtr renderGraphPass{nullptr};
+        uint32_t id{0};
         RGPPassInfo passInfo;
+        uint32_t indegree{0};           //*How many passes should run before me
+        std::vector<uint32_t> outgoing; //*Which passes depend on me(Their ids)
     };
 
 public:
-    RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene);
+    RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain);
 
     template <typename T, typename... Args>
     T *addPass(Args &&...args)
@@ -43,12 +48,25 @@ public:
         auto renderPass = std::make_shared<T>(std::forward<Args>(args)...);
         T *ptr = renderPass.get();
 
-        m_renderGraphPasses[type] = RenderGraphPassData(std::move(renderPass), {});
+        RenderGraphPassData renderGraphPassInfo{};
+        renderGraphPassInfo.renderGraphPass = std::move(renderPass);
+        renderGraphPassInfo.id = m_renderGraphPasses.size(); //! For static ok, for dynamic - no
+
+        m_renderGraphPasses[type] = renderGraphPassInfo;
 
         return ptr;
     }
 
-    void prepareFrame(Camera::SharedPtr camera);
+    RenderGraphPassData *findRenderGraphPassById(uint32_t id)
+    {
+        for (auto &[_, renderGraphPass] : m_renderGraphPasses)
+            if (renderGraphPass.id == id)
+                return &renderGraphPass;
+
+        return nullptr;
+    }
+
+    void prepareFrame(Camera::SharedPtr camera, Scene *scene);
     void addAdditionalFrameData(const std::vector<AdditionalPerFrameData> &data)
     {
         if (data.empty())
@@ -61,60 +79,24 @@ public:
 
     static constexpr uint16_t MAX_FRAMES_IN_FLIGHT = 2;
 
-    core::DescriptorSetLayout::SharedPtr getMaterialDescriptorSetLayout() const
-    {
-        return m_materialSetLayout;
-    }
-
     VkDescriptorPool getDescriptorPool() const
     {
         return m_descriptorPool;
     }
 
-    core::CommandPool::SharedPtr getCommandPool() const
-    {
-        return m_commandPool;
-    }
-
     void createRenderGraphResources();
     void createDescriptorSetPool();
     void createCameraDescriptorSets(VkSampler sampler, VkImageView imageView);
-    void createDirectionalLightDescriptorSets();
-    void createDataFromScene();
+    void createPreviewCameraDescriptorSets();
 
     void cleanResources();
 
 private:
-    struct CameraUBO
-    {
-        glm::mat4 view;
-        glm::mat4 projection;
-    };
-
-    struct LightData
-    {
-        glm::vec4 position;
-        glm::vec4 direction;
-        glm::vec4 colorStrength;
-        glm::vec4 parameters;
-    };
-
-    struct LightSSBO
-    {
-        int lightCount;
-        glm::vec3 padding{0.0f};
-        LightData lights[];
-    };
-
-    struct LightSpaceMatrixUBO
-    {
-        glm::mat4 lightSpaceMatrix;
-    };
+    void sortRenderGraphPasses();
+    void prepareFrameDataFromScene(Scene *scene);
 
     bool begin();
     void end();
-
-    Scene::SharedPtr m_scene{nullptr};
 
     RGPResourcesBuilder m_renderGraphPassesBuilder;
     RGPResourcesCompiler m_renderGraphPassesCompiler;
@@ -122,30 +104,26 @@ private:
 
     void compile();
     std::unordered_map<std::type_index, RenderGraphPassData> m_renderGraphPasses;
+    std::unordered_set<IRenderGraphPass *> m_sortedRenderGraphPasses;
 
     VkDevice m_device{VK_NULL_HANDLE};
-    VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
 
     core::SwapChain::SharedPtr m_swapchain{nullptr};
-    core::CommandPool::SharedPtr m_commandPool{nullptr};
-
-    core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
 
     uint32_t m_imageIndex{0};
     uint32_t m_currentFrame{0};
 
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
 
-    core::DescriptorSetLayout::SharedPtr m_materialSetLayout{nullptr};
-
-    core::DescriptorSetLayout::SharedPtr m_directionalLightSetLayout{nullptr};
-    std::vector<VkDescriptorSet> m_directionalLightDescriptorSets;
     std::vector<core::Buffer::SharedPtr> m_lightSSBOs;
 
     std::vector<void *> m_cameraMapped;
     std::vector<core::Buffer::SharedPtr> m_cameraUniformObjects;
-    core::DescriptorSetLayout::SharedPtr m_cameraSetLayout{nullptr};
     std::vector<VkDescriptorSet> m_cameraDescriptorSets;
+
+    std::vector<void *> m_previewCameraMapped;
+    std::vector<core::Buffer::SharedPtr> m_previewCameraUniformObjects;
+    std::vector<VkDescriptorSet> m_previewCameraDescriptorSets;
 
     std::vector<void *> m_lightMapped;
     std::vector<core::Buffer::SharedPtr> m_lightSpaceMatrixUniformObjects;

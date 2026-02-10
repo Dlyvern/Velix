@@ -5,6 +5,7 @@
 #include <array>
 #include <cstring>
 #include <stdexcept>
+#include <algorithm>
 
 #include "Core/RenderPass.hpp"
 #include "Core/Shader.hpp"
@@ -24,21 +25,41 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+struct CameraUBO
+{
+    glm::mat4 view;
+    glm::mat4 projection;
+};
+
+struct LightData
+{
+    glm::vec4 position;
+    glm::vec4 direction;
+    glm::vec4 colorStrength;
+    glm::vec4 parameters;
+};
+
+struct LightSSBO
+{
+    int lightCount;
+    glm::vec3 padding{0.0f};
+    LightData lights[];
+};
+
+struct LightSpaceMatrixUBO
+{
+    glm::mat4 lightSpaceMatrix;
+};
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, Scene::SharedPtr scene) : m_device(device),
-                                                                                                          m_swapchain(swapchain), m_scene(scene)
+RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain) : m_device(device),
+                                                                                  m_swapchain(swapchain)
 {
-    m_physicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
-
-    m_commandPool = core::CommandPool::createShared(m_device, core::VulkanContext::getContext()->getGraphicsFamily());
-
     m_commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
     m_secondaryCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
     m_commandPools.reserve(MAX_FRAMES_IN_FLIGHT);
-
-    int imageCount = swapchain->getImages().size();
 
     m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
     m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
@@ -65,17 +86,57 @@ RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain, 
             throw std::runtime_error("Failed to create renderFinished semaphore for image!");
     }
 
-    engineShaderFamilies::initEngineShaderFamilies();
-
-    m_cameraSetLayout = engineShaderFamilies::cameraDescriptorSetLayout;
-    m_directionalLightSetLayout = engineShaderFamilies::staticMeshLightLayout;
-    m_materialSetLayout = engineShaderFamilies::staticMeshMaterialLayout;
+    EngineShaderFamilies::initEngineShaderFamilies();
 }
 
-void RenderGraph::createDataFromScene()
+void RenderGraph::prepareFrameDataFromScene(Scene *scene)
 {
-    for (const auto &entity : m_scene->getEntities())
+    static std::size_t lastEntitiesSize = 0;
+    const std::size_t entitiesSize = scene->getEntities().size();
+
+    // Something has changed in the scene
+    if (entitiesSize != lastEntitiesSize)
     {
+        // Find and delete 'deleted' entity
+        if (entitiesSize < lastEntitiesSize)
+        {
+            std::cout << "Entity was deleted\n";
+
+            const auto &en = scene->getEntities();
+
+            auto it = m_perFrameData.meshes.begin();
+
+            while (it != m_perFrameData.meshes.end())
+            {
+                if (std::find(en.begin(), en.end(), it->first) == en.end())
+                {
+                    m_perFrameData.meshes.erase(it);
+                    break;
+                }
+                else
+                    ++it;
+            }
+        }
+        else if (entitiesSize > lastEntitiesSize)
+        {
+            std::cout << "Entity was addded\n";
+        }
+
+        lastEntitiesSize = entitiesSize;
+    }
+
+    for (const auto &entity : scene->getEntities())
+    {
+        auto entityIt = m_perFrameData.meshes.find(entity);
+
+        // Just update transformation
+        if (entityIt != m_perFrameData.meshes.end())
+        {
+            entityIt->second.transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f);
+            continue;
+        }
+
+        // Create a new GPU mesh
         std::vector<CPUMesh> meshes;
 
         if (auto component = entity->getComponent<StaticMeshComponent>())
@@ -97,7 +158,7 @@ void RenderGraph::createDataFromScene()
             else
             {
                 auto textureImage = std::make_shared<Texture>();
-                textureImage->load(mesh.material.albedoTexture, m_commandPool);
+                textureImage->load(mesh.material.albedoTexture);
 
                 auto material = Material::create(getDescriptorPool(), textureImage);
                 gpuMesh->material = material;
@@ -115,43 +176,17 @@ void RenderGraph::createDataFromScene()
             gpuEntity.finalBones = skeletalComponent->getSkeleton().getFinalMatrices();
 
         m_perFrameData.meshes[entity] = gpuEntity;
-
-        // static bool test{false};
-
-        // if (!test)
-        // {
-        //     m_perFrameData.wireframeMeshes.push_back(gpuEntity);
-        //     test = true;
-        // }
     }
 }
 
-void RenderGraph::prepareFrame(Camera::SharedPtr camera)
+void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene)
 {
-    // static auto startTime = std::chrono::high_resolution_clock::now();
-    // auto currentTime = std::chrono::high_resolution_clock::now();
-    // float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-    // CameraUBO cameraUBO{};
-    // cameraUBO.model = glm::rotate(model, time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f,s 1.0f));
+    prepareFrameDataFromScene(scene);
 
     m_perFrameData.swapChainViewport = m_swapchain->getViewport();
     m_perFrameData.swapChainScissor = m_swapchain->getScissor();
-    m_perFrameData.lightDescriptorSet = m_directionalLightDescriptorSets[m_currentFrame];
     m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
-
-    for (const auto &entity : m_scene->getEntities())
-    {
-        auto en = m_perFrameData.meshes.find(entity);
-
-        if (en == m_perFrameData.meshes.end())
-        {
-            std::cerr << "Failed to find entity" << std::endl;
-            continue;
-        }
-
-        m_perFrameData.meshes[entity].transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix()
-                                                                                               : glm::mat4(1.0f);
-    }
+    m_perFrameData.previewCameraDescriptorSet = m_previewCameraDescriptorSets[m_currentFrame];
 
     CameraUBO cameraUBO{};
 
@@ -163,6 +198,20 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     m_perFrameData.view = cameraUBO.view;
 
     std::memcpy(m_cameraMapped[m_currentFrame], &cameraUBO, sizeof(CameraUBO));
+
+    CameraUBO previewCameraUBO{};
+    previewCameraUBO.view = glm::lookAt(
+        glm::vec3(0, 0, 3),
+        glm::vec3(0, 0, 0),
+        glm::vec3(0, 1, 0));
+
+    previewCameraUBO.projection = glm::perspective(glm::radians(45.0f), 1.0f, 0.1f, 10.0f);
+    previewCameraUBO.projection[1][1] *= -1;
+
+    m_perFrameData.previewProjection = previewCameraUBO.projection;
+    m_perFrameData.previewView = previewCameraUBO.view;
+
+    std::memcpy(m_previewCameraMapped[m_currentFrame], &previewCameraUBO, sizeof(CameraUBO));
 
     // TODO NEEDS TO BE REDESIGNED
     //  size_t requiredSize = sizeof(LightData) * lights.size();
@@ -193,13 +242,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     //     vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
     // }
 
-    auto lights = m_scene->getLights();
-
-    if (lights.empty())
-    {
-        // std::cerr << "NO LIGHTS" << std::endl;
-        return;
-    }
+    auto lights = scene->getLights();
 
     // size_t requiredSize = sizeof(LightData) * (lights.size() * sizeof(LightData));
 
@@ -242,50 +285,52 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera)
     {
         auto light = lights[i];
 
-        if (auto directionalLight = dynamic_cast<DirectionalLight *>(light.get()))
-        {
-            LightSpaceMatrixUBO lightSpaceMatrixUBO{};
+        auto directionalLight = dynamic_cast<DirectionalLight *>(light.get());
 
-            glm::vec3 lightDirection = glm::normalize(directionalLight->direction);
+        if (!directionalLight)
+            continue;
 
-            glm::vec3 lightTarget{0.0f};
-            float nearPlane = 50.0f;
-            float farPlane = 1000.0f;
-            // Position 'light camera' 20 units away from the target
-            glm::vec3 lightPosition = lightTarget - lightDirection * 20.0f;
+        LightSpaceMatrixUBO lightSpaceMatrixUBO{};
 
-            glm::mat4 lightView = glm::lookAt(lightPosition, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::vec3 lightDirection = glm::normalize(directionalLight->direction);
 
-            glm::mat4 lightProjection = glm::ortho(-30.0f, 30.0f, -30.0f, 30.0f, 1.0f, 40.0f);
+        glm::vec3 lightTarget{0.0f};
+        float nearPlane = 50.0f;
+        float farPlane = 1000.0f;
+        // Position 'light camera' 20 units away from the target
+        glm::vec3 lightPosition = lightTarget - lightDirection * 20.0f;
 
-            // glm::mat4 lightProjection = glm::perspective(glm::radians(45.0f), 1.0f, nearPlane, farPlane);
+        glm::mat4 lightView = glm::lookAt(lightPosition, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
 
-            glm::mat4 lightMatrix = lightProjection * lightView;
+        glm::mat4 lightProjection = glm::ortho(-30.0f, 30.0f, -30.0f, 30.0f, 1.0f, 40.0f);
 
-            lightSpaceMatrixUBO.lightSpaceMatrix = lightMatrix;
+        // glm::mat4 lightProjection = glm::perspective(glm::radians(45.0f), 1.0f, nearPlane, farPlane);
 
-            std::memcpy(m_lightMapped[m_currentFrame], &lightSpaceMatrixUBO, sizeof(LightSpaceMatrixUBO));
+        glm::mat4 lightMatrix = lightProjection * lightView;
 
-            // m_lightSpaceMatrixUniformObjects[m_currentFrame]->update(&lightSpaceMatrixUBO);
+        lightSpaceMatrixUBO.lightSpaceMatrix = lightMatrix;
 
-            m_perFrameData.lightSpaceMatrix = lightMatrix;
+        std::memcpy(m_lightMapped[m_currentFrame], &lightSpaceMatrixUBO, sizeof(LightSpaceMatrixUBO));
 
-            //! Only one directional light. Fix it later
-            break;
-        }
+        // m_lightSpaceMatrixUniformObjects[m_currentFrame]->update(&lightSpaceMatrixUBO);
+
+        m_perFrameData.lightSpaceMatrix = lightMatrix;
+
+        //! Only one directional light. Fix it later
+        break;
     }
 }
 
 void RenderGraph::createDescriptorSetPool()
 {
     const std::vector<VkDescriptorPoolSize> poolSizes{
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
-        {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
-        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000}};
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 100},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 100},
+        {VK_DESCRIPTOR_TYPE_SAMPLER, 100},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 100},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 100},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 100},
+        {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 100}};
 
     VkDescriptorPoolCreateInfo descriptorPoolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     descriptorPoolCI.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
@@ -324,16 +369,6 @@ bool RenderGraph::begin()
         for (const auto &[id, renderPass] : m_renderGraphPasses)
             renderPass.renderGraphPass->onSwapChainResized(m_renderGraphPassesStorage);
 
-        for (const auto &renderPass : m_renderGraphPasses)
-        {
-            if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.renderGraphPass.get()))
-            {
-                m_perFrameData.viewportImageViews = s->getImageViews();
-                m_perFrameData.isViewportImageViewsDirty = true;
-                break;
-            }
-        }
-
         return false;
     }
     else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
@@ -351,27 +386,11 @@ bool RenderGraph::begin()
 
     size_t passIndex = 0;
 
-    std::vector<IRenderGraphPass::SharedPtr> shadowPasses;
-    std::vector<IRenderGraphPass::SharedPtr> otherPasses;
-
-    for (const auto &[_, pass] : m_renderGraphPasses)
-    {
-        if (dynamic_cast<ShadowRenderGraphPass *>(pass.renderGraphPass.get()))
-            shadowPasses.push_back(pass.renderGraphPass);
-        else
-            otherPasses.push_back(pass.renderGraphPass);
-    }
-
-    std::vector<std::shared_ptr<IRenderGraphPass>> orderedPasses;
-    orderedPasses.reserve(shadowPasses.size() + otherPasses.size());
-    orderedPasses.insert(orderedPasses.end(), shadowPasses.begin(), shadowPasses.end());
-    orderedPasses.insert(orderedPasses.end(), otherPasses.begin(), otherPasses.end());
-
     RenderGraphPassContext frameData{
         .currentFrame = m_currentFrame,
         .currentImageIndex = m_imageIndex};
 
-    for (const auto &renderGraphPass : orderedPasses)
+    for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
     {
         renderGraphPass->update(frameData);
 
@@ -411,8 +430,6 @@ bool RenderGraph::begin()
 
     primaryCommandBuffer->end();
 
-    m_perFrameData.isViewportImageViewsDirty = false;
-
     return true;
 }
 
@@ -445,19 +462,9 @@ void RenderGraph::end()
 
         for (const auto &[id, renderPass] : m_renderGraphPasses)
             renderPass.renderGraphPass->onSwapChainResized(m_renderGraphPassesStorage);
-
-        for (const auto &renderPass : m_renderGraphPasses)
-        {
-            if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.renderGraphPass.get()))
-            {
-                m_perFrameData.viewportImageViews = s->getImageViews();
-                m_perFrameData.isViewportImageViewsDirty = true;
-                break;
-            }
-        }
     }
     else if (result != VK_SUCCESS)
-        throw std::runtime_error("Failed to present swap chain image");
+        throw std::runtime_error("Failed to present swap chain image: " + core::helpers::vulkanResultToString(result));
 
     m_perFrameData.additionalData.clear();
 }
@@ -481,6 +488,103 @@ void RenderGraph::setup()
     compile();
 }
 
+void RenderGraph::sortRenderGraphPasses()
+{
+    auto hasDependencies = [](const RenderGraphPassData &a, const RenderGraphPassData &b)
+    {
+        for (auto &writesA : a.passInfo.writes)
+        {
+            for (auto &readsB : b.passInfo.reads)
+                if (writesA.resourceId == readsB.resourceId)
+                    return true;
+
+            for (auto &writesB : b.passInfo.writes)
+                if (writesA.resourceId == writesB.resourceId)
+                    return true;
+        }
+
+        for (auto &readsA : a.passInfo.reads)
+            for (auto &writesB : b.passInfo.writes)
+                if (readsA.resourceId == writesB.resourceId)
+                    return true;
+
+        return false;
+    };
+
+    for (auto &[id, renderGraphPass] : m_renderGraphPasses)
+    {
+        for (auto &[id, secondRenderGraphPass] : m_renderGraphPasses)
+        {
+            if (renderGraphPass.id == secondRenderGraphPass.id)
+                continue;
+
+            if (hasDependencies(renderGraphPass, secondRenderGraphPass))
+            {
+                renderGraphPass.outgoing.push_back(secondRenderGraphPass.id);
+                secondRenderGraphPass.indegree++;
+            }
+        }
+    }
+
+    std::queue<uint32_t> q;
+    std::vector<uint32_t> sorted;
+
+    for (auto &[id, renderGraphPass] : m_renderGraphPasses)
+        if (renderGraphPass.indegree <= 0)
+            q.push(renderGraphPass.id);
+
+    while (!q.empty())
+    {
+        uint32_t n = q.front();
+        q.pop();
+        sorted.push_back(n);
+
+        auto renderGraphPass = findRenderGraphPassById(n);
+
+        if (!renderGraphPass)
+        {
+            std::cerr << "Failed to find pass. Error...\n";
+            continue;
+        }
+
+        for (uint32_t dst : renderGraphPass->outgoing)
+        {
+            auto dstRenderGraphPass = findRenderGraphPassById(dst);
+
+            if (!dstRenderGraphPass)
+            {
+                std::cerr << "Failed to find dst pass. Error...\n";
+                continue;
+            }
+
+            if (--dstRenderGraphPass->indegree == 0)
+                q.push(dst);
+        }
+    }
+
+    if (sorted.size() != m_renderGraphPasses.size())
+    {
+        std::cerr << "Failed to build graph tree\n";
+        return;
+    }
+
+    for (const auto &sortId : sorted)
+    {
+        auto renderGraphPass = findRenderGraphPassById(sortId);
+
+        if (!renderGraphPass)
+        {
+            std::cerr << "Failed to find sorted node\n";
+            continue;
+        }
+
+        m_sortedRenderGraphPasses.insert(renderGraphPass->renderGraphPass.get());
+    }
+
+    for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
+        std::cout << "Node: " << renderGraphPass->getDebugName() << '\n';
+}
+
 void RenderGraph::compile()
 {
     m_renderGraphPassesCompiler.compile(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
@@ -489,34 +593,24 @@ void RenderGraph::compile()
     {
         pass.renderGraphPass->compile(m_renderGraphPassesStorage);
     }
-
-    for (const auto &renderPass : m_renderGraphPasses)
-    {
-        if (auto s = dynamic_cast<OffscreenRenderGraphPass *>(renderPass.second.renderGraphPass.get()))
-        {
-            m_perFrameData.viewportImageViews = s->getImageViews();
-            m_perFrameData.isViewportImageViewsDirty = true;
-            break;
-        }
-    }
 }
 
-void RenderGraph::createDirectionalLightDescriptorSets()
+void RenderGraph::createPreviewCameraDescriptorSets()
 {
-    m_lightSSBOs.reserve(MAX_FRAMES_IN_FLIGHT);
-    m_directionalLightDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-
-    static constexpr uint8_t INIT_LIGHTS_COUNT = 2;
-    static constexpr VkDeviceSize INITIAL_SIZE = sizeof(LightData) * (INIT_LIGHTS_COUNT * sizeof(LightData));
+    m_previewCameraMapped.resize(MAX_FRAMES_IN_FLIGHT);
+    m_previewCameraUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
+    m_previewCameraDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        auto ssboBuffer = m_lightSSBOs.emplace_back(core::Buffer::createShared(INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                                                               core::memory::MemoryUsage::CPU_TO_GPU));
+        auto &cameraBuffer = m_previewCameraUniformObjects.emplace_back(core::Buffer::createShared(sizeof(CameraUBO),
+                                                                                                   VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
 
-        m_directionalLightDescriptorSets[i] = DescriptorSetBuilder::begin()
-                                                  .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                                                  .build(m_device, m_descriptorPool, m_directionalLightSetLayout->vk());
+        cameraBuffer->map(m_previewCameraMapped[i]);
+
+        m_previewCameraDescriptorSets[i] = DescriptorSetBuilder::begin()
+                                               .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                                               .build(m_device, m_descriptorPool, EngineShaderFamilies::cameraDescriptorSetLayout->vk());
     }
 }
 
@@ -528,6 +622,10 @@ void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imag
 
     m_lightSpaceMatrixUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
     m_cameraUniformObjects.reserve(MAX_FRAMES_IN_FLIGHT);
+    m_lightSSBOs.reserve(MAX_FRAMES_IN_FLIGHT);
+
+    static constexpr uint8_t INIT_LIGHTS_COUNT = 2;
+    static constexpr VkDeviceSize INITIAL_SIZE = sizeof(LightData) * (INIT_LIGHTS_COUNT * sizeof(LightData));
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
@@ -537,6 +635,9 @@ void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imag
         auto &lightBuffer = m_lightSpaceMatrixUniformObjects.emplace_back(core::Buffer::createShared(sizeof(LightSpaceMatrixUBO),
                                                                                                      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
 
+        auto ssboBuffer = m_lightSSBOs.emplace_back(core::Buffer::createShared(INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                                               core::memory::MemoryUsage::CPU_TO_GPU));
+
         cameraBuffer->map(m_cameraMapped[i]);
         lightBuffer->map(m_lightMapped[i]);
 
@@ -544,8 +645,11 @@ void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imag
                                         .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                                         .addBuffer(lightBuffer, sizeof(LightSpaceMatrixUBO), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                                         .addImage(imageView, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
-                                        .build(m_device, m_descriptorPool, m_cameraSetLayout->vk());
+                                        .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                                        .build(m_device, m_descriptorPool, EngineShaderFamilies::cameraDescriptorSetLayout->vk());
     }
+
+    createPreviewCameraDescriptorSets();
 }
 
 void RenderGraph::createRenderGraphResources()
@@ -562,6 +666,8 @@ void RenderGraph::createRenderGraphResources()
         for (size_t pass = 0; pass < m_renderGraphPasses.size(); ++pass)
             m_secondaryCommandBuffers[frame][pass] = core::CommandBuffer::createShared(commandPool, VK_COMMAND_BUFFER_LEVEL_SECONDARY);
     }
+
+    sortRenderGraphPasses();
 }
 
 void RenderGraph::cleanResources()
@@ -591,8 +697,9 @@ void RenderGraph::cleanResources()
     }
 
     m_perFrameData.meshes.clear();
+    m_renderGraphPassesStorage.cleanup();
 
-    engineShaderFamilies::cleanEngineShaderFamilies();
+    EngineShaderFamilies::cleanEngineShaderFamilies();
 }
 ELIX_CUSTOM_NAMESPACE_END
 

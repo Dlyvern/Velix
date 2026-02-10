@@ -14,6 +14,14 @@ RGPResourceHandler RGPResourcesBuilder::createTexture(const RGPTextureDescriptio
     return RGPResourceHandler{.id = m_nextResourceId};
 }
 
+RGPResourceHandler RGPResourcesBuilder::createTexture(const RGPTextureDescription &description, RGPResourceHandler &handler)
+{
+    ++m_nextResourceId;
+    handler.id = m_nextResourceId;
+    m_textureDescriptions[handler] = description;
+    return handler;
+}
+
 const std::unordered_map<RGPResourceHandler, RGPTextureDescription> &RGPResourcesBuilder::getAllTextureDescriptions() const
 {
     return m_textureDescriptions;

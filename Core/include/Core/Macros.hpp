@@ -34,6 +34,16 @@ public:                                                     \
     void set##name(const type &value) { m_##name = value; } \
     void set##name(type &&value) { m_##name = std::move(value); }
 
+#define PROPERTY_FULL_DEFAULT(type, name, defaultValue)     \
+private:                                                    \
+    type m_##name = defaultValue;                           \
+                                                            \
+public:                                                     \
+    const type &get##name() const { return m_##name; }      \
+    type &get##name() { return m_##name; }                  \
+    void set##name(const type &value) { m_##name = value; } \
+    void set##name(type &&value) { m_##name = std::move(value); }
+
 #define ELIX_DECLARE_VK_LIFECYCLE()              \
 public:                                          \
     bool isCreated() const { return m_created; } \
@@ -72,11 +82,6 @@ private:                                                        \
 
 #define DECLARE_VK_SMART_PTRS(ClassName, HandleType)             \
 public:                                                          \
-    using SharedPtr = std::shared_ptr<ClassName>;                \
-    using UniquePtr = std::unique_ptr<ClassName>;                \
-    using WeakPtr = std::weak_ptr<ClassName>;                    \
-    using Ptr = ClassName *;                                     \
-                                                                 \
     class SPtr : public std::shared_ptr<ClassName>               \
     {                                                            \
     public:                                                      \
@@ -96,6 +101,11 @@ public:                                                          \
             return (*this)->m_handle;                            \
         }                                                        \
     };                                                           \
+    using SharedPtr = SPtr;                                      \
+    using UniquePtr = UPtr;                                      \
+    using WeakPtr = std::weak_ptr<ClassName>;                    \
+    using Ptr = ClassName *;                                     \
+                                                                 \
     template <typename... Args>                                  \
     static ClassName create(Args &&...args)                      \
     {                                                            \

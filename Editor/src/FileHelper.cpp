@@ -1,19 +1,19 @@
 #include "Editor/FileHelper.hpp"
 
 #if defined(_WIN32)
-    #define WIN32_LEAN_AND_MEAN
-    #include <windows.h>
-    #include <cstdio>
-    #include <shlobj.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <cstdio>
+#include <shlobj.h>
 #elif defined(__linux__)
-    #include <unistd.h>
-    #include <sys/types.h>
-    #include <pwd.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <pwd.h>
 #elif defined(__APPLE__)
-    #include <mach-o/dyld.h>
-    #include <sys/types.h>
-    #include <unistd.h>
-    #include <pwd.h>
+#include <mach-o/dyld.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <pwd.h>
 #endif
 
 #include <cstdint>
@@ -23,7 +23,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-std::pair<int, std::string> FileHelper::executeCommand(const std::string& command)
+std::pair<int, std::string> FileHelper::executeCommand(const std::string &command)
 {
     constexpr int kBufferSize = 128;
     std::array<char, kBufferSize> buffer{};
@@ -35,7 +35,7 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string& comman
     std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
 #endif
 
-    if (!pipe) 
+    if (!pipe)
     {
         std::cerr << "Failed to execute command";
         return {-1, ""};
@@ -75,6 +75,5 @@ std::filesystem::path FileHelper::getExecutablePath()
     return {};
 #endif
 }
-
 
 ELIX_NESTED_NAMESPACE_END

@@ -47,7 +47,8 @@ Image::Image(VkImage image) : m_device(VulkanContext::getContext()->getDevice())
     m_isWrapped = true;
 }
 
-void Image::copyBufferToImage(Buffer::SharedPtr buffer, uint32_t width, uint32_t height, CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t layerCount)
+void Image::copyBufferToImage(Buffer::SharedPtr buffer, uint32_t width, uint32_t height, CommandPool::SharedPtr commandPool, VkQueue queue,
+                              uint32_t layerCount, uint32_t baseLayer)
 {
     auto cb = CommandBuffer::createShared(commandPool);
     cb->begin();
@@ -62,13 +63,13 @@ void Image::copyBufferToImage(Buffer::SharedPtr buffer, uint32_t width, uint32_t
         region.bufferImageHeight = 0;
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         region.imageSubresource.mipLevel = 0;
-        region.imageSubresource.baseArrayLayer = layer;
+        region.imageSubresource.baseArrayLayer = baseLayer + layer;
         region.imageSubresource.layerCount = 1;
         region.imageOffset = {0, 0, 0};
         region.imageExtent = {width, height, 1};
 
         regions.push_back(region);
-        offset += width * height * 4;
+        offset += width * height * 4 * sizeof(float);
     }
 
     vkCmdCopyBufferToImage(cb, buffer->vk(), m_handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()), regions.data());
@@ -92,6 +93,23 @@ void Image::copyBufferToImage(Buffer::SharedPtr buffer, uint32_t width, uint32_t
     }
     else
         vkQueueWaitIdle(queue);
+}
+
+void Image::insertImageMemoryBarrier(VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,
+                                     VkImageLayout oldImageLayout, VkImageLayout newImageLayout, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
+                                     VkImageSubresourceRange subresourceRange, CommandBuffer &commandBuffer)
+{
+    VkImageMemoryBarrier imageMemoryBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imageMemoryBarrier.srcAccessMask = srcAccessMask;
+    imageMemoryBarrier.dstAccessMask = dstAccessMask;
+    imageMemoryBarrier.oldLayout = oldImageLayout;
+    imageMemoryBarrier.newLayout = newImageLayout;
+    imageMemoryBarrier.image = m_handle;
+    imageMemoryBarrier.subresourceRange = subresourceRange;
+
+    vkCmdPipelineBarrier(commandBuffer, srcStageMask, dstStageMask, 0, 0, nullptr, 0, nullptr, 1, &imageMemoryBarrier);
 }
 
 void Image::insertImageMemoryBarrier(VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,

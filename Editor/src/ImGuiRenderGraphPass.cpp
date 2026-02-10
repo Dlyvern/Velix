@@ -10,11 +10,14 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor)
-    : m_editor(editor), m_device(core::VulkanContext::getContext()->getDevice())
+ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
+                                           engine::renderGraph::RGPResourceHandler &objectIdTextureHandler)
+    : m_editor(editor), m_device(core::VulkanContext::getContext()->getDevice()), m_offscreenTextureHandler(offscreenTexture),
+      m_objectIdTextureHandler(objectIdTextureHandler)
 {
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     m_clearValues[1].depthStencil = {1.0f, 0};
+    this->setDebugName("ImGui render graph pass");
 }
 
 void ImGuiRenderGraphPass::setViewportImages(const std::vector<VkImageView> &imageViews)
@@ -30,22 +33,47 @@ void ImGuiRenderGraphPass::setViewportImages(const std::vector<VkImageView> &ima
 
 void ImGuiRenderGraphPass::compile(engine::renderGraph::RGPResourcesStorage &storage)
 {
+    std::vector<VkImageView> offscreenImageViews;
+
     for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
     {
         auto colorTexture = storage.getSwapChainTexture(m_colorTextureHandler, imageIndex);
         std::vector<VkImageView> attachments{colorTexture->vkImageView()};
 
-        auto framebuffer = std::make_shared<core::Framebuffer>(core::VulkanContext::getContext()->getDevice(), attachments,
-                                                               m_renderPass, core::VulkanContext::getContext()->getSwapchain()->getExtent());
+        auto framebuffer = core::Framebuffer::createShared(core::VulkanContext::getContext()->getDevice(), attachments,
+                                                           m_renderPass, core::VulkanContext::getContext()->getSwapchain()->getExtent());
 
         m_framebuffers.push_back(framebuffer);
+
+        if (m_offscreenTextureHandler.size() > imageIndex)
+        {
+            auto offscreenColorTexture = storage.getTexture(m_offscreenTextureHandler[imageIndex]);
+
+            if (offscreenColorTexture)
+                offscreenImageViews.push_back(offscreenColorTexture->vkImageView());
+            else
+                std::cerr << "Failed to find offscreen color texture\n";
+        }
+        else
+            std::cerr << "Something wrong with offscreen color texture size\n";
     }
 
     initImGui();
+
+    setViewportImages(offscreenImageViews);
+
+    auto objectIdTexture = storage.getTexture(m_objectIdTextureHandler);
+
+    if (!objectIdTexture)
+        std::cerr << "Failed to get object id texture\n";
+    else
+        m_editor->setObjectIdColorImage(objectIdTexture);
 }
 
 void ImGuiRenderGraphPass::onSwapChainResized(engine::renderGraph::RGPResourcesStorage &storage)
 {
+    std::vector<VkImageView> offscreenImageViews;
+
     for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
     {
         auto frameBuffer = m_framebuffers[imageIndex];
@@ -54,7 +82,28 @@ void ImGuiRenderGraphPass::onSwapChainResized(engine::renderGraph::RGPResourcesS
         std::vector<VkImageView> attachments{colorTexture->vkImageView()};
 
         frameBuffer->resize(core::VulkanContext::getContext()->getSwapchain()->getExtent(), attachments);
+
+        if (m_offscreenTextureHandler.size() > imageIndex)
+        {
+            auto offscreenColorTexture = storage.getTexture(m_offscreenTextureHandler[imageIndex]);
+
+            if (offscreenColorTexture)
+                offscreenImageViews.push_back(offscreenColorTexture->vkImageView());
+            else
+                std::cerr << "Failed to find offscreen color texture\n";
+        }
+        else
+            std::cerr << "Something wrong with offscreen color texture size\n";
     }
+
+    setViewportImages(offscreenImageViews);
+
+    auto objectIdTexture = storage.getTexture(m_objectIdTextureHandler);
+
+    if (!objectIdTexture)
+        std::cerr << "Failed to get object id texture\n";
+    else
+        m_editor->setObjectIdColorImage(objectIdTexture);
 }
 
 void ImGuiRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder &builder)
@@ -96,7 +145,10 @@ void ImGuiRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder &build
     dependency.srcAccessMask = 0; // or VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-    m_renderPass = core::RenderPass::create({attachment}, {subpass}, {dependency});
+    m_renderPass = core::RenderPass::createShared(
+        std::vector<VkAttachmentDescription>{attachment},
+        std::vector<VkSubpassDescription>{subpass},
+        std::vector<VkSubpassDependency>{dependency});
 
     VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -127,6 +179,11 @@ void ImGuiRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder &build
 
     m_colorTextureHandler = builder.createTexture(colorTextureDescription);
     builder.write(m_colorTextureHandler, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
+
+    for (const auto &color : m_offscreenTextureHandler)
+        builder.read(color, engine::renderGraph::RGPTextureUsage::SAMPLED);
+
+    builder.read(m_objectIdTextureHandler, engine::renderGraph::RGPTextureUsage::SAMPLED);
 }
 
 void ImGuiRenderGraphPass::initImGui()
@@ -177,9 +234,12 @@ void ImGuiRenderGraphPass::initImGui()
 
 void ImGuiRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const
 {
+    const float width = m_editor->getViewportX();
+    const float height = m_editor->getViewportY();
+
     VkExtent2D extent{
-        .width = m_editor->getViewportX(),
-        .height = m_editor->getViewportY(),
+        .width = static_cast<uint32_t>(width),
+        .height = static_cast<uint32_t>(height),
     };
 
     renderPassBeginInfo = VkRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -199,23 +259,21 @@ void ImGuiRenderGraphPass::update(const engine::RenderGraphPassContext &renderDa
 
 void ImGuiRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data)
 {
-    if (data.isViewportImageViewsDirty)
-        setViewportImages(data.viewportImageViews);
-
-    // float width = m_editor->getViewportX() <= 0.0f ? 1.0 : m_editor->getViewportX()
+    const float width = m_editor->getViewportX();
+    const float height = m_editor->getViewportY();
 
     VkViewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
-    viewport.width = static_cast<float>(m_editor->getViewportX());
-    viewport.height = static_cast<float>(m_editor->getViewportY());
+    viewport.width = width;
+    viewport.height = height;
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &viewport);
 
     VkExtent2D extent{
-        .width = m_editor->getViewportX(),
-        .height = m_editor->getViewportY(),
+        .width = static_cast<uint32_t>(width),
+        .height = static_cast<uint32_t>(height),
     };
 
     VkRect2D scissor{};

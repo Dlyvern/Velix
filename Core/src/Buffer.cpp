@@ -87,6 +87,57 @@ CommandBuffer Buffer::copy(Ptr srcBuffer, Ptr dstBuffer, CommandPool::SharedPtr 
     return commandBuffer;
 }
 
+void Buffer::copyImageToBuffer(VkImage image, VkOffset3D imageOffset)
+{
+    auto commandPool = core::VulkanContext::getContext()->getTransferCommandPool();
+    auto queue = core::VulkanContext::getContext()->getTransferQueue();
+
+    auto commandBuffer = CommandBuffer::create(commandPool);
+    commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+    VkBufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; // TODO change it to depth aspect(pass core::Image instead of raw vulkan)
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+
+    region.imageOffset = imageOffset;
+    region.imageExtent = {1, 1, 1};
+
+    vkCmdCopyImageToBuffer(
+        commandBuffer,
+        image,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        m_handle,
+        1,
+        &region);
+
+    commandBuffer.end();
+
+    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    fenceInfo.flags = 0;
+
+    VkFence fence = VK_NULL_HANDLE;
+
+    if (vkCreateFence(core::VulkanContext::getContext()->getDevice(), &fenceInfo, nullptr, &fence) != VK_SUCCESS)
+        std::cerr << "Failed to create fence for copy image to buffer. Falling back to vkQueueWaitIdle\n";
+
+    if (!commandBuffer.submit(queue, {}, {}, {}, fence))
+        std::cerr << "Failed to submit copy image to buffer\n";
+
+    if (fence)
+    {
+        vkWaitForFences(core::VulkanContext::getContext()->getDevice(), 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(core::VulkanContext::getContext()->getDevice(), fence, nullptr);
+    }
+    else
+        vkQueueWaitIdle(queue);
+}
+
 Buffer::SharedPtr Buffer::createCopied(const void *data, VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, CommandPool::SharedPtr commandPool)
 {
     auto queue = core::VulkanContext::getContext()->getTransferQueue();

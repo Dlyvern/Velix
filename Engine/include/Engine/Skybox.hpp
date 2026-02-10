@@ -23,6 +23,7 @@ class Skybox
 public:
     Skybox(VkDevice device, VkPhysicalDevice physicalDevice, core::CommandPool::SharedPtr commandPool, core::RenderPass::SharedPtr renderPass, const std::array<std::string, 6> &cubemaps,
            VkDescriptorPool descriptorPool);
+    Skybox(core::RenderPass::SharedPtr renderPass, const std::string &hdrPath, VkDescriptorPool descriptorPool);
 
     // TODO FIX IT
     void render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat4 &view, const glm::mat4 &projection);

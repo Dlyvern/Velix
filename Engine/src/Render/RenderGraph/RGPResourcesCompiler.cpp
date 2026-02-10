@@ -8,6 +8,9 @@ namespace
     {
         switch (usage)
         {
+        case elix::engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC:
+            return VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+
         case elix::engine::renderGraph::RGPTextureUsage::SAMPLED:
             return VK_IMAGE_USAGE_SAMPLED_BIT;
 

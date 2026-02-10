@@ -5,10 +5,6 @@
 #include "Core/PipelineLayout.hpp"
 #include "Core/DescriptorSetLayout.hpp"
 
-#include "Engine/PushConstant.hpp"
-
-#include <glm/glm.hpp>
-
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 struct ShaderFamily
@@ -17,23 +13,24 @@ struct ShaderFamily
     core::PipelineLayout::SharedPtr pipelineLayout{nullptr};
 };
 
-namespace engineShaderFamilies
+class EngineShaderFamilies
 {
-    extern ShaderFamily staticMeshShaderFamily;
-    extern ShaderFamily wireframeMeshShaderFamily;
-    extern ShaderFamily skeletonMeshShaderFamily;
+public:
+    static inline ShaderFamily staticMeshShaderFamily;
+    static inline ShaderFamily wireframeMeshShaderFamily;
+    static inline ShaderFamily skeletonMeshShaderFamily;
+    static inline ShaderFamily texturedStatisMeshShaderFamily;
 
-    extern core::DescriptorSetLayout::SharedPtr wireframeMeshCameraLayout;
+    static inline core::DescriptorSetLayout::SharedPtr wireframeMeshCameraLayout{nullptr};
 
-    extern core::DescriptorSetLayout::SharedPtr skeletonMeshCameraLayout;
+    static inline core::DescriptorSetLayout::SharedPtr objectDescriptorSetLayout{nullptr};
 
-    extern core::DescriptorSetLayout::SharedPtr cameraDescriptorSetLayout;
-    extern core::DescriptorSetLayout::SharedPtr staticMeshLightLayout;
-    extern core::DescriptorSetLayout::SharedPtr staticMeshMaterialLayout;
+    static inline core::DescriptorSetLayout::SharedPtr cameraDescriptorSetLayout{nullptr};
+    static inline core::DescriptorSetLayout::SharedPtr materialDescriptorSetLayout{nullptr};
 
-    void initEngineShaderFamilies();
-    void cleanEngineShaderFamilies();
-} // engineShaderFamilies
+    static void initEngineShaderFamilies();
+    static void cleanEngineShaderFamilies();
+};
 
 ELIX_NESTED_NAMESPACE_END
 

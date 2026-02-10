@@ -9,6 +9,7 @@
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Engine/Components/CameraComponent.hpp"
 #include "Engine/Components/RigidBodyComponent.hpp"
+#include "Engine/Primitives.hpp"
 
 #include "Engine/Primitives.hpp"
 #include "Engine/Components/CollisionComponent.hpp"
@@ -99,7 +100,7 @@ void Editor::drawGuizmo()
 void Editor::initStyle()
 {
     ImGuiStyle &style = ImGui::GetStyle();
-    ImVec4 *colors = style.Colors;
+    ImVec4 *colors = ImGui::GetStyle().Colors;
 
     style.WindowRounding = 5.0f;
     style.FrameRounding = 4.0f;
@@ -168,29 +169,49 @@ void Editor::initStyle()
     ImGuiIO &io = ImGui::GetIO();
     io.Fonts->AddFontFromFileTTF("./resources/fonts/JetBrainsMono-Regular.ttf", 16.0f);
 
-    // auto vulkanContext = core::VulkanContext::getContext();
-    // auto device = vulkanContext->getDevice();
-    // auto physicalDevice = vulkanContext->getPhysicalDevice();
-    // auto graphicsQueue = vulkanContext->getGraphicsQueue();
-
     m_resourceStorage.loadNeededResources();
 
     m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage, m_descriptorPool);
 
-    // auto commandPool = core::CommandPool::createShared(vulkanContext->getDevice(), core::VulkanContext::getContext()->getGraphicsFamily());
+    m_entityIdBuffer = core::Buffer::createShared(sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                  core::memory::MemoryUsage::CPU_TO_GPU);
 
-    // m_logoTexture = std::make_shared<engine::Texture>();
-    // m_folderTexture = std::make_shared<engine::Texture>();
-    // m_fileTexture = std::make_shared<engine::Texture>();
+    auto window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
+    GLFWwindow *windowHandler = window->getRawHandler();
 
-    // m_logoTexture->load("./resources/textures/VelixFire.png", commandPool);
-    // m_logoDescriptorSet = ImGui_ImplVulkan_AddTexture(m_logoTexture->vkSampler(), m_logoTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    glfwSetWindowAttrib(windowHandler, GLFW_DECORATED, !m_isDockingWindowFullscreen);
+    if (m_isDockingWindowFullscreen)
+    {
+        GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+        const GLFWvidmode *mode = glfwGetVideoMode(monitor);
+        glfwSetWindowPos(windowHandler, 0, 0);
+        glfwSetWindowSize(windowHandler, mode->width, mode->height);
+    }
 
-    // m_folderTexture->load("./resources/textures/folder.png", commandPool);
-    // m_folderDescriptorSet = ImGui_ImplVulkan_AddTexture(m_folderTexture->vkSampler(), m_folderTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.maxAnisotropy = 1.0f;
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
 
-    // m_fileTexture->load("./resources/textures/file.png", commandPool);
-    // m_fileDescriptorSet = ImGui_ImplVulkan_AddTexture(m_fileTexture->vkSampler(), m_fileTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (vkCreateSampler(core::VulkanContext::getContext()->getDevice(), &samplerInfo, nullptr, &m_defaultSampler) != VK_SUCCESS)
+        throw std::runtime_error("failed to create texture sampler!");
+}
+
+void Editor::setTest(VkImageView imageView)
+{
+    m_test = ImGui_ImplVulkan_AddTexture(m_defaultSampler, imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 void Editor::addOnModeChangedCallback(const std::function<void(EditorMode)> &function)
@@ -280,7 +301,9 @@ void Editor::drawCustomTitleBar()
 
     ImGui::SetCursorPos(ImVec2(4, (ImGui::GetWindowHeight() - 30) * 0.5f));
     ImVec2 logoSize = ImVec2(50, 30);
-    ImGui::Image(m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.png"), logoSize);
+    // ImGui::Image(m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.png"), logoSize);
+    ImGui::Image(m_test, logoSize);
+
     ImGui::SameLine(0, 10);
 
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
@@ -471,6 +494,8 @@ void Editor::drawCustomTitleBar()
     }
 
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y + ImGui::GetItemRectSize().y));
+    auto window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
+    GLFWwindow *windowHandler = window->getRawHandler();
 
     if (ImGui::BeginPopup("FilePopup"))
     {
@@ -514,7 +539,7 @@ void Editor::drawCustomTitleBar()
 
         ImGui::Separator();
         if (ImGui::Button("Exit"))
-            std::abort(); // Ha-ha-ha-ha Kill it slower dumbass
+            window->close(); // Ha-ha-ha-ha Kill it slower dumbass
         ImGui::PopStyleColor(1);
 
         ImGui::EndPopup();
@@ -551,28 +576,13 @@ void Editor::drawCustomTitleBar()
     float buttonSize = ImGui::GetFrameHeight();
     ImGui::SameLine(windowWidth - buttonSize * 3 - 30);
 
-    auto window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
-    GLFWwindow *windowHandler = window->getRawHandler();
-
     if (ImGui::Button("_", ImVec2(buttonSize, buttonSize * 0.9f)))
         window->iconify();
 
     ImGui::SameLine();
 
     if (ImGui::Button("[]", ImVec2(buttonSize, buttonSize * 0.9f)))
-    {
         m_isDockingWindowFullscreen = !m_isDockingWindowFullscreen;
-        glfwSetWindowAttrib(windowHandler, GLFW_DECORATED, !m_isDockingWindowFullscreen);
-        if (m_isDockingWindowFullscreen)
-        {
-            GLFWmonitor *monitor = glfwGetPrimaryMonitor();
-            const GLFWvidmode *mode = glfwGetVideoMode(monitor);
-            glfwSetWindowPos(windowHandler, 0, 0);
-            glfwSetWindowSize(windowHandler, mode->width, mode->height);
-        }
-        else
-            window->setSize(1280, 720);
-    }
 
     ImGui::SameLine();
 
@@ -759,7 +769,7 @@ std::vector<engine::AdditionalPerFrameData> Editor::getRenderData()
 
     static engine::Entity *prevEntity{nullptr};
 
-    if (prevEntity == m_selectedEntity.get())
+    if (prevEntity == m_selectedEntity)
     {
         engine::AdditionalPerFrameData data;
 
@@ -773,7 +783,7 @@ std::vector<engine::AdditionalPerFrameData> Editor::getRenderData()
         return {data};
     }
 
-    prevEntity = m_selectedEntity.get();
+    prevEntity = m_selectedEntity;
 
     engine::AdditionalPerFrameData data;
 
@@ -822,6 +832,12 @@ void Editor::handleInput()
 
     const bool ctrl_down = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
     const bool s_pressed = ImGui::IsKeyPressed(ImGuiKey_S, false);
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && m_selectedEntity)
+    {
+        m_scene->destroyEntity(m_selectedEntity);
+        m_selectedEntity = nullptr;
+    }
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape) && m_currentMode != EditorMode::EDIT)
         changeMode(EditorMode::EDIT);
@@ -1042,7 +1058,7 @@ void Editor::drawDetails()
 
                 ImGui::DragFloat3("Light position", &light->position.x, 0.1f, 0.0f);
                 ImGui::ColorEdit3("Light color", &light->color.x);
-                ImGui::DragFloat("Light strength", &light->strength, 0.1f, 0.0f);
+                ImGui::DragFloat("Light strength", &light->strength, 0.1f, 0.0f, 150.0f);
 
                 if (lightType == engine::LightComponent::LightType::POINT)
                 {
@@ -1052,7 +1068,7 @@ void Editor::drawDetails()
                 else if (lightType == engine::LightComponent::LightType::DIRECTIONAL)
                 {
                     auto directionalLight = dynamic_cast<engine::DirectionalLight *>(light.get());
-                    ImGui::DragFloat3("Light direction", &directionalLight->direction.x);
+                    ImGui::DragFloat3("Light direction", &directionalLight->direction.x, 0.01);
                 }
                 else if (lightType == engine::LightComponent::LightType::SPOT)
                 {
@@ -1163,6 +1179,60 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
     const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     ImGuiIO &io = ImGui::GetIO();
 
+    // if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_objectIdColorImage)
+    // {
+    //     ImVec2 mouse = ImGui::GetMousePos();
+
+    //     ImVec2 vpMin = ImGui::GetItemRectMin();
+    //     ImVec2 vpMax = ImGui::GetItemRectMax();
+    //     ImVec2 vpSize = ImVec2(vpMax.x - vpMin.x, vpMax.y - vpMin.y);
+
+    //     float u = (mouse.x - vpMin.x) / vpSize.x;
+    //     float v = (mouse.y - vpMin.y) / vpSize.y;
+
+    //     uint32_t x = uint32_t(u * m_viewportSizeX);
+    //     uint32_t y = uint32_t(v * m_viewportSizeY);
+
+    //     std::cout << "First\n";
+    //     m_objectIdColorImage->getImage()->insertImageMemoryBarrier(
+    //         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+    //         VK_ACCESS_TRANSFER_READ_BIT,
+    //         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    //         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    //         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    //         VK_PIPELINE_STAGE_TRANSFER_BIT,
+    //         {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+
+    //     vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+
+    //     m_entityIdBuffer->copyImageToBuffer(m_objectIdColorImage->getImage()->vk(), {int32_t(x), int32_t(y), 0});
+
+    //     vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+
+    //     std::cout << "Second\n";
+    //     m_objectIdColorImage->getImage()->insertImageMemoryBarrier(
+    //         VK_ACCESS_TRANSFER_READ_BIT,
+    //         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+    //         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    //         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    //         VK_PIPELINE_STAGE_TRANSFER_BIT,
+    //         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    //         {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+
+    //     vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+
+    //     uint32_t *data;
+    //     m_entityIdBuffer->map(reinterpret_cast<void *&>(data));
+
+    //     uint32_t pickedId = data[0];
+
+    //     m_selectedEntity = m_scene->getEntityById(pickedId);
+
+    //     std::cout << pickedId << '\n';
+
+    //     m_entityIdBuffer->unmap();
+    // }
+
     if (hovered && ImGui::IsMouseDown(ImGuiMouseButton_Right))
     {
         ImGui::SetMouseCursor(ImGuiMouseCursor_None);
@@ -1241,7 +1311,7 @@ void Editor::drawHierarchy()
 
         auto entityName = entity->getName().c_str();
 
-        bool selected = (entity == m_selectedEntity);
+        bool selected = (entity.get() == m_selectedEntity);
 
         ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth;
 
@@ -1251,7 +1321,7 @@ void Editor::drawHierarchy()
         bool nodeOpen = ImGui::TreeNodeEx(entityName, nodeFlags);
 
         if (ImGui::IsItemClicked())
-            m_selectedEntity = entity;
+            m_selectedEntity = entity.get();
 
         if (nodeOpen)
             ImGui::TreePop();
@@ -1261,7 +1331,97 @@ void Editor::drawHierarchy()
 
     ImGui::PopStyleVar(2);
 
+    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    ImGuiIO &io = ImGui::GetIO();
+
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+    {
+        ImGui::OpenPopup("HierarchyPopup");
+    }
+
+    if (ImGui::BeginPopup("HierarchyPopup"))
+    {
+        if (ImGui::Button("Add entity"))
+        {
+            ImGui::OpenPopup("EntityAddingPopup");
+        }
+
+        if (ImGui::BeginPopup("EntityAddingPopup"))
+        {
+            if (ImGui::Button("Cube"))
+            {
+                auto entity = m_scene->addEntity("New entity");
+                engine::CPUMesh mesh = engine::CPUMesh::build<engine::vertex::Vertex3D>(engine::cube::vertices, engine::cube::indices);
+                entity->addComponent<engine::StaticMeshComponent>(std::vector<engine::CPUMesh>{mesh});
+            }
+            if (ImGui::Button("Sphere"))
+            {
+                float radius = 1.0f;
+                int sectorCount = 32;
+                int stackCount = 16;
+                std::vector<engine::vertex::Vertex3D> vertices;
+                std::vector<uint32_t> indices;
+
+                float sectorStep = 2 * M_PI / sectorCount;
+                float stackStep = M_PI / stackCount;
+
+                for (int i = 0; i <= stackCount; ++i)
+                {
+                    float stackAngle = M_PI / 2 - i * stackStep;
+                    float xy = radius * cosf(stackAngle);
+                    float z = radius * sinf(stackAngle);
+
+                    for (int j = 0; j <= sectorCount; ++j)
+                    {
+                        float sectorAngle = j * sectorStep;
+
+                        engine::vertex::Vertex3D vertex;
+                        vertex.position.x = xy * cosf(sectorAngle);
+                        vertex.position.y = xy * sinf(sectorAngle);
+                        vertex.position.z = z;
+
+                        vertex.normal = glm::normalize(vertex.position);
+
+                        vertex.textureCoordinates.x = (float)j / sectorCount;
+                        vertex.textureCoordinates.y = (float)i / stackCount;
+
+                        vertices.push_back(vertex);
+                    }
+                }
+                for (int i = 0; i < stackCount; ++i)
+                {
+                    int k1 = i * (sectorCount + 1);
+                    int k2 = k1 + sectorCount + 1;
+
+                    for (int j = 0; j < sectorCount; ++j, ++k1, ++k2)
+                    {
+                        if (i != 0)
+                        {
+                            indices.push_back(k1);
+                            indices.push_back(k2);
+                            indices.push_back(k1 + 1);
+                        }
+
+                        if (i != (stackCount - 1))
+                        {
+                            indices.push_back(k1 + 1);
+                            indices.push_back(k2);
+                            indices.push_back(k2 + 1);
+                        }
+                    }
+                }
+                auto entity = m_scene->addEntity("New entity");
+
+                engine::CPUMesh mesh = engine::CPUMesh::build<engine::vertex::Vertex3D>(vertices, indices);
+                entity->addComponent<engine::StaticMeshComponent>(std::vector<engine::CPUMesh>{mesh});
+            }
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
     ImGui::End();
 }
-
 ELIX_NESTED_NAMESPACE_END

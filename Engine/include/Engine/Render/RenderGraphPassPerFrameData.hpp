@@ -34,7 +34,6 @@ public:
 class RenderGraphPassPerFrameData
 {
 public:
-    //! For now, leave it like this, after adding SkeletonMeshProxy it needs to be redesigned
     std::map<Entity::SharedPtr, GPUEntity> meshes;
 
     std::vector<AdditionalPerFrameData> additionalData;
@@ -43,14 +42,12 @@ public:
     VkViewport swapChainViewport;
     VkRect2D swapChainScissor;
     VkDescriptorSet cameraDescriptorSet;
-    VkDescriptorSet lightDescriptorSet;
+    VkDescriptorSet previewCameraDescriptorSet;
 
     glm::mat4 view;
     glm::mat4 projection;
-
-    // TODO THIS IS SO FUCKED UP, MAKE IT BETTER ASAP
-    std::vector<VkImageView> viewportImageViews;
-    bool isViewportImageViewsDirty{true};
+    glm::mat4 previewView;
+    glm::mat4 previewProjection;
 };
 
 ELIX_NESTED_NAMESPACE_END

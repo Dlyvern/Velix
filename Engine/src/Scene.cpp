@@ -35,11 +35,66 @@ const std::vector<Entity::SharedPtr> &Scene::getEntities() const
     return m_entities;
 }
 
+// TODO so fucked up method
+Scene::SharedPtr Scene::copy()
+{
+    auto copyScene = std::make_shared<Scene>();
+
+    for (const auto &entity : m_entities)
+    {
+        //! Copy components etc(Transformation is the most important)
+        auto newEntity = std::make_shared<Entity>(entity->getName());
+        copyScene->m_entities.push_back(std::move(newEntity));
+    }
+
+    copyScene->m_physicsScene = m_physicsScene;
+    copyScene->m_name = m_name;
+    return copyScene;
+}
+
+Entity *Scene::getEntityById(uint32_t id)
+{
+    for (const auto &entity : m_entities)
+        if (entity->getId() == id)
+            return entity.get();
+
+    return nullptr;
+}
+
 Entity::SharedPtr Scene::addEntity(const std::string &name)
 {
-    auto entity = std::make_shared<Entity>(name);
+    auto doesEntityNameExist = [this](const std::string &name)
+    {
+        for (auto &&entity : m_entities)
+            if (entity->getName() == name)
+                return true;
+
+        return false;
+    };
+
+    auto generateUniqueName = [this, doesEntityNameExist](const std::string &baseName)
+    {
+        int counter = 1;
+        std::string newName;
+
+        do
+        {
+            newName = baseName + "_" + (counter < 10 ? "0" : "") + std::to_string(counter);
+            counter++;
+        } while (doesEntityNameExist(newName));
+
+        return newName;
+    };
+
+    std::string actualName = name;
+    if (doesEntityNameExist(name))
+        actualName = generateUniqueName(name);
+
+    auto entity = std::make_shared<Entity>(actualName);
 
     entity->addComponent<Transform3DComponent>();
+    entity->setId(m_nextEntityId);
+    ++m_nextEntityId;
 
     m_entities.push_back(entity);
     return entity;
@@ -279,8 +334,17 @@ void Scene::saveSceneToFile(const std::string &filePath)
         std::cerr << "Failed to open file to save game objects: " << filePath << std::endl;
 }
 
-void Scene::destroyEntity(Entity::SharedPtr entity)
+bool Scene::destroyEntity(Entity *entity)
 {
+    auto it = std::find_if(m_entities.begin(), m_entities.end(), [entity](const std::shared_ptr<Entity> &en)
+                           { return en.get() == entity; });
+
+    if (it == m_entities.end())
+        return false;
+
+    m_entities.erase(it);
+
+    return true;
 }
 
 void Scene::update(float deltaTime)

@@ -10,6 +10,7 @@
 #include "Core/CommandPool.hpp"
 #include "Core/VulkanContext.hpp"
 #include "Core/Framebuffer.hpp"
+#include "Core/Sampler.hpp"
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 
@@ -51,7 +52,7 @@ private:
     core::GraphicsPipeline::SharedPtr m_graphicsPipeline{nullptr};
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
-    VkSampler m_sampler{VK_NULL_HANDLE};
+    core::Sampler::SharedPtr m_sampler{nullptr};
 
     const RenderTarget *m_renderTarget{nullptr};
 
@@ -60,8 +61,7 @@ private:
     VkViewport m_viewport{};
     VkRect2D m_scissor{};
 
-    uint32_t m_width{4096};
-    uint32_t m_height{4096};
+    VkExtent2D m_extent{1024, 1024};
 
     VkClearValue m_clearValue;
 

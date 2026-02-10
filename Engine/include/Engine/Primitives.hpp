@@ -1,36 +1,37 @@
-#ifndef PRIMITIVES_HPP
-#define PRIMITIVES_HPP
+#ifndef ELIX_PRIMITIVES_HPP
+#define ELIX_PRIMITIVES_HPP
 
 #include <vector>
 #include "Engine/Vertex.hpp"
 #include <cstdint>
+#include "Engine/Mesh.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 namespace triangle
 {
-    const std::vector<vertex::Vertex2D> vertices =
+    static const std::vector<vertex::Vertex2D> vertices =
         {
             {{0.0f, -0.5f, 0.0f}, {0.5f, 0.0f}},
             {{0.5f, 0.5f, 0.0f}, {1.0f, 1.0f}},
             {{-0.5f, 0.5f, 0.0f}, {0.0f, 1.0f}},
     };
 
-    const std::vector<uint32_t> indices =
+    static const std::vector<uint32_t> indices =
         {
             0, 1, 2};
 } // namespace triangle
 
 namespace quad
 {
-    static std::vector<vertex::Vertex2D> vertices =
+    static const std::vector<vertex::Vertex2D> vertices =
         {
             {{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f}},
             {{0.5f, -0.5f, 0.0f}, {1.0f, 0.0f}},
             {{0.5f, 0.5f, 0.0f}, {1.0f, 1.0f}},
             {{-0.5f, 0.5f, 0.0f}, {0.0f, 1.0f}}};
 
-    static std::vector<uint32_t> indices =
+    static const std::vector<uint32_t> indices =
         {
             0, 1, 2,
             2, 3, 0};
@@ -39,7 +40,7 @@ namespace quad
 
 namespace cube
 {
-    static std::vector<vertex::Vertex3D> vertices =
+    static const std::vector<vertex::Vertex3D> vertices =
         {
             // front +Z
             {{-0.5f, -0.5f, 0.5f}, {0, 0}, {0, 0, 1}},
@@ -78,7 +79,7 @@ namespace cube
             {{-0.5f, -0.5f, 0.5f}, {0, 1}, {0, -1, 0}},
     };
 
-    static std::vector<uint32_t> indices =
+    static const std::vector<uint32_t> indices =
         {
             0, 1, 2, 2, 3, 0,
             4, 5, 6, 6, 7, 4,
@@ -89,6 +90,18 @@ namespace cube
 
 } // namespace cube
 
+namespace primitives
+{
+    static GPUMesh::SharedPtr cubeMesh{nullptr};
+
+    inline void initPrimitiveMeshes()
+    {
+        auto cpuMesh = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
+        cubeMesh = GPUMesh::createFromMesh(cpuMesh);
+    }
+
+} // namespace primitives
+
 ELIX_NESTED_NAMESPACE_END
 
-#endif // PRIMITIVES_HPP
+#endif // ELIX_PRIMITIVES_HPP

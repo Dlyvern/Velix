@@ -3,31 +3,24 @@
 
 #include "Core/Macros.hpp"
 
-#include <memory>
 #include <vector>
-
 #include <volk.h>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 class RenderPass
 {
+    DECLARE_VK_HANDLE_METHODS(VkRenderPass)
+    DECLARE_VK_SMART_PTRS(RenderPass, VkRenderPass)
+    ELIX_DECLARE_VK_LIFECYCLE()
 public:
-    using SharedPtr = std::shared_ptr<RenderPass>;
-
     RenderPass(const std::vector<VkAttachmentDescription> &attachments, const std::vector<VkSubpassDescription> &subpasses,
                const std::vector<VkSubpassDependency> &dependencies);
 
-    static SharedPtr create(const std::vector<VkAttachmentDescription> &attachments, const std::vector<VkSubpassDescription> &subpasses,
-                            const std::vector<VkSubpassDependency> &dependencies);
-
-    VkRenderPass vk();
+    void createVk(const std::vector<VkAttachmentDescription> &attachments, const std::vector<VkSubpassDescription> &subpasses,
+                  const std::vector<VkSubpassDependency> &dependencies);
 
     ~RenderPass();
-
-private:
-    VkDevice m_device{VK_NULL_HANDLE};
-    VkRenderPass m_renderPass{VK_NULL_HANDLE};
 };
 
 ELIX_NESTED_NAMESPACE_END

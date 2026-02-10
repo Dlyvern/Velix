@@ -25,6 +25,12 @@ public:
 
     bool loadCubemap(const std::array<std::string, 6> &cubemaps, core::CommandPool::SharedPtr commandPool = nullptr, bool freePixelsOnLoad = true);
 
+    void NewFunction(elix::core::Buffer::SPtr &buffer);
+
+    bool loadHDR(const std::string &filepath);
+    bool createCubemapFromHDR(const std::string &hdrPath, uint32_t cubemapSize = 512);
+    bool createCubemapFromEquirectangular(const float *data, int width, int height, uint32_t cubemapSize = 512);
+
     unsigned char *getPixels() const;
     int getWidth() const;
     int getHeight() const;

@@ -8,21 +8,19 @@
 struct ModelPushConstant
 {
     glm::mat4 model{1.0f};
+    uint32_t objectId{0};
+    uint32_t padding[3];
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-// SceneRenderGraphPass::SceneRenderGraphPass(renderGraph::RGPResourceHandler &shadowHandler) : m_shadowHandler(shadowHandler)
-// {
-//     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
-//     m_clearValues[1].depthStencil = {1.0f, 0};
-// }
-
-SceneRenderGraphPass::SceneRenderGraphPass()
+SceneRenderGraphPass::SceneRenderGraphPass(renderGraph::RGPResourceHandler &shadowHandler) : m_shadowHandler(shadowHandler)
 {
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
-    m_clearValues[1].depthStencil = {1.0f, 0};
+    m_clearValues[1].color = {0.0f, 0.0f, 0.0f, 0.0f};
+    m_clearValues[2].depthStencil = {1.0f, 0};
+    this->setDebugName("Screne render graph pass");
 }
 
 void SceneRenderGraphPass::setup(RGPResourcesBuilder &builder)
@@ -37,6 +35,16 @@ void SceneRenderGraphPass::setup(RGPResourcesBuilder &builder)
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+    VkAttachmentDescription objectIdAttachment{};
+    objectIdAttachment.format = VK_FORMAT_R32_UINT;
+    objectIdAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    objectIdAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    objectIdAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    objectIdAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    objectIdAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    objectIdAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    objectIdAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
     VkAttachmentDescription depthAttachment{};
     depthAttachment.format = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -47,12 +55,14 @@ void SceneRenderGraphPass::setup(RGPResourcesBuilder &builder)
     depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    VkAttachmentReference colorAttachmentReference{};
-    colorAttachmentReference.attachment = 0;
-    colorAttachmentReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference colorAttachmentReferences[2];
+    colorAttachmentReferences[0].attachment = 0;
+    colorAttachmentReferences[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachmentReferences[1].attachment = 1;
+    colorAttachmentReferences[1].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     VkAttachmentReference depthAttachmentReference{};
-    depthAttachmentReference.attachment = 1;
+    depthAttachmentReference.attachment = 2;
     depthAttachmentReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
     VkSubpassDependency dependency{};
@@ -64,23 +74,32 @@ void SceneRenderGraphPass::setup(RGPResourcesBuilder &builder)
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     VkSubpassDescription des{};
-    des.colorAttachmentCount = 1;
+    des.colorAttachmentCount = 2;
     des.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    des.pColorAttachments = &colorAttachmentReference;
+    des.pColorAttachments = colorAttachmentReferences;
     des.pDepthStencilAttachment = &depthAttachmentReference;
     des.flags = 0;
 
-    m_renderPass = core::RenderPass::create({colorAttachment, depthAttachment}, {des},
-                                            {dependency});
+    m_renderPass = core::RenderPass::createShared(
+        std::vector<VkAttachmentDescription>{colorAttachment, objectIdAttachment, depthAttachment},
+        std::vector<VkSubpassDescription>{des},
+        std::vector<VkSubpassDependency>{dependency});
 
     RGPTextureDescription colorTextureDescription{};
     RGPTextureDescription depthTextureDescription{};
+    RGPTextureDescription objectIdTextureDescription{};
 
     colorTextureDescription.setDebugName("__ELIX_COLOR_TEXTURE__");
     colorTextureDescription.setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
     colorTextureDescription.setFormat(core::VulkanContext::getContext()->getSwapchain()->getImageFormat());
     colorTextureDescription.setUsage(RGPTextureUsage::COLOR_ATTACHMENT);
     colorTextureDescription.setIsSwapChainTarget(true);
+
+    objectIdTextureDescription.setDebugName("__ELIX_OBJECT_ID_TEXTURE__");
+    objectIdTextureDescription.setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    objectIdTextureDescription.setFormat(VK_FORMAT_R32_UINT);
+    objectIdTextureDescription.setUsage(RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC);
+    objectIdTextureDescription.setIsSwapChainTarget(false);
 
     depthTextureDescription.setDebugName("__ELIX_DEPTH_TEXTURE__");
     depthTextureDescription.setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
@@ -90,25 +109,30 @@ void SceneRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
     m_colorTextureHandler = builder.createTexture(colorTextureDescription);
     m_depthTextureHandler = builder.createTexture(depthTextureDescription);
+    m_objectIdTextureHandler = builder.createTexture(objectIdTextureDescription);
 
     builder.write(m_colorTextureHandler, RGPTextureUsage::COLOR_ATTACHMENT);
     builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
-    // builder.read(m_shadowHandler, RGPTextureUsage::SAMPLED);
+    builder.write(m_objectIdTextureHandler, RGPTextureUsage::COLOR_ATTACHMENT);
+
+    builder.read(m_shadowHandler, RGPTextureUsage::SAMPLED);
 }
 
 void SceneRenderGraphPass::compile(RGPResourcesStorage &storage)
 {
     auto depthTexture = storage.getTexture(m_depthTextureHandler);
+    auto objectIdTexture = storage.getTexture(m_objectIdTextureHandler);
+
     depthTexture->getImage()->transitionImageLayout(core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice()), VK_IMAGE_LAYOUT_UNDEFINED,
                                                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
     for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
     {
         auto colorTexture = storage.getSwapChainTexture(m_colorTextureHandler, imageIndex);
-        std::vector<VkImageView> attachments{colorTexture->vkImageView(), depthTexture->vkImageView()};
+        std::vector<VkImageView> attachments{colorTexture->vkImageView(), objectIdTexture->vkImageView(), depthTexture->vkImageView()};
 
-        auto framebuffer = std::make_shared<core::Framebuffer>(core::VulkanContext::getContext()->getDevice(), attachments,
-                                                               m_renderPass, core::VulkanContext::getContext()->getSwapchain()->getExtent());
+        auto framebuffer = core::Framebuffer::createShared(core::VulkanContext::getContext()->getDevice(), attachments,
+                                                           m_renderPass, core::VulkanContext::getContext()->getSwapchain()->getExtent());
 
         m_framebuffers.push_back(framebuffer);
     }
@@ -161,15 +185,35 @@ void SceneRenderGraphPass::compile(RGPResourcesStorage &storage)
     depthStencil.front = {};
     depthStencil.back = {};
 
-    VkPipelineColorBlendAttachmentState colorBlendAttachment{
-        .blendEnable = VK_FALSE,
-        .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
-        .colorBlendOp = VK_BLEND_OP_ADD,
-        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
-        .alphaBlendOp = VK_BLEND_OP_ADD,
-        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
+    // VkPipelineColorBlendAttachmentState colorBlendAttachment{
+    //     .blendEnable = VK_FALSE,
+    //     .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+    //     .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+    //     .colorBlendOp = VK_BLEND_OP_ADD,
+    //     .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+    //     .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+    //     .alphaBlendOp = VK_BLEND_OP_ADD,
+    //     .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachments[2]{};
+
+    for (int i = 0; i < 2; i++)
+    {
+        colorBlendAttachments[i].blendEnable = VK_FALSE;
+        colorBlendAttachments[i].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachments[i].dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachments[i].colorBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachments[i].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachments[i].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachments[i].alphaBlendOp = VK_BLEND_OP_ADD;
+    }
+
+    colorBlendAttachments[0].colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                              VK_COLOR_COMPONENT_G_BIT |
+                                              VK_COLOR_COMPONENT_B_BIT |
+                                              VK_COLOR_COMPONENT_A_BIT;
+
+    colorBlendAttachments[1].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
 
     colorBlending.blendConstants[0] = 0.0f;
     colorBlending.blendConstants[1] = 0.0f;
@@ -177,8 +221,8 @@ void SceneRenderGraphPass::compile(RGPResourcesStorage &storage)
     colorBlending.blendConstants[3] = 0.0f;
 
     colorBlending.logicOpEnable = VK_FALSE;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
+    colorBlending.attachmentCount = 2;
+    colorBlending.pAttachments = colorBlendAttachments;
 
     VkViewport viewport = core::VulkanContext::getContext()->getSwapchain()->getViewport();
     VkRect2D scissor = core::VulkanContext::getContext()->getSwapchain()->getScissor();
@@ -205,15 +249,15 @@ void SceneRenderGraphPass::compile(RGPResourcesStorage &storage)
     vertexInputStateCI.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttributeDescriptions.size());
     vertexInputStateCI.pVertexAttributeDescriptions = vertexAttributeDescriptions.data();
 
-    m_graphicsPipeline = std::make_shared<core::GraphicsPipeline>(core::VulkanContext::getContext()->getDevice(), m_renderPass->vk(), shaderStages.data(),
-                                                                  static_cast<uint32_t>(shaderStages.size()), engineShaderFamilies::staticMeshShaderFamily.pipelineLayout->vk(),
-                                                                  dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputStateCI,
-                                                                  subpass, depthStencil);
+    m_graphicsPipeline = core::GraphicsPipeline::createShared(core::VulkanContext::getContext()->getDevice(), m_renderPass->vk(), shaderStages, EngineShaderFamilies::staticMeshShaderFamily.pipelineLayout->vk(),
+                                                              dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputStateCI,
+                                                              subpass, depthStencil);
 }
 
 void SceneRenderGraphPass::onSwapChainResized(renderGraph::RGPResourcesStorage &storage)
 {
     auto depthTexture = storage.getTexture(m_depthTextureHandler);
+    auto objectIdTexture = storage.getTexture(m_objectIdTextureHandler);
 
     depthTexture->getImage()->transitionImageLayout(core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice()), VK_IMAGE_LAYOUT_UNDEFINED,
                                                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
@@ -223,7 +267,7 @@ void SceneRenderGraphPass::onSwapChainResized(renderGraph::RGPResourcesStorage &
         auto frameBuffer = m_framebuffers[imageIndex];
 
         auto colorTexture = storage.getSwapChainTexture(m_colorTextureHandler, imageIndex);
-        std::vector<VkImageView> attachments{colorTexture->vkImageView(), depthTexture->vkImageView()};
+        std::vector<VkImageView> attachments{colorTexture->vkImageView(), objectIdTexture->vkImageView(), depthTexture->vkImageView()};
 
         frameBuffer->resize(core::VulkanContext::getContext()->getSwapchain()->getExtent(), attachments);
     }
@@ -253,10 +297,12 @@ void SceneRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer,
 
     vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline->vk());
 
-    auto &pipelineLayout = engineShaderFamilies::staticMeshShaderFamily.pipelineLayout;
+    auto &pipelineLayout = EngineShaderFamilies::staticMeshShaderFamily.pipelineLayout;
 
     for (const auto &[entity, gpuEntity] : data.meshes)
     {
+        uint64_t entityId = entity->getId();
+
         for (const auto &mesh : gpuEntity.meshes)
         {
             VkBuffer vertexBuffers[] = {mesh->vertexBuffer->vk()};
@@ -266,15 +312,15 @@ void SceneRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer,
             vkCmdBindIndexBuffer(commandBuffer->vk(), mesh->indexBuffer->vk(), 0, mesh->indexType);
 
             ModelPushConstant modelPushConstant{
-                .model = gpuEntity.transform};
+                .model = gpuEntity.transform, .objectId = entityId};
 
-            vkCmdPushConstants(commandBuffer->vk(), pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
+            vkCmdPushConstants(commandBuffer->vk(), pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof(ModelPushConstant), &modelPushConstant);
 
             const std::array<VkDescriptorSet, 3> descriptorSets =
                 {
-                    data.cameraDescriptorSet,                         // set 0: camera
+                    data.cameraDescriptorSet,                         // set 0: camera & light
                     mesh->material->getDescriptorSet(m_currentFrame), // set 1: material
-                    data.lightDescriptorSet                           // set 2: lighting
                 };
 
             vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout->vk(), 0, static_cast<uint32_t>(descriptorSets.size()),

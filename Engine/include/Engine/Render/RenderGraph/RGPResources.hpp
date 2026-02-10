@@ -18,6 +18,9 @@ enum class RGPTextureUsage
     SAMPLED,
     COLOR_ATTACHMENT,
     DEPTH_STENCIL,
+
+    // RAW VULKAN FOR NOW
+    COLOR_ATTACHMENT_TRANSFER_SRC
 };
 
 struct RGPResourceAccess
@@ -49,11 +52,21 @@ struct SharedRGPResourceHandler
 
 class RGPTextureDescription
 {
+public:
+    RGPTextureDescription() = default;
+
+    RGPTextureDescription(VkFormat format, RGPTextureUsage usage)
+    {
+        m_Format = format;
+        m_Usage = usage;
+    }
+
     PROPERTY_FULL(VkFormat, Format)
     PROPERTY_FULL(std::string, DebugName)
     PROPERTY_FULL(RGPTextureUsage, Usage)
     PROPERTY_FULL(VkExtent2D, Extent)
-    PROPERTY_FULL(bool, IsSwapChainTarget);
+    PROPERTY_FULL_DEFAULT(bool, IsSwapChainTarget, false);
+    PROPERTY_FULL_DEFAULT(bool, isDepenedOnSwapChainSize, false); // On swap chain resize this resource will be re-created with swap chain extent
 };
 
 ELIX_CUSTOM_NAMESPACE_END

@@ -5,12 +5,17 @@
 
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 #include "Engine/Shaders/ShaderDataExtractor.hpp"
+#include "Core/Cache/GraphicsPipelineCache.hpp"
 
 #include "Engine/Primitives.hpp"
 
 #include "Core/Shader.hpp"
 #include "Engine/Vertex.hpp"
 #include "Core/VulkanHelpers.hpp"
+
+#include "Engine/Builders/GraphicsPipelineBuilder.hpp"
+#include "Engine/Builders/RenderPassBuilder.hpp"
+#include "Engine/Render/RenderGraph/RenderGraph.hpp"
 
 #include <iostream>
 
@@ -32,75 +37,48 @@ struct LightSpaceMatrixUBO
     glm::mat4 lightSpaceMatrix;
 };
 
-struct ModelPushConstant
+struct ModelOnly
 {
     glm::mat4 model{1.0f};
 };
 
-struct BonesSSBO
+struct ModelPushConstant
 {
-    int bonesCount;
-    glm::vec3 allign;
-    glm::mat4 boneMatrices[];
+    glm::mat4 model{1.0f};
+    uint32_t objectId{0};
+    uint32_t padding[3];
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-OffscreenRenderGraphPass::OffscreenRenderGraphPass(VkDescriptorPool descriptorPool) : m_swapChain(core::VulkanContext::getContext()->getSwapchain()), m_descriptorPool(descriptorPool)
+OffscreenRenderGraphPass::OffscreenRenderGraphPass(VkDescriptorPool descriptorPool, RGPResourceHandler &shadowTextureHandler)
+    : m_swapChain(core::VulkanContext::getContext()->getSwapchain()), m_descriptorPool(descriptorPool),
+      m_shadowTextureHandler(shadowTextureHandler)
 {
     m_device = core::VulkanContext::getContext()->getDevice();
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
-    m_clearValues[1].depthStencil = {1.0f, 0};
-}
+    m_clearValues[1].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    m_clearValues[2].depthStencil = {1.0f, 0};
 
-void OffscreenRenderGraphPass::createSkeleton(VkSampler sampler, VkImageView imageView, int maxFramesInFlight)
-{
-    m_cameraDescriptorSets.resize(maxFramesInFlight);
-    m_cameraWireframeDescriptorSets.resize(maxFramesInFlight);
+    this->setDebugName("Offscreen render graph pass");
 
-    m_cameraMapped.resize(maxFramesInFlight);
-    m_lightMapped.resize(maxFramesInFlight);
+    m_perObjectDescriptorSets.resize(RenderGraph::MAX_FRAMES_IN_FLIGHT);
 
-    m_lightSpaceMatrixUniformObjects.reserve(maxFramesInFlight);
-    m_cameraUniformObjects.reserve(maxFramesInFlight);
+    m_bonesSSBOs.reserve(RenderGraph::MAX_FRAMES_IN_FLIGHT);
 
-    m_bonesSSBOs.reserve(maxFramesInFlight);
-
-    m_cameraWireframeMapped.resize(maxFramesInFlight);
-    m_cameraWireframeUniformObjects.reserve(maxFramesInFlight);
-
+    static constexpr VkDeviceSize bonesStructSize = sizeof(glm::mat4);
     static constexpr uint8_t INIT_BONES_COUNT = 100;
-    static constexpr VkDeviceSize INITIAL_SIZE = sizeof(BonesSSBO) * (INIT_BONES_COUNT * sizeof(BonesSSBO));
+    static constexpr VkDeviceSize INITIAL_SIZE = bonesStructSize * (INIT_BONES_COUNT * bonesStructSize);
 
-    for (size_t i = 0; i < maxFramesInFlight; ++i)
+    for (size_t i = 0; i < RenderGraph::MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        auto &cameraBuffer = m_cameraUniformObjects.emplace_back(core::Buffer::createShared(sizeof(CameraUBO),
-                                                                                            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
-
-        auto &lightBuffer = m_lightSpaceMatrixUniformObjects.emplace_back(core::Buffer::createShared(sizeof(LightSpaceMatrixUBO),
-                                                                                                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
-
         auto ssboBuffer = m_bonesSSBOs.emplace_back(core::Buffer::createShared(INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                                                core::memory::MemoryUsage::CPU_TO_GPU));
 
-        cameraBuffer->map(m_cameraMapped[i]);
-        lightBuffer->map(m_lightMapped[i]);
-
-        m_cameraDescriptorSets[i] = DescriptorSetBuilder::begin()
-                                        .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                                        .addBuffer(lightBuffer, sizeof(LightSpaceMatrixUBO), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                                        .addImage(imageView, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
-                                        .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                                        .build(m_device, m_descriptorPool, engineShaderFamilies::skeletonMeshCameraLayout->vk());
-
-        auto &wireframeCameraBuffer = m_cameraWireframeUniformObjects.emplace_back(core::Buffer::createShared(sizeof(CameraUBO),
-                                                                                                              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, core::memory::MemoryUsage::CPU_TO_GPU));
-
-        wireframeCameraBuffer->map(m_cameraWireframeMapped[i]);
-        m_cameraWireframeDescriptorSets[i] = DescriptorSetBuilder::begin()
-                                                 .addBuffer(wireframeCameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                                                 .build(m_device, m_descriptorPool, engineShaderFamilies::wireframeMeshCameraLayout->vk());
+        m_perObjectDescriptorSets[i] = DescriptorSetBuilder::begin()
+                                           .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                                           .build(m_device, m_descriptorPool, EngineShaderFamilies::objectDescriptorSetLayout->vk());
     }
 }
 
@@ -134,6 +112,7 @@ void OffscreenRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo &ren
 void OffscreenRenderGraphPass::onSwapChainResized(renderGraph::RGPResourcesStorage &storage)
 {
     auto depthTexture = storage.getTexture(m_depthTextureHandler);
+    auto objectIdTexture = storage.getTexture(m_objectIdTextureHandler);
 
     depthTexture->getImage()->transitionImageLayout(core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice()), VK_IMAGE_LAYOUT_UNDEFINED,
                                                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
@@ -145,7 +124,7 @@ void OffscreenRenderGraphPass::onSwapChainResized(renderGraph::RGPResourcesStora
         auto colorTexture = storage.getTexture(m_colorTextureHandler[imageIndex]);
         m_colorImages[imageIndex] = colorTexture;
 
-        std::vector<VkImageView> attachments{colorTexture->vkImageView(), depthTexture->vkImageView()};
+        std::vector<VkImageView> attachments{colorTexture->vkImageView(), objectIdTexture->vkImageView(), depthTexture->vkImageView()};
 
         frameBuffer->resize(core::VulkanContext::getContext()->getSwapchain()->getExtent(), attachments);
     }
@@ -154,6 +133,8 @@ void OffscreenRenderGraphPass::onSwapChainResized(renderGraph::RGPResourcesStora
 void OffscreenRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 {
     auto depthTexture = storage.getTexture(m_depthTextureHandler);
+    auto objectIdTexture = storage.getTexture(m_objectIdTextureHandler);
+
     depthTexture->getImage()->transitionImageLayout(core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice()), VK_IMAGE_LAYOUT_UNDEFINED,
                                                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
@@ -161,29 +142,38 @@ void OffscreenRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage
     {
         auto colorTexture = storage.getTexture(m_colorTextureHandler[imageIndex]);
         m_colorImages.push_back(colorTexture);
-        std::vector<VkImageView> attachments{colorTexture->vkImageView(), depthTexture->vkImageView()};
+        std::vector<VkImageView> attachments{colorTexture->vkImageView(), objectIdTexture->vkImageView(), depthTexture->vkImageView()};
 
-        auto framebuffer = std::make_shared<core::Framebuffer>(core::VulkanContext::getContext()->getDevice(), attachments,
-                                                               m_renderPass, core::VulkanContext::getContext()->getSwapchain()->getExtent());
+        auto framebuffer = core::Framebuffer::createShared(core::VulkanContext::getContext()->getDevice(), attachments,
+                                                           m_renderPass, core::VulkanContext::getContext()->getSwapchain()->getExtent());
 
         m_framebuffers.push_back(framebuffer);
     }
 
-    std::array<std::string, 6> cubemaps{
-        "./resources/textures/right.jpg",
-        "./resources/textures/left.jpg",
-        "./resources/textures/top.jpg",
-        "./resources/textures/bottom.jpg",
-        "./resources/textures/front.jpg",
-        "./resources/textures/back.jpg",
-    };
+    // std::array<std::string, 6> cubemaps{
+    //     "./resources/textures/right.jpg",
+    //     "./resources/textures/left.jpg",
+    //     "./resources/textures/top.jpg",
+    //     "./resources/textures/bottom.jpg",
+    //     "./resources/textures/front.jpg",
+    //     "./resources/textures/back.jpg",
+    // };
 
-    m_skybox = std::make_unique<Skybox>(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), core::VulkanContext::getContext()->getTransferCommandPool(), m_renderPass,
-                                        cubemaps, m_descriptorPool);
+    // m_skybox = std::make_unique<Skybox>(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), core::VulkanContext::getContext()->getTransferCommandPool(), m_renderPass,
+    //                                     cubemaps, m_descriptorPool);
+
+    m_skybox = std::make_unique<Skybox>(m_renderPass, "./resources/textures/default_sky.hdr", m_descriptorPool);
 }
 
 void OffscreenRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 {
+    // auto renderPassBuilder = builders::RenderPassBuilder::begin();
+    auto physicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
+
+    // auto &colorAttachment = renderPassBuilder.addColorAttachment(m_swapChain.lock()->getImageFormat());
+    // auto &objectIdAttachment = renderPassBuilder.addColorAttachment(VK_FORMAT_R32_UINT);
+    // auto &depthStencilAttachment = renderPassBuilder.addDepthAttachment(core::helpers::findDepthFormat(physicalDevice));
+
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = m_swapChain.lock()->getImageFormat();
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -194,8 +184,18 @@ void OffscreenRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     colorAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
+    VkAttachmentDescription objectIdAttachment{};
+    objectIdAttachment.format = VK_FORMAT_R32_UINT;
+    objectIdAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    objectIdAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    objectIdAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    objectIdAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    objectIdAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    objectIdAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    objectIdAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
     VkAttachmentDescription depthAttachment{};
-    depthAttachment.format = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
+    depthAttachment.format = core::helpers::findDepthFormat(physicalDevice);
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -204,12 +204,14 @@ void OffscreenRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    VkAttachmentReference colorAttachmentReference{};
-    colorAttachmentReference.attachment = 0;
-    colorAttachmentReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    std::vector<VkAttachmentReference> attachmentReferences(2);
+    attachmentReferences[0].attachment = 0;
+    attachmentReferences[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    attachmentReferences[1].attachment = 1;
+    attachmentReferences[1].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     VkAttachmentReference depthAttachmentReference{};
-    depthAttachmentReference.attachment = 1;
+    depthAttachmentReference.attachment = 2;
     depthAttachmentReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
     VkSubpassDependency dependency{};
@@ -222,23 +224,32 @@ void OffscreenRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     dependency.dependencyFlags = 0;
 
     VkSubpassDescription des{};
-    des.colorAttachmentCount = 1;
+    des.colorAttachmentCount = static_cast<uint32_t>(attachmentReferences.size());
     des.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    des.pColorAttachments = &colorAttachmentReference;
+    des.pColorAttachments = attachmentReferences.data();
     des.pDepthStencilAttachment = &depthAttachmentReference;
     des.flags = 0;
 
-    m_renderPass = core::RenderPass::create({colorAttachment, depthAttachment}, {des},
-                                            {dependency});
+    m_renderPass = core::RenderPass::createShared(
+        std::vector<VkAttachmentDescription>{colorAttachment, objectIdAttachment, depthAttachment},
+        std::vector<VkSubpassDescription>{des},
+        std::vector<VkSubpassDependency>{dependency});
 
     renderGraph::RGPTextureDescription colorTextureDescription{};
     renderGraph::RGPTextureDescription depthTextureDescription{};
+    renderGraph::RGPTextureDescription objectIdTextureDescription{};
 
     colorTextureDescription.setDebugName("__ELIX_COLOR_OFFSCREEN__TEXTURE__");
     colorTextureDescription.setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
     colorTextureDescription.setFormat(core::VulkanContext::getContext()->getSwapchain()->getImageFormat());
     colorTextureDescription.setUsage(renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
     colorTextureDescription.setIsSwapChainTarget(false);
+
+    objectIdTextureDescription.setDebugName("__ELIX_OBJECT_ID__TEXTURE__");
+    objectIdTextureDescription.setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    objectIdTextureDescription.setFormat(VK_FORMAT_R32_UINT);
+    objectIdTextureDescription.setUsage(renderGraph::RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC);
+    objectIdTextureDescription.setIsSwapChainTarget(false);
 
     depthTextureDescription.setDebugName("__ELIX_DEPTH_OFFSCREEN__TEXTURE__");
     depthTextureDescription.setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
@@ -254,8 +265,12 @@ void OffscreenRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         builder.write(colorTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
     }
 
+    m_objectIdTextureHandler = builder.createTexture(objectIdTextureDescription);
+
     m_depthTextureHandler = builder.createTexture(depthTextureDescription);
     builder.write(m_depthTextureHandler, renderGraph::RGPTextureUsage::DEPTH_STENCIL);
+
+    builder.read(m_shadowTextureHandler, RGPTextureUsage::SAMPLED);
 
     auto shader = std::make_shared<core::Shader>("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
     auto skeletonShader = std::make_shared<core::Shader>("./resources/shaders/skeleton_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
@@ -263,117 +278,75 @@ void OffscreenRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     auto stencilShader = std::make_shared<core::Shader>("./resources/shaders/wireframe_mesh.vert.spv", "./resources/shaders/debug_yellow.frag.spv");
     // ShaderDataExtractor::parse(shader->getVertexHandler());
 
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-    VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-    VkPipelineMultisampleStateCreateInfo multisampling{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-    VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-    VkPipelineColorBlendStateCreateInfo colorBlending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-    VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    std::vector<VkDynamicState> dynamicStates;
+    //? what is this parameter
+    const uint32_t subpass = 0;
+    const VkViewport viewport = core::VulkanContext::getContext()->getSwapchain()->getViewport();
+    const VkRect2D scissor = core::VulkanContext::getContext()->getSwapchain()->getScissor();
+    std::vector<VkVertexInputBindingDescription> vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D))};
+    std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions = {vertex::Vertex3D::getAttributeDescriptions()};
 
-    std::vector<VkVertexInputBindingDescription> vertexBindingDescriptions;
-    std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions;
+    const std::vector<VkDynamicState> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    const auto device = core::VulkanContext::getContext()->getDevice();
+    const auto cache = core::cache::GraphicsPipelineCache::getDeviceCache(device);
 
-    VkPipelineLayout layout = VK_NULL_HANDLE;
-    uint32_t subpass = 0;
+    auto inputAssembly = builders::GraphicsPipelineBuilder::inputAssemblyCI(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    auto rasterizer = builders::GraphicsPipelineBuilder::rasterizationCI(VK_POLYGON_MODE_FILL);
+    auto multisampling = builders::GraphicsPipelineBuilder::multisamplingCI();
+    auto depthStencil = builders::GraphicsPipelineBuilder::depthStencilCI(true, true, VK_COMPARE_OP_LESS);
+    auto viewportState = builders::GraphicsPipelineBuilder::viewportCI({viewport}, {scissor});
+    auto dynamicState = builders::GraphicsPipelineBuilder::dynamic(dynamicStates);
+    auto vertexInputState = builders::GraphicsPipelineBuilder::vertexInputCI(vertexBindingDescriptions, vertexAttributeDescriptions);
 
-    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+    std::vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments{
+        builders::GraphicsPipelineBuilder::colorBlendAttachmentCI(false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO),
+        builders::GraphicsPipelineBuilder::colorBlendAttachmentCI(false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO)};
 
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    inputAssembly.primitiveRestartEnable = VK_FALSE;
+    colorBlendAttachments[1].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
 
-    rasterizer.depthClampEnable = VK_FALSE;
-    rasterizer.rasterizerDiscardEnable = VK_FALSE;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.depthBiasEnable = VK_FALSE;
-    rasterizer.depthBiasConstantFactor = 0.0f;
-    rasterizer.depthBiasSlopeFactor = 0.0f;
-    rasterizer.depthBiasClamp = 0.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    auto colorBlending = builders::GraphicsPipelineBuilder::colorBlending(colorBlendAttachments);
 
-    multisampling.sampleShadingEnable = VK_FALSE;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    multisampling.minSampleShading = 1.0f;
-    multisampling.pSampleMask = nullptr;
-    multisampling.alphaToCoverageEnable = VK_FALSE;
-    multisampling.alphaToOneEnable = VK_FALSE;
-
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-    depthStencil.depthBoundsTestEnable = VK_FALSE;
-    depthStencil.minDepthBounds = 0.0f;
-    depthStencil.maxDepthBounds = 1.0f;
-    depthStencil.stencilTestEnable = VK_FALSE;
-    depthStencil.front = {};
-    depthStencil.back = {};
-
-    VkPipelineColorBlendAttachmentState colorBlendAttachment{
-        .blendEnable = VK_FALSE,
-        .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
-        .colorBlendOp = VK_BLEND_OP_ADD,
-        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
-        .alphaBlendOp = VK_BLEND_OP_ADD,
-        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
-
-    colorBlending.blendConstants[0] = 0.0f;
-    colorBlending.blendConstants[1] = 0.0f;
-    colorBlending.blendConstants[2] = 0.0f;
-    colorBlending.blendConstants[3] = 0.0f;
-
-    colorBlending.logicOpEnable = VK_FALSE;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
-
-    VkViewport viewport = core::VulkanContext::getContext()->getSwapchain()->getViewport();
-    VkRect2D scissor = core::VulkanContext::getContext()->getSwapchain()->getScissor();
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-    viewportState.pViewports = &viewport;
-    viewportState.pScissors = &scissor;
-
-    dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = (uint32_t)dynamicStates.size();
-    dynamicState.pDynamicStates = dynamicStates.data();
-
-    shaderStages = shader->getShaderStages();
-
-    vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D))};
-    vertexAttributeDescriptions = {vertex::Vertex3D::getAttributeDescriptions()};
-
-    VkPipelineVertexInputStateCreateInfo vertexInputStateCI{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    vertexInputStateCI.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexBindingDescriptions.size());
-    vertexInputStateCI.pVertexBindingDescriptions = vertexBindingDescriptions.data();
-    vertexInputStateCI.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttributeDescriptions.size());
-    vertexInputStateCI.pVertexAttributeDescriptions = vertexAttributeDescriptions.data();
-
-    m_graphicsPipeline = std::make_shared<core::GraphicsPipeline>(core::VulkanContext::getContext()->getDevice(), m_renderPass->vk(), shaderStages.data(),
-                                                                  static_cast<uint32_t>(shaderStages.size()), engineShaderFamilies::staticMeshShaderFamily.pipelineLayout->vk(),
-                                                                  dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputStateCI,
-                                                                  subpass, depthStencil);
+    m_graphicsPipeline = core::GraphicsPipeline::createShared(device, m_renderPass->vk(), shader->getShaderStages(), EngineShaderFamilies::staticMeshShaderFamily.pipelineLayout->vk(),
+                                                              dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputState,
+                                                              subpass, depthStencil, cache);
 
     {
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::VertexSkinned))};
         vertexAttributeDescriptions = {vertex::VertexSkinned::getAttributeDescriptions()};
 
-        vertexInputStateCI.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexBindingDescriptions.size());
-        vertexInputStateCI.pVertexBindingDescriptions = vertexBindingDescriptions.data();
-        vertexInputStateCI.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttributeDescriptions.size());
-        vertexInputStateCI.pVertexAttributeDescriptions = vertexAttributeDescriptions.data();
+        vertexInputState = builders::GraphicsPipelineBuilder::vertexInputCI(vertexBindingDescriptions, vertexAttributeDescriptions);
 
-        shaderStages = skeletonShader->getShaderStages();
-
-        m_skeletalGraphicsPipeline = std::make_shared<core::GraphicsPipeline>(core::VulkanContext::getContext()->getDevice(), m_renderPass->vk(), shaderStages.data(),
-                                                                              static_cast<uint32_t>(shaderStages.size()), engineShaderFamilies::skeletonMeshShaderFamily.pipelineLayout->vk(),
-                                                                              dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputStateCI,
-                                                                              subpass, depthStencil);
+        m_skeletalGraphicsPipeline = core::GraphicsPipeline::createShared(device, m_renderPass->vk(), skeletonShader->getShaderStages(), EngineShaderFamilies::skeletonMeshShaderFamily.pipelineLayout->vk(),
+                                                                          dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputState,
+                                                                          subpass, depthStencil, cache);
     }
+
+    // {
+    //     std::vector<VkVertexInputAttributeDescription> attributes(1);
+
+    //     attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(VertexStruct, position)};
+
+    //     vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(VertexStruct))};
+    //     vertexAttributeDescriptions = attributes;
+
+    //     vertexInputState = builders::GraphicsPipelineBuilder::vertexInputCI(vertexBindingDescriptions, vertexAttributeDescriptions);
+
+    //     auto beforeRasterizer = rasterizer;
+    //     rasterizer.polygonMode = VK_POLYGON_MODE_LINE;
+    //     rasterizer.lineWidth = 1.0f;
+    //     rasterizer.cullMode = VK_CULL_MODE_NONE;
+    //     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    //     rasterizer.depthBiasEnable = VK_FALSE;
+
+    //     auto assemblyBefore = inputAssembly;
+    //     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+
+    //     m_wireframeGraphicsPipeline = core::GraphicsPipeline::createShared(device, m_renderPass->vk(), wireframeShader->getShaderStages(), EngineShaderFamilies::wireframeMeshShaderFamily.pipelineLayout->vk(),
+    //                                                                            dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputState,
+    //                                                                            subpass, depthStencil, cache);
+
+    //     rasterizer = beforeRasterizer;
+    //     inputAssembly = assemblyBefore;
+    // }
 
     {
         std::vector<VkVertexInputAttributeDescription> attributes(1);
@@ -383,82 +356,28 @@ void OffscreenRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(VertexStruct))};
         vertexAttributeDescriptions = attributes;
 
-        vertexInputStateCI.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexBindingDescriptions.size());
-        vertexInputStateCI.pVertexBindingDescriptions = vertexBindingDescriptions.data();
-        vertexInputStateCI.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttributeDescriptions.size());
-        vertexInputStateCI.pVertexAttributeDescriptions = vertexAttributeDescriptions.data();
+        vertexInputState = builders::GraphicsPipelineBuilder::vertexInputCI(vertexBindingDescriptions, vertexAttributeDescriptions);
 
-        auto beforeRasterizer = rasterizer;
-        rasterizer.polygonMode = VK_POLYGON_MODE_LINE;
-        rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_NONE;
-        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-        rasterizer.depthBiasEnable = VK_FALSE;
-
-        auto assemblyBefore = inputAssembly;
-        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-
-        shaderStages = wireframeShader->getShaderStages();
-
-        m_wireframeGraphicsPipeline = std::make_shared<core::GraphicsPipeline>(core::VulkanContext::getContext()->getDevice(), m_renderPass->vk(), shaderStages.data(),
-                                                                               static_cast<uint32_t>(shaderStages.size()), engineShaderFamilies::wireframeMeshShaderFamily.pipelineLayout->vk(),
-                                                                               dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputStateCI,
-                                                                               subpass, depthStencil);
-
-        rasterizer = beforeRasterizer;
-        inputAssembly = assemblyBefore;
-    }
-
-    {
-        std::vector<VkVertexInputAttributeDescription> attributes(1);
-
-        attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(VertexStruct, position)};
-
-        vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(VertexStruct))};
-        vertexAttributeDescriptions = attributes;
-
-        vertexInputStateCI.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexBindingDescriptions.size());
-        vertexInputStateCI.pVertexBindingDescriptions = vertexBindingDescriptions.data();
-        vertexInputStateCI.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttributeDescriptions.size());
-        vertexInputStateCI.pVertexAttributeDescriptions = vertexAttributeDescriptions.data();
-
-        auto beforeRasterizer = rasterizer;
-        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer = builders::GraphicsPipelineBuilder::rasterizationCI(VK_POLYGON_MODE_FILL);
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
         rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-        rasterizer.depthBiasEnable = VK_FALSE;
 
-        auto assemblyBefore = inputAssembly;
-        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+        inputAssembly = builders::GraphicsPipelineBuilder::inputAssemblyCI(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 
-        depthStencil.depthTestEnable = VK_TRUE;
-        depthStencil.depthWriteEnable = VK_FALSE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        depthStencil = builders::GraphicsPipelineBuilder::depthStencilCI(false, false, VK_COMPARE_OP_LESS_OR_EQUAL);
 
-        shaderStages = stencilShader->getShaderStages();
-
-        m_stencilGraphicsPipeline = std::make_shared<core::GraphicsPipeline>(core::VulkanContext::getContext()->getDevice(), m_renderPass->vk(), shaderStages.data(),
-                                                                             static_cast<uint32_t>(shaderStages.size()), engineShaderFamilies::wireframeMeshShaderFamily.pipelineLayout->vk(),
-                                                                             dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputStateCI,
-                                                                             subpass, depthStencil);
-
-        rasterizer = beforeRasterizer;
-        inputAssembly = assemblyBefore;
+        m_stencilGraphicsPipeline = core::GraphicsPipeline::createShared(device, m_renderPass->vk(), stencilShader->getShaderStages(), EngineShaderFamilies::wireframeMeshShaderFamily.pipelineLayout->vk(),
+                                                                         dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputState,
+                                                                         subpass, depthStencil, cache);
     }
+}
+
+void OffscreenRenderGraphPass::cleanup()
+{
 }
 
 void OffscreenRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data)
 {
-    std::memcpy(m_lightMapped[m_currentFrame], &data.lightSpaceMatrix, sizeof(LightSpaceMatrixUBO));
-
-    CameraUBO cameraUBO{};
-    cameraUBO.projection = data.projection;
-    cameraUBO.view = data.view;
-
-    std::memcpy(m_cameraMapped[m_currentFrame], &cameraUBO, sizeof(CameraUBO));
-
-    std::memcpy(m_cameraWireframeMapped[m_currentFrame], &cameraUBO, sizeof(CameraUBO));
-
     //----Later
     // vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);
     // vkCmdSetScissor(commandBuffer->vk(), 0, 1, &m_scissor);
@@ -469,13 +388,15 @@ void OffscreenRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuf
 
     for (const auto &[entity, gpuEntity] : data.meshes)
     {
+        uint64_t entityId = entity->getId();
+
         for (const auto &mesh : gpuEntity.meshes)
         {
             core::GraphicsPipeline::SharedPtr graphicsPipeline = m_graphicsPipeline;
-            core::PipelineLayout::SharedPtr pipelineLayout = engineShaderFamilies::staticMeshShaderFamily.pipelineLayout;
+            core::PipelineLayout::SharedPtr pipelineLayout = EngineShaderFamilies::staticMeshShaderFamily.pipelineLayout;
 
             graphicsPipeline = gpuEntity.finalBones.empty() ? m_graphicsPipeline : m_skeletalGraphicsPipeline;
-            pipelineLayout = gpuEntity.finalBones.empty() ? engineShaderFamilies::staticMeshShaderFamily.pipelineLayout : engineShaderFamilies::skeletonMeshShaderFamily.pipelineLayout;
+            pipelineLayout = gpuEntity.finalBones.empty() ? EngineShaderFamilies::staticMeshShaderFamily.pipelineLayout : EngineShaderFamilies::skeletonMeshShaderFamily.pipelineLayout;
 
             vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->vk());
 
@@ -486,40 +407,43 @@ void OffscreenRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuf
             vkCmdBindIndexBuffer(commandBuffer->vk(), mesh->indexBuffer->vk(), 0, mesh->indexType);
 
             ModelPushConstant modelPushConstant{
-                .model = gpuEntity.transform};
+                .model = gpuEntity.transform, .objectId = entityId};
 
-            vkCmdPushConstants(commandBuffer->vk(), pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
-
+            // vkCmdPushConstants(commandBuffer->vk(), pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
+            vkCmdPushConstants(commandBuffer->vk(), pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
             std::vector<VkDescriptorSet> descriptorSets;
 
             if (gpuEntity.finalBones.empty())
             {
                 descriptorSets =
                     {
-                        data.cameraDescriptorSet,                         // set 0: camera
+                        data.cameraDescriptorSet,                         // set 0: camera & light
                         mesh->material->getDescriptorSet(m_currentFrame), // set 1: material
-                        data.lightDescriptorSet                           // set 2: lighting
                     };
             }
             else
             {
                 descriptorSets =
                     {
-                        m_cameraDescriptorSets[m_currentFrame],           // set 0: camera
+                        data.cameraDescriptorSet,                         // set 0: camera & light
                         mesh->material->getDescriptorSet(m_currentFrame), // set 1: material
-                        data.lightDescriptorSet                           // set 2: lighting
-                    };
+                        m_perObjectDescriptorSets[m_currentFrame]};
 
-                void *mapped;
-                m_bonesSSBOs[m_currentFrame]->map(mapped);
-                BonesSSBO *ssboData = static_cast<BonesSSBO *>(mapped);
-
-                ssboData->bonesCount = static_cast<int>(gpuEntity.finalBones.size());
-
+                glm::mat4 *mapped;
+                m_bonesSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(mapped));
                 for (int i = 0; i < gpuEntity.finalBones.size(); ++i)
-                {
-                    ssboData->boneMatrices[i] = gpuEntity.finalBones.at(i);
-                }
+                    mapped[i] = gpuEntity.finalBones.at(i);
+
+                // void *mapped;
+                // m_bonesSSBOs[m_currentFrame]->map(mapped);
+                // BonesSSBO *ssboData = static_cast<BonesSSBO *>(mapped);
+
+                // ssboData->bonesCount = static_cast<int>(gpuEntity.finalBones.size());
+
+                // for (int i = 0; i < gpuEntity.finalBones.size(); ++i)
+                // {
+                //     ssboData->boneMatrices[i] = gpuEntity.finalBones.at(i);
+                // }
 
                 m_bonesSSBOs[m_currentFrame]->unmap();
             }
@@ -531,13 +455,15 @@ void OffscreenRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuf
         }
     }
 
+    m_skybox->render(commandBuffer, data.view, data.projection);
+
     for (auto &addData : data.additionalData)
     {
         for (const auto &wireframeEntity : addData.stencilMeshes)
         {
             for (const auto &m : wireframeEntity.meshes)
             {
-                core::PipelineLayout::SharedPtr pipelineLayout = engineShaderFamilies::wireframeMeshShaderFamily.pipelineLayout;
+                core::PipelineLayout::SharedPtr pipelineLayout = EngineShaderFamilies::wireframeMeshShaderFamily.pipelineLayout;
 
                 vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_stencilGraphicsPipeline->vk());
 
@@ -547,16 +473,16 @@ void OffscreenRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuf
                 vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
                 vkCmdBindIndexBuffer(commandBuffer->vk(), m->indexBuffer->vk(), 0, m->indexType);
 
-                ModelPushConstant modelPushConstant{
+                ModelOnly modelPushConstant{
                     .model = wireframeEntity.transform};
 
-                vkCmdPushConstants(commandBuffer->vk(), pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
+                vkCmdPushConstants(commandBuffer->vk(), pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelOnly), &modelPushConstant);
 
                 std::vector<VkDescriptorSet> descriptorSets;
 
                 descriptorSets =
                     {
-                        m_cameraWireframeDescriptorSets[m_currentFrame] // set 0: camera
+                        data.cameraDescriptorSet // set 0: camera
                     };
                 vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout->vk(), 0, static_cast<uint32_t>(descriptorSets.size()),
                                         descriptorSets.data(), 0, nullptr);
@@ -565,8 +491,6 @@ void OffscreenRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuf
             }
         }
     }
-
-    m_skybox->render(commandBuffer, data.view, data.projection);
 }
 
 ELIX_CUSTOM_NAMESPACE_END

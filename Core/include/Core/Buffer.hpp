@@ -21,23 +21,26 @@ class Buffer
 public:
     Buffer(VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, VkBufferCreateFlags flags = 0);
 
-    void upload(const void* data, VkDeviceSize size);
-    void upload(const void* data);
+    void upload(const void *data, VkDeviceSize size);
+    void upload(const void *data);
 
     void bind(VkDeviceSize memoryOffset = 0);
 
-    void map(void*& data, VkDeviceSize offset = 0, VkMemoryMapFlags flags = 0);
-    void map(void*& data, VkDeviceSize size, VkDeviceSize offset = 0, VkMemoryMapFlags flags = 0);
+    void map(void *&data, VkDeviceSize offset = 0, VkMemoryMapFlags flags = 0);
+    void map(void *&data, VkDeviceSize size, VkDeviceSize offset = 0, VkMemoryMapFlags flags = 0);
 
     void unmap();
 
     void createVk(VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, VkBufferCreateFlags flags = 0);
 
-    static CommandBuffer copy(Ptr srcBuffer, Ptr dstBuffer, CommandPool::SharedPtr commandPool,  VkDeviceSize size);
-    
-    static SharedPtr createCopied(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, CommandPool::SharedPtr commandPool = nullptr);
+    void copyImageToBuffer(VkImage image, VkOffset3D imageOffset);
+
+    static CommandBuffer copy(Ptr srcBuffer, Ptr dstBuffer, CommandPool::SharedPtr commandPool, VkDeviceSize size);
+
+    static SharedPtr createCopied(const void *data, VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, CommandPool::SharedPtr commandPool = nullptr);
 
     ~Buffer();
+
 private:
     allocators::AllocatedBuffer m_bufferAllocation;
     VkDeviceSize m_size;
@@ -45,4 +48,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_BUFFER_HPP
+#endif // ELIX_BUFFER_HPP

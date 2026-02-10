@@ -19,7 +19,8 @@ public:
     using SharedPtr = std::shared_ptr<ImGuiRenderGraphPass>;
 
     //! Maybe this is not a good idea
-    ImGuiRenderGraphPass(std::shared_ptr<Editor> editor);
+    ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
+                         engine::renderGraph::RGPResourceHandler &objectIdTextureHandler);
 
     void setup(engine::renderGraph::RGPResourcesBuilder &builder) override;
     void compile(engine::renderGraph::RGPResourcesStorage &storage) override;
@@ -54,6 +55,9 @@ private:
     std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
 
     engine::renderGraph::RGPResourceHandler m_colorTextureHandler;
+
+    std::vector<engine::renderGraph::RGPResourceHandler> &m_offscreenTextureHandler;
+    engine::renderGraph::RGPResourceHandler &m_objectIdTextureHandler;
 };
 
 ELIX_NESTED_NAMESPACE_END

@@ -20,6 +20,13 @@ layout(location = 2) in vec3 fragPositionView;
 layout(location = 3) in vec4 fragPositionLightSpace;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out uint outObjectId;
+
+layout(push_constant) uniform ObjectIdPushConstant
+{
+    mat4 model;
+    uint objectId;       
+} objectIdPushConstant;
 
 layout(set = 0, binding = 2) uniform sampler2D shadowMap;
 
@@ -31,7 +38,7 @@ layout(set = 1, binding = 1) uniform MaterialColor
 } materialColor;
 
 
-layout(std430, set = 2, binding = 0) readonly buffer LightSSBO
+layout(std430, set = 0, binding = 3) readonly buffer LightSSBO
 {
     int lightCount;
     Light lights[];
@@ -125,11 +132,12 @@ vec3 calculatePointLight(vec3 albedo, Light light)
 void main() 
 {
     vec4 textureSample = texture(texSampler, fragTextureCoordinates);
+    outObjectId = objectIdPushConstant.objectId;
     vec3 albedo = (textureSample.a > 0.0) ? textureSample.rgb : materialColor.color.rgb;
 
     if (lightData.lightCount == 0)
     {
-        outColor = vec4(albedo, 1.0);
+        outColor = vec4(vec3(0.0), 1.0);
         return;
     }
 

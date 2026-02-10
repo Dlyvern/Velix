@@ -105,13 +105,13 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
         {
             auto texture = std::make_shared<Texture>();
 
-            if (!texture->load(entry.path()))
+            if (!texture->load(entry.path().string()))
             {
-                std::cerr << "Failed to load some assets cache texture: " << entry.path() << '\n';
+                std::cerr << "Failed to load some assets cache texture: " << entry.path().string() << '\n';
                 continue;
             }
 
-            std::cout << "Loaded texture: " << entry.path() << '\n';
+            std::cout << "Loaded texture: " << entry.path().string() << '\n';
 
             assetsCache.addTexture(entry.path(), std::move(texture));
         }

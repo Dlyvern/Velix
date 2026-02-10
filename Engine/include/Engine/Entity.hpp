@@ -136,6 +136,9 @@ public:
     const std::string &getName() const;
     void setName(const std::string &name);
 
+    uint64_t getId() const;
+    void setId(uint64_t id);
+
     void setLayer(int layerID);
     int getLayer() const;
 

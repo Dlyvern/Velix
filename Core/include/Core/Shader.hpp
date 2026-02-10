@@ -2,10 +2,6 @@
 #define SHADER_HPP
 
 #include "Core/ShaderHandler.hpp"
-#include <vector>
-#include <string>
-#include <volk.h>
-#include <memory>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -14,18 +10,19 @@ class Shader
 public:
     using SharedPtr = std::shared_ptr<Shader>;
 
-    Shader(const std::string& vertexPath, const std::string& fragmentPath);
-    Shader(const std::vector<uint32_t>& vertexCode, const std::vector<uint32_t>& fragmentCode);
+    Shader(const std::string &vertexPath, const std::string &fragmentPath);
+    Shader(const std::vector<uint32_t> &vertexCode, const std::vector<uint32_t> &fragmentCode);
 
-    static SharedPtr create(const std::string& vertexPath, const std::string& fragmentPath);
+    static SharedPtr create(const std::string &vertexPath, const std::string &fragmentPath);
 
     ~Shader();
-    Shader(const Shader&) = delete;
-    Shader& operator=(const Shader&) = delete;
+    Shader(const Shader &) = delete;
+    Shader &operator=(const Shader &) = delete;
 
-    ShaderHandler& getFragmentHandler();
-    ShaderHandler& getVertexHandler();
-    const std::vector<VkPipelineShaderStageCreateInfo>& getShaderStages() const;
+    ShaderHandler &getFragmentHandler();
+    ShaderHandler &getVertexHandler();
+    const std::vector<VkPipelineShaderStageCreateInfo> &getShaderStages() const;
+
 private:
     ShaderHandler m_fragmentHandler;
     ShaderHandler m_vertexHandler;
@@ -35,4 +32,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //SHADER_HPP
+#endif // SHADER_HPP

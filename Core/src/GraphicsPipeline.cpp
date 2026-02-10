@@ -1,17 +1,27 @@
- #include "Core/GraphicsPipeline.hpp"
+#include "Core/GraphicsPipeline.hpp"
 #include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-GraphicsPipeline::GraphicsPipeline(VkDevice device, VkRenderPass renderPass, VkPipelineShaderStageCreateInfo* shaderStages, size_t stageCount,
-VkPipelineLayout pipelineLayout, VkPipelineDynamicStateCreateInfo dynamicState, VkPipelineColorBlendStateCreateInfo colorBlending, VkPipelineMultisampleStateCreateInfo multisampling,
-VkPipelineRasterizationStateCreateInfo rasterizer, VkPipelineViewportStateCreateInfo viewportState, VkPipelineInputAssemblyStateCreateInfo inputAssembly,
-VkPipelineVertexInputStateCreateInfo vertexInputInfo, uint32_t subpass, VkPipelineDepthStencilStateCreateInfo depthStencil) :
-m_device(device)
-{   
+GraphicsPipeline::GraphicsPipeline(VkDevice device, VkRenderPass renderPass, const std::vector<VkPipelineShaderStageCreateInfo> &shaderStages,
+                                   VkPipelineLayout pipelineLayout, VkPipelineDynamicStateCreateInfo dynamicState, VkPipelineColorBlendStateCreateInfo colorBlending, VkPipelineMultisampleStateCreateInfo multisampling,
+                                   VkPipelineRasterizationStateCreateInfo rasterizer, VkPipelineViewportStateCreateInfo viewportState, VkPipelineInputAssemblyStateCreateInfo inputAssembly,
+                                   VkPipelineVertexInputStateCreateInfo vertexInputInfo, uint32_t subpass, VkPipelineDepthStencilStateCreateInfo depthStencil, VkPipelineCache pipelineCache) : m_device(device)
+{
+    createVk(device, renderPass, shaderStages, pipelineLayout, dynamicState, colorBlending, multisampling, rasterizer, viewportState, inputAssembly, vertexInputInfo,
+             subpass, depthStencil, pipelineCache);
+}
+
+void GraphicsPipeline::createVk(VkDevice device, VkRenderPass renderPass, const std::vector<VkPipelineShaderStageCreateInfo> &shaderStages, VkPipelineLayout pipelineLayout,
+                                VkPipelineDynamicStateCreateInfo dynamicState, VkPipelineColorBlendStateCreateInfo colorBlending, VkPipelineMultisampleStateCreateInfo multisampling,
+                                VkPipelineRasterizationStateCreateInfo rasterizer, VkPipelineViewportStateCreateInfo viewportState, VkPipelineInputAssemblyStateCreateInfo inputAssembly,
+                                VkPipelineVertexInputStateCreateInfo vertexInputInfo, uint32_t subpass, VkPipelineDepthStencilStateCreateInfo depthStencil, VkPipelineCache pipelineCache)
+{
+    ELIX_VK_CREATE_GUARD()
+
     VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    pipelineInfo.stageCount = stageCount;
-    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+    pipelineInfo.pStages = shaderStages.data();
     pipelineInfo.pVertexInputState = &vertexInputInfo;
     pipelineInfo.pInputAssemblyState = &inputAssembly;
     pipelineInfo.pViewportState = &viewportState;
@@ -26,22 +36,24 @@ m_device(device)
     pipelineInfo.basePipelineIndex = -1;
     pipelineInfo.pDepthStencilState = &depthStencil;
 
-    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_graphicsPipeline) != VK_SUCCESS)
-            throw std::runtime_error("Failed to create graphics pipeline");
+    if (vkCreateGraphicsPipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_handle) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create graphics pipeline");
+
+    ELIX_VK_CREATE_GUARD_DONE()
 }
 
-VkPipeline GraphicsPipeline::vk()
+void GraphicsPipeline::destroyVkImpl()
 {
-    return m_graphicsPipeline;
+    if (m_handle)
+    {
+        vkDestroyPipeline(m_device, m_handle, nullptr);
+        m_handle = VK_NULL_HANDLE;
+    }
 }
 
 GraphicsPipeline::~GraphicsPipeline()
 {
-    if(m_graphicsPipeline)
-    {
-        vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
-        m_graphicsPipeline = VK_NULL_HANDLE;        
-    }
+    destroyVk();
 }
 
 ELIX_NESTED_NAMESPACE_END

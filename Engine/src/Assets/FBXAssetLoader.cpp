@@ -1,6 +1,8 @@
 #include "Engine/Assets/FBXAssetLoader.hpp"
 
 #include <iostream>
+#include <algorithm>
+
 #include "Engine/Skeleton.hpp"
 
 struct VertexKey
@@ -176,6 +178,9 @@ void FBXAssetLoader::processNodeAttribute(FbxNodeAttribute *nodeAttribute, FbxNo
 
     auto attributeType = nodeAttribute->GetAttributeType();
 
+    if (attributeType == FbxNodeAttribute::eNull ||
+        attributeType == FbxNodeAttribute::eUnknown)
+        return;
     switch (attributeType)
     {
     case FbxNodeAttribute::eMesh:
@@ -183,11 +188,29 @@ void FBXAssetLoader::processNodeAttribute(FbxNodeAttribute *nodeAttribute, FbxNo
         processMesh(node, static_cast<FbxMesh *>(nodeAttribute), meshData);
         break;
     }
-    default:
+    case FbxNodeAttribute::eSkeleton:
     {
-        std::cerr << "Unnknow attribute type " << static_cast<int>(attributeType) << std::endl;
+        processFbxSkeleton(node, static_cast<FbxSkeleton *>(nodeAttribute));
         break;
     }
+    default:
+    {
+        std::cerr << "Unknow attribute type " << static_cast<int>(attributeType) << std::endl;
+        break;
+    }
+    }
+}
+
+void FBXAssetLoader::processFbxSkeleton(FbxNode *node, FbxSkeleton *skeleton)
+{
+    switch (skeleton->GetSkeletonType())
+    {
+    case FbxSkeleton::eRoot: // one per skeleton
+        return;
+    case FbxSkeleton::eLimb: // bone
+        return;
+    case FbxSkeleton::eLimbNode: // end bone
+        return;
     }
 }
 
@@ -302,7 +325,7 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
             v.position = vertex.position;
             v.normal = vertex.normal;
             v.textureCoordinates = vertex.textureCoordinates;
-            v.boneIds = glm::uvec4(0);
+            v.boneIds = glm::ivec4(-1);
             v.weights = glm::vec4(0.0f);
 
             const auto &influences = controlPointInfluences[vertex.controlPointIndex];
@@ -331,23 +354,23 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
             skinnedVertices.push_back(v);
         }
 
-        // cpuMesh = CPUMesh::build<vertex::VertexSkinned>(skinnedVertices, indices);
+        cpuMesh = CPUMesh::build<vertex::VertexSkinned>(skinnedVertices, indices);
     }
-    // else
-    // {
-    std::vector<vertex::Vertex3D> vertices3D;
-
-    for (const auto &vertex : vertices)
+    else
     {
-        vertex::Vertex3D v;
-        v.position = vertex.position;
-        v.normal = vertex.normal;
-        v.textureCoordinates = vertex.textureCoordinates;
-        vertices3D.push_back(v);
-    }
+        std::vector<vertex::Vertex3D> vertices3D;
 
-    cpuMesh = CPUMesh::build<vertex::Vertex3D>(vertices3D, indices);
-    // }
+        for (const auto &vertex : vertices)
+        {
+            vertex::Vertex3D v;
+            v.position = vertex.position;
+            v.normal = vertex.normal;
+            v.textureCoordinates = vertex.textureCoordinates;
+            vertices3D.push_back(v);
+        }
+
+        cpuMesh = CPUMesh::build<vertex::Vertex3D>(vertices3D, indices);
+    }
 
     cpuMesh.localTransform = glmMatrix;
 
@@ -381,6 +404,13 @@ std::optional<Skeleton> FBXAssetLoader::processSkeleton(FbxMesh *mesh)
         Skeleton::BoneInfo bone;
         bone.id = i;
         bone.name = boneNode->GetName();
+        FbxAMatrix local = boneNode->EvaluateLocalTransform();
+
+        bone.localBindTransform = glm::mat4(
+            (float)local.Get(0, 0), (float)local.Get(0, 1), (float)local.Get(0, 2), (float)local.Get(0, 3),
+            (float)local.Get(1, 0), (float)local.Get(1, 1), (float)local.Get(1, 2), (float)local.Get(1, 3),
+            (float)local.Get(2, 0), (float)local.Get(2, 1), (float)local.Get(2, 2), (float)local.Get(2, 3),
+            (float)local.Get(3, 0), (float)local.Get(3, 1), (float)local.Get(3, 2), (float)local.Get(3, 3));
 
         FbxAMatrix meshTransform;
         FbxAMatrix boneTransform;

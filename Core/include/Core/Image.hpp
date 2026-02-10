@@ -37,9 +37,13 @@ public:
                                   VkImageLayout oldImageLayout, VkImageLayout newImageLayout, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
                                   VkImageSubresourceRange subresourceRange, CommandPool::SharedPtr commandPool = nullptr, VkQueue queue = VK_NULL_HANDLE);
 
+    void insertImageMemoryBarrier(VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,
+                                  VkImageLayout oldImageLayout, VkImageLayout newImageLayout, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
+                                  VkImageSubresourceRange subresourceRange, CommandBuffer &commandBuffer);
+
     void transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, CommandPool::SharedPtr commandPool = nullptr, VkQueue queue = VK_NULL_HANDLE, uint32_t layerCount = 1);
 
-    void copyBufferToImage(Buffer::SharedPtr buffer, uint32_t width, uint32_t height, CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t layerCount = 1);
+    void copyBufferToImage(Buffer::SharedPtr buffer, uint32_t width, uint32_t height, CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t layerCount = 1, uint32_t baseLayer = 0);
 
     ~Image();
 

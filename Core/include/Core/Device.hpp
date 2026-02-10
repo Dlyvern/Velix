@@ -37,7 +37,6 @@ public:
 private:
     std::unique_ptr<allocators::IAllocator> m_allocator{nullptr};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
-
 #ifdef __linux__
     mutable bool m_isRAMFileOpened{false};
     mutable FILE *m_ramFile{nullptr};

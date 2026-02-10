@@ -21,6 +21,10 @@
 #include "Engine/Assets/MaterialAssetLoader.hpp"
 #include "Engine/Physics/PhysXCore.hpp"
 #include "Engine/Components/CameraComponent.hpp"
+#include "Core/Cache/GraphicsPipelineCache.hpp"
+#include "Engine/Render/GraphPasses/MaterialPreviewRenderGraphPass.hpp"
+
+#include "Editor/FileHelper.hpp"
 
 #include "Engine/ProjectLoader.hpp"
 
@@ -35,12 +39,18 @@
 int main(int argc, char **argv)
 {
     if (argc < 2)
-        throw std::runtime_error("No arguments provided");
+    {
+        std::cerr << "No arguments provided\n";
+        return 1;
+    }
 
     auto start = std::chrono::high_resolution_clock::now();
 
     if (!glfwInit())
-        throw std::runtime_error("Failed to initialize GLFW");
+    {
+        std::cerr << "Failed to initialize GLFW\n";
+        return 1;
+    }
 
     elix::core::Logger::createDefaultLogger();
     elix::engine::PhysXCore::init();
@@ -51,13 +61,23 @@ int main(int argc, char **argv)
 
     auto window = elix::platform::Window::create(800, 600, "Velix", elix::platform::Window::WindowFlags::EWINDOW_FLAGS_FULLSCREEN_WINDOWED);
     auto vulkanContext = elix::core::VulkanContext::create(window);
+    auto props = vulkanContext->getPhysicalDevicePoperties();
+
+    const std::string graphicsPipelineCache = elix::editor::FileHelper::getExecutablePath().string() +
+                                              "/pipeline_cache_" + std::string(props.deviceName) + "_" + std::to_string(props.vendorID) + '_' +
+                                              std::to_string(props.driverVersion) + ".elixgpbin";
+
+    elix::core::cache::GraphicsPipelineCache::loadCacheFromFile(vulkanContext->getDevice(), graphicsPipelineCache);
 
     const std::string projectPath = argv[1];
 
     auto project = elix::engine::ProjectLoader::loadProject(projectPath);
 
     if (!project)
-        throw std::runtime_error("Failed to load project");
+    {
+        std::cerr << "Failed to load project\n";
+        return 1;
+    }
 
     auto scene = std::make_shared<elix::engine::Scene>();
 
@@ -66,20 +86,25 @@ int main(int argc, char **argv)
 
     // TODO: Change order to see if RenderGraph compile works
 
-    auto renderGraph = new elix::engine::renderGraph::RenderGraph(vulkanContext->getDevice(), vulkanContext->getSwapchain(), scene);
+    auto renderGraph = new elix::engine::renderGraph::RenderGraph(vulkanContext->getDevice(), vulkanContext->getSwapchain());
     renderGraph->createDescriptorSetPool();
     auto editor = std::make_shared<elix::editor::Editor>(renderGraph->getDescriptorPool());
 
     auto shadowRenderPass = renderGraph->addPass<elix::engine::renderGraph::ShadowRenderGraphPass>();
-    auto imguiRenderGraphPass = renderGraph->addPass<elix::editor::ImGuiRenderGraphPass>(editor);
-    auto offscreenRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::OffscreenRenderGraphPass>(renderGraph->getDescriptorPool());
-    // auto sceneRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::SceneRenderGraphPass>();
+    auto offscreenRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::OffscreenRenderGraphPass>(renderGraph->getDescriptorPool(),
+                                                                                                              shadowRenderPass->getShadowHandler());
+
+    auto imguiRenderGraphPass = renderGraph->addPass<elix::editor::ImGuiRenderGraphPass>(editor, offscreenRenderGraphPass->getColorTextureHandlers(),
+                                                                                         offscreenRenderGraphPass->getObjectTextureHandler());
+
+    VkExtent2D extent{.width = 50, .height = 30};
+
+    auto materialRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::MaterialPreviewRenderGraphPass>(extent);
+
+    // auto sceneRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::SceneRenderGraphPass>(shadowRenderPass->getShadowHandler());
     renderGraph->setup();
 
     renderGraph->createCameraDescriptorSets(shadowRenderPass->getSampler(), shadowRenderPass->getImageView());
-    renderGraph->createDirectionalLightDescriptorSets();
-
-    offscreenRenderGraphPass->createSkeleton(shadowRenderPass->getSampler(), shadowRenderPass->getImageView(), renderGraph->MAX_FRAMES_IN_FLIGHT);
 
     renderGraph->createRenderGraphResources();
 
@@ -111,8 +136,6 @@ int main(int argc, char **argv)
 
     elix::engine::Material::createDefaultMaterial(renderGraph->getDescriptorPool(), dummyTexture);
 
-    renderGraph->createDataFromScene();
-
     // editor->addOnViewportChangedCallback([&](float w, float h)
     //                                      {
     //     VkViewport viewport{0.0f, 0.0f, w, h,  0.0f, 1.0f};
@@ -141,6 +164,8 @@ int main(int argc, char **argv)
     currentRenderCamera->setPosition({0.0f, 1.0f, 5.0f});
 
     bool shouldUpdate{false};
+
+    editor->setTest(materialRenderGraphPass->getRenderTarget()->vkImageView());
 
     editor->addOnModeChangedCallback([&](elix::editor::Editor::EditorMode mode)
                                      {
@@ -175,6 +200,8 @@ int main(int argc, char **argv)
             shouldUpdate = false;
         } });
 
+    elix::engine::primitives::initPrimitiveMeshes();
+
     while (window->isOpen())
     {
         const float currentFrame = static_cast<float>(glfwGetTime());
@@ -197,10 +224,11 @@ int main(int argc, char **argv)
         // }
 
         renderGraph->addAdditionalFrameData(editor->getRenderData());
-        renderGraph->prepareFrame(currentRenderCamera);
+        renderGraph->prepareFrame(currentRenderCamera, scene.get());
         renderGraph->draw();
     }
 
+    elix::core::cache::GraphicsPipelineCache::saveCacheToFile(vulkanContext->getDevice(), graphicsPipelineCache);
     // To clean all needed Vulkan resources before VulkanContex is cleared
     renderGraph->cleanResources();
     delete renderGraph;
