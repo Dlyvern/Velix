@@ -7,18 +7,10 @@
 #include <stdexcept>
 #include <algorithm>
 
-#include "Core/RenderPass.hpp"
-#include "Core/Shader.hpp"
-#include "Core/VulkanHelpers.hpp"
-
-#include "Engine/Render/GraphPasses/OffscreenRenderGraphPass.hpp"
-
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
-#include "Engine/PushConstant.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
-#include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
 
 #include "Engine/Shaders/ShaderFamily.hpp"
 
@@ -91,6 +83,7 @@ RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain) 
 
 void RenderGraph::prepareFrameDataFromScene(Scene *scene)
 {
+    //! Store last scene
     static std::size_t lastEntitiesSize = 0;
     const std::size_t entitiesSize = scene->getEntities().size();
 
@@ -104,13 +97,13 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
 
             const auto &en = scene->getEntities();
 
-            auto it = m_perFrameData.meshes.begin();
+            auto it = m_perFrameData.drawItems.begin();
 
-            while (it != m_perFrameData.meshes.end())
+            while (it != m_perFrameData.drawItems.end())
             {
                 if (std::find(en.begin(), en.end(), it->first) == en.end())
                 {
-                    m_perFrameData.meshes.erase(it);
+                    m_perFrameData.drawItems.erase(it);
                     break;
                 }
                 else
@@ -127,12 +120,26 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
 
     for (const auto &entity : scene->getEntities())
     {
-        auto entityIt = m_perFrameData.meshes.find(entity);
+        auto entityIt = m_perFrameData.drawItems.find(entity);
 
         // Just update transformation
-        if (entityIt != m_perFrameData.meshes.end())
+        if (entityIt != m_perFrameData.drawItems.end())
         {
             entityIt->second.transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f);
+
+            //! if animatios is playing get finalMatrices, bind poses otherwise
+            if (auto skeletalComponent = entity->getComponent<SkeletalMeshComponent>())
+                entityIt->second.finalBones = skeletalComponent->getSkeleton().getBindPoses();
+
+            glm::mat4 *mapped;
+            m_bonesSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(mapped));
+            for (int i = 0; i < entityIt->second.finalBones.size(); ++i)
+                mapped[i] = entityIt->second.finalBones.at(i);
+
+            m_bonesSSBOs[m_currentFrame]->unmap();
+
+            m_perFrameData.perObjectDescriptorSet = m_perObjectDescriptorSets[m_currentFrame];
+
             continue;
         }
 
@@ -151,7 +158,24 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
 
         for (const auto &mesh : meshes)
         {
-            auto gpuMesh = GPUMesh::createFromMesh(mesh);
+            std::size_t hashData{0};
+
+            hashing::hash(hashData, mesh.vertexStride);
+            hashing::hash(hashData, mesh.vertexLayoutHash);
+
+            for (const auto &vertex : mesh.vertexData)
+                hashing::hash(hashData, vertex);
+
+            for (const auto &index : mesh.indices)
+                hashing::hash(hashData, index);
+
+            if (m_meshes.find(hashData) == m_meshes.end())
+            {
+                m_meshes[hashData] = GPUMesh::createFromMesh(mesh);
+                std::cout << "New mesh\n";
+            }
+
+            auto gpuMesh = m_meshes[hashData];
 
             if (mesh.material.albedoTexture.empty())
                 gpuMesh->material = Material::getDefaultMaterial();
@@ -167,15 +191,25 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
             gpuMeshes.push_back(gpuMesh);
         }
 
-        GPUEntity gpuEntity{
+        DrawItem drawItem{
             .meshes = gpuMeshes,
             .transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f),
         };
 
+        //! if animatios is playing get finalMatrices, bind poses otherwise
         if (auto skeletalComponent = entity->getComponent<SkeletalMeshComponent>())
-            gpuEntity.finalBones = skeletalComponent->getSkeleton().getFinalMatrices();
+            drawItem.finalBones = skeletalComponent->getSkeleton().getBindPoses();
 
-        m_perFrameData.meshes[entity] = gpuEntity;
+        glm::mat4 *mapped;
+        m_bonesSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(mapped));
+        for (int i = 0; i < drawItem.finalBones.size(); ++i)
+            mapped[i] = drawItem.finalBones.at(i);
+
+        m_bonesSSBOs[m_currentFrame]->unmap();
+
+        m_perFrameData.drawItems[entity] = drawItem;
+
+        m_perFrameData.perObjectDescriptorSet = m_perObjectDescriptorSets[m_currentFrame];
     }
 }
 
@@ -381,52 +415,61 @@ bool RenderGraph::begin()
 
     primaryCommandBuffer->begin();
 
-    // std::vector<VkCommandBuffer> vkSecondaries;
-    // vkSecondaries.reserve(m_renderGraphPasses.size());
-
     size_t passIndex = 0;
 
-    RenderGraphPassContext frameData{
-        .currentFrame = m_currentFrame,
-        .currentImageIndex = m_imageIndex};
+    size_t secIndex = 0;
+
+    m_passContextData.currentFrame = m_currentFrame;
+    m_passContextData.currentImageIndex = m_imageIndex;
 
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
     {
-        renderGraphPass->update(frameData);
+        const auto executions = renderGraphPass->getRenderPassExecutions(m_passContextData);
 
-        VkRenderPassBeginInfo beginRenderPassInfo;
-        renderGraphPass->getRenderPassBeginInfo(beginRenderPassInfo);
+        for (int recordingIndex = 0; recordingIndex < executions.size(); ++recordingIndex)
+        {
+            if (secIndex >= m_secondaryCommandBuffers[m_currentFrame].size())
+            {
+                // Out of preallocated SCBs — allocate more (better to preallocate enough).
+                throw std::runtime_error("Not enough secondary command buffers preallocated for frame");
+            }
 
-        const auto &secCB = m_secondaryCommandBuffers[m_currentFrame][passIndex];
+            const auto &execution = executions[recordingIndex];
 
-        VkCommandBufferInheritanceInfo inherit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-        inherit.renderPass = beginRenderPassInfo.renderPass;
-        inherit.subpass = 0;
-        inherit.framebuffer = beginRenderPassInfo.framebuffer;
+            VkRenderPassBeginInfo beginRenderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            beginRenderPassInfo.renderPass = execution.renderPass;
+            beginRenderPassInfo.framebuffer = execution.framebuffer;
+            beginRenderPassInfo.renderArea = execution.renderArea;
+            beginRenderPassInfo.clearValueCount = static_cast<uint32_t>(execution.clearValues.size());
+            beginRenderPassInfo.pClearValues = execution.clearValues.data();
 
-        vkCmdBeginRenderPass(primaryCommandBuffer->vk(), &beginRenderPassInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+            const auto &secCB = m_secondaryCommandBuffers[m_currentFrame][secIndex];
 
-        // TODO what is VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT flag
-        secCB->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inherit);
+            VkCommandBufferInheritanceInfo inherit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+            inherit.renderPass = beginRenderPassInfo.renderPass;
+            inherit.subpass = 0;
+            inherit.framebuffer = beginRenderPassInfo.framebuffer;
 
-        renderGraphPass->execute(secCB, m_perFrameData);
+            vkCmdBeginRenderPass(primaryCommandBuffer->vk(), &beginRenderPassInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
 
-        secCB->end();
+            secCB->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inherit);
 
-        // vkSecondaries.push_back(secCB->vk());
+            renderGraphPass->record(secCB, m_perFrameData, m_passContextData);
 
-        VkCommandBuffer vkSec = secCB->vk();
-        vkCmdExecuteCommands(primaryCommandBuffer->vk(), 1, &vkSec);
+            secCB->end();
+
+            VkCommandBuffer vkSec = secCB->vk();
+            vkCmdExecuteCommands(primaryCommandBuffer->vk(), 1, &vkSec);
+
+            vkCmdEndRenderPass(primaryCommandBuffer->vk());
+
+            renderGraphPass->endBeginRenderPass(primaryCommandBuffer);
+
+            secIndex++;
+        }
 
         ++passIndex;
-
-        vkCmdEndRenderPass(primaryCommandBuffer->vk());
-
-        renderGraphPass->endBeginRenderPass(primaryCommandBuffer);
     }
-
-    // if(!vkSecondaries.empty())
-    //     vkCmdExecuteCommands(primaryCommandBuffer->vk(), static_cast<uint32_t>(vkSecondaries.size()), vkSecondaries.data());
 
     primaryCommandBuffer->end();
 
@@ -589,10 +632,12 @@ void RenderGraph::compile()
 {
     m_renderGraphPassesCompiler.compile(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
 
+    // std::cout << "Memory before render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n';
+
     for (const auto &[id, pass] : m_renderGraphPasses)
-    {
         pass.renderGraphPass->compile(m_renderGraphPassesStorage);
-    }
+
+    // std::cout << "Memory after render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n';
 }
 
 void RenderGraph::createPreviewCameraDescriptorSets()
@@ -611,6 +656,27 @@ void RenderGraph::createPreviewCameraDescriptorSets()
         m_previewCameraDescriptorSets[i] = DescriptorSetBuilder::begin()
                                                .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                                                .build(m_device, m_descriptorPool, EngineShaderFamilies::cameraDescriptorSetLayout->vk());
+    }
+}
+
+void RenderGraph::createPerObjectDescriptorSets()
+{
+    m_perObjectDescriptorSets.resize(RenderGraph::MAX_FRAMES_IN_FLIGHT);
+
+    m_bonesSSBOs.reserve(RenderGraph::MAX_FRAMES_IN_FLIGHT);
+
+    static constexpr VkDeviceSize bonesStructSize = sizeof(glm::mat4);
+    static constexpr uint8_t INIT_BONES_COUNT = 100;
+    static constexpr VkDeviceSize INITIAL_SIZE = bonesStructSize * (INIT_BONES_COUNT * bonesStructSize);
+
+    for (size_t i = 0; i < RenderGraph::MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        auto ssboBuffer = m_bonesSSBOs.emplace_back(core::Buffer::createShared(INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                                               core::memory::MemoryUsage::CPU_TO_GPU));
+
+        m_perObjectDescriptorSets[i] = DescriptorSetBuilder::begin()
+                                           .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                                           .build(core::VulkanContext::getContext()->getDevice(), m_descriptorPool, EngineShaderFamilies::objectDescriptorSetLayout->vk());
     }
 }
 
@@ -650,6 +716,7 @@ void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imag
     }
 
     createPreviewCameraDescriptorSets();
+    createPerObjectDescriptorSets();
 }
 
 void RenderGraph::createRenderGraphResources()
@@ -661,10 +728,10 @@ void RenderGraph::createRenderGraphResources()
 
         m_commandBuffers.emplace_back(core::CommandBuffer::createShared(commandPool));
 
-        m_secondaryCommandBuffers[frame].resize(m_renderGraphPasses.size());
+        m_secondaryCommandBuffers[frame].resize(MAX_RENDER_JOBS);
 
-        for (size_t pass = 0; pass < m_renderGraphPasses.size(); ++pass)
-            m_secondaryCommandBuffers[frame][pass] = core::CommandBuffer::createShared(commandPool, VK_COMMAND_BUFFER_LEVEL_SECONDARY);
+        for (size_t job = 0; job < MAX_RENDER_JOBS; ++job)
+            m_secondaryCommandBuffers[frame][job] = core::CommandBuffer::createShared(commandPool, VK_COMMAND_BUFFER_LEVEL_SECONDARY);
     }
 
     sortRenderGraphPasses();
@@ -696,7 +763,7 @@ void RenderGraph::cleanResources()
         camera->destroyVk();
     }
 
-    m_perFrameData.meshes.clear();
+    m_perFrameData.drawItems.clear();
     m_renderGraphPassesStorage.cleanup();
 
     EngineShaderFamilies::cleanEngineShaderFamilies();

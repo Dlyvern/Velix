@@ -4,7 +4,6 @@
 #include "Core/Macros.hpp"
 #include "Core/CommandBuffer.hpp"
 
-#include "Engine/Render/RenderGraphPassContext.hpp"
 #include "Engine/Render/RenderGraphPassPerFrameData.hpp"
 
 #include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
@@ -19,6 +18,14 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 class IRenderGraphPass
 {
 public:
+    struct RenderPassExecution
+    {
+        VkRenderPass renderPass;
+        VkFramebuffer framebuffer;
+        VkRect2D renderArea;
+        std::vector<VkClearValue> clearValues;
+    };
+
     using SharedPtr = std::shared_ptr<IRenderGraphPass>;
 
     /// Called at the start of the graph setup phase.
@@ -29,14 +36,11 @@ public:
     /// Called after all proxies have been realized and GPU resources are created.
     virtual void compile(RGPResourcesStorage &storage) = 0;
 
-    virtual void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data) = 0;
+    virtual void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
+                        const RenderGraphPassContext &renderContext) = 0;
 
-    //! Leave this shit for now. Delete it later
-    virtual void update(const RenderGraphPassContext &renderData) = 0;
+    virtual std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const = 0;
 
-    virtual void getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const = 0;
-
-    virtual void beginRenderPass() {}
     virtual void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer) {}
 
     virtual void cleanup() {}
@@ -55,8 +59,24 @@ public:
         return m_debugName;
     }
 
+    void requestRecompilation()
+    {
+        m_needsRecompilation = true;
+    }
+
+    void recompilationIsDone()
+    {
+        m_needsRecompilation = false;
+    }
+
+    bool needsRecompilation()
+    {
+        return m_needsRecompilation;
+    }
+
 private:
     std::string m_debugName;
+    bool m_needsRecompilation{false};
 };
 
 ELIX_CUSTOM_NAMESPACE_END

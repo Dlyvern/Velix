@@ -2,7 +2,6 @@
 #define ELIX_MATERIAL_HPP
 
 #include "Core/Macros.hpp"
-#include "Core/DescriptorSetLayout.hpp"
 
 #include "Engine/Texture.hpp"
 

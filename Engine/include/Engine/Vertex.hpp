@@ -3,7 +3,7 @@
 
 #include "Core/Macros.hpp"
 
-#include "Engine/Hash.hpp"
+#include "Engine/Caches/Hash.hpp"
 
 #include <vector>
 #include <volk.h>

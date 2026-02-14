@@ -3,7 +3,7 @@
 
 #include "Core/Macros.hpp"
 
-#include "Engine/Project.hpp"
+#include "Editor/Project.hpp"
 
 #include "Editor/EditorResourcesStorage.hpp"
 
@@ -20,13 +20,23 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 class AssetsWindow
 {
 public:
-    AssetsWindow(EditorResourcesStorage *resourcesStorage, VkDescriptorPool descriptorPool);
+    AssetsWindow(EditorResourcesStorage *resourcesStorage, VkDescriptorPool descriptorPool, std::vector<engine::Material *> &previewMaterialJobs);
 
-    void setProject(engine::Project *project);
+    void setProject(Project *project);
 
     void draw();
 
+    void setDoneMaterialJobs(const std::vector<VkDescriptorSet> &doneMaterialPreviewJobs)
+    {
+        m_doneMaterialPreviewJobs = doneMaterialPreviewJobs;
+    }
+
 private:
+    std::pair<engine::Texture::SharedPtr, elix::engine::CPUMaterial> tryToPreloadTexture(const std::string &path);
+
+    std::vector<VkDescriptorSet> m_doneMaterialPreviewJobs;
+    std::unordered_map<std::string, uint32_t> m_materialPreviewSlots;
+
     struct TreeNode
     {
         std::string name;
@@ -57,7 +67,7 @@ private:
 
     void drawMaterialEditor();
 
-    engine::Project *m_currentProject{nullptr};
+    Project *m_currentProject{nullptr};
     EditorResourcesStorage *m_resourcesStorage{nullptr};
     std::filesystem::path m_currentDirectory;
     char m_searchBuffer[256] = "";
@@ -71,6 +81,8 @@ private:
 
     std::shared_ptr<TreeNode> m_treeRoot;
     TreeNode *m_selectedTreeNode = nullptr;
+
+    std::unordered_set<std::string> m_velixExtensions = {".scene", ".elixproject", ".cc", ".cxx"};
 
     std::unordered_set<std::string> m_cppExtensions = {".cpp", ".c", ".cc", ".cxx"};
     std::unordered_set<std::string> m_headerExtensions = {".h", ".hpp", ".hh", ".hxx"};
@@ -89,7 +101,15 @@ private:
         VkDescriptorSet previewTextureDescriptorSet{nullptr};
     };
 
-    std::unordered_map<std::string, VkDescriptorSet> m_texturesPreview;
+    struct TextureAssetWindow
+    {
+        engine::Texture::SharedPtr texture{nullptr};
+        VkDescriptorSet previewTextureDescriptorSet{nullptr};
+    };
+
+    std::unordered_map<std::string, TextureAssetWindow> m_texturesPreview;
+
+    std::vector<engine::Material *> &m_previewMaterialJobs;
 
     std::unordered_map<std::string, MaterialAssetWindow> m_materials;
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};

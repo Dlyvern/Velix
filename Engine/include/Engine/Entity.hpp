@@ -33,6 +33,8 @@ public:
 
     Entity(const std::string &name);
 
+    Entity(Entity &other, const std::string &name, uint32_t id);
+
     virtual void update(float deltaTime)
     {
         for (auto &component : m_components)
@@ -136,8 +138,8 @@ public:
     const std::string &getName() const;
     void setName(const std::string &name);
 
-    uint64_t getId() const;
-    void setId(uint64_t id);
+    uint32_t getId() const;
+    void setId(uint32_t id);
 
     void setLayer(int layerID);
     int getLayer() const;
@@ -154,7 +156,7 @@ private:
     int m_layer{0};
     std::unordered_set<std::string> m_tags;
 
-    uint64_t m_id;
+    uint32_t m_id;
     std::string m_name;
 };
 

@@ -3,12 +3,7 @@
 
 #include "Core/Macros.hpp"
 #include "Core/RenderPass.hpp"
-#include "Core/Image.hpp"
-#include "Core/GraphicsPipeline.hpp"
 #include "Core/PipelineLayout.hpp"
-#include "Core/DescriptorSetLayout.hpp"
-#include "Core/CommandPool.hpp"
-#include "Core/VulkanContext.hpp"
 #include "Core/Framebuffer.hpp"
 #include "Core/Sampler.hpp"
 
@@ -24,9 +19,9 @@ class ShadowRenderGraphPass : public IRenderGraphPass
 {
 public:
     ShadowRenderGraphPass();
-    void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data) override;
-    void update(const RenderGraphPassContext &renderData) override;
-    void getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const override;
+    void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
+                const RenderGraphPassContext &renderContext) override;
+    std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
     void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer) override;
 
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
@@ -49,9 +44,7 @@ public:
 
 private:
     core::RenderPass::SharedPtr m_renderPass{nullptr};
-    core::GraphicsPipeline::SharedPtr m_graphicsPipeline{nullptr};
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
-    core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};
 
     const RenderTarget *m_renderTarget{nullptr};

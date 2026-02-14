@@ -6,7 +6,7 @@
 #include "Engine/Texture.hpp"
 #include "Engine/Camera.hpp"
 #include "Core/CommandBuffer.hpp"
-#include "Engine/Project.hpp"
+#include "Editor/Project.hpp"
 #include "Engine/Render/RenderTarget.hpp"
 
 #include "Engine/Render/RenderGraphPassPerFrameData.hpp"
@@ -18,6 +18,7 @@
 
 #include "Editor/EditorResourcesStorage.hpp"
 #include "Editor/AssetsWindow.hpp"
+#include <backends/imgui_impl_vulkan.h>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -43,7 +44,7 @@ public:
         m_scene = scene;
     }
 
-    void setProject(const std::shared_ptr<engine::Project> &project)
+    void setProject(const std::shared_ptr<Project> &project)
     {
         m_currentProject = project;
 
@@ -74,9 +75,44 @@ public:
         return m_viewportSizeY;
     }
 
-    void setTest(VkImageView imageView);
+    std::vector<engine::Material *> getRequestedMaterialPreviewJobs()
+    {
+        return m_requestedMaterialPreviewJobs;
+    }
+
+    void clearMaterialPreviewJobs()
+    {
+        // m_requestedMaterialPreviewJobs.clear();
+    }
+
+    void setDoneMaterialJobs(const std::vector<VkImageView> &views)
+    {
+        // m_materialPreviewDescriptorSets.clear();
+
+        // m_materialPreviewDescriptorSets.reserve(views.size());
+
+        if (m_materialPreviewDescriptorSets.size() != views.size())
+        {
+            for (VkImageView view : views)
+            {
+                VkDescriptorSet set = ImGui_ImplVulkan_AddTexture(
+                    m_defaultSampler,
+                    view,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+                m_materialPreviewDescriptorSets.push_back(set);
+            }
+
+            m_assetsWindow->setDoneMaterialJobs(m_materialPreviewDescriptorSets);
+        }
+
+        // m_requestedMaterialPreviewJobs.clear();
+    }
 
 private:
+    std::vector<engine::Material *> m_requestedMaterialPreviewJobs;
+    std::vector<VkDescriptorSet> m_materialPreviewDescriptorSets;
+
     const engine::RenderTarget *m_objectIdColorImage{nullptr};
 
     core::Buffer::SharedPtr m_entityIdBuffer{nullptr};
@@ -102,6 +138,8 @@ private:
 
     void handleInput();
 
+    void setSelectedEntity(engine::Entity *entity);
+
     void drawGuizmo();
 
     float m_movementSpeed{3.0f};
@@ -114,7 +152,7 @@ private:
 
     engine::Camera::SharedPtr m_editorCamera{nullptr};
 
-    std::weak_ptr<engine::Project> m_currentProject;
+    std::weak_ptr<Project> m_currentProject;
 
     EditorResourcesStorage m_resourceStorage;
     std::shared_ptr<AssetsWindow> m_assetsWindow{nullptr};
@@ -129,6 +167,7 @@ private:
     void drawHierarchy();
     engine::Scene::SharedPtr m_scene{nullptr};
     engine::Entity *m_selectedEntity{nullptr};
+    engine::Entity *m_cacheEntity{nullptr};
     bool m_isDockingWindowFullscreen{true};
 
     std::vector<std::function<void(float width, float height)>> m_onViewportWindowResized{nullptr};
@@ -137,8 +176,6 @@ private:
     float m_viewportSizeY{0.0f};
 
     VkSampler m_defaultSampler{VK_NULL_HANDLE};
-
-    VkDescriptorSet m_test;
 };
 
 ELIX_NESTED_NAMESPACE_END

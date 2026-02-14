@@ -5,7 +5,7 @@
 #include "Engine/Vertex.hpp"
 #include "Core/Buffer.hpp"
 #include <cstdint>
-#include "Engine/Hash.hpp"
+#include "Engine/Caches/Hash.hpp"
 
 #include "Engine/Material.hpp"
 

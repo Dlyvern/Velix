@@ -1,9 +1,9 @@
 #include "Engine/Skybox.hpp"
-#include "Engine/PushConstant.hpp"
+#include "Engine/Shaders/PushConstant.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
-#include "Core/Shader.hpp"
-#include "Core/Cache/GraphicsPipelineCache.hpp"
 
+#include "Core/Shader.hpp"
+#include "Engine/Caches/GraphicsPipelineCache.hpp"
 #include "Core/VulkanContext.hpp"
 
 struct PushConstantView
@@ -207,7 +207,7 @@ Skybox::Skybox(core::RenderPass::SharedPtr renderPass, const std::string &hdrPat
     viewportState.pScissors = &scissor;
 
     m_graphicsPipeline = core::GraphicsPipeline::createShared(device, renderPass->vk(), shaderStages, m_pipelineLayout->vk(), dynamicState, colorBlending, multisampling,
-                                                              rasterizer, viewportState, inputAssembly, vertexInputStateCI, subpass, depthStencil, core::cache::GraphicsPipelineCache::getDeviceCache(device));
+                                                              rasterizer, viewportState, inputAssembly, vertexInputStateCI, subpass, depthStencil, cache::GraphicsPipelineCache::getDeviceCache(device));
 }
 
 Skybox::Skybox(VkDevice device, VkPhysicalDevice physicalDevice, core::CommandPool::SharedPtr commandPool,
@@ -412,7 +412,7 @@ Skybox::Skybox(VkDevice device, VkPhysicalDevice physicalDevice, core::CommandPo
     viewportState.pScissors = &scissor;
 
     m_graphicsPipeline = core::GraphicsPipeline::createShared(device, renderPass->vk(), shaderStages, m_pipelineLayout->vk(), dynamicState, colorBlending, multisampling,
-                                                              rasterizer, viewportState, inputAssembly, vertexInputStateCI, subpass, depthStencil, core::cache::GraphicsPipelineCache::getDeviceCache(device));
+                                                              rasterizer, viewportState, inputAssembly, vertexInputStateCI, subpass, depthStencil, cache::GraphicsPipelineCache::getDeviceCache(device));
 }
 
 void Skybox::render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat4 &view, const glm::mat4 &projection)

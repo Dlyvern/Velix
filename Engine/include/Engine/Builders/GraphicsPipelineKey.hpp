@@ -1,0 +1,103 @@
+#ifndef ELIX_GRAPHICS_PIPELINE_KEY_HPP
+#define ELIX_GRAPHICS_PIPELINE_KEY_HPP
+
+#include "Core/Macros.hpp"
+#include "Core/RenderPass.hpp"
+#include "Core/PipelineLayout.hpp"
+
+#include "Engine/Caches/Hash.hpp"
+
+#include <cstdint>
+
+ELIX_NESTED_NAMESPACE_BEGIN(engine)
+
+enum class ShaderId : uint8_t
+{
+    StaticMesh,
+    SkinnedMesh,
+    Wireframe,
+    Stencil,
+    StaticShadow,
+    PreviewMesh,
+    None
+};
+
+enum class RenderQueue : uint8_t
+{
+    Opaque,
+    Transparent,
+    Overlay
+};
+
+enum class BlendMode : uint8_t
+{
+    None,
+    AlphaBlend
+};
+
+enum class CullMode : uint8_t
+{
+    Back,
+    None
+};
+
+struct MaterialRenderState
+{
+    RenderQueue queue = RenderQueue::Opaque;
+    BlendMode blend = BlendMode::None; // AlphaBlend => transparent
+    CullMode cull = CullMode::Back;
+    bool castShadow = true;
+    bool receiveShadow = true;
+};
+
+struct GraphicsPipelineKey
+{
+    ShaderId shader{ShaderId::None};
+    core::RenderPass::SharedPtr renderPass{nullptr};
+    BlendMode blend = BlendMode::None;
+    CullMode cull{CullMode::Back};
+    bool depthTest{true};
+    bool depthWrite{true};
+    VkCompareOp depthCompare{VK_COMPARE_OP_LESS};
+    VkPolygonMode polygonMode{VK_POLYGON_MODE_FILL};
+    VkPrimitiveTopology topology{VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
+
+    core::PipelineLayout::SharedPtr pipelineLayout{nullptr};
+
+    bool operator==(const GraphicsPipelineKey &o) const noexcept
+    {
+        return shader == o.shader &&
+               renderPass->vk() == o.renderPass->vk() &&
+               blend == o.blend &&
+               cull == o.cull &&
+               depthTest == o.depthTest &&
+               depthWrite == o.depthWrite &&
+               depthCompare == o.depthCompare &&
+               polygonMode == o.polygonMode &&
+               topology == o.topology;
+    }
+};
+
+struct GraphicsPipelineKeyHash
+{
+    size_t operator()(const GraphicsPipelineKey &k) const noexcept
+    {
+        size_t data = 0;
+
+        hashing::hash(data, static_cast<uint8_t>(k.blend));
+        hashing::hash(data, reinterpret_cast<uint64_t>(k.renderPass->vk()));
+        hashing::hash(data, static_cast<uint8_t>(k.shader));
+        hashing::hash(data, static_cast<uint8_t>(k.cull));
+        hashing::hash(data, static_cast<bool>(k.depthTest));
+        hashing::hash(data, static_cast<bool>(k.depthWrite));
+        hashing::hash(data, static_cast<uint32_t>(k.depthCompare));
+        hashing::hash(data, static_cast<uint32_t>(k.polygonMode));
+        hashing::hash(data, static_cast<uint32_t>(k.topology));
+
+        return data;
+    }
+};
+
+ELIX_NESTED_NAMESPACE_END
+
+#endif // ELIX_GRAPHICS_PIPELINE_KEY_HPP

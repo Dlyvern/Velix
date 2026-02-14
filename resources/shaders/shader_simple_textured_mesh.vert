@@ -3,6 +3,7 @@
 layout(push_constant) uniform ModelPushConstant
 {
     mat4 model;
+    uint objectId;
 } modelPushConstant;
 
 layout(set = 0, binding = 0) uniform CameraUniformObject

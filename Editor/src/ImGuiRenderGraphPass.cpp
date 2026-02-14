@@ -74,6 +74,7 @@ void ImGuiRenderGraphPass::onSwapChainResized(engine::renderGraph::RGPResourcesS
 {
     std::vector<VkImageView> offscreenImageViews;
 
+    std::cout << "ImGui start\n";
     for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
     {
         auto frameBuffer = m_framebuffers[imageIndex];
@@ -95,6 +96,7 @@ void ImGuiRenderGraphPass::onSwapChainResized(engine::renderGraph::RGPResourcesS
         else
             std::cerr << "Something wrong with offscreen color texture size\n";
     }
+    std::cout << "ImGui end\n";
 
     setViewportImages(offscreenImageViews);
 
@@ -209,6 +211,28 @@ void ImGuiRenderGraphPass::initImGui()
         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
 
+    VkDescriptorPoolSize pool_sizes[] = {
+        {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+        {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+
+    VkDescriptorPoolCreateInfo pool_info{};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1000; // big enough for all textures
+    pool_info.poolSizeCount = std::size(pool_sizes);
+    pool_info.pPoolSizes = pool_sizes;
+
+    vkCreateDescriptorPool(core::VulkanContext::getContext()->getDevice(), &pool_info, nullptr, &m_imguiDescriptorPool);
+
     ImGui_ImplGlfw_InitForVulkan(core::VulkanContext::getContext()->getSwapchain()->getWindow()->getRawHandler(), true);
 
     ImGui_ImplVulkan_InitInfo imguiInitInfo{};
@@ -218,7 +242,7 @@ void ImGuiRenderGraphPass::initImGui()
     imguiInitInfo.QueueFamily = core::VulkanContext::getContext()->getGraphicsFamily();
     imguiInitInfo.Queue = core::VulkanContext::getContext()->getGraphicsQueue();
     imguiInitInfo.PipelineCache = VK_NULL_HANDLE;
-    imguiInitInfo.DescriptorPoolSize = 1000;
+    imguiInitInfo.DescriptorPool = m_imguiDescriptorPool;
     imguiInitInfo.MinImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     imguiInitInfo.ImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     imguiInitInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
@@ -232,7 +256,7 @@ void ImGuiRenderGraphPass::initImGui()
     m_editor->initStyle();
 }
 
-void ImGuiRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const
+std::vector<engine::renderGraph::IRenderGraphPass::RenderPassExecution> ImGuiRenderGraphPass::getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const
 {
     const float width = m_editor->getViewportX();
     const float height = m_editor->getViewportY();
@@ -242,22 +266,17 @@ void ImGuiRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo &renderP
         .height = static_cast<uint32_t>(height),
     };
 
-    renderPassBeginInfo = VkRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    renderPassBeginInfo.renderPass = m_renderPass->vk();
-    renderPassBeginInfo.framebuffer = m_framebuffers[m_currentImageIndex]->vk();
-    renderPassBeginInfo.renderArea.offset = {0, 0};
-    renderPassBeginInfo.renderArea.extent = extent;
-    renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(m_clearValues.size());
-    renderPassBeginInfo.pClearValues = m_clearValues.data();
+    IRenderGraphPass::RenderPassExecution renderPassExecution;
+    renderPassExecution.clearValues = {m_clearValues[0], m_clearValues[1]};
+    renderPassExecution.framebuffer = m_framebuffers[renderContext.currentImageIndex];
+    renderPassExecution.renderArea.offset = {0, 0};
+    renderPassExecution.renderArea.extent = extent;
+    renderPassExecution.renderPass = m_renderPass;
+    return {renderPassExecution};
 }
 
-void ImGuiRenderGraphPass::update(const engine::RenderGraphPassContext &renderData)
-{
-    m_currentFrame = renderData.currentFrame;
-    m_currentImageIndex = renderData.currentImageIndex;
-}
-
-void ImGuiRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data)
+void ImGuiRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data,
+                                  const engine::RenderGraphPassContext &renderContext)
 {
     const float width = m_editor->getViewportX();
     const float height = m_editor->getViewportY();
@@ -285,7 +304,7 @@ void ImGuiRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer,
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    m_editor->drawFrame(!m_descriptorSets.empty() && m_descriptorSets.size() > m_currentFrame ? m_descriptorSets.at(m_currentFrame) : VK_NULL_HANDLE);
+    m_editor->drawFrame(!m_descriptorSets.empty() && m_descriptorSets.size() > renderContext.currentFrame ? m_descriptorSets.at(renderContext.currentFrame) : VK_NULL_HANDLE);
 
     ImGui::Render();
 

@@ -1,7 +1,7 @@
 #include "Engine/Shaders/ShaderFamily.hpp"
 #include "Core/VulkanContext.hpp"
 
-#include "Engine/PushConstant.hpp"
+#include "Engine/Shaders/PushConstant.hpp"
 #include <glm/glm.hpp>
 #include <cstdint>
 
@@ -9,8 +9,6 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 void EngineShaderFamilies::initEngineShaderFamilies()
 {
-    //! look at me
-    // staticMeshShaderFamily.layouts.reserve(3);
     const auto &device = core::VulkanContext::getContext()->getDevice();
 
     {
@@ -76,22 +74,9 @@ void EngineShaderFamilies::initEngineShaderFamilies()
                                                                             std::vector<VkDescriptorSetLayoutBinding>{bonesBinding});
     }
 
-    staticMeshShaderFamily.layouts.push_back(cameraDescriptorSetLayout);
-    staticMeshShaderFamily.layouts.push_back(materialDescriptorSetLayout);
-
-    skeletonMeshShaderFamily.layouts.push_back(cameraDescriptorSetLayout);
-    skeletonMeshShaderFamily.layouts.push_back(materialDescriptorSetLayout);
-    skeletonMeshShaderFamily.layouts.push_back(objectDescriptorSetLayout);
-
-    wireframeMeshShaderFamily.layouts.push_back(cameraDescriptorSetLayout);
-
-    texturedStatisMeshShaderFamily.layouts.push_back(cameraDescriptorSetLayout);
-    texturedStatisMeshShaderFamily.layouts.push_back(materialDescriptorSetLayout);
-
-    struct ModelPushConstant
-    {
-        glm::mat4 modelMatrix;
-    };
+    meshShaderFamily.layouts.push_back(cameraDescriptorSetLayout);
+    meshShaderFamily.layouts.push_back(materialDescriptorSetLayout);
+    meshShaderFamily.layouts.push_back(objectDescriptorSetLayout);
 
     struct PushConstants
     {
@@ -100,27 +85,18 @@ void EngineShaderFamilies::initEngineShaderFamilies()
         uint32_t padding[3];
     };
 
-    const std::vector<VkPushConstantRange> pushConstants{
-        PushConstant<ModelPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)};
-
     const std::vector<VkPushConstantRange> pushConstantsStatic{
         PushConstant<PushConstants>::getRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)};
 
-    skeletonMeshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(device, skeletonMeshShaderFamily.layouts, pushConstantsStatic);
-    staticMeshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(device, staticMeshShaderFamily.layouts, pushConstantsStatic);
-    wireframeMeshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(device, wireframeMeshShaderFamily.layouts, pushConstants);
-    texturedStatisMeshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(device, texturedStatisMeshShaderFamily.layouts, pushConstants);
+    meshShaderFamily.pushConstantRange = PushConstant<PushConstants>::getRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+    meshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(device, meshShaderFamily.layouts, pushConstantsStatic);
 }
 
 void EngineShaderFamilies::cleanEngineShaderFamilies()
 {
-    staticMeshShaderFamily.pipelineLayout->destroyVk();
-    skeletonMeshShaderFamily.pipelineLayout->destroyVk();
+    meshShaderFamily.pipelineLayout->destroyVk();
 
-    for (auto &descriptorSetLayout : staticMeshShaderFamily.layouts)
-        descriptorSetLayout->destroyVk();
-
-    for (auto &descriptorSetLayout : skeletonMeshShaderFamily.layouts)
+    for (auto &descriptorSetLayout : meshShaderFamily.layouts)
         descriptorSetLayout->destroyVk();
 }
 ELIX_NESTED_NAMESPACE_END

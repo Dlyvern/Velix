@@ -21,26 +21,19 @@ public:
 
     void compile(RGPResourcesStorage &storage) override;
 
-    void execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data) override;
-
-    void update(const RenderGraphPassContext &renderData) override;
-
-    void getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const override;
-
+    void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
+                const RenderGraphPassContext &renderContext) override;
     void onSwapChainResized(RGPResourcesStorage &storage) override;
 
-private:
-    void createGraphicsPipeline();
+    std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
 
+private:
     std::array<VkClearValue, 3> m_clearValues;
 
     core::GraphicsPipeline::SharedPtr m_graphicsPipeline{nullptr};
 
     std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
     core::RenderPass::SharedPtr m_renderPass{nullptr};
-
-    uint32_t m_imageIndex{0};
-    uint32_t m_currentFrame{0};
 
     RGPResourceHandler &m_shadowHandler;
     RGPResourceHandler m_depthTextureHandler;

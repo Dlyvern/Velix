@@ -1,10 +1,6 @@
 #include "Engine/Material.hpp"
 #include <glm/vec4.hpp>
 
-#include <cstring>
-#include <stdexcept>
-#include <array>
-
 #include "Core/VulkanContext.hpp"
 
 #include "Engine/Builders/DescriptorSetBuilder.hpp"

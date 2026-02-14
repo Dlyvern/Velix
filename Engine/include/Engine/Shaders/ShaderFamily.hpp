@@ -11,20 +11,15 @@ struct ShaderFamily
 {
     std::vector<core::DescriptorSetLayout::SharedPtr> layouts;
     core::PipelineLayout::SharedPtr pipelineLayout{nullptr};
+    VkPushConstantRange pushConstantRange{};
 };
 
 class EngineShaderFamilies
 {
 public:
-    static inline ShaderFamily staticMeshShaderFamily;
-    static inline ShaderFamily wireframeMeshShaderFamily;
-    static inline ShaderFamily skeletonMeshShaderFamily;
-    static inline ShaderFamily texturedStatisMeshShaderFamily;
-
-    static inline core::DescriptorSetLayout::SharedPtr wireframeMeshCameraLayout{nullptr};
+    static inline ShaderFamily meshShaderFamily;
 
     static inline core::DescriptorSetLayout::SharedPtr objectDescriptorSetLayout{nullptr};
-
     static inline core::DescriptorSetLayout::SharedPtr cameraDescriptorSetLayout{nullptr};
     static inline core::DescriptorSetLayout::SharedPtr materialDescriptorSetLayout{nullptr};
 

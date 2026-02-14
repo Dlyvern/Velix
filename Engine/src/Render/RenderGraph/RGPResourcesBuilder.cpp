@@ -1,7 +1,5 @@
 #include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
 
-#include "Engine/Hash.hpp"
-
 #include <iostream>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)

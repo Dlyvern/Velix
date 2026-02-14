@@ -27,7 +27,11 @@ public:
 
     std::vector<std::shared_ptr<BaseLight>> getLights() const;
 
-    Entity::SharedPtr addEntity(const std::string &name);
+    bool doesEntityNameExist(const std::string &name) const;
+
+    Entity::SharedPtr
+    addEntity(const std::string &name);
+    Entity::SharedPtr addEntity(Entity &en, const std::string &name);
 
     Entity *getEntityById(uint32_t id);
 

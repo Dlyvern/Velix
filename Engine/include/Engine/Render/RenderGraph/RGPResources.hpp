@@ -8,6 +8,7 @@
 #include <string>
 #include <cstdint>
 #include <vector>
+#include <functional>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -66,7 +67,8 @@ public:
     PROPERTY_FULL(RGPTextureUsage, Usage)
     PROPERTY_FULL(VkExtent2D, Extent)
     PROPERTY_FULL_DEFAULT(bool, IsSwapChainTarget, false);
-    PROPERTY_FULL_DEFAULT(bool, isDepenedOnSwapChainSize, false); // On swap chain resize this resource will be re-created with swap chain extent
+    PROPERTY_FULL_DEFAULT(std::function<VkExtent2D()>, CustomExtentFunction, nullptr); // If not nullptr, Extent field will be ignored
+    PROPERTY_FULL_DEFAULT(bool, isDepenedOnSwapChainSize, false);                      // On swap chain resize this resource will be re-created with swap chain extent
 };
 
 ELIX_CUSTOM_NAMESPACE_END

@@ -85,25 +85,6 @@ Skeleton::BoneInfo *Skeleton::getParent()
     return nullptr;
 }
 
-// void Skeleton::calculateBindPoseTransforms()
-// {
-//     m_bindPoseTransform.resize(m_bonesInfo.size());
-
-//     for (auto& bone : m_bonesInfo)
-//     {
-//         if (bone.parentId == -1)
-//             bone.globalBindTransform = bone.localBindTransform;
-//         else
-//         {
-//             bone.globalBindTransform =
-//                 m_bonesInfo[bone.parentId].globalBindTransform *
-//                 bone.localBindTransform;
-//         }
-
-//         m_bindPoseTransform[bone.id] = bone.globalBindTransform;
-//     }
-// }
-
 void Skeleton::calculateBindPoseTransforms()
 {
     m_bindPoseTransform.resize(m_bonesInfo.size(), glm::mat4(1.0f));
@@ -115,9 +96,11 @@ void Skeleton::calculateBindPoseTransforms()
         BoneInfo &bone = m_bonesInfo[boneID];
         glm::mat4 globalTransform = parentTransform * bone.localBindTransform;
 
-        m_bindPoseTransform[boneID] = globalTransform * bone.offsetMatrix;
+        // m_bindPoseTransform[boneID] = globalTransform * bone.offsetMatrix;
+        m_bindPoseTransform[boneID] = globalTransform;
 
-        bone.finalTransformation = globalTransform * bone.offsetMatrix;
+        // bone.finalTransformation = globalTransform * bone.offsetMatrix;
+        // bone.finalTransformation = globalTransform;
 
         for (int childID : bone.children)
             self(childID, globalTransform, self);
@@ -128,15 +111,26 @@ void Skeleton::calculateBindPoseTransforms()
             processBone(bone.id, identity, processBone);
 }
 
-const std::vector<glm::mat4> &Skeleton::getBindPoses() const
+const std::vector<glm::mat4> &Skeleton::getBindPoses()
 {
+    // return m_bindPoseTransform;
+
+    for (auto &m : m_bindPoseTransform)
+        m = glm::mat4(1.0f);
+
     return m_bindPoseTransform;
 }
 
 const std::vector<glm::mat4> &Skeleton::getFinalMatrices()
 {
+    // for (const auto &bone : m_bonesInfo)
+    //     m_finalBoneMatrices[bone.id] = bone.finalTransformation;
+
     for (const auto &bone : m_bonesInfo)
-        m_finalBoneMatrices[bone.id] = bone.finalTransformation;
+        m_finalBoneMatrices[bone.id] = bone.finalTransformation * bone.offsetMatrix;
+
+    // for (auto &m : m_finalBoneMatrices)
+    //     m = glm::mat4(1.0f);
 
     return m_finalBoneMatrices;
 }

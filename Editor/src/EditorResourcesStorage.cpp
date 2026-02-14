@@ -9,6 +9,10 @@ void EditorResourcesStorage::loadNeededResources()
     auto logoTexture = std::make_shared<engine::Texture>();
     auto folderTexture = std::make_shared<engine::Texture>();
     auto fileTexture = std::make_shared<engine::Texture>();
+    auto vLogoTexture = std::make_shared<engine::Texture>();
+
+    vLogoTexture->load("./resources/textures/VelixV.png", core::VulkanContext::getContext()->getTransferCommandPool());
+    auto vLogoDescriptorSet = ImGui_ImplVulkan_AddTexture(vLogoTexture->vkSampler(), vLogoTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     logoTexture->load("./resources/textures/VelixFire.png", core::VulkanContext::getContext()->getTransferCommandPool());
     auto logoDescriptorSet = ImGui_ImplVulkan_AddTexture(logoTexture->vkSampler(), logoTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -18,6 +22,10 @@ void EditorResourcesStorage::loadNeededResources()
 
     fileTexture->load("./resources/textures/file.png", core::VulkanContext::getContext()->getTransferCommandPool());
     auto fileDescriptorSet = ImGui_ImplVulkan_AddTexture(fileTexture->vkSampler(), fileTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    m_textures["./resources/textures/VelixV.png"] = TextureResource{
+        .texture = vLogoTexture,
+        .descriptorSet = vLogoDescriptorSet};
 
     m_textures["./resources/textures/VelixFire.png"] = TextureResource{
         .texture = logoTexture,

@@ -35,20 +35,16 @@ const std::vector<Entity::SharedPtr> &Scene::getEntities() const
     return m_entities;
 }
 
-// TODO so fucked up method
 Scene::SharedPtr Scene::copy()
 {
     auto copyScene = std::make_shared<Scene>();
 
     for (const auto &entity : m_entities)
-    {
-        //! Copy components etc(Transformation is the most important)
-        auto newEntity = std::make_shared<Entity>(entity->getName());
-        copyScene->m_entities.push_back(std::move(newEntity));
-    }
+        copyScene->addEntity(*entity.get(), entity->getName());
 
     copyScene->m_physicsScene = m_physicsScene;
     copyScene->m_name = m_name;
+
     return copyScene;
 }
 
@@ -61,18 +57,46 @@ Entity *Scene::getEntityById(uint32_t id)
     return nullptr;
 }
 
-Entity::SharedPtr Scene::addEntity(const std::string &name)
+bool Scene::doesEntityNameExist(const std::string &name) const
 {
-    auto doesEntityNameExist = [this](const std::string &name)
-    {
-        for (auto &&entity : m_entities)
-            if (entity->getName() == name)
-                return true;
+    for (auto &&entity : m_entities)
+        if (entity->getName() == name)
+            return true;
 
-        return false;
+    return false;
+}
+
+Entity::SharedPtr Scene::addEntity(Entity &en, const std::string &name)
+{
+    auto generateUniqueName = [this](const std::string &baseName)
+    {
+        int counter = 1;
+        std::string newName;
+
+        do
+        {
+            newName = baseName + "_" + (counter < 10 ? "0" : "") + std::to_string(counter);
+            counter++;
+        } while (doesEntityNameExist(newName));
+
+        return newName;
     };
 
-    auto generateUniqueName = [this, doesEntityNameExist](const std::string &baseName)
+    std::string actualName = name;
+    if (doesEntityNameExist(name))
+        actualName = generateUniqueName(name);
+
+    auto entity = std::make_shared<Entity>(en, actualName, m_nextEntityId);
+    entity->addComponent<Transform3DComponent>();
+    ++m_nextEntityId;
+
+    m_entities.push_back(entity);
+    return entity;
+}
+
+Entity::SharedPtr Scene::addEntity(const std::string &name)
+{
+    auto generateUniqueName = [this](const std::string &baseName)
     {
         int counter = 1;
         std::string newName;

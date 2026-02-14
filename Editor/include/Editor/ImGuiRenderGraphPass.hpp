@@ -24,11 +24,9 @@ public:
 
     void setup(engine::renderGraph::RGPResourcesBuilder &builder) override;
     void compile(engine::renderGraph::RGPResourcesStorage &storage) override;
-    void execute(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data) override;
-
-    void update(const engine::RenderGraphPassContext &renderData) override;
-
-    void getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const override;
+    void record(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data,
+                const engine::RenderGraphPassContext &renderContext) override;
+    std::vector<RenderPassExecution> getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const override;
 
     void setViewportImages(const std::vector<VkImageView> &imageViews);
 
@@ -47,9 +45,6 @@ private:
 
     core::RenderPass::SharedPtr m_renderPass{nullptr};
 
-    uint32_t m_currentImageIndex;
-    uint32_t m_currentFrame;
-
     std::vector<VkDescriptorSet> m_descriptorSets;
     std::vector<std::size_t> m_framebufferHashes;
     std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
@@ -58,6 +53,8 @@ private:
 
     std::vector<engine::renderGraph::RGPResourceHandler> &m_offscreenTextureHandler;
     engine::renderGraph::RGPResourceHandler &m_objectIdTextureHandler;
+
+    VkDescriptorPool m_imguiDescriptorPool{VK_NULL_HANDLE};
 };
 
 ELIX_NESTED_NAMESPACE_END

@@ -5,17 +5,14 @@
 #include "Core/SwapChain.hpp"
 #include "Core/CommandBuffer.hpp"
 #include "Core/CommandPool.hpp"
-#include "Core/DescriptorSetLayout.hpp"
-#include "Core/PipelineLayout.hpp"
 
-#include "Engine/Texture.hpp"
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 #include "Engine/Scene.hpp"
 #include "Engine/Camera.hpp"
-
 #include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesCompiler.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
+
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
@@ -87,11 +84,14 @@ public:
     void createRenderGraphResources();
     void createDescriptorSetPool();
     void createCameraDescriptorSets(VkSampler sampler, VkImageView imageView);
+    void createPerObjectDescriptorSets();
     void createPreviewCameraDescriptorSets();
 
     void cleanResources();
 
 private:
+    static constexpr uint32_t MAX_RENDER_JOBS = 255;
+
     void sortRenderGraphPasses();
     void prepareFrameDataFromScene(Scene *scene);
 
@@ -117,6 +117,9 @@ private:
 
     std::vector<core::Buffer::SharedPtr> m_lightSSBOs;
 
+    std::vector<core::Buffer::SharedPtr> m_bonesSSBOs;
+    std::vector<VkDescriptorSet> m_perObjectDescriptorSets;
+
     std::vector<void *> m_cameraMapped;
     std::vector<core::Buffer::SharedPtr> m_cameraUniformObjects;
     std::vector<VkDescriptorSet> m_cameraDescriptorSets;
@@ -133,10 +136,13 @@ private:
     std::vector<core::CommandPool::SharedPtr> m_commandPools;
 
     RenderGraphPassPerFrameData m_perFrameData;
+    RenderGraphPassContext m_passContextData;
 
     std::vector<VkFence> m_inFlightFences;
     std::vector<VkSemaphore> m_imageAvailableSemaphores;
     std::vector<VkSemaphore> m_renderFinishedSemaphores;
+
+    std::unordered_map<std::size_t, GPUMesh::SharedPtr> m_meshes;
 };
 
 ELIX_CUSTOM_NAMESPACE_END

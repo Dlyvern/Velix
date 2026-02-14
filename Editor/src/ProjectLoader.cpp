@@ -1,4 +1,4 @@
-#include "Engine/ProjectLoader.hpp"
+#include "Editor/ProjectLoader.hpp"
 
 #include <filesystem>
 #include <iostream>
@@ -8,7 +8,7 @@
 
 #include "nlohmann/json.hpp"
 
-ELIX_NESTED_NAMESPACE_BEGIN(engine)
+ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPath)
 {
@@ -95,7 +95,13 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
     project->resourcesDir = json["resources_path"];
     project->sourcesDir = json["sources_path"];
 
-    auto &assetsCache = project->cache.assetsCache;
+    auto &assetsCache = project->cache;
+
+    if (!std::filesystem::exists(project->fullPath))
+    {
+        std::cerr << "Project full path is not correct\n";
+        return nullptr;
+    }
 
     for (auto &entry : std::filesystem::recursive_directory_iterator(project->fullPath))
     {
@@ -103,17 +109,20 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
 
         if (extension == ".png" || extension == ".jpg")
         {
-            auto texture = std::make_shared<Texture>();
+            std::cout << "Found texture: " << entry.path().string() << '\n';
+            assetsCache.allProjectTexturesPaths.push_back(entry.path().string());
 
-            if (!texture->load(entry.path().string()))
-            {
-                std::cerr << "Failed to load some assets cache texture: " << entry.path().string() << '\n';
-                continue;
-            }
+            //     auto texture = std::make_shared<engine::Texture>();
 
-            std::cout << "Loaded texture: " << entry.path().string() << '\n';
+            // if (!texture->load(entry.path().string()))
+            // {
+            //     std::cerr << "Failed to load some assets cache texture: " << entry.path().string() << '\n';
+            //     continue;
+            // }
 
-            assetsCache.addTexture(entry.path(), std::move(texture));
+            // std::cout << "Loaded texture: " << entry.path().string() << '\n';
+
+            // assetsCache.addTexture(entry.path().string(), std::move(texture));
         }
     }
 

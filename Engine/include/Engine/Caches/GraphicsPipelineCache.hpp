@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <mutex>
 
-ELIX_NESTED_NAMESPACE_BEGIN(core)
+ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(cache)
 
 class GraphicsPipelineCache

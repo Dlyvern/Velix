@@ -1,13 +1,11 @@
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
 
 #include "Core/VulkanHelpers.hpp"
-#include "Core/Shader.hpp"
-#include "Core/Cache/GraphicsPipelineCache.hpp"
 
-#include "Engine/PushConstant.hpp"
-#include "Engine/Components/Transform3DComponent.hpp"
+#include "Engine/Shaders/PushConstant.hpp"
 #include "Engine/Builders/GraphicsPipelineBuilder.hpp"
 #include "Engine/Builders/RenderPassBuilder.hpp"
+#include "Engine/Builders/GraphicsPipelineManager.hpp"
 
 #include <glm/mat4x4.hpp>
 
@@ -53,34 +51,6 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
     m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
                                             VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE, VK_COMPARE_OP_ALWAYS, VK_SAMPLER_MIPMAP_MODE_LINEAR);
-
-    const core::Shader shader("./resources/shaders/static_mesh_shadow.vert.spv",
-                              "./resources/shaders/empty.frag.spv");
-
-    const std::vector<VkDynamicState> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
-    const std::vector<VkVertexInputBindingDescription> vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D))};
-    const std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions = vertex::Vertex3D::getAttributeDescriptions();
-
-    auto inputAssembly = builders::GraphicsPipelineBuilder::inputAssemblyCI(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-    auto rasterizer = builders::GraphicsPipelineBuilder::rasterizationCI(VK_POLYGON_MODE_FILL);
-    auto multisampling = builders::GraphicsPipelineBuilder::multisamplingCI();
-    auto depthStencil = builders::GraphicsPipelineBuilder::depthStencilCI(true, true, VK_COMPARE_OP_LESS);
-    auto viewportState = builders::GraphicsPipelineBuilder::viewportCI({m_viewport}, {m_scissor});
-    auto dynamicState = builders::GraphicsPipelineBuilder::dynamic(dynamicStates);
-    auto vertexInputState = builders::GraphicsPipelineBuilder::vertexInputCI(vertexBindingDescriptions, vertexAttributeDescriptions);
-    auto colorBlending = builders::GraphicsPipelineBuilder::colorBlending({});
-
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    rasterizer.depthBiasEnable = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = 4.0f;
-    rasterizer.depthBiasSlopeFactor = 4.0f;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-
-    auto cache = core::cache::GraphicsPipelineCache::getDeviceCache(device);
-
-    m_graphicsPipeline = core::GraphicsPipeline::createShared(device, m_renderPass, shader.getShaderStages(),
-                                                              m_pipelineLayout, dynamicState, colorBlending, multisampling, rasterizer, viewportState,
-                                                              inputAssembly, vertexInputState, 0, depthStencil, cache);
 }
 
 void ShadowRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
@@ -114,17 +84,30 @@ void ShadowRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr co
         {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}, *commandBuffer.get());
 }
 
-void ShadowRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data)
+void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
+                                   const RenderGraphPassContext &renderContext)
 {
     vkCmdSetViewport(commandBuffer, 0, 1, &m_viewport);
     vkCmdSetDepthBias(commandBuffer, 1.25f, 0.0f, 1.75f);
     vkCmdSetScissor(commandBuffer, 0, 1, &m_scissor);
 
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-
-    for (const auto &[entity, gpuEntity] : data.meshes)
+    for (const auto &[entity, drawItem] : data.drawItems)
     {
-        for (const auto &mesh : gpuEntity.meshes)
+        GraphicsPipelineKey key{};
+        key.renderPass = m_renderPass;
+        key.shader = ShaderId::StaticShadow;
+        key.cull = CullMode::None;
+        key.depthTest = true;
+        key.depthWrite = true;
+        key.depthCompare = VK_COMPARE_OP_LESS;
+        key.polygonMode = VK_POLYGON_MODE_FILL;
+        key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        key.pipelineLayout = m_pipelineLayout;
+        auto graphicsPipeline = GraphicsPipelineManager::getOrCreate(key);
+
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+        for (const auto &mesh : drawItem.meshes)
         {
             VkBuffer vertexBuffers[] = {mesh->vertexBuffer};
             VkDeviceSize offset[] = {0};
@@ -134,7 +117,7 @@ void ShadowRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer
 
             LightSpaceMatrixPushConstant lightSpaceMatrixPushConstant{
                 .lightSpaceMatrix = data.lightSpaceMatrix,
-                .model = gpuEntity.transform};
+                .model = drawItem.transform};
 
             vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(LightSpaceMatrixPushConstant),
                                &lightSpaceMatrixPushConstant);
@@ -143,19 +126,15 @@ void ShadowRenderGraphPass::execute(core::CommandBuffer::SharedPtr commandBuffer
     }
 }
 
-void ShadowRenderGraphPass::update(const RenderGraphPassContext &renderData)
+std::vector<IRenderGraphPass::RenderPassExecution> ShadowRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const
 {
-}
-
-void ShadowRenderGraphPass::getRenderPassBeginInfo(VkRenderPassBeginInfo &renderPassBeginInfo) const
-{
-    renderPassBeginInfo = VkRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    renderPassBeginInfo.renderPass = m_renderPass;
-    renderPassBeginInfo.framebuffer = m_framebuffer;
-    renderPassBeginInfo.renderArea.offset = {0, 0};
-    renderPassBeginInfo.renderArea.extent = m_extent;
-    renderPassBeginInfo.clearValueCount = 1;
-    renderPassBeginInfo.pClearValues = &m_clearValue;
+    IRenderGraphPass::RenderPassExecution renderPassExecution;
+    renderPassExecution.clearValues = {m_clearValue};
+    renderPassExecution.framebuffer = m_framebuffer;
+    renderPassExecution.renderArea.offset = {0, 0};
+    renderPassExecution.renderArea.extent = m_extent;
+    renderPassExecution.renderPass = m_renderPass;
+    return {renderPassExecution};
 }
 
 ELIX_CUSTOM_NAMESPACE_END

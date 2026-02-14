@@ -1,10 +1,10 @@
-#include "Core/Cache/GraphicsPipelineCache.hpp"
+#include "Engine/Caches/GraphicsPipelineCache.hpp"
 #include <vector>
 #include <fstream>
 #include <stdexcept>
 #include <iostream>
 
-ELIX_NESTED_NAMESPACE_BEGIN(core)
+ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(cache)
 
 VkPipelineCache GraphicsPipelineCache::getDeviceCache(VkDevice device)

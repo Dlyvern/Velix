@@ -6,12 +6,20 @@ Entity::Entity(const std::string &name) : m_name(name)
 {
 }
 
-uint64_t Entity::getId() const
+Entity::Entity(Entity &other, const std::string &name, uint32_t id)
+{
+    this->m_components = other.m_components;
+    this->m_multiComponents = other.m_multiComponents;
+    this->m_name = name;
+    this->m_id = id;
+}
+
+uint32_t Entity::getId() const
 {
     return m_id;
 }
 
-void Entity::setId(uint64_t id)
+void Entity::setId(uint32_t id)
 {
     m_id = id;
 }

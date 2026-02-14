@@ -102,76 +102,114 @@ void Editor::initStyle()
     ImGuiStyle &style = ImGui::GetStyle();
     ImVec4 *colors = ImGui::GetStyle().Colors;
 
-    style.WindowRounding = 5.0f;
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.ScrollbarRounding = 6.0f;
-    style.TabRounding = 4.0f;
+    style.WindowRounding = 3.0f;
+    style.FrameRounding = 2.0f;
+    style.GrabRounding = 2.0f;
+    style.PopupRounding = 3.0f;
+    style.ScrollbarRounding = 3.0f;
+    style.TabRounding = 2.0f;
 
     style.WindowBorderSize = 1.0f;
-    style.FrameBorderSize = 1.0f;
+    style.FrameBorderSize = 0.0f;
     style.PopupBorderSize = 1.0f;
-    style.ScrollbarSize = 14.0f;
-    style.GrabMinSize = 14.0f;
-    style.TabBorderSize = 1.0f;
+    style.TabBorderSize = 0.0f;
 
-    style.FramePadding = ImVec2(6, 4);
-    style.ItemSpacing = ImVec2(8, 6);
-    style.WindowPadding = ImVec2(10, 10);
-    style.PopupRounding = 5.0f;
+    style.FramePadding = ImVec2(6, 3);
+    style.ItemSpacing = ImVec2(8, 4);
+    style.ItemInnerSpacing = ImVec2(4, 4);
+    style.WindowPadding = ImVec2(8, 8);
+    style.CellPadding = ImVec2(4, 2);
+    style.IndentSpacing = 20.0f;
+    style.ScrollbarSize = 12.0f;
+    style.GrabMinSize = 8.0f;
 
-    ImVec4 accent = ImVec4(0.25f, 0.55f, 1.00f, 1.00f);
-    ImVec4 darkBG = ImVec4(0.05f, 0.05f, 0.05f, 1.00f);
-    ImVec4 panelBG = ImVec4(0.10f, 0.10f, 0.11f, 1.00f);
-    ImVec4 lightPanel = ImVec4(0.14f, 0.14f, 0.16f, 1.00f);
-    ImVec4 highlight = ImVec4(1.00f, 0.35f, 0.10f, 1.00f);
+    ImVec4 darkColor = ImVec4(0.043f, 0.043f, 0.043f, 1.00f);
+    ImVec4 mediumColor = ImVec4(0.078f, 0.078f, 0.078f, 1.00f);
+    ImVec4 lightColor = ImVec4(0.117f, 0.117f, 0.117f, 1.00f);
+    ImVec4 lighterColor = ImVec4(0.156f, 0.156f, 0.156f, 1.00f);
 
-    colors[ImGuiCol_Text] = ImVec4(0.85f, 0.88f, 0.92f, 1.00f);
-    colors[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.47f, 0.50f, 1.00f);
-    colors[ImGuiCol_WindowBg] = darkBG;
-    colors[ImGuiCol_ChildBg] = panelBG;
-    colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.08f, 0.09f, 0.98f);
-    colors[ImGuiCol_Border] = ImVec4(0.18f, 0.18f, 0.20f, 0.60f);
-    colors[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_FrameBg] = panelBG;
-    colors[ImGuiCol_FrameBgHovered] = lightPanel;
-    colors[ImGuiCol_FrameBgActive] = accent;
-    colors[ImGuiCol_TitleBg] = darkBG;
-    colors[ImGuiCol_TitleBgActive] = panelBG;
-    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0, 0, 0, 0.60f);
-    colors[ImGuiCol_MenuBarBg] = panelBG;
-    colors[ImGuiCol_ScrollbarBg] = ImVec4(0.05f, 0.05f, 0.06f, 0.53f);
-    colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.22f, 0.24f, 0.26f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabHovered] = accent;
-    colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.00f, 0.55f, 1.00f, 1.00f);
-    colors[ImGuiCol_CheckMark] = accent;
-    colors[ImGuiCol_SliderGrab] = accent;
-    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.20f, 0.65f, 1.00f, 1.00f);
-    colors[ImGuiCol_Button] = ImVec4(0.15f, 0.15f, 0.17f, 1.00f);
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.25f, 0.28f, 1.00f);
-    colors[ImGuiCol_ButtonActive] = accent;
-    colors[ImGuiCol_Header] = panelBG;
-    colors[ImGuiCol_HeaderHovered] = lightPanel;
-    colors[ImGuiCol_HeaderActive] = accent;
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.12f, 0.12f, 0.14f, 0.60f);
-    colors[ImGuiCol_ResizeGripHovered] = accent;
-    colors[ImGuiCol_ResizeGripActive] = accent;
-    colors[ImGuiCol_Tab] = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
-    colors[ImGuiCol_TabHovered] = accent;
-    colors[ImGuiCol_TabActive] = ImVec4(0.17f, 0.17f, 0.20f, 1.00f);
-    colors[ImGuiCol_TabUnfocused] = ImVec4(0.09f, 0.09f, 0.11f, 1.00f);
-    colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.00f, 0.40f, 1.00f, 0.30f);
-    colors[ImGuiCol_DragDropTarget] = highlight;
-    colors[ImGuiCol_NavHighlight] = accent;
-    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.07f, 0.07f, 0.07f, 0.80f);
+    ImVec4 blueColor = ImVec4(0.031f, 0.529f, 0.902f, 1.00f);
+    ImVec4 blueHover = ImVec4(0.149f, 0.631f, 0.949f, 1.00f);
+    ImVec4 blueActive = ImVec4(0.000f, 0.447f, 0.741f, 1.00f);
+    ImVec4 orangeColor = ImVec4(0.902f, 0.361f, 0.055f, 1.00f);
+
+    ImVec4 text = ImVec4(0.800f, 0.800f, 0.800f, 1.00f);
+    ImVec4 textDim = ImVec4(0.600f, 0.600f, 0.600f, 1.00f);
+    ImVec4 textHighlight = ImVec4(1.000f, 1.000f, 1.000f, 1.00f);
+
+    colors[ImGuiCol_Text] = text;
+    colors[ImGuiCol_TextDisabled] = textDim;
+    colors[ImGuiCol_WindowBg] = darkColor;
+    colors[ImGuiCol_ChildBg] = mediumColor;
+    colors[ImGuiCol_PopupBg] = mediumColor;
+    colors[ImGuiCol_Border] = ImVec4(0.200f, 0.200f, 0.200f, 0.50f);
+    colors[ImGuiCol_BorderShadow] = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
+
+    colors[ImGuiCol_FrameBg] = lightColor;
+    colors[ImGuiCol_FrameBgHovered] = lighterColor;
+    colors[ImGuiCol_FrameBgActive] = blueActive;
+
+    colors[ImGuiCol_TitleBg] = darkColor;
+    colors[ImGuiCol_TitleBgActive] = mediumColor;
+    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.043f, 0.043f, 0.043f, 0.70f);
+
+    colors[ImGuiCol_MenuBarBg] = mediumColor;
+
+    colors[ImGuiCol_ScrollbarBg] = ImVec4(0.043f, 0.043f, 0.043f, 0.60f);
+    colors[ImGuiCol_ScrollbarGrab] = lighterColor;
+    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.250f, 0.250f, 0.250f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive] = blueColor;
+
+    colors[ImGuiCol_CheckMark] = blueColor;
+    colors[ImGuiCol_SliderGrab] = blueColor;
+    colors[ImGuiCol_SliderGrabActive] = blueHover;
+
+    colors[ImGuiCol_Button] = lightColor;
+    colors[ImGuiCol_ButtonHovered] = lighterColor;
+    colors[ImGuiCol_ButtonActive] = blueColor;
+
+    colors[ImGuiCol_Header] = lightColor;
+    colors[ImGuiCol_HeaderHovered] = lighterColor;
+    colors[ImGuiCol_HeaderActive] = blueColor;
+
+    colors[ImGuiCol_ResizeGrip] = ImVec4(0.200f, 0.200f, 0.200f, 0.50f);
+    colors[ImGuiCol_ResizeGripHovered] = blueColor;
+    colors[ImGuiCol_ResizeGripActive] = blueHover;
+
+    colors[ImGuiCol_Tab] = mediumColor;
+    colors[ImGuiCol_TabHovered] = blueColor;
+    colors[ImGuiCol_TabActive] = lightColor;
+    colors[ImGuiCol_TabUnfocused] = mediumColor;
+    colors[ImGuiCol_TabUnfocusedActive] = lightColor;
+
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.031f, 0.529f, 0.902f, 0.35f);
+    colors[ImGuiCol_DragDropTarget] = orangeColor;
+    colors[ImGuiCol_NavHighlight] = blueColor;
+    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.000f, 1.000f, 1.000f, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.043f, 0.043f, 0.043f, 0.20f);
+    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.043f, 0.043f, 0.043f, 0.75f);
+
+    colors[ImGuiCol_Separator] = ImVec4(0.200f, 0.200f, 0.200f, 0.50f);
+    colors[ImGuiCol_SeparatorHovered] = blueColor;
+    colors[ImGuiCol_SeparatorActive] = blueHover;
+
+    colors[ImGuiCol_TableHeaderBg] = lightColor;
+    colors[ImGuiCol_TableBorderStrong] = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
+    colors[ImGuiCol_TableBorderLight] = ImVec4(0.150f, 0.150f, 0.150f, 0.50f);
+    colors[ImGuiCol_TableRowBg] = mediumColor;
+    colors[ImGuiCol_TableRowBgAlt] = lightColor;
+
+    colors[ImGuiCol_PlotLines] = blueColor;
+    colors[ImGuiCol_PlotLinesHovered] = blueHover;
+    colors[ImGuiCol_PlotHistogram] = blueColor;
+    colors[ImGuiCol_PlotHistogramHovered] = blueHover;
 
     ImGuiIO &io = ImGui::GetIO();
     io.Fonts->AddFontFromFileTTF("./resources/fonts/JetBrainsMono-Regular.ttf", 16.0f);
 
     m_resourceStorage.loadNeededResources();
 
-    m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage, m_descriptorPool);
+    m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage, m_descriptorPool, m_requestedMaterialPreviewJobs);
 
     m_entityIdBuffer = core::Buffer::createShared(sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                   core::memory::MemoryUsage::CPU_TO_GPU);
@@ -207,11 +245,6 @@ void Editor::initStyle()
 
     if (vkCreateSampler(core::VulkanContext::getContext()->getDevice(), &samplerInfo, nullptr, &m_defaultSampler) != VK_SUCCESS)
         throw std::runtime_error("failed to create texture sampler!");
-}
-
-void Editor::setTest(VkImageView imageView)
-{
-    m_test = ImGui_ImplVulkan_AddTexture(m_defaultSampler, imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 void Editor::addOnModeChangedCallback(const std::function<void(EditorMode)> &function)
@@ -301,8 +334,7 @@ void Editor::drawCustomTitleBar()
 
     ImGui::SetCursorPos(ImVec2(4, (ImGui::GetWindowHeight() - 30) * 0.5f));
     ImVec2 logoSize = ImVec2(50, 30);
-    // ImGui::Image(m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.png"), logoSize);
-    ImGui::Image(m_test, logoSize);
+    ImGui::Image(m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.png"), logoSize);
 
     ImGui::SameLine(0, 10);
 
@@ -769,57 +801,54 @@ std::vector<engine::AdditionalPerFrameData> Editor::getRenderData()
 
     static engine::Entity *prevEntity{nullptr};
 
-    if (prevEntity == m_selectedEntity)
-    {
-        engine::AdditionalPerFrameData data;
-
-        engine::GPUEntity entity;
-        entity.transform = m_selectedEntity->getComponent<engine::Transform3DComponent>()->getMatrix();
-        entity.transform = glm::scale(entity.transform, glm::vec3(1.15f));
-        entity.meshes.push_back(m_selectedObjectMesh);
-
-        data.stencilMeshes.push_back(entity);
-
-        return {data};
-    }
-
-    prevEntity = m_selectedEntity;
-
     engine::AdditionalPerFrameData data;
 
-    engine::GPUEntity entity;
-
+    engine::DrawItem entity;
     entity.transform = m_selectedEntity->getComponent<engine::Transform3DComponent>()->getMatrix();
-    entity.transform = glm::scale(entity.transform, glm::vec3(1.15f));
+    entity.transform = glm::scale(entity.transform, glm::vec3(1.05f));
+    entity.graphicsPipelineKey.shader = engine::ShaderId::Wireframe;
 
-    std::vector<elix::engine::CPUMesh> meshes;
-    if (auto c = m_selectedEntity->getComponent<engine::StaticMeshComponent>())
-        meshes = c->getMeshes();
-    else if (auto c = m_selectedEntity->getComponent<engine::SkeletalMeshComponent>())
-        meshes = c->getMeshes();
+    entity.graphicsPipelineKey.cull = engine::CullMode::None;
+    entity.graphicsPipelineKey.polygonMode = VK_POLYGON_MODE_LINE;
+    entity.graphicsPipelineKey.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 
-    struct VertexStruct
+    // entity.graphicsPipelineKey.polygonMode = VK_POLYGON_MODE_FILL;
+    // entity.graphicsPipelineKey.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    // entity.graphicsPipelineKey.depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL;
+    // entity.graphicsPipelineKey.depthTest = false;
+    // entity.graphicsPipelineKey.depthWrite = false;
+
+    if (prevEntity == m_selectedEntity)
     {
-        glm::vec3 position{1.0f};
+        entity.meshes.push_back(m_selectedObjectMesh);
 
-        VertexStruct(const glm::vec3 &pos) : position(pos) {}
-    };
+        data.drawItems.push_back(entity);
+    }
+    else
+    {
+        prevEntity = m_selectedEntity;
 
-    std::vector<VertexStruct> test;
+        std::vector<elix::engine::CPUMesh> meshes;
+        if (auto c = m_selectedEntity->getComponent<engine::StaticMeshComponent>())
+            meshes = c->getMeshes();
+        else if (auto c = m_selectedEntity->getComponent<engine::SkeletalMeshComponent>())
+            meshes = c->getMeshes();
 
-    for (const auto &cubeVert : engine::cube::vertices)
-        test.emplace_back(VertexStruct{cubeVert.position});
+        // TODO FIX THIS SHIT
+        for (const auto &m : meshes)
+            m_selectedObjectMesh = engine::GPUMesh::createFromMesh(m);
 
-    std::vector<uint8_t> vertexData;
-    vertexData.resize(test.size() * sizeof(VertexStruct));
-    std::memcpy(vertexData.data(), test.data(), vertexData.size());
+        entity.meshes.push_back(m_selectedObjectMesh);
 
-    m_selectedObjectMesh = engine::GPUMesh::create(vertexData, engine::cube::indices);
-    entity.meshes.push_back(m_selectedObjectMesh);
-
-    data.stencilMeshes.push_back(entity);
+        data.drawItems.push_back(entity);
+    }
 
     return {data};
+}
+
+void Editor::setSelectedEntity(engine::Entity *entity)
+{
+    m_selectedEntity = entity;
 }
 
 void Editor::handleInput()
@@ -830,19 +859,22 @@ void Editor::handleInput()
     {
     }
 
-    const bool ctrl_down = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
-    const bool s_pressed = ImGui::IsKeyPressed(ImGuiKey_S, false);
+    const bool isCtrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+
+    if (isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_C, false))
+    {
+    }
 
     if (ImGui::IsKeyPressed(ImGuiKey_Delete) && m_selectedEntity)
     {
         m_scene->destroyEntity(m_selectedEntity);
-        m_selectedEntity = nullptr;
+        setSelectedEntity(nullptr);
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape) && m_currentMode != EditorMode::EDIT)
         changeMode(EditorMode::EDIT);
 
-    if (ctrl_down && s_pressed)
+    if (isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_S, false))
     {
         if (m_currentProject.lock())
             m_scene->saveSceneToFile(m_currentProject.lock()->entryScene);
@@ -1321,7 +1353,7 @@ void Editor::drawHierarchy()
         bool nodeOpen = ImGui::TreeNodeEx(entityName, nodeFlags);
 
         if (ImGui::IsItemClicked())
-            m_selectedEntity = entity.get();
+            setSelectedEntity(entity.get());
 
         if (nodeOpen)
             ImGui::TreePop();

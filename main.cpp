@@ -21,12 +21,12 @@
 #include "Engine/Assets/MaterialAssetLoader.hpp"
 #include "Engine/Physics/PhysXCore.hpp"
 #include "Engine/Components/CameraComponent.hpp"
-#include "Core/Cache/GraphicsPipelineCache.hpp"
-#include "Engine/Render/GraphPasses/MaterialPreviewRenderGraphPass.hpp"
+#include "Engine/Caches/GraphicsPipelineCache.hpp"
+#include "Editor/RenderGraphPasses/PreviewAssetsRenderGraphPass.hpp"
 
 #include "Editor/FileHelper.hpp"
 
-#include "Engine/ProjectLoader.hpp"
+#include "Editor/ProjectLoader.hpp"
 
 #include "Core/Logger.hpp"
 
@@ -67,11 +67,11 @@ int main(int argc, char **argv)
                                               "/pipeline_cache_" + std::string(props.deviceName) + "_" + std::to_string(props.vendorID) + '_' +
                                               std::to_string(props.driverVersion) + ".elixgpbin";
 
-    elix::core::cache::GraphicsPipelineCache::loadCacheFromFile(vulkanContext->getDevice(), graphicsPipelineCache);
+    elix::engine::cache::GraphicsPipelineCache::loadCacheFromFile(vulkanContext->getDevice(), graphicsPipelineCache);
 
     const std::string projectPath = argv[1];
 
-    auto project = elix::engine::ProjectLoader::loadProject(projectPath);
+    auto project = elix::editor::ProjectLoader::loadProject(projectPath);
 
     if (!project)
     {
@@ -99,7 +99,7 @@ int main(int argc, char **argv)
 
     VkExtent2D extent{.width = 50, .height = 30};
 
-    auto materialRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::MaterialPreviewRenderGraphPass>(extent);
+    auto previewRenderGraphPass = renderGraph->addPass<elix::editor::PreviewAssetsRenderGraphPass>(extent);
 
     // auto sceneRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::SceneRenderGraphPass>(shadowRenderPass->getShadowHandler());
     renderGraph->setup();
@@ -114,17 +114,9 @@ int main(int argc, char **argv)
 
         auto entity = scene->addEntity("texture test");
 
-        if (model.skeleton.has_value())
-        {
-            auto skeletonComponent = entity->addComponent<elix::engine::SkeletalMeshComponent>(model.meshes, model.skeleton.value());
-            // skeletonComponent->getSkeleton().printBonesHierarchy();
-            // std::cout << "Added skeleton mesh component\n";
-        }
-        else
-        {
-            entity->addComponent<elix::engine::StaticMeshComponent>(model.meshes);
-            entity->getComponent<elix::engine::StaticMeshComponent>()->getMesh(0).material = elix::engine::CPUMaterial{.albedoTexture = "./resources/textures/ConcreteWall.png"};
-        }
+        auto skeletonComponent = entity->addComponent<elix::engine::SkeletalMeshComponent>(model.meshes, model.skeleton.value());
+        // skeletonComponent->getSkeleton().printBonesHierarchy();
+        // std::cout << "Added skeleton mesh component\n";
 
         entity->getComponent<elix::engine::Transform3DComponent>()->setScale({0.003f, 0.003f, 0.003f});
     }
@@ -164,8 +156,6 @@ int main(int argc, char **argv)
     currentRenderCamera->setPosition({0.0f, 1.0f, 5.0f});
 
     bool shouldUpdate{false};
-
-    editor->setTest(materialRenderGraphPass->getRenderTarget()->vkImageView());
 
     editor->addOnModeChangedCallback([&](elix::editor::Editor::EditorMode mode)
                                      {
@@ -217,6 +207,15 @@ int main(int argc, char **argv)
             scene->update(deltaTime);
         }
 
+        previewRenderGraphPass->clearJobs();
+
+        for (const auto &m : editor->getRequestedMaterialPreviewJobs())
+        {
+            elix::editor::PreviewAssetsRenderGraphPass::PreviewJob job;
+            job.material = m;
+            previewRenderGraphPass->addMaterialPreviewJob(job);
+        }
+
         // while(accumulator >= fixedStep)
         // {
         //     scene->fixedUpdate(fixedStep);
@@ -226,9 +225,12 @@ int main(int argc, char **argv)
         renderGraph->addAdditionalFrameData(editor->getRenderData());
         renderGraph->prepareFrame(currentRenderCamera, scene.get());
         renderGraph->draw();
+
+        editor->setDoneMaterialJobs(previewRenderGraphPass->getRenderedImages());
+        editor->clearMaterialPreviewJobs();
     }
 
-    elix::core::cache::GraphicsPipelineCache::saveCacheToFile(vulkanContext->getDevice(), graphicsPipelineCache);
+    elix::engine::cache::GraphicsPipelineCache::saveCacheToFile(vulkanContext->getDevice(), graphicsPipelineCache);
     // To clean all needed Vulkan resources before VulkanContex is cleared
     renderGraph->cleanResources();
     delete renderGraph;

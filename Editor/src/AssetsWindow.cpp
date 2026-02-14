@@ -12,12 +12,14 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage, VkDescriptorPool descriptorPool) : m_resourcesStorage(resourcesStorage),
-                                                                                                        m_descriptorPool(descriptorPool)
+AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage, VkDescriptorPool descriptorPool,
+                           std::vector<engine::Material *> &previewMaterialJobs) : m_resourcesStorage(resourcesStorage),
+                                                                                   m_descriptorPool(descriptorPool),
+                                                                                   m_previewMaterialJobs(previewMaterialJobs)
 {
 }
 
-void AssetsWindow::setProject(engine::Project *project)
+void AssetsWindow::setProject(Project *project)
 {
     m_currentProject = project;
     m_currentDirectory = m_currentProject->fullPath;
@@ -67,7 +69,21 @@ void AssetsWindow::draw()
                 currentDir += '/';
 
             std::cout << currentDir << std::endl;
-            newMaterialFile.open(currentDir + "newMaterial.elixmat");
+
+            std::string newMaterialName = currentDir + "newMaterial";
+
+            // TODO remake this fucking shit
+            while (true)
+            {
+                if (std::filesystem::exists(newMaterialName + ".elixmat"))
+                    newMaterialName += "_1";
+                else
+                    break;
+            }
+
+            newMaterialName += ".elixmat";
+
+            newMaterialFile.open(newMaterialName);
         }
         ImGui::EndPopup();
     }
@@ -216,6 +232,29 @@ void AssetsWindow::drawTreeView()
     drawTreeNode(m_treeRoot.get());
 }
 
+std::pair<engine::Texture::SharedPtr, elix::engine::CPUMaterial> AssetsWindow::tryToPreloadTexture(const std::string &path)
+{
+    auto materialAsset = engine::AssetsLoader::loadMaterial(path);
+
+    if (!materialAsset.has_value())
+    {
+        std::cerr << "Something is weird, failed to load material asset\n";
+        return {nullptr, {}};
+    }
+
+    auto materialCPU = materialAsset.value().material;
+
+    auto texture = std::make_shared<engine::Texture>();
+
+    if (!texture->load(materialCPU.albedoTexture))
+    {
+        std::cerr << "Something is weird, failed to load texture for material\n";
+        return {nullptr, {}};
+    }
+
+    return {texture, materialCPU};
+}
+
 void AssetsWindow::drawAssetGrid()
 {
     auto entries = getFilteredEntries();
@@ -254,6 +293,47 @@ void AssetsWindow::drawAssetGrid()
         }
         else
         {
+            if (extension == ".elixmat")
+            {
+                if (m_materialPreviewSlots.find(entry.path().string()) == m_materialPreviewSlots.end())
+                {
+                    uint32_t index = m_previewMaterialJobs.size();
+
+                    auto textureMaterial = tryToPreloadTexture(entry.path().string());
+                    auto texture = textureMaterial.first;
+                    auto materialCPU = textureMaterial.second;
+
+                    if (texture)
+                    {
+                        MaterialAssetWindow materialAssetWindow;
+                        materialAssetWindow.material = engine::Material::create(m_descriptorPool, texture);
+                        materialAssetWindow.texture = texture;
+
+                        materialAssetWindow.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+                        m_texturesPreview[materialCPU.albedoTexture].previewTextureDescriptorSet = materialAssetWindow.previewTextureDescriptorSet;
+                        m_materials[entry.path().string()] = materialAssetWindow;
+
+                        m_previewMaterialJobs.push_back(materialAssetWindow.material.get());
+                        m_materialPreviewSlots[entry.path().string()] = index;
+                    }
+                }
+
+                auto it = m_materialPreviewSlots.find(entry.path().string());
+
+                if (it != m_materialPreviewSlots.end())
+                {
+                    uint32_t slot = it->second;
+
+                    if (slot < m_doneMaterialPreviewJobs.size())
+                        icon = m_doneMaterialPreviewJobs[slot];
+                }
+            }
+            else if (m_velixExtensions.find(extension) != m_velixExtensions.end())
+            {
+                icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.png");
+            }
+
             // Choose icon based on file extension
             // if (m_cppExtensions.find(extension) != m_cppExtensions.end())
             //     icon = m_cppIcon;
@@ -372,7 +452,7 @@ void AssetsWindow::drawMaterialEditor()
 
         materialAssetWindow.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-        m_texturesPreview[materialCPU.albedoTexture] = materialAssetWindow.previewTextureDescriptorSet;
+        m_texturesPreview[materialCPU.albedoTexture].previewTextureDescriptorSet = materialAssetWindow.previewTextureDescriptorSet;
         m_materials[m_currentEditedMaterialPath] = materialAssetWindow;
     }
 
@@ -415,7 +495,7 @@ void AssetsWindow::drawMaterialEditor()
 
         ImGui::BeginChild("TextureScroll", ImVec2(300, 200), true);
 
-        for (const auto &[texturePath, texture] : m_currentProject->cache.assetsCache.getTextures())
+        for (const auto &texturePath : m_currentProject->cache.allProjectTexturesPaths)
         {
             if (filter[0] != '\0' && texturePath.find(filter) == std::string::npos)
                 continue;
@@ -424,14 +504,21 @@ void AssetsWindow::drawMaterialEditor()
 
             if (m_texturesPreview.find(texturePath) == m_texturesPreview.end())
             {
-                m_texturesPreview[texturePath] = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                TextureAssetWindow textureAssetWindow;
+
+                auto texture = std::make_shared<engine::Texture>();
+                texture->load(texturePath);
+                textureAssetWindow.texture = texture;
+
+                textureAssetWindow.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+                m_texturesPreview[texturePath] = textureAssetWindow;
             }
 
-            ImTextureID imguiTexId = (ImTextureID)(uintptr_t)m_texturesPreview[texturePath];
+            ImTextureID imguiTexId = (ImTextureID)(uintptr_t)m_texturesPreview[texturePath].previewTextureDescriptorSet;
 
             if (ImGui::ImageButton(texturePath.c_str(), imguiTexId, ImVec2(50, 50)))
             {
-                // selectedEntity->setTexture(texture);
                 ImGui::CloseCurrentPopup();
             }
 
@@ -450,6 +537,41 @@ void AssetsWindow::drawMaterialEditor()
 
             ImGui::PopID();
         }
+
+        // for (const auto &[texturePath, texture] : m_currentProject->cache.assetsCache.getTextures())
+        // {
+        //     if (filter[0] != '\0' && texturePath.find(filter) == std::string::npos)
+        //         continue;
+
+        //     ImGui::PushID(texturePath.c_str());
+
+        //     if (m_texturesPreview.find(texturePath) == m_texturesPreview.end())
+        //     {
+        //         m_texturesPreview[texturePath] = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        //     }
+
+        //     ImTextureID imguiTexId = (ImTextureID)(uintptr_t)m_texturesPreview[texturePath];
+
+        //     if (ImGui::ImageButton(texturePath.c_str(), imguiTexId, ImVec2(50, 50)))
+        //     {
+        //         ImGui::CloseCurrentPopup();
+        //     }
+
+        //     if (ImGui::IsItemHovered())
+        //     {
+        //         ImGui::BeginTooltip();
+        //         ImGui::Text("%s", texturePath.c_str());
+        //         ImGui::EndTooltip();
+        //     }
+
+        //     const std::string fileName = std::filesystem::path(texturePath).filename();
+
+        //     ImGui::SameLine();
+
+        //     ImGui::TextWrapped("%s", fileName.c_str());
+
+        //     ImGui::PopID();
+        // }
 
         ImGui::EndChild();
 

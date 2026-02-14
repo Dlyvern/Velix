@@ -51,6 +51,8 @@ void RGPResourcesCompiler::compile(RGPResourcesBuilder &builder, RGPResourcesSto
     {
         // TODO namespace above core::memory::MemoryUsage
 
+        VkDeviceSize before = core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM();
+
         if (textureDescription.getIsSwapChainTarget())
         {
             const auto &swapChain = vulkanContext->getSwapchain();
@@ -81,6 +83,11 @@ void RGPResourcesCompiler::compile(RGPResourcesBuilder &builder, RGPResourcesSto
 
             storage.addTexture(id, std::move(renderTarget));
         }
+
+        VkDeviceSize after = core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM();
+        VkDeviceSize delta = after - before;
+        const std::string textureName = textureDescription.getIsSwapChainTarget() ? "swap chain" : "common";
+        std::cout << "New " << textureName << " " << textureDescription.getDebugName() << " texture allocated " << delta << '\n';
     }
 }
 
