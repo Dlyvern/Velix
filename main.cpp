@@ -190,22 +190,16 @@ int main(int argc, char **argv)
             shouldUpdate = false;
         } });
 
-    elix::engine::primitives::initPrimitiveMeshes();
-
     while (window->isOpen())
     {
         const float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
-        // accumulator += deltaTime;
-
         window->pollEvents();
 
         if (shouldUpdate)
-        {
             scene->update(deltaTime);
-        }
 
         previewRenderGraphPass->clearJobs();
 
@@ -215,12 +209,6 @@ int main(int argc, char **argv)
             job.material = m;
             previewRenderGraphPass->addMaterialPreviewJob(job);
         }
-
-        // while(accumulator >= fixedStep)
-        // {
-        //     scene->fixedUpdate(fixedStep);
-        //     accumulator -= fixedStep;
-        // }
 
         renderGraph->addAdditionalFrameData(editor->getRenderData());
         renderGraph->prepareFrame(currentRenderCamera, scene.get());

@@ -158,7 +158,7 @@ void Image::insertImageMemoryBarrier(VkAccessFlags srcAccessMask, VkAccessFlags 
         vkQueueWaitIdle(queue);
 }
 
-void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t layerCount)
+void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t layerCount, core::CommandBuffer::SharedPtr comandBuffer)
 {
     if (!commandPool)
         commandPool = core::VulkanContext::getContext()->getGraphicsCommandPool();
@@ -166,8 +166,13 @@ void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkIm
     if (!queue)
         queue = VulkanContext::getContext()->getGraphicsQueue();
 
-    auto cb = CommandBuffer::createShared(commandPool);
-    cb->begin();
+    CommandBuffer::SharedPtr cb = comandBuffer;
+
+    if (!comandBuffer)
+    {
+        cb = CommandBuffer::createShared(commandPool);
+        cb->begin();
+    }
 
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.oldLayout = oldLayout;
@@ -226,25 +231,28 @@ void Image::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkIm
 
     vkCmdPipelineBarrier(cb->vk(), sourceStage, destinationStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 
-    cb->end();
-
-    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    fenceInfo.flags = 0;
-
-    VkFence fence = VK_NULL_HANDLE;
-
-    if (vkCreateFence(core::VulkanContext::getContext()->getDevice(), &fenceInfo, nullptr, &fence) != VK_SUCCESS)
-        std::cerr << "Failed to create fence for image memory barrier. Falling back to vkQueueWaitIdle\n";
-
-    cb->submit(queue, {}, {}, {}, fence);
-
-    if (fence)
+    if (!comandBuffer)
     {
-        vkWaitForFences(core::VulkanContext::getContext()->getDevice(), 1, &fence, VK_TRUE, UINT64_MAX);
-        vkDestroyFence(core::VulkanContext::getContext()->getDevice(), fence, nullptr);
+        cb->end();
+
+        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        fenceInfo.flags = 0;
+
+        VkFence fence = VK_NULL_HANDLE;
+
+        if (vkCreateFence(core::VulkanContext::getContext()->getDevice(), &fenceInfo, nullptr, &fence) != VK_SUCCESS)
+            std::cerr << "Failed to create fence for image memory barrier. Falling back to vkQueueWaitIdle\n";
+
+        cb->submit(queue, {}, {}, {}, fence);
+
+        if (fence)
+        {
+            vkWaitForFences(core::VulkanContext::getContext()->getDevice(), 1, &fence, VK_TRUE, UINT64_MAX);
+            vkDestroyFence(core::VulkanContext::getContext()->getDevice(), fence, nullptr);
+        }
+        else
+            vkQueueWaitIdle(queue);
     }
-    else
-        vkQueueWaitIdle(queue);
 }
 
 void Image::destroyVkImpl()

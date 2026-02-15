@@ -16,7 +16,6 @@ ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, std::
       m_objectIdTextureHandler(objectIdTextureHandler)
 {
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
-    m_clearValues[1].depthStencil = {1.0f, 0};
     this->setDebugName("ImGui render graph pass");
 }
 
@@ -31,19 +30,39 @@ void ImGuiRenderGraphPass::setViewportImages(const std::vector<VkImageView> &ima
     }
 }
 
+void ImGuiRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context)
+{
+    m_colorRenderTargets[context.currentImageIndex]->getImage()->insertImageMemoryBarrier(
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        0,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer);
+}
+
+void ImGuiRenderGraphPass::startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context)
+{
+    m_colorRenderTargets[context.currentImageIndex]->getImage()->insertImageMemoryBarrier(
+        0,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer);
+}
+
 void ImGuiRenderGraphPass::compile(engine::renderGraph::RGPResourcesStorage &storage)
 {
     std::vector<VkImageView> offscreenImageViews;
 
+    m_colorRenderTargets.resize(core::VulkanContext::getContext()->getSwapchain()->getImages().size());
+
     for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
     {
-        auto colorTexture = storage.getSwapChainTexture(m_colorTextureHandler, imageIndex);
-        std::vector<VkImageView> attachments{colorTexture->vkImageView()};
-
-        auto framebuffer = core::Framebuffer::createShared(core::VulkanContext::getContext()->getDevice(), attachments,
-                                                           m_renderPass, core::VulkanContext::getContext()->getSwapchain()->getExtent());
-
-        m_framebuffers.push_back(framebuffer);
+        m_colorRenderTargets[imageIndex] = storage.getSwapChainTexture(m_colorTextureHandler, imageIndex);
 
         if (m_offscreenTextureHandler.size() > imageIndex)
         {
@@ -74,15 +93,9 @@ void ImGuiRenderGraphPass::onSwapChainResized(engine::renderGraph::RGPResourcesS
 {
     std::vector<VkImageView> offscreenImageViews;
 
-    std::cout << "ImGui start\n";
     for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
     {
-        auto frameBuffer = m_framebuffers[imageIndex];
-
-        auto colorTexture = storage.getSwapChainTexture(m_colorTextureHandler, imageIndex);
-        std::vector<VkImageView> attachments{colorTexture->vkImageView()};
-
-        frameBuffer->resize(core::VulkanContext::getContext()->getSwapchain()->getExtent(), attachments);
+        m_colorRenderTargets[imageIndex] = storage.getSwapChainTexture(m_colorTextureHandler, imageIndex);
 
         if (m_offscreenTextureHandler.size() > imageIndex)
         {
@@ -96,7 +109,6 @@ void ImGuiRenderGraphPass::onSwapChainResized(engine::renderGraph::RGPResourcesS
         else
             std::cerr << "Something wrong with offscreen color texture size\n";
     }
-    std::cout << "ImGui end\n";
 
     setViewportImages(offscreenImageViews);
 
@@ -110,73 +122,14 @@ void ImGuiRenderGraphPass::onSwapChainResized(engine::renderGraph::RGPResourcesS
 
 void ImGuiRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder &builder)
 {
-    VkAttachmentDescription attachment = {};
-    attachment.format = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();
-    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    m_colorFormat = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();
 
-    // VkAttachmentDescription colorAttachment{};
-    // colorAttachment.format = m_swapchain->getImageFormat();
-    // colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    // colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    // colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    // colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    // colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    // colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    // colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                                            VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_COMPARE_OP_ALWAYS, VK_SAMPLER_MIPMAP_MODE_LINEAR);
 
-    VkAttachmentReference colorAttachment = {};
-    colorAttachment.attachment = 0;
-    colorAttachment.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkSubpassDescription subpass = {};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachment;
-
-    VkSubpassDependency dependency = {};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0; // or VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-    m_renderPass = core::RenderPass::createShared(
-        std::vector<VkAttachmentDescription>{attachment},
-        std::vector<VkSubpassDescription>{subpass},
-        std::vector<VkSubpassDependency>{dependency});
-
-    VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.mipLodBias = 0.0f;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
-
-    if (vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
-        throw std::runtime_error("failed to create texture sampler!");
-
-    engine::renderGraph::RGPTextureDescription colorTextureDescription{};
+    engine::renderGraph::RGPTextureDescription colorTextureDescription{m_colorFormat, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT};
     colorTextureDescription.setDebugName("__ELIX_IMGUI_COLOR__");
     colorTextureDescription.setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
-    colorTextureDescription.setFormat(core::VulkanContext::getContext()->getSwapchain()->getImageFormat());
-    colorTextureDescription.setUsage(engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
     colorTextureDescription.setIsSwapChainTarget(true);
 
     m_colorTextureHandler = builder.createTexture(colorTextureDescription);
@@ -246,10 +199,18 @@ void ImGuiRenderGraphPass::initImGui()
     imguiInitInfo.MinImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     imguiInitInfo.ImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     imguiInitInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    imguiInitInfo.RenderPass = m_renderPass->vk();
     imguiInitInfo.Subpass = 0;
     imguiInitInfo.CheckVkResultFn = nullptr;
     imguiInitInfo.Allocator = nullptr;
+
+    imguiInitInfo.UseDynamicRendering = true;
+    imguiInitInfo.PipelineRenderingCreateInfo = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+    imguiInitInfo.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+
+    VkFormat format = m_colorFormat;
+    imguiInitInfo.PipelineRenderingCreateInfo.pColorAttachmentFormats = &format;
+
+    imguiInitInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
 
     ImGui_ImplVulkan_Init(&imguiInitInfo);
 
@@ -267,11 +228,22 @@ std::vector<engine::renderGraph::IRenderGraphPass::RenderPassExecution> ImGuiRen
     };
 
     IRenderGraphPass::RenderPassExecution renderPassExecution;
-    renderPassExecution.clearValues = {m_clearValues[0], m_clearValues[1]};
-    renderPassExecution.framebuffer = m_framebuffers[renderContext.currentImageIndex];
     renderPassExecution.renderArea.offset = {0, 0};
     renderPassExecution.renderArea.extent = extent;
-    renderPassExecution.renderPass = m_renderPass;
+
+    VkRenderingAttachmentInfo color0{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    color0.imageView = m_colorRenderTargets[renderContext.currentImageIndex]->vkImageView();
+    color0.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color0.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color0.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color0.clearValue = m_clearValues[0];
+
+    renderPassExecution.colorsRenderingItems = {color0};
+    renderPassExecution.useDepth = false;
+
+    renderPassExecution.colorFormats = {m_colorFormat};
+    renderPassExecution.depthFormat = VK_FORMAT_UNDEFINED;
+
     return {renderPassExecution};
 }
 
@@ -304,7 +276,7 @@ void ImGuiRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, 
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    m_editor->drawFrame(!m_descriptorSets.empty() && m_descriptorSets.size() > renderContext.currentFrame ? m_descriptorSets.at(renderContext.currentFrame) : VK_NULL_HANDLE);
+    m_editor->drawFrame(!m_descriptorSets.empty() && m_descriptorSets.size() > renderContext.currentImageIndex ? m_descriptorSets.at(renderContext.currentImageIndex) : VK_NULL_HANDLE);
 
     ImGui::Render();
 

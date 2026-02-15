@@ -112,6 +112,9 @@ void VulkanContext::createLogicalDevice()
     deviceFeatures.fillModeNonSolid = VK_TRUE;
     deviceFeatures.independentBlend = VK_TRUE;
 
+    VkPhysicalDeviceVulkan13Features v13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    v13.dynamicRendering = VK_TRUE;
+
     VkDeviceCreateInfo createInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     createInfo.queueCreateInfoCount = queueCreateInfos.size();
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
@@ -119,6 +122,7 @@ void VulkanContext::createLogicalDevice()
     createInfo.enabledExtensionCount = m_deviceExtensions.size();
     createInfo.ppEnabledExtensionNames = m_deviceExtensions.data();
     createInfo.enabledLayerCount = 0;
+    createInfo.pNext = &v13;
 
     if (m_isValidationLayersEnabled)
     {

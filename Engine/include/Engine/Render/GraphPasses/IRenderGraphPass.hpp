@@ -20,10 +20,14 @@ class IRenderGraphPass
 public:
     struct RenderPassExecution
     {
-        VkRenderPass renderPass;
-        VkFramebuffer framebuffer;
         VkRect2D renderArea;
-        std::vector<VkClearValue> clearValues;
+
+        std::vector<VkRenderingAttachmentInfo> colorsRenderingItems;
+        VkRenderingAttachmentInfo depthRenderingItem;
+        std::vector<VkFormat> colorFormats;
+        VkFormat depthFormat;
+
+        bool useDepth{true};
     };
 
     using SharedPtr = std::shared_ptr<IRenderGraphPass>;
@@ -41,7 +45,9 @@ public:
 
     virtual std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const = 0;
 
-    virtual void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer) {}
+    virtual void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) {}
+
+    virtual void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) {}
 
     virtual void cleanup() {}
 

@@ -57,25 +57,12 @@ void PreviewAssetsRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilde
 
         m_resourceHandlers[index] = builder.createTexture(colorTextureDescription);
     }
-
-    m_renderPass = engine::builders::RenderPassBuilder::begin()
-                       .addColorAttachment(format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE,
-                                           VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                       .addSubpassDependency()
-                       .build();
 }
 
 void PreviewAssetsRenderGraphPass::compile(engine::renderGraph::RGPResourcesStorage &storage)
 {
     for (int index = 0; index < MAX_RENDER_JOBS; ++index)
-    {
         m_renderTargets[index] = storage.getTexture(m_resourceHandlers[index]);
-
-        const std::vector<VkImageView> attachments{m_renderTargets[index]->vkImageView()};
-
-        m_framebuffers[index] = core::Framebuffer::createShared(core::VulkanContext::getContext()->getDevice(),
-                                                                attachments, m_renderPass, m_extent);
-    }
 }
 
 void PreviewAssetsRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data,
@@ -85,7 +72,6 @@ void PreviewAssetsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
     vkCmdSetScissor(commandBuffer, 0, 1, &m_scissor);
 
     engine::GraphicsPipelineKey key{};
-    key.renderPass = m_renderPass;
     key.shader = engine::ShaderId::PreviewMesh;
     key.cull = engine::CullMode::Back;
     key.depthTest = true;
@@ -93,6 +79,8 @@ void PreviewAssetsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
     key.depthCompare = VK_COMPARE_OP_LESS;
     key.polygonMode = VK_POLYGON_MODE_FILL;
     key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    key.colorFormats = {core::VulkanContext::getContext()->getSwapchain()->getImageFormat()};
+    key.depthFormat = VK_FORMAT_UNDEFINED;
 
     auto graphicsPipeline = engine::GraphicsPipelineManager::getOrCreate(key);
     auto pipelineLayout = engine::EngineShaderFamilies::meshShaderFamily.pipelineLayout;
@@ -144,6 +132,36 @@ void PreviewAssetsRenderGraphPass::clearJobs()
     m_currentJob = 0;
 }
 
+void PreviewAssetsRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context)
+{
+    for (const auto &colorTarget : m_renderTargets)
+    {
+        colorTarget->getImage()->insertImageMemoryBarrier(
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer);
+    }
+}
+
+void PreviewAssetsRenderGraphPass::startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context)
+{
+    for (const auto &colorTarget : m_renderTargets)
+    {
+        colorTarget->getImage()->insertImageMemoryBarrier(
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer);
+    }
+}
+
 std::vector<engine::renderGraph::IRenderGraphPass::RenderPassExecution> PreviewAssetsRenderGraphPass::getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const
 {
     if (m_indexBusyJobs == 0)
@@ -152,15 +170,25 @@ std::vector<engine::renderGraph::IRenderGraphPass::RenderPassExecution> PreviewA
     std::vector<IRenderGraphPass::RenderPassExecution> result;
     result.reserve(m_indexBusyJobs);
 
-    IRenderGraphPass::RenderPassExecution renderPassExecution;
-    renderPassExecution.renderArea.offset = {0, 0};
-    renderPassExecution.renderArea.extent = m_extent;
-    renderPassExecution.renderPass = m_renderPass;
-    renderPassExecution.clearValues = {m_clearValues[0]};
-
     for (uint32_t i = 0; i < m_indexBusyJobs; ++i)
     {
-        renderPassExecution.framebuffer = m_framebuffers[i];
+        IRenderGraphPass::RenderPassExecution renderPassExecution;
+        renderPassExecution.renderArea.offset = {0, 0};
+        renderPassExecution.renderArea.extent = m_extent;
+
+        VkRenderingAttachmentInfo color0{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color0.imageView = m_renderTargets[i]->vkImageView();
+        color0.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color0.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color0.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color0.clearValue = m_clearValues[0];
+
+        renderPassExecution.colorsRenderingItems = {color0};
+        renderPassExecution.useDepth = false;
+
+        renderPassExecution.colorFormats = {core::VulkanContext::getContext()->getSwapchain()->getImageFormat()};
+        renderPassExecution.depthFormat = VK_FORMAT_UNDEFINED;
+
         result.push_back(renderPassExecution);
     }
 

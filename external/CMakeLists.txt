@@ -14,6 +14,7 @@ add_library(stb INTERFACE)
 
 target_include_directories(stb INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/stb)
 
+
 add_library(imgui STATIC
     ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui.cpp
     ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_draw.cpp
@@ -37,6 +38,17 @@ if(UNIX AND NOT APPLE)
 endif()
 
 target_link_libraries(imgui PUBLIC volk glfw  $<$<PLATFORM_ID:Linux>:${X11_LIBRARIES}> $<$<PLATFORM_ID:Linux>:Threads::Threads>)
+
+
+add_library(imgui_text_edit STATIC
+    ${CMAKE_CURRENT_LIST_DIR}/ImGuiColorTextEdit/TextEditor.cpp
+)
+
+target_include_directories(imgui_text_edit PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/ImGuiColorTextEdit
+)
+
+target_link_libraries(imgui_text_edit PUBLIC imgui)
 
 
 add_library(imguizmo STATIC

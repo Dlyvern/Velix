@@ -9,6 +9,8 @@
 #include "Editor/Project.hpp"
 #include "Engine/Render/RenderTarget.hpp"
 
+#include "TextEditor.h"
+
 #include "Engine/Render/RenderGraphPassPerFrameData.hpp"
 
 #include "Engine/Scene.hpp"
@@ -110,6 +112,12 @@ public:
     }
 
 private:
+    TextEditor m_textEditor;
+
+    void drawDocument();
+
+    ImGuiID m_centerDockId = 0;
+
     std::vector<engine::Material *> m_requestedMaterialPreviewJobs;
     std::vector<VkDescriptorSet> m_materialPreviewDescriptorSets;
 

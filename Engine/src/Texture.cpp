@@ -1,7 +1,7 @@
 #include "Engine/Texture.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_STATIC
+// #define STB_IMAGE_STATIC
 // #define STBI_ONLY_HDR
 #include <stb_image.h>
 
@@ -418,6 +418,7 @@ bool Texture::load(const std::string &path, core::CommandPool::SharedPtr command
     return true;
 }
 
+// TODO does not work
 bool Texture::loadCubemap(const std::array<std::string, 6> &cubemaps,
                           core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
 {
@@ -447,67 +448,38 @@ bool Texture::loadCubemap(const std::array<std::string, 6> &cubemaps,
     }
 
     VkDeviceSize imageSize = m_width * m_height * 4;
-    VkDeviceSize totalSize = imageSize * 6;
-
-    if (!commandPool)
-        commandPool = core::VulkanContext::getContext()->getTransferCommandPool();
-
-    auto queue = core::VulkanContext::getContext()->getGraphicsQueue();
-
-    m_image = core::Image::createShared(static_cast<uint32_t>(m_width),
-                                        static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                        core::memory::MemoryUsage::GPU_ONLY, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
-
-    m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                   commandPool, queue, 6);
-
-    // TODO fix this shit...
-    vkQueueWaitIdle(queue);
+    VkDeviceSize layerSize = imageSize;
+    VkDeviceSize totalSize = layerSize * 6;
 
     auto buffer = core::Buffer::createShared(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
 
+    void *data;
+
+    buffer->map(data);
+
     for (int face = 0; face < 6; ++face)
     {
-        size_t offset = face * imageSize;
+        size_t offset = face * layerSize;
 
-        // void *data;
+        memcpy(static_cast<char *>(data) + offset, facePixels[face], layerSize);
 
-        // buffer->map(data);
-
-        buffer->upload(facePixels[face], offset);
-
-        // size_t offset = face * imageSize;
-
-        // memcpy(static_cast<char *>(data) + offset, facePixels[face], imageSize);
-
-        m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, queue, 1, face);
-
-        // buffer->unmap();
-
-        // TODO do not forget to free fucking pixels
-        //  stbi_image_free(facePixels[face]);
-        vkQueueWaitIdle(queue);
+        if (freePixelsOnLoad)
+            stbi_image_free(facePixels[face]);
     }
 
+    buffer->unmap();
+
+    commandPool = core::VulkanContext::getContext()->getGraphicsCommandPool();
+
+    m_image = core::Image::createShared(static_cast<uint32_t>(m_width),
+                                        static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY, VK_FORMAT_R8G8B8A8_SRGB,
+                                        VK_IMAGE_TILING_OPTIMAL, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
+
+    m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                   commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
+    m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
     m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                   commandPool, queue, 6);
-    vkQueueWaitIdle(queue);
-
-    // void *data;
-
-    // buffer->map(data);
-
-    // for (int face = 0; face < 6; ++face)
-    // {
-    //     size_t offset = face * layerSize;
-
-    //     memcpy(static_cast<char *>(data) + offset, facePixels[face], layerSize);
-
-    //     if (freePixelsOnLoad)
-    //         stbi_image_free(facePixels[face]);
-    // }
-
-    // buffer->unmap();
+                                   commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
 
     VkImageViewCreateInfo imageViewCI{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     imageViewCI.image = m_image->vk();

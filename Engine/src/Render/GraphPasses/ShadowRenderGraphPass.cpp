@@ -3,8 +3,6 @@
 #include "Core/VulkanHelpers.hpp"
 
 #include "Engine/Shaders/PushConstant.hpp"
-#include "Engine/Builders/GraphicsPipelineBuilder.hpp"
-#include "Engine/Builders/RenderPassBuilder.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 
 #include <glm/mat4x4.hpp>
@@ -29,20 +27,13 @@ ShadowRenderGraphPass::ShadowRenderGraphPass()
 
 void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
 {
-    const VkFormat depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
+    m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
     const auto device = core::VulkanContext::getContext()->getDevice();
-
-    m_renderPass = builders::RenderPassBuilder::begin()
-                       .addDepthAttachment(depthFormat, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE,
-                                           VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE,
-                                           VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
-                       .addSubpassDependency(VK_DEPENDENCY_BY_REGION_BIT)
-                       .build();
 
     m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{},
                                                           std::vector<VkPushConstantRange>{PushConstant<LightSpaceMatrixPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)});
 
-    RGPTextureDescription depthTextureDescription(depthFormat, RGPTextureUsage::DEPTH_STENCIL);
+    RGPTextureDescription depthTextureDescription(m_depthFormat, RGPTextureUsage::DEPTH_STENCIL);
     depthTextureDescription.setDebugName("__ELIX_SHADOW_DEPTH_TEXTURE__");
     depthTextureDescription.setExtent(m_extent);
 
@@ -61,27 +52,34 @@ void ShadowRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         0,
         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
         VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
         {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1});
-
-    std::vector<VkImageView> attachments{m_renderTarget->vkImageView()};
-
-    m_framebuffer = core::Framebuffer::createShared(core::VulkanContext::getContext()->getDevice(), attachments,
-                                                    m_renderPass, m_extent);
 }
 
-void ShadowRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer)
+void ShadowRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context)
 {
     m_renderTarget->getImage()->insertImageMemoryBarrier(
         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
         VK_ACCESS_SHADER_READ_BIT,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}, *commandBuffer.get());
+        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}, *commandBuffer);
+}
+
+void ShadowRenderGraphPass::startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context)
+{
+    m_renderTarget->getImage()->insertImageMemoryBarrier(
+        VK_ACCESS_SHADER_READ_BIT,
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}, *commandBuffer);
 }
 
 void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
@@ -94,7 +92,6 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     for (const auto &[entity, drawItem] : data.drawItems)
     {
         GraphicsPipelineKey key{};
-        key.renderPass = m_renderPass;
         key.shader = ShaderId::StaticShadow;
         key.cull = CullMode::None;
         key.depthTest = true;
@@ -103,6 +100,9 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
         key.polygonMode = VK_POLYGON_MODE_FILL;
         key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         key.pipelineLayout = m_pipelineLayout;
+        key.colorFormats = {};
+        key.depthFormat = m_depthFormat;
+
         auto graphicsPipeline = GraphicsPipelineManager::getOrCreate(key);
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
@@ -129,11 +129,22 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
 std::vector<IRenderGraphPass::RenderPassExecution> ShadowRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const
 {
     IRenderGraphPass::RenderPassExecution renderPassExecution;
-    renderPassExecution.clearValues = {m_clearValue};
-    renderPassExecution.framebuffer = m_framebuffer;
     renderPassExecution.renderArea.offset = {0, 0};
     renderPassExecution.renderArea.extent = m_extent;
-    renderPassExecution.renderPass = m_renderPass;
+
+    VkRenderingAttachmentInfo depthAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    depthAtt.imageView = m_renderTarget->vkImageView();
+    depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depthAtt.clearValue = m_clearValue;
+
+    renderPassExecution.colorsRenderingItems = {};
+    renderPassExecution.depthRenderingItem = depthAtt;
+
+    renderPassExecution.colorFormats = {};
+    renderPassExecution.depthFormat = m_depthFormat;
+
     return {renderPassExecution};
 }
 

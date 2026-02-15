@@ -436,21 +436,42 @@ bool RenderGraph::begin()
 
             const auto &execution = executions[recordingIndex];
 
-            VkRenderPassBeginInfo beginRenderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-            beginRenderPassInfo.renderPass = execution.renderPass;
-            beginRenderPassInfo.framebuffer = execution.framebuffer;
-            beginRenderPassInfo.renderArea = execution.renderArea;
-            beginRenderPassInfo.clearValueCount = static_cast<uint32_t>(execution.clearValues.size());
-            beginRenderPassInfo.pClearValues = execution.clearValues.data();
+            // VkRenderPassBeginInfo beginRenderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            // beginRenderPassInfo.renderPass = execution.renderPass;
+            // beginRenderPassInfo.framebuffer = execution.framebuffer;
+            // beginRenderPassInfo.renderArea = execution.renderArea;
+            // beginRenderPassInfo.clearValueCount = static_cast<uint32_t>(execution.clearValues.size());
+            // beginRenderPassInfo.pClearValues = execution.clearValues.data();
 
             const auto &secCB = m_secondaryCommandBuffers[m_currentFrame][secIndex];
 
-            VkCommandBufferInheritanceInfo inherit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-            inherit.renderPass = beginRenderPassInfo.renderPass;
-            inherit.subpass = 0;
-            inherit.framebuffer = beginRenderPassInfo.framebuffer;
+            VkCommandBufferInheritanceRenderingInfo someShit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO_KHR};
+            someShit.colorAttachmentCount = static_cast<uint32_t>(execution.colorsRenderingItems.size());
+            someShit.pColorAttachmentFormats = execution.colorFormats.data();
+            someShit.depthAttachmentFormat = execution.depthFormat;
+            someShit.viewMask = 0;
+            someShit.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            someShit.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
 
-            vkCmdBeginRenderPass(primaryCommandBuffer->vk(), &beginRenderPassInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+            VkCommandBufferInheritanceInfo inherit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+            inherit.pNext = &someShit;
+            // inherit.renderPass = beginRenderPassInfo.renderPass;
+            inherit.subpass = 0;
+            // inherit.framebuffer = beginRenderPassInfo.framebuffer;
+
+            // vkCmdBeginRenderPass(primaryCommandBuffer->vk(), &beginRenderPassInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+
+            VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+            ri.renderArea = execution.renderArea;
+            ri.layerCount = 1;
+            ri.colorAttachmentCount = static_cast<uint32_t>(execution.colorsRenderingItems.size());
+            ri.pColorAttachments = execution.colorsRenderingItems.data();
+            ri.pDepthAttachment = execution.useDepth ? &execution.depthRenderingItem : VK_NULL_HANDLE;
+            ri.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
+
+            renderGraphPass->startBeginRenderPass(primaryCommandBuffer, m_passContextData);
+
+            vkCmdBeginRendering(primaryCommandBuffer->vk(), &ri);
 
             secCB->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inherit);
 
@@ -461,9 +482,10 @@ bool RenderGraph::begin()
             VkCommandBuffer vkSec = secCB->vk();
             vkCmdExecuteCommands(primaryCommandBuffer->vk(), 1, &vkSec);
 
-            vkCmdEndRenderPass(primaryCommandBuffer->vk());
+            // vkCmdEndRenderPass(primaryCommandBuffer->vk());
+            vkCmdEndRendering(primaryCommandBuffer->vk());
 
-            renderGraphPass->endBeginRenderPass(primaryCommandBuffer);
+            renderGraphPass->endBeginRenderPass(primaryCommandBuffer, m_passContextData);
 
             secIndex++;
         }
@@ -710,7 +732,7 @@ void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imag
         m_cameraDescriptorSets[i] = DescriptorSetBuilder::begin()
                                         .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                                         .addBuffer(lightBuffer, sizeof(LightSpaceMatrixUBO), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                                        .addImage(imageView, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
+                                        .addImage(imageView, sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 2)
                                         .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                                         .build(m_device, m_descriptorPool, EngineShaderFamilies::cameraDescriptorSetLayout->vk());
     }

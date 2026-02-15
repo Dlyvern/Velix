@@ -4,7 +4,6 @@
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 
 #include "Core/PipelineLayout.hpp"
-#include "Core/Framebuffer.hpp"
 #include "Core/GraphicsPipeline.hpp"
 
 #include <vector>
@@ -27,18 +26,23 @@ public:
 
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
 
+    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
+    void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
+
 private:
     std::array<VkClearValue, 3> m_clearValues;
-
-    core::GraphicsPipeline::SharedPtr m_graphicsPipeline{nullptr};
-
-    std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
-    core::RenderPass::SharedPtr m_renderPass{nullptr};
 
     RGPResourceHandler &m_shadowHandler;
     RGPResourceHandler m_depthTextureHandler;
     RGPResourceHandler m_colorTextureHandler;
     RGPResourceHandler m_objectIdTextureHandler;
+
+    std::vector<const RenderTarget *> m_colorRenderTargets;
+    const RenderTarget *m_depthRenderTarget{nullptr};
+    const RenderTarget *m_objectIdRenderTarget{nullptr};
+
+    std::vector<VkFormat> m_colorFormats;
+    VkFormat m_depthFormat;
 
     // VkDescriptorPool m_descriptorPool;
     // std::unique_ptr<Skybox> m_skybox{nullptr};

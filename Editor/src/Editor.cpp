@@ -245,6 +245,9 @@ void Editor::initStyle()
 
     if (vkCreateSampler(core::VulkanContext::getContext()->getDevice(), &samplerInfo, nullptr, &m_defaultSampler) != VK_SUCCESS)
         throw std::runtime_error("failed to create texture sampler!");
+
+    m_textEditor.SetPalette(TextEditor::GetDarkPalette());
+    m_textEditor.SetShowWhitespaces(false);
 }
 
 void Editor::addOnModeChangedCallback(const std::function<void(EditorMode)> &function)
@@ -311,6 +314,7 @@ void Editor::showDockSpace()
         ImGui::DockBuilderDockWindow("Hierarchy", dockIdRightTop);
         ImGui::DockBuilderDockWindow("Details", dockIdRightBottom);
         ImGui::DockBuilderDockWindow("Viewport", dockMainId);
+        m_centerDockId = dockMainId;
 
         ImGui::DockBuilderFinish(dockspaceId);
     }
@@ -787,7 +791,7 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet)
 
     if (viewportDescriptorSet)
         drawViewport(viewportDescriptorSet);
-
+    drawDocument();
     drawAssets();
     drawBottomPanel();
     drawHierarchy();
@@ -844,6 +848,30 @@ std::vector<engine::AdditionalPerFrameData> Editor::getRenderData()
     }
 
     return {data};
+}
+
+void Editor::drawDocument()
+{
+    std::string windowName = "./imgui.ini";
+
+    if (m_centerDockId != 0)
+        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Always);
+
+    if (!ImGui::Begin(windowName.c_str()))
+    {
+        ImGui::End();
+        return;
+    }
+
+    if (ImGui::Button("Save"))
+    {
+    }
+    ImGui::SameLine();
+    ImGui::TextUnformatted(true ? "*" : "");
+
+    m_textEditor.Render("TextEditor");
+
+    ImGui::End();
 }
 
 void Editor::setSelectedEntity(engine::Entity *entity)
@@ -1181,10 +1209,6 @@ void Editor::addOnViewportChangedCallback(const std::function<void(float width, 
 
 void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 {
-    ImGuiWindowClass windowClass;
-    windowClass.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoTabBar;
-    ImGui::SetNextWindowClass(&windowClass);
-
     ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_None);
 
     ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();

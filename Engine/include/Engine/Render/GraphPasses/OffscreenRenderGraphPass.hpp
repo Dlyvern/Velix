@@ -2,8 +2,6 @@
 #define ELIX_OFFSCREEN_RENDER_GRAPH_PASS_HPP
 
 #include "Core/Macros.hpp"
-#include "Core/RenderPass.hpp"
-#include "Core/Framebuffer.hpp"
 #include "Engine/Render/RenderTarget.hpp"
 #include "Core/Buffer.hpp"
 #include "Engine/Skybox.hpp"
@@ -30,6 +28,9 @@ public:
     void compile(renderGraph::RGPResourcesStorage &storage) override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
 
+    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
+    void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
+
     std::vector<RGPResourceHandler> &getColorTextureHandlers()
     {
         return m_colorTextureHandler;
@@ -42,10 +43,14 @@ public:
 
 private:
     std::array<VkClearValue, 3> m_clearValues;
-    core::RenderPass::SharedPtr m_renderPass{nullptr};
 
-    std::vector<const RenderTarget *> m_colorImages;
-    std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
+    std::vector<const RenderTarget *> m_colorRenderTargets;
+    const RenderTarget *m_depthRenderTarget{nullptr};
+    const RenderTarget *m_objectIdRenderTarget{nullptr};
+
+    std::vector<VkFormat> m_colorFormats;
+    VkFormat m_depthFormat;
+
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
 
     std::unique_ptr<Skybox> m_skybox{nullptr};

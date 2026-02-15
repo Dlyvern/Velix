@@ -1,6 +1,10 @@
 #ifndef ELIX_PRIMITIVES_HPP
 #define ELIX_PRIMITIVES_HPP
 
+#ifdef _WIN32
+#define _USE_MATH_DEFINES
+#endif
+
 #include <vector>
 #include "Engine/Vertex.hpp"
 #include <cstdint>
@@ -149,18 +153,6 @@ namespace circle
     }
 
 }
-
-namespace primitives
-{
-    static GPUMesh::SharedPtr cubeMesh{nullptr};
-
-    inline void initPrimitiveMeshes()
-    {
-        auto cpuMesh = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
-        cubeMesh = GPUMesh::createFromMesh(cpuMesh);
-    }
-
-} // namespace primitives
 
 ELIX_NESTED_NAMESPACE_END
 

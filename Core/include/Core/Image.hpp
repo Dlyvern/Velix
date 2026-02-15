@@ -41,7 +41,8 @@ public:
                                   VkImageLayout oldImageLayout, VkImageLayout newImageLayout, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
                                   VkImageSubresourceRange subresourceRange, CommandBuffer &commandBuffer);
 
-    void transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, CommandPool::SharedPtr commandPool = nullptr, VkQueue queue = VK_NULL_HANDLE, uint32_t layerCount = 1);
+    void transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, CommandPool::SharedPtr commandPool = nullptr, VkQueue queue = VK_NULL_HANDLE, uint32_t layerCount = 1,
+                               core::CommandBuffer::SharedPtr comandBuffer = nullptr);
 
     void copyBufferToImage(Buffer::SharedPtr buffer, uint32_t width, uint32_t height, CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t layerCount = 1, uint32_t baseLayer = 0);
 

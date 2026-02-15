@@ -27,6 +27,19 @@ OffscreenRenderGraphPass::OffscreenRenderGraphPass(VkDescriptorPool descriptorPo
     this->setDebugName("Offscreen render graph pass");
 
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+
+    // const std::array<std::string, 6> cubemaps{
+    //     "./resources/textures/right.jpg",
+    //     "./resources/textures/left.jpg",
+    //     "./resources/textures/top.jpg",
+    //     "./resources/textures/bottom.jpg",
+    //     "./resources/textures/front.jpg",
+    //     "./resources/textures/back.jpg",
+    // };
+
+    // m_skybox = std::make_unique<Skybox>(cubemaps, m_descriptorPool);
+
+    m_skybox = std::make_unique<Skybox>("./resources/textures/default_sky.hdr", m_descriptorPool);
 }
 
 void OffscreenRenderGraphPass::setExtent(VkExtent2D extent)
@@ -39,93 +52,75 @@ void OffscreenRenderGraphPass::setExtent(VkExtent2D extent)
 std::vector<IRenderGraphPass::RenderPassExecution> OffscreenRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const
 {
     IRenderGraphPass::RenderPassExecution renderPassExecution;
-    renderPassExecution.clearValues = {m_clearValues[0], m_clearValues[1], m_clearValues[2]};
-    renderPassExecution.framebuffer = m_framebuffers[renderContext.currentImageIndex];
     renderPassExecution.renderArea.offset = {0, 0};
     renderPassExecution.renderArea.extent = m_extent;
-    renderPassExecution.renderPass = m_renderPass;
+
+    VkRenderingAttachmentInfo color0{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    color0.imageView = m_colorRenderTargets[renderContext.currentImageIndex]->vkImageView();
+    color0.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color0.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color0.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color0.clearValue = m_clearValues[0];
+
+    VkRenderingAttachmentInfo color1{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    color1.imageView = m_objectIdRenderTarget->vkImageView();
+    color1.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color1.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color1.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color1.clearValue = m_clearValues[1];
+
+    VkRenderingAttachmentInfo depthAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    depthAtt.imageView = m_depthRenderTarget->vkImageView();
+    depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAtt.clearValue = m_clearValues[2];
+
+    renderPassExecution.colorsRenderingItems = {color0, color1};
+    renderPassExecution.depthRenderingItem = depthAtt;
+
+    renderPassExecution.colorFormats = m_colorFormats;
+    renderPassExecution.depthFormat = m_depthFormat;
+
     return {renderPassExecution};
 }
 
 void OffscreenRenderGraphPass::onSwapChainResized(renderGraph::RGPResourcesStorage &storage)
 {
-    auto depthTexture = storage.getTexture(m_depthTextureHandler);
-    auto objectIdTexture = storage.getTexture(m_objectIdTextureHandler);
+    m_depthRenderTarget = storage.getTexture(m_depthTextureHandler);
+    m_objectIdRenderTarget = storage.getTexture(m_objectIdTextureHandler);
 
-    depthTexture->getImage()->transitionImageLayout(core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice()), VK_IMAGE_LAYOUT_UNDEFINED,
-                                                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    m_depthRenderTarget->getImage()->transitionImageLayout(m_depthFormat, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
     for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
-    {
-        auto frameBuffer = m_framebuffers[imageIndex];
-
-        auto colorTexture = storage.getTexture(m_colorTextureHandler[imageIndex]);
-        m_colorImages[imageIndex] = colorTexture;
-
-        std::vector<VkImageView> attachments{colorTexture->vkImageView(), objectIdTexture->vkImageView(), depthTexture->vkImageView()};
-
-        frameBuffer->resize(core::VulkanContext::getContext()->getSwapchain()->getExtent(), attachments);
-    }
+        m_colorRenderTargets[imageIndex] = storage.getTexture(m_colorTextureHandler[imageIndex]);
 }
 
 void OffscreenRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 {
-    auto depthTexture = storage.getTexture(m_depthTextureHandler);
-    auto objectIdTexture = storage.getTexture(m_objectIdTextureHandler);
+    m_depthRenderTarget = storage.getTexture(m_depthTextureHandler);
+    m_objectIdRenderTarget = storage.getTexture(m_objectIdTextureHandler);
 
-    depthTexture->getImage()->transitionImageLayout(core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice()), VK_IMAGE_LAYOUT_UNDEFINED,
-                                                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    m_depthRenderTarget->getImage()->transitionImageLayout(m_depthFormat, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    m_colorRenderTargets.resize(core::VulkanContext::getContext()->getSwapchain()->getImages().size());
 
     for (int imageIndex = 0; imageIndex < core::VulkanContext::getContext()->getSwapchain()->getImages().size(); ++imageIndex)
-    {
-        auto colorTexture = storage.getTexture(m_colorTextureHandler[imageIndex]);
-        m_colorImages.push_back(colorTexture);
-        std::vector<VkImageView> attachments{colorTexture->vkImageView(), objectIdTexture->vkImageView(), depthTexture->vkImageView()};
-
-        auto framebuffer = core::Framebuffer::createShared(core::VulkanContext::getContext()->getDevice(), attachments,
-                                                           m_renderPass, core::VulkanContext::getContext()->getSwapchain()->getExtent());
-
-        m_framebuffers.push_back(framebuffer);
-    }
-
-    // std::array<std::string, 6> cubemaps{
-    //     "./resources/textures/right.jpg",
-    //     "./resources/textures/left.jpg",
-    //     "./resources/textures/top.jpg",
-    //     "./resources/textures/bottom.jpg",
-    //     "./resources/textures/front.jpg",
-    //     "./resources/textures/back.jpg",
-    // };
-
-    // m_skybox = std::make_unique<Skybox>(m_device, core::VulkanContext::getContext()->getPhysicalDevice(), core::VulkanContext::getContext()->getTransferCommandPool(), m_renderPass,
-    //                                     cubemaps, m_descriptorPool);
-
-    // m_skybox = std::make_unique<Skybox>(m_renderPass, "./resources/textures/default_sky.hdr", m_descriptorPool);
+        m_colorRenderTargets[imageIndex] = storage.getTexture(m_colorTextureHandler[imageIndex]);
 }
 
 void OffscreenRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 {
-    auto physicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
-
     auto swapChainImageFormat = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();
-    auto depthImageFormat = core::helpers::findDepthFormat(physicalDevice);
 
-    m_renderPass = builders::RenderPassBuilder::begin()
-                       .addColorAttachment(swapChainImageFormat, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                           VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED,
-                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                       .addColorAttachment(VK_FORMAT_R32_UINT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                           VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED,
-                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                       .addDepthAttachment(depthImageFormat, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                           VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED,
-                                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                       .addSubpassDependency()
-                       .build();
+    m_colorFormats = {swapChainImageFormat, VK_FORMAT_R32_UINT};
+    m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
 
     renderGraph::RGPTextureDescription colorTextureDescription{swapChainImageFormat, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT};
-    renderGraph::RGPTextureDescription depthTextureDescription{depthImageFormat, renderGraph::RGPTextureUsage::DEPTH_STENCIL};
     renderGraph::RGPTextureDescription objectIdTextureDescription{VK_FORMAT_R32_UINT, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC};
+    renderGraph::RGPTextureDescription depthTextureDescription{m_depthFormat, renderGraph::RGPTextureUsage::DEPTH_STENCIL};
 
     colorTextureDescription.setExtent(m_extent);
 
@@ -151,6 +146,66 @@ void OffscreenRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     builder.read(m_shadowTextureHandler, RGPTextureUsage::SAMPLED);
 }
 
+void OffscreenRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context)
+{
+    m_colorRenderTargets[context.currentImageIndex]->getImage()->insertImageMemoryBarrier(
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_ACCESS_SHADER_READ_BIT,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer);
+
+    m_objectIdRenderTarget->getImage()->insertImageMemoryBarrier(
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer.get());
+
+    m_depthRenderTarget->getImage()->insertImageMemoryBarrier(
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        VK_ACCESS_SHADER_READ_BIT,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}, *commandBuffer.get());
+}
+
+void OffscreenRenderGraphPass::startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context)
+{
+    m_colorRenderTargets[context.currentImageIndex]->getImage()->insertImageMemoryBarrier(
+        VK_ACCESS_SHADER_READ_BIT,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer);
+
+    m_objectIdRenderTarget->getImage()->insertImageMemoryBarrier(
+        VK_ACCESS_TRANSFER_READ_BIT,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer);
+
+    m_depthRenderTarget->getImage()->insertImageMemoryBarrier(
+        VK_ACCESS_SHADER_READ_BIT,
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}, *commandBuffer);
+}
+
 void OffscreenRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                                       const RenderGraphPassContext &renderContext)
 {
@@ -159,12 +214,11 @@ void OffscreenRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuff
 
     for (const auto &[entity, drawItem] : data.drawItems)
     {
-        uint64_t entityId = entity->getId();
+        auto entityId = entity->getId();
 
         for (const auto &mesh : drawItem.meshes)
         {
             GraphicsPipelineKey key{};
-            key.renderPass = m_renderPass;
             key.shader = drawItem.finalBones.empty() ? ShaderId::StaticMesh : ShaderId::SkinnedMesh;
             key.cull = CullMode::Back;
             key.depthTest = true;
@@ -172,6 +226,8 @@ void OffscreenRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuff
             key.depthCompare = VK_COMPARE_OP_LESS;
             key.polygonMode = VK_POLYGON_MODE_FILL;
             key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            key.colorFormats = m_colorFormats;
+            key.depthFormat = m_depthFormat;
 
             auto graphicsPipeline = GraphicsPipelineManager::getOrCreate(key);
             auto pipelineLayout = EngineShaderFamilies::meshShaderFamily.pipelineLayout;
@@ -202,47 +258,54 @@ void OffscreenRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuff
         }
     }
 
-    // m_skybox->render(commandBuffer, data.view, data.projection);
+    auto key = m_skybox->getGraphicsPipelineKey();
+    key.colorFormats = m_colorFormats;
+    key.depthFormat = m_depthFormat;
 
-    // for (auto &addData : data.additionalData)
-    // {
-    //     for (const auto &drawItem : addData.drawItems)
-    //     {
-    //         for (const auto &m : drawItem.meshes)
-    //         {
-    //             auto key = drawItem.graphicsPipelineKey;
-    //             key.renderPass = m_renderPass;
+    auto skyboxRenderGraphPipeline = GraphicsPipelineManager::getOrCreate(key);
 
-    //             auto graphicsPipeline = GraphicsPipelineManager::getOrCreate(key);
-    //             core::PipelineLayout::SharedPtr pipelineLayout = EngineShaderFamilies::meshShaderFamily.pipelineLayout;
+    m_skybox->render(commandBuffer, data.view, data.projection, skyboxRenderGraphPipeline);
 
-    //             vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    for (auto &addData : data.additionalData)
+    {
+        for (const auto &drawItem : addData.drawItems)
+        {
+            for (const auto &m : drawItem.meshes)
+            {
+                auto key = drawItem.graphicsPipelineKey;
+                key.colorFormats = m_colorFormats;
+                key.depthFormat = m_depthFormat;
 
-    //             VkBuffer vertexBuffers[] = {m->vertexBuffer->vk()};
-    //             VkDeviceSize offset[] = {0};
+                auto graphicsPipeline = GraphicsPipelineManager::getOrCreate(key);
+                core::PipelineLayout::SharedPtr pipelineLayout = EngineShaderFamilies::meshShaderFamily.pipelineLayout;
 
-    //             vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
-    //             vkCmdBindIndexBuffer(commandBuffer->vk(), m->indexBuffer->vk(), 0, m->indexType);
+                vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-    //             ModelPushConstant modelPushConstant{
-    //                 .model = drawItem.transform};
+                VkBuffer vertexBuffers[] = {m->vertexBuffer->vk()};
+                VkDeviceSize offset[] = {0};
 
-    //             vkCmdPushConstants(commandBuffer->vk(), pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
+                vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, vertexBuffers, offset);
+                vkCmdBindIndexBuffer(commandBuffer->vk(), m->indexBuffer->vk(), 0, m->indexType);
 
-    //             std::vector<VkDescriptorSet> descriptorSets;
+                ModelPushConstant modelPushConstant{
+                    .model = drawItem.transform};
 
-    //             descriptorSets =
-    //                 {
-    //                     data.cameraDescriptorSet // set 0: camera
-    //                 };
+                vkCmdPushConstants(commandBuffer->vk(), pipelineLayout->vk(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ModelPushConstant), &modelPushConstant);
 
-    //             vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout->vk(), 0, static_cast<uint32_t>(descriptorSets.size()),
-    //                                     descriptorSets.data(), 0, nullptr);
+                std::vector<VkDescriptorSet> descriptorSets;
 
-    //             vkCmdDrawIndexed(commandBuffer->vk(), m->indicesCount, 1, 0, 0, 0);
-    //         }
-    //     }
-    // }
+                descriptorSets =
+                    {
+                        data.cameraDescriptorSet // set 0: camera
+                    };
+
+                vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout->vk(), 0, static_cast<uint32_t>(descriptorSets.size()),
+                                        descriptorSets.data(), 0, nullptr);
+
+                vkCmdDrawIndexed(commandBuffer->vk(), m->indicesCount, 1, 0, 0, 0);
+            }
+        }
+    }
 }
 
 ELIX_CUSTOM_NAMESPACE_END

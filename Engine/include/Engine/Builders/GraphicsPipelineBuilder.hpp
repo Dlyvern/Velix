@@ -73,7 +73,7 @@ public:
         ci.blendConstants[3] = 0.0f;
         ci.logicOpEnable = VK_FALSE;
         ci.attachmentCount = static_cast<uint32_t>(blendingAttachments.size());
-        ci.pAttachments = blendingAttachments.data();
+        ci.pAttachments = blendingAttachments.empty() ? nullptr : blendingAttachments.data();
         return ci;
     }
 

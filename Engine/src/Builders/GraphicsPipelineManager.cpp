@@ -43,6 +43,9 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     core::Shader previewMeshShader("./resources/shaders/shader_simple_textured_mesh.vert.spv",
                                    "./resources/shaders/shader_simple_textured_mesh.frag.spv");
 
+    core::Shader skyboxHDRShader("./resources/shaders/skybox.vert.spv", "./resources/shaders/skybox_hdr.frag.spv");
+    core::Shader skyboxShader("./resources/shaders/skybox.vert.spv", "./resources/shaders/skybox.frag.spv");
+
     switch (key.shader)
     {
     case ShaderId::StaticMesh:
@@ -63,6 +66,13 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::PreviewMesh:
         stages = previewMeshShader.getShaderStages();
         break;
+    case ShaderId::SkyboxHDR:
+        stages = skyboxHDRShader.getShaderStages();
+        break;
+    case ShaderId::Skybox:
+        stages = skyboxShader.getShaderStages();
+        break;
+
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
@@ -81,7 +91,19 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     auto inputAssembly = builders::GraphicsPipelineBuilder::inputAssemblyCI(key.topology);
     auto viewportState = builders::GraphicsPipelineBuilder::viewportCI({dummyVp}, {dummySc});
     auto rasterizer = builders::GraphicsPipelineBuilder::rasterizationCI(key.polygonMode);
-    rasterizer.cullMode = (key.cull == CullMode::Back) ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+
+    switch (key.cull)
+    {
+    case CullMode::Back:
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        break;
+    case CullMode::Front:
+        rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT;
+        break;
+    default:
+        rasterizer.cullMode = VK_CULL_MODE_NONE;
+    }
+
     auto msaa = builders::GraphicsPipelineBuilder::multisamplingCI(); // 1x currently
     auto depthStencil = builders::GraphicsPipelineBuilder::depthStencilCI(key.depthTest, key.depthWrite, key.depthCompare);
 
@@ -92,6 +114,22 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     {
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::VertexSkinned))};
         vertexAttributeDescriptions = vertex::VertexSkinned::getAttributeDescriptions();
+    }
+    else if (key.shader == ShaderId::SkyboxHDR || key.shader == ShaderId::Skybox)
+    {
+        VkVertexInputBindingDescription bindingDescription{};
+        bindingDescription.binding = 0;
+        bindingDescription.stride = 3 * sizeof(float);
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        VkVertexInputAttributeDescription attributeDescription{};
+        attributeDescription.binding = 0;
+        attributeDescription.location = 0;
+        attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescription.offset = 0;
+
+        vertexBindingDescriptions = {bindingDescription};
+        vertexAttributeDescriptions = {attributeDescription};
     }
     else
     {
@@ -122,17 +160,25 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         colorBlendAttachments.clear();
     }
 
+    if (key.shader == ShaderId::SkyboxHDR)
+        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
     auto colorBlending = builders::GraphicsPipelineBuilder::colorBlending(colorBlendAttachments);
 
     const uint32_t subpass = 0;
 
     auto pipelineLayout = key.pipelineLayout ? key.pipelineLayout : EngineShaderFamilies::meshShaderFamily.pipelineLayout;
 
-    return core::GraphicsPipeline::createShared(
-        core::VulkanContext::getContext()->getDevice(),
-        key.renderPass->vk(),
+    VkPipelineRenderingCreateInfo pipelineRenderingCI{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+    pipelineRenderingCI.colorAttachmentCount = static_cast<uint32_t>(key.colorFormats.size());
+    pipelineRenderingCI.pColorAttachmentFormats = key.colorFormats.empty() ? nullptr : key.colorFormats.data();
+    pipelineRenderingCI.depthAttachmentFormat = key.depthFormat;
+    pipelineRenderingCI.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
+
+    auto graphicsPipeline = core::GraphicsPipeline::createShared(
+        pipelineRenderingCI,
         stages,
-        pipelineLayout,
+        *pipelineLayout,
         dynamicState,
         colorBlending,
         msaa,
@@ -140,9 +186,11 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         viewportState,
         inputAssembly,
         vertexInputState,
-        subpass,
         depthStencil,
+        subpass,
         cache::GraphicsPipelineCache::getDeviceCache(core::VulkanContext::getContext()->getDevice()));
+
+    return graphicsPipeline;
 }
 
 ELIX_NESTED_NAMESPACE_END

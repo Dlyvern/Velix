@@ -21,6 +21,7 @@ class Buffer
 public:
     Buffer(VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, VkBufferCreateFlags flags = 0);
 
+    void upload(const void *data, VkDeviceSize size, VkDeviceSize offset);
     void upload(const void *data, VkDeviceSize size);
     void upload(const void *data);
 

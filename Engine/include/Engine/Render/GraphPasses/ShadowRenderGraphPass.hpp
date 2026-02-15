@@ -1,10 +1,7 @@
 #ifndef ELIX_SHADOW_RENDER_GRAPH_PASS_HPP
 #define ELIX_SHADOW_RENDER_GRAPH_PASS_HPP
 
-#include "Core/Macros.hpp"
-#include "Core/RenderPass.hpp"
 #include "Core/PipelineLayout.hpp"
-#include "Core/Framebuffer.hpp"
 #include "Core/Sampler.hpp"
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
@@ -22,7 +19,8 @@ public:
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
-    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer) override;
+    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
+    void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
 
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
     void compile(renderGraph::RGPResourcesStorage &storage) override;
@@ -43,13 +41,11 @@ public:
     }
 
 private:
-    core::RenderPass::SharedPtr m_renderPass{nullptr};
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};
 
     const RenderTarget *m_renderTarget{nullptr};
-
-    core::Framebuffer::SharedPtr m_framebuffer{nullptr};
+    VkFormat m_depthFormat;
 
     VkViewport m_viewport{};
     VkRect2D m_scissor{};

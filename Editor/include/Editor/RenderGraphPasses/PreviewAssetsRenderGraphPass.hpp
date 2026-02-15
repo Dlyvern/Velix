@@ -3,9 +3,6 @@
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 
-#include "Core/RenderPass.hpp"
-#include "Core/Framebuffer.hpp"
-
 #include <vector>
 #include <array>
 
@@ -35,11 +32,10 @@ public:
     void record(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data,
                 const engine::RenderGraphPassContext &renderContext) override;
 
+    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context) override;
+    void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context) override;
+
     std::vector<RenderPassExecution> getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const override;
-
-    void cleanup() {}
-
-    void onSwapChainResized(engine::renderGraph::RGPResourcesStorage &storage) {}
 
     std::vector<VkImageView> getRenderedImages() const
     {
@@ -61,14 +57,11 @@ private:
     std::array<PreviewJob, MAX_RENDER_JOBS> m_renderJobs;
     std::array<const engine::RenderTarget *, MAX_RENDER_JOBS> m_renderTargets;
     std::array<engine::renderGraph::RGPResourceHandler, MAX_RENDER_JOBS> m_resourceHandlers;
-    std::array<core::Framebuffer::SharedPtr, MAX_RENDER_JOBS> m_framebuffers;
 
     VkViewport m_viewport;
     VkRect2D m_scissor;
     VkExtent2D m_extent;
     std::array<VkClearValue, 1> m_clearValues;
-
-    core::RenderPass::SharedPtr m_renderPass{nullptr};
 
     engine::GPUMesh::SharedPtr m_circleGpuMesh{nullptr};
 

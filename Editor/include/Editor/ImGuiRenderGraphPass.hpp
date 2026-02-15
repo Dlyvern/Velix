@@ -1,7 +1,7 @@
 #ifndef IMGUI_RENDER_GRAPH_PASS_HPP
 #define IMGUI_RENDER_GRAPH_PASS_HPP
 
-#include "Core/Framebuffer.hpp"
+#include "Core/Sampler.hpp"
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 
@@ -28,6 +28,9 @@ public:
                 const engine::RenderGraphPassContext &renderContext) override;
     std::vector<RenderPassExecution> getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const override;
 
+    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context) override;
+    void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context) override;
+
     void setViewportImages(const std::vector<VkImageView> &imageViews);
 
     void onSwapChainResized(engine::renderGraph::RGPResourcesStorage &storage) override;
@@ -37,17 +40,17 @@ public:
 private:
     void initImGui();
 
+    core::Sampler::SharedPtr m_sampler{nullptr};
+
     VkDevice m_device{VK_NULL_HANDLE};
-    std::array<VkClearValue, 2> m_clearValues;
+    std::array<VkClearValue, 1> m_clearValues;
     std::shared_ptr<Editor> m_editor{nullptr};
 
-    VkSampler m_sampler;
+    std::vector<const engine::RenderTarget *> m_colorRenderTargets;
 
-    core::RenderPass::SharedPtr m_renderPass{nullptr};
+    VkFormat m_colorFormat;
 
     std::vector<VkDescriptorSet> m_descriptorSets;
-    std::vector<std::size_t> m_framebufferHashes;
-    std::vector<core::Framebuffer::SharedPtr> m_framebuffers;
 
     engine::renderGraph::RGPResourceHandler m_colorTextureHandler;
 

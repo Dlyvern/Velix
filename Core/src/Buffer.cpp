@@ -46,6 +46,14 @@ void Buffer::unmap()
     core::VulkanContext::getContext()->getDevice()->unmapMemory(m_bufferAllocation.allocation);
 }
 
+void Buffer::upload(const void *data, VkDeviceSize size, VkDeviceSize offset)
+{
+    void *dst = nullptr;
+    map(dst, size, offset, 0);
+    std::memcpy(dst, data, (size_t)size);
+    unmap();
+}
+
 void Buffer::upload(const void *data, VkDeviceSize size)
 {
     void *dst;
