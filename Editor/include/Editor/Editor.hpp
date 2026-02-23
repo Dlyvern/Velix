@@ -34,7 +34,7 @@ public:
         PAUSE = 2
     };
 
-    Editor(VkDescriptorPool descriptorPool);
+    Editor();
 
     void initStyle();
 
@@ -61,18 +61,18 @@ public:
 
     void drawFrame(VkDescriptorSet viewportDescriptorSet = VK_NULL_HANDLE);
 
-    void addOnViewportChangedCallback(const std::function<void(float width, float height)> &function);
+    void addOnViewportChangedCallback(const std::function<void(uint32_t width, uint32_t height)> &function);
 
     void addOnModeChangedCallback(const std::function<void(EditorMode)> &function);
 
     std::vector<engine::AdditionalPerFrameData> getRenderData();
 
-    float getViewportX() const
+    uint32_t getViewportX() const
     {
         return m_viewportSizeX;
     }
 
-    float getViewportY() const
+    uint32_t getViewportY() const
     {
         return m_viewportSizeY;
     }
@@ -125,8 +125,6 @@ private:
 
     core::Buffer::SharedPtr m_entityIdBuffer{nullptr};
 
-    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
-
     engine::GPUMesh::SharedPtr m_selectedObjectMesh{nullptr};
 
     EditorMode m_currentMode{EditorMode::EDIT};
@@ -178,10 +176,10 @@ private:
     engine::Entity *m_cacheEntity{nullptr};
     bool m_isDockingWindowFullscreen{true};
 
-    std::vector<std::function<void(float width, float height)>> m_onViewportWindowResized{nullptr};
+    std::vector<std::function<void(uint32_t width, uint32_t height)>> m_onViewportWindowResized{nullptr};
 
-    float m_viewportSizeX{0.0f};
-    float m_viewportSizeY{0.0f};
+    uint32_t m_viewportSizeX{0};
+    uint32_t m_viewportSizeY{0};
 
     VkSampler m_defaultSampler{VK_NULL_HANDLE};
 };

@@ -50,6 +50,8 @@ void PreviewAssetsRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilde
 
     engine::renderGraph::RGPTextureDescription colorTextureDescription(format, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
     colorTextureDescription.setExtent(m_extent);
+    colorTextureDescription.setInitialLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    colorTextureDescription.setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
     for (int index = 0; index < MAX_RENDER_JOBS; ++index)
     {
@@ -132,36 +134,6 @@ void PreviewAssetsRenderGraphPass::clearJobs()
     m_currentJob = 0;
 }
 
-void PreviewAssetsRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context)
-{
-    for (const auto &colorTarget : m_renderTargets)
-    {
-        colorTarget->getImage()->insertImageMemoryBarrier(
-            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            VK_ACCESS_SHADER_READ_BIT,
-            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer);
-    }
-}
-
-void PreviewAssetsRenderGraphPass::startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context)
-{
-    for (const auto &colorTarget : m_renderTargets)
-    {
-        colorTarget->getImage()->insertImageMemoryBarrier(
-            VK_ACCESS_SHADER_READ_BIT,
-            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, *commandBuffer);
-    }
-}
-
 std::vector<engine::renderGraph::IRenderGraphPass::RenderPassExecution> PreviewAssetsRenderGraphPass::getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const
 {
     if (m_indexBusyJobs == 0)
@@ -188,6 +160,8 @@ std::vector<engine::renderGraph::IRenderGraphPass::RenderPassExecution> PreviewA
 
         renderPassExecution.colorFormats = {core::VulkanContext::getContext()->getSwapchain()->getImageFormat()};
         renderPassExecution.depthFormat = VK_FORMAT_UNDEFINED;
+
+        renderPassExecution.targets[m_resourceHandlers[i]] = m_renderTargets[i];
 
         result.push_back(renderPassExecution);
     }

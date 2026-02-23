@@ -14,7 +14,7 @@ struct MaterialColor
     glm::vec4 color = glm::vec4(1.0f);
 };
 
-Material::Material(VkDescriptorPool descriptorPool, Texture::SharedPtr texture) : m_texture(texture)
+Material::Material(Texture::SharedPtr texture) : m_texture(texture)
 {
     m_device = core::VulkanContext::getContext()->getDevice();
 
@@ -22,6 +22,8 @@ Material::Material(VkDescriptorPool descriptorPool, Texture::SharedPtr texture) 
 
     m_descriptorSets.resize(m_maxFramesInFlight);
     m_colorBuffers.reserve(m_maxFramesInFlight);
+
+    auto descriptorPool = core::VulkanContext::getContext()->getPersistentDescriptorPool();
 
     for (uint32_t i = 0; i < m_maxFramesInFlight; ++i)
     {
@@ -59,14 +61,14 @@ Texture::SharedPtr Material::getTexture() const
     return m_texture;
 }
 
-void Material::createDefaultMaterial(VkDescriptorPool descriptorPool, Texture::SharedPtr texture)
+void Material::createDefaultMaterial(Texture::SharedPtr texture)
 {
-    s_defaultMaterial = create(descriptorPool, texture);
+    s_defaultMaterial = create(texture);
 }
 
-Material::SharedPtr Material::create(VkDescriptorPool descriptorPool, Texture::SharedPtr texture)
+Material::SharedPtr Material::create(Texture::SharedPtr texture)
 {
-    return std::make_shared<Material>(descriptorPool, texture);
+    return std::make_shared<Material>(texture);
 }
 
 VkDescriptorSet Material::getDescriptorSet(uint32_t frameIndex) const

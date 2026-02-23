@@ -12,6 +12,7 @@
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 
+#include "Engine/Utilities/ImageUtilities.hpp"
 #include "Engine/Shaders/ShaderFamily.hpp"
 
 #include <glm/glm.hpp>
@@ -184,7 +185,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
                 auto textureImage = std::make_shared<Texture>();
                 textureImage->load(mesh.material.albedoTexture);
 
-                auto material = Material::create(getDescriptorPool(), textureImage);
+                auto material = Material::create(textureImage);
                 gpuMesh->material = material;
             }
 
@@ -366,14 +367,32 @@ void RenderGraph::createDescriptorSetPool()
         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 100},
         {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 100}};
 
-    VkDescriptorPoolCreateInfo descriptorPoolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    descriptorPoolCI.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    descriptorPoolCI.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-    descriptorPoolCI.pPoolSizes = poolSizes.data();
-    descriptorPoolCI.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    m_descriptorPool = core::DescriptorPool::createShared(m_device, poolSizes, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+                                                          static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT));
+}
 
-    if (vkCreateDescriptorPool(m_device, &descriptorPoolCI, nullptr, &m_descriptorPool) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create descriptor pool");
+void RenderGraph::recreateSwapChain()
+{
+    m_swapchain->recreate();
+
+    auto barriers = m_renderGraphPassesCompiler.onSwapChainResized(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
+
+    auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
+    commandBuffer.begin();
+
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+    dep.pImageMemoryBarriers = barriers.data();
+
+    vkCmdPipelineBarrier2(commandBuffer, &dep);
+
+    commandBuffer.end();
+
+    commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
+    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+
+    for (const auto &[id, renderPass] : m_renderGraphPasses)
+        renderPass.renderGraphPass->compile(m_renderGraphPassesStorage);
 }
 
 bool RenderGraph::begin()
@@ -396,12 +415,7 @@ bool RenderGraph::begin()
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
-        m_swapchain->recreate();
-
-        m_renderGraphPassesCompiler.onSwapChainResized(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
-
-        for (const auto &[id, renderPass] : m_renderGraphPasses)
-            renderPass.renderGraphPass->onSwapChainResized(m_renderGraphPassesStorage);
+        recreateSwapChain();
 
         return false;
     }
@@ -409,6 +423,49 @@ bool RenderGraph::begin()
     {
         std::cerr << "Failed to acquire swap chain image: " << core::helpers::vulkanResultToString(result) << '\n';
         return false;
+    }
+
+    for (const auto &[id, renderGraphPass] : m_renderGraphPasses)
+    {
+        if (renderGraphPass.renderGraphPass->needsRecompilation())
+        {
+            std::vector<RGPResourceHandler> resourcesId;
+
+            for (const auto &write : renderGraphPass.passInfo.writes)
+                resourcesId.push_back(write.resourceId);
+
+            auto barriers = m_renderGraphPassesCompiler.compile(resourcesId, m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
+
+            auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
+            commandBuffer.begin();
+
+            VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            dep.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+            dep.pImageMemoryBarriers = barriers.data();
+
+            vkCmdPipelineBarrier2(commandBuffer, &dep);
+
+            commandBuffer.end();
+
+            commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
+            vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+
+            renderGraphPass.renderGraphPass->compile(m_renderGraphPassesStorage);
+
+            renderGraphPass.renderGraphPass->recompilationIsDone();
+
+            for (const auto &id : renderGraphPass.outgoing)
+            {
+                for (const auto &[_, render] : m_renderGraphPasses)
+                {
+                    if (render.id == id)
+                    {
+                        render.renderGraphPass->compile(m_renderGraphPassesStorage);
+                        continue;
+                    }
+                }
+            }
+        }
     }
 
     const auto &primaryCommandBuffer = m_commandBuffers.at(m_currentFrame);
@@ -436,13 +493,6 @@ bool RenderGraph::begin()
 
             const auto &execution = executions[recordingIndex];
 
-            // VkRenderPassBeginInfo beginRenderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-            // beginRenderPassInfo.renderPass = execution.renderPass;
-            // beginRenderPassInfo.framebuffer = execution.framebuffer;
-            // beginRenderPassInfo.renderArea = execution.renderArea;
-            // beginRenderPassInfo.clearValueCount = static_cast<uint32_t>(execution.clearValues.size());
-            // beginRenderPassInfo.pClearValues = execution.clearValues.data();
-
             const auto &secCB = m_secondaryCommandBuffers[m_currentFrame][secIndex];
 
             VkCommandBufferInheritanceRenderingInfo someShit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO_KHR};
@@ -455,11 +505,7 @@ bool RenderGraph::begin()
 
             VkCommandBufferInheritanceInfo inherit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
             inherit.pNext = &someShit;
-            // inherit.renderPass = beginRenderPassInfo.renderPass;
             inherit.subpass = 0;
-            // inherit.framebuffer = beginRenderPassInfo.framebuffer;
-
-            // vkCmdBeginRenderPass(primaryCommandBuffer->vk(), &beginRenderPassInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
 
             VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
             ri.renderArea = execution.renderArea;
@@ -469,9 +515,51 @@ bool RenderGraph::begin()
             ri.pDepthAttachment = execution.useDepth ? &execution.depthRenderingItem : VK_NULL_HANDLE;
             ri.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
 
-            renderGraphPass->startBeginRenderPass(primaryCommandBuffer, m_passContextData);
+            std::vector<VkImageMemoryBarrier2> firstBarriers;
+            std::vector<VkImageMemoryBarrier2> secondBarriers;
 
-            vkCmdBeginRendering(primaryCommandBuffer->vk(), &ri);
+            for (const auto &[id, target] : execution.targets)
+            {
+                auto textureDescription = m_renderGraphPassesBuilder.getTextureDescription(id);
+
+                auto srcInfoInitial = utilities::ImageUtilities::getSrcLayoutInfo(textureDescription->getInitialLayout());
+                auto srcInfoFinal = utilities::ImageUtilities::getSrcLayoutInfo(textureDescription->getFinalLayout());
+
+                auto dstInfoInitial = utilities::ImageUtilities::getDstLayoutInfo(textureDescription->getInitialLayout());
+                auto dstInfoFinal = utilities::ImageUtilities::getDstLayoutInfo(textureDescription->getFinalLayout());
+
+                auto aspect = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription->getFormat());
+                auto preBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+                    *target->getImage(),
+                    srcInfoFinal.accessMask,
+                    dstInfoInitial.accessMask,
+                    textureDescription->getFinalLayout(),   // old
+                    textureDescription->getInitialLayout(), // new
+                    srcInfoFinal.stageMask,
+                    dstInfoInitial.stageMask,
+                    {aspect, 0, 1, 0, 1});
+
+                auto postBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+                    *target->getImage(),
+                    srcInfoInitial.accessMask,
+                    dstInfoFinal.accessMask,
+                    textureDescription->getInitialLayout(), // old
+                    textureDescription->getFinalLayout(),   // new
+                    srcInfoInitial.stageMask,
+                    dstInfoFinal.stageMask,
+                    {aspect, 0, 1, 0, 1});
+
+                firstBarriers.push_back(preBarrier);
+                secondBarriers.push_back(postBarrier);
+            }
+
+            VkDependencyInfo firstDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            firstDep.imageMemoryBarrierCount = static_cast<uint32_t>(firstBarriers.size());
+            firstDep.pImageMemoryBarriers = firstBarriers.data();
+
+            vkCmdPipelineBarrier2(primaryCommandBuffer, &firstDep);
+
+            vkCmdBeginRendering(primaryCommandBuffer, &ri);
 
             secCB->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inherit);
 
@@ -479,13 +567,15 @@ bool RenderGraph::begin()
 
             secCB->end();
 
-            VkCommandBuffer vkSec = secCB->vk();
-            vkCmdExecuteCommands(primaryCommandBuffer->vk(), 1, &vkSec);
+            vkCmdExecuteCommands(primaryCommandBuffer->vk(), 1, secCB->pVk());
 
-            // vkCmdEndRenderPass(primaryCommandBuffer->vk());
             vkCmdEndRendering(primaryCommandBuffer->vk());
 
-            renderGraphPass->endBeginRenderPass(primaryCommandBuffer, m_passContextData);
+            VkDependencyInfo secondDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            secondDep.imageMemoryBarrierCount = static_cast<uint32_t>(secondBarriers.size());
+            secondDep.pImageMemoryBarriers = secondBarriers.data();
+
+            vkCmdPipelineBarrier2(primaryCommandBuffer, &secondDep);
 
             secIndex++;
         }
@@ -509,6 +599,8 @@ void RenderGraph::end()
     currentCommandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue(), waitSemaphores, waitStages, signalSemaphores,
                                  m_inFlightFences[m_currentFrame]);
 
+    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+
     VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     presentInfo.waitSemaphoreCount = static_cast<uint32_t>(signalSemaphores.size());
     presentInfo.pWaitSemaphores = signalSemaphores.data();
@@ -520,14 +612,7 @@ void RenderGraph::end()
     VkResult result = vkQueuePresentKHR(core::VulkanContext::getContext()->getPresentQueue(), &presentInfo);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
-    {
-        m_swapchain->recreate();
-
-        m_renderGraphPassesCompiler.onSwapChainResized(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
-
-        for (const auto &[id, renderPass] : m_renderGraphPasses)
-            renderPass.renderGraphPass->onSwapChainResized(m_renderGraphPassesStorage);
-    }
+        recreateSwapChain();
     else if (result != VK_SUCCESS)
         throw std::runtime_error("Failed to present swap chain image: " + core::helpers::vulkanResultToString(result));
 
@@ -544,11 +629,94 @@ void RenderGraph::draw()
 
 void RenderGraph::setup()
 {
-    for (auto &[id, pass] : m_renderGraphPasses)
+    // indegree[id] = number of dependencies this pass has
+    std::unordered_map<uint32_t, uint32_t> indegree;
+    indegree.reserve(m_renderGraphPasses.size());
+
+    // adjacency: dep -> list of passes that depend on it
+    std::unordered_map<uint32_t, std::vector<uint32_t>> adj;
+    adj.reserve(m_renderGraphPasses.size());
+
+    // Init indegrees to 0 for all passes in graph
+    for (const auto &[_, pass] : m_renderGraphPasses)
+        indegree[pass.id] = 0;
+
+    // Build graph
+    for (const auto &[_, pass] : m_renderGraphPasses)
     {
-        m_renderGraphPassesBuilder.setCurrentPass(&pass.passInfo);
-        pass.renderGraphPass->setup(m_renderGraphPassesBuilder);
+        const auto &deps = pass.renderGraphPass->getDependOnRenderGraphPassesIds();
+        for (uint32_t depId : deps)
+        {
+            // If depId isn't in the graph, that's a bug (or allow "external")
+            if (!indegree.contains(depId))
+            {
+                throw std::runtime_error(
+                    "RenderGraph: pass " + std::to_string(pass.id) +
+                    " depends on missing pass " + std::to_string(depId));
+            }
+
+            adj[depId].push_back(pass.id); // depId -> id
+            indegree[pass.id]++;           // id has one more prerequisite
+        }
     }
+
+    // Start with nodes that have no deps
+    std::queue<uint32_t> q;
+    for (const auto &[id, deg] : indegree)
+        if (deg == 0)
+            q.push(id);
+
+    std::vector<uint32_t> order;
+    order.reserve(m_renderGraphPasses.size());
+
+    while (!q.empty())
+    {
+        uint32_t u = q.front();
+        q.pop();
+        order.push_back(u);
+
+        auto it = adj.find(u);
+        if (it == adj.end())
+            continue;
+
+        for (uint32_t v : it->second)
+        {
+            auto &d = indegree[v];
+            if (--d == 0)
+                q.push(v);
+        }
+    }
+
+    // Cycle check
+    if (order.size() != m_renderGraphPasses.size())
+    {
+        // Optional: collect nodes still with indegree > 0 for nicer debug
+        std::string msg = "RenderGraph: dependency cycle detected among passes: ";
+        for (const auto &[id, deg] : indegree)
+            if (deg > 0)
+                msg += std::to_string(id) + " ";
+        throw std::runtime_error(msg);
+    }
+
+    for (uint32_t id : order)
+    {
+        auto renderGraphPass = findRenderGraphPassById(id);
+
+        if (!renderGraphPass)
+        {
+            std::cerr << "failed to find render graph pass\n";
+            continue;
+        }
+
+        m_renderGraphPassesBuilder.setCurrentPass(&renderGraphPass->passInfo);
+        renderGraphPass->renderGraphPass->setup(m_renderGraphPassesBuilder);
+    }
+
+    // for (auto &[id, pass] : m_renderGraphPasses)
+    // {
+    //     m_renderGraphPassesBuilder.setCurrentPass(&pass.passInfo);
+    //     pass.renderGraphPass->setup(m_renderGraphPassesBuilder);
+    // }
 
     compile();
 }
@@ -576,18 +744,35 @@ void RenderGraph::sortRenderGraphPasses()
         return false;
     };
 
-    for (auto &[id, renderGraphPass] : m_renderGraphPasses)
+    auto producerConsumer = [](const RenderGraphPassData &a, const RenderGraphPassData &b)
     {
-        for (auto &[id, secondRenderGraphPass] : m_renderGraphPasses)
+        for (const auto &wa : a.passInfo.writes)
+            for (const auto &rb : b.passInfo.reads)
+                if (wa.resourceId == rb.resourceId)
+                    return true;
+        return false;
+    };
+
+    for (auto &[_, renderGraphPass] : m_renderGraphPasses)
+    {
+        std::unordered_set<uint32_t> uniqueDst;
+        for (auto &[_, secondRenderGraphPass] : m_renderGraphPasses)
         {
             if (renderGraphPass.id == secondRenderGraphPass.id)
                 continue;
 
-            if (hasDependencies(renderGraphPass, secondRenderGraphPass))
+            if (producerConsumer(renderGraphPass, secondRenderGraphPass))
             {
-                renderGraphPass.outgoing.push_back(secondRenderGraphPass.id);
-                secondRenderGraphPass.indegree++;
+                uniqueDst.insert(secondRenderGraphPass.id);
+                // renderGraphPass.outgoing.push_back(secondRenderGraphPass.id);
+                // secondRenderGraphPass.indegree++;
             }
+        }
+
+        for (uint32_t dst : uniqueDst)
+        {
+            renderGraphPass.outgoing.push_back(dst);
+            findRenderGraphPassById(dst)->indegree++;
         }
     }
 
@@ -633,6 +818,9 @@ void RenderGraph::sortRenderGraphPasses()
         return;
     }
 
+    m_sortedRenderGraphPasses.clear();
+    m_sortedRenderGraphPasses.reserve(sorted.size());
+
     for (const auto &sortId : sorted)
     {
         auto renderGraphPass = findRenderGraphPassById(sortId);
@@ -643,7 +831,7 @@ void RenderGraph::sortRenderGraphPasses()
             continue;
         }
 
-        m_sortedRenderGraphPasses.insert(renderGraphPass->renderGraphPass.get());
+        m_sortedRenderGraphPasses.push_back(renderGraphPass->renderGraphPass.get());
     }
 
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
@@ -652,12 +840,30 @@ void RenderGraph::sortRenderGraphPasses()
 
 void RenderGraph::compile()
 {
-    m_renderGraphPassesCompiler.compile(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
+    auto barriers = m_renderGraphPassesCompiler.compile(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
 
     // std::cout << "Memory before render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n';
 
+    auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
+    commandBuffer.begin();
+
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+    dep.pImageMemoryBarriers = barriers.data();
+
+    vkCmdPipelineBarrier2(commandBuffer, &dep);
+
+    commandBuffer.end();
+
+    commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
+    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+
     for (const auto &[id, pass] : m_renderGraphPasses)
         pass.renderGraphPass->compile(m_renderGraphPassesStorage);
+
+    // Do it here cause swap chain can be resized after all resources are compiled for render graph passes
+    core::VulkanContext::getContext()->getSwapchain()->getWindow()->addResizeCallback([this](platform::Window *, int, int)
+                                                                                      { recreateSwapChain(); });
 
     // std::cout << "Memory after render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n';
 }
@@ -772,18 +978,6 @@ void RenderGraph::cleanResources()
 
     for (const auto &renderPass : m_renderGraphPasses)
         renderPass.second.renderGraphPass->cleanup();
-
-    for (const auto &light : m_lightSpaceMatrixUniformObjects)
-    {
-        light->unmap();
-        light->destroyVk();
-    }
-
-    for (const auto &camera : m_cameraUniformObjects)
-    {
-        camera->unmap();
-        camera->destroyVk();
-    }
 
     m_perFrameData.drawItems.clear();
     m_renderGraphPassesStorage.cleanup();

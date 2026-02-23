@@ -26,7 +26,7 @@ class Material
 public:
     using SharedPtr = std::shared_ptr<Material>;
 
-    Material(VkDescriptorPool descriptorPool, engine::Texture::SharedPtr texture);
+    Material(Texture::SharedPtr texture);
 
     void updateDescriptorSets();
 
@@ -43,14 +43,14 @@ public:
         return s_defaultMaterial;
     }
 
-    static void createDefaultMaterial(VkDescriptorPool descriptorPool, engine::Texture::SharedPtr texture);
+    static void createDefaultMaterial(Texture::SharedPtr texture);
     static void deleteDefaultMaterial();
-    static SharedPtr create(VkDescriptorPool descriptorPool, engine::Texture::SharedPtr texture);
+    static SharedPtr create(Texture::SharedPtr texture);
 
 private:
     uint32_t m_maxFramesInFlight;
     std::vector<VkDescriptorSet> m_descriptorSets;
-    engine::Texture::SharedPtr m_texture{nullptr};
+    Texture::SharedPtr m_texture{nullptr};
     VkDevice m_device{VK_NULL_HANDLE};
     std::vector<core::Buffer::SharedPtr> m_colorBuffers;
     static inline Material::SharedPtr s_defaultMaterial{nullptr};

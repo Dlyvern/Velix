@@ -39,6 +39,30 @@ void RGPResourcesStorage::addSwapChainTexture(const RGPResourceHandler &handler,
     vec[index] = std::move(texture);
 }
 
+RenderTarget *RGPResourcesStorage::getSwapChainTexture(const RGPResourceHandler &handler, int imageIndex)
+{
+    auto it = m_swapChainTextures.find(handler);
+
+    if (it == m_swapChainTextures.end())
+        return nullptr;
+
+    const auto &vec = it->second;
+
+    if (imageIndex < 0 || imageIndex > vec.size())
+        return nullptr;
+
+    // return &vec[imageIndex];
+    return vec[imageIndex].get();
+}
+
+RenderTarget *RGPResourcesStorage::getTexture(const RGPResourceHandler &handler)
+{
+    auto it = m_textures.find(handler);
+
+    // return it == m_textures.end() ? nullptr : &(it->second);
+    return it == m_textures.end() ? nullptr : it->second.get();
+}
+
 const RenderTarget *RGPResourcesStorage::getSwapChainTexture(const RGPResourceHandler &handler, int imageIndex) const
 {
     auto it = m_swapChainTextures.find(handler);

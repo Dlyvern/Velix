@@ -16,6 +16,7 @@ public:
     static VkPipelineCache getDeviceCache(VkDevice device);
     static void saveCacheToFile(VkDevice device, const std::string &path);
     static void loadCacheFromFile(VkDevice device, const std::string &path);
+    static void deleteCache(VkDevice device);
 
 private:
     static inline std::unordered_map<VkDevice, VkPipelineCache> s_graphicsPipelineCachePerDevice;

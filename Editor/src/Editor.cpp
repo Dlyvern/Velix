@@ -34,7 +34,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-Editor::Editor(VkDescriptorPool descriptorPool) : m_descriptorPool(descriptorPool)
+Editor::Editor()
 {
     m_editorCamera = std::make_shared<engine::Camera>();
 }
@@ -209,7 +209,7 @@ void Editor::initStyle()
 
     m_resourceStorage.loadNeededResources();
 
-    m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage, m_descriptorPool, m_requestedMaterialPreviewJobs);
+    m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage, m_requestedMaterialPreviewJobs);
 
     m_entityIdBuffer = core::Buffer::createShared(sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                   core::memory::MemoryUsage::CPU_TO_GPU);
@@ -217,7 +217,7 @@ void Editor::initStyle()
     auto window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
     GLFWwindow *windowHandler = window->getRawHandler();
 
-    glfwSetWindowAttrib(windowHandler, GLFW_DECORATED, !m_isDockingWindowFullscreen);
+    // glfwSetWindowAttrib(windowHandler, GLFW_DECORATED, !m_isDockingWindowFullscreen);
     if (m_isDockingWindowFullscreen)
     {
         GLFWmonitor *monitor = glfwGetPrimaryMonitor();
@@ -746,8 +746,8 @@ void Editor::drawToolBar()
             float fps = ImGui::GetIO().Framerate;
             ImGui::Text("FPS: %.1f", fps);
             ImGui::Text("Frame time: %.3f ms", 1000.0f / fps);
-            ImGui::Text("VRAM usage: %d mB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
-            ImGui::Text("RAM usage: %d mB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
+            ImGui::Text("VRAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
+            ImGui::Text("RAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
 
             ImGui::EndPopup();
         }
@@ -1037,7 +1037,7 @@ void Editor::drawDetails()
                     ImGui::PopStyleColor();
                     ImGui::SameLine();
 
-                    ImGui::DragFloat3("##Position", &position.x, 0.5f);
+                    ImGui::DragFloat3("##Position", &position.x, 0.01f);
 
                     transformComponent->setPosition(position);
 
@@ -1061,7 +1061,7 @@ void Editor::drawDetails()
                     ImGui::Text("Rotation");
                     ImGui::TableSetColumnIndex(1);
                     auto euler = transformComponent->getEulerDegrees();
-                    if (ImGui::DragFloat3("##Rotation", &euler.x, 0.5f))
+                    if (ImGui::DragFloat3("##Rotation", &euler.x, 0.1f))
                         transformComponent->setEulerDegrees(euler);
 
                     ImGui::TableNextRow();
@@ -1069,7 +1069,7 @@ void Editor::drawDetails()
                     ImGui::Text("Scale");
                     ImGui::TableSetColumnIndex(1);
                     auto scale = transformComponent->getScale();
-                    if (ImGui::DragFloat3("##Scale", &scale.x, 0.1f))
+                    if (ImGui::DragFloat3("##Scale", &scale.x, 0.01f, 0.0f, 100.0f))
                         transformComponent->setScale(scale);
 
                     ImGui::EndTable();
@@ -1202,7 +1202,7 @@ engine::Camera::SharedPtr Editor::getCurrentCamera()
     return m_editorCamera;
 }
 
-void Editor::addOnViewportChangedCallback(const std::function<void(float width, float height)> &function)
+void Editor::addOnViewportChangedCallback(const std::function<void(uint32_t width, uint32_t height)> &function)
 {
     m_onViewportWindowResized.push_back(function);
 }
@@ -1216,16 +1216,15 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 
     drawGuizmo();
 
-    bool sizeChanged = (m_viewportSizeX != viewportPanelSize.x ||
-                        m_viewportSizeY != viewportPanelSize.y);
+    uint32_t x = static_cast<uint32_t>(viewportPanelSize.x);
+    uint32_t y = static_cast<uint32_t>(viewportPanelSize.y);
+
+    bool sizeChanged = (m_viewportSizeX != x || m_viewportSizeY != y);
 
     if (sizeChanged)
     {
-        m_viewportSizeX = viewportPanelSize.x;
-        m_viewportSizeY = viewportPanelSize.y;
-
-        std::cout << "Changed X: " << m_viewportSizeX << '\n';
-        std::cout << "Changed Y: " << m_viewportSizeY << '\n';
+        m_viewportSizeX = x;
+        m_viewportSizeY = y;
 
         for (const auto &function : m_onViewportWindowResized)
             if (function)

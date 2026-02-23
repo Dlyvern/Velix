@@ -20,7 +20,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 class AssetsWindow
 {
 public:
-    AssetsWindow(EditorResourcesStorage *resourcesStorage, VkDescriptorPool descriptorPool, std::vector<engine::Material *> &previewMaterialJobs);
+    AssetsWindow(EditorResourcesStorage *resourcesStorage, std::vector<engine::Material *> &previewMaterialJobs);
 
     void setProject(Project *project);
 
@@ -112,7 +112,6 @@ private:
     std::vector<engine::Material *> &m_previewMaterialJobs;
 
     std::unordered_map<std::string, MaterialAssetWindow> m_materials;
-    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
     std::string m_currentEditedMaterialPath;
 
     bool m_shotTexturePopup{false};

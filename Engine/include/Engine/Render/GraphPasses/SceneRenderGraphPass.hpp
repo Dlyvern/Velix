@@ -22,12 +22,8 @@ public:
 
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
-    void onSwapChainResized(RGPResourcesStorage &storage) override;
 
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
-
-    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
-    void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
 
 private:
     std::array<VkClearValue, 3> m_clearValues;

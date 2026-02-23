@@ -14,7 +14,7 @@ GraphicsPipeline::GraphicsPipeline(VkDevice device, VkRenderPass renderPass, con
              subpass, depthStencil, pipelineCache);
 }
 
-GraphicsPipeline::GraphicsPipeline(VkPipelineRenderingCreateInfo pipelineRendering, const std::vector<VkPipelineShaderStageCreateInfo> &shaderStages, core::PipelineLayout &pipelineLayout,
+GraphicsPipeline::GraphicsPipeline(VkPipelineRenderingCreateInfo pipelineRendering, const std::vector<VkPipelineShaderStageCreateInfo> &shaderStages, VkPipelineLayout pipelineLayout,
                                    VkPipelineDynamicStateCreateInfo dynamicState, VkPipelineColorBlendStateCreateInfo colorBlending, VkPipelineMultisampleStateCreateInfo multisampling,
                                    VkPipelineRasterizationStateCreateInfo rasterizer, VkPipelineViewportStateCreateInfo viewportState, VkPipelineInputAssemblyStateCreateInfo inputAssembly,
                                    VkPipelineVertexInputStateCreateInfo vertexInputInfo, VkPipelineDepthStencilStateCreateInfo depthStencil, uint32_t subpass, VkPipelineCache pipelineCache) : m_device(VulkanContext::getContext()->getDevice())
@@ -23,7 +23,7 @@ GraphicsPipeline::GraphicsPipeline(VkPipelineRenderingCreateInfo pipelineRenderi
              depthStencil, subpass, pipelineCache);
 }
 
-void GraphicsPipeline::createVk(VkPipelineRenderingCreateInfo pipelineRendering, const std::vector<VkPipelineShaderStageCreateInfo> &shaderStages, core::PipelineLayout &pipelineLayout,
+void GraphicsPipeline::createVk(VkPipelineRenderingCreateInfo pipelineRendering, const std::vector<VkPipelineShaderStageCreateInfo> &shaderStages, VkPipelineLayout pipelineLayout,
                                 VkPipelineDynamicStateCreateInfo dynamicState, VkPipelineColorBlendStateCreateInfo colorBlending, VkPipelineMultisampleStateCreateInfo multisampling,
                                 VkPipelineRasterizationStateCreateInfo rasterizer, VkPipelineViewportStateCreateInfo viewportState, VkPipelineInputAssemblyStateCreateInfo inputAssembly,
                                 VkPipelineVertexInputStateCreateInfo vertexInputInfo, VkPipelineDepthStencilStateCreateInfo depthStencil, uint32_t subpass, VkPipelineCache pipelineCache)

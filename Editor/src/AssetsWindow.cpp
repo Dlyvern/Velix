@@ -12,10 +12,8 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage, VkDescriptorPool descriptorPool,
-                           std::vector<engine::Material *> &previewMaterialJobs) : m_resourcesStorage(resourcesStorage),
-                                                                                   m_descriptorPool(descriptorPool),
-                                                                                   m_previewMaterialJobs(previewMaterialJobs)
+AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage, std::vector<engine::Material *> &previewMaterialJobs) : m_resourcesStorage(resourcesStorage),
+                                                                                                                             m_previewMaterialJobs(previewMaterialJobs)
 {
 }
 
@@ -306,7 +304,7 @@ void AssetsWindow::drawAssetGrid()
                     if (texture)
                     {
                         MaterialAssetWindow materialAssetWindow;
-                        materialAssetWindow.material = engine::Material::create(m_descriptorPool, texture);
+                        materialAssetWindow.material = engine::Material::create(texture);
                         materialAssetWindow.texture = texture;
 
                         materialAssetWindow.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -447,7 +445,7 @@ void AssetsWindow::drawMaterialEditor()
         }
 
         MaterialAssetWindow materialAssetWindow;
-        materialAssetWindow.material = engine::Material::create(m_descriptorPool, texture);
+        materialAssetWindow.material = engine::Material::create(texture);
         materialAssetWindow.texture = texture;
 
         materialAssetWindow.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);

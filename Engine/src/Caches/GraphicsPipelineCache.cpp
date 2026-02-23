@@ -28,6 +28,17 @@ VkPipelineCache GraphicsPipelineCache::getDeviceCache(VkDevice device)
     return cache;
 }
 
+void GraphicsPipelineCache::deleteCache(VkDevice device)
+{
+    std::lock_guard<std::mutex> lock(s_mutex);
+
+    auto it = s_graphicsPipelineCachePerDevice.find(device);
+    if (it == s_graphicsPipelineCachePerDevice.end())
+        return;
+
+    vkDestroyPipelineCache(device, it->second, nullptr);
+}
+
 void GraphicsPipelineCache::saveCacheToFile(VkDevice device, const std::string &path)
 {
     VkPipelineCache cache = getDeviceCache(device);

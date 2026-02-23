@@ -11,8 +11,8 @@ void PhysXMessenger::infoCallback(const char *error, const char *message)
 {
     if (m_logger)
     {
-        const std::string message = "PhysX " + std::string(error) + ": " + message;
-        m_logger->info(message);
+        const std::string formattedMessage = "PhysX " + std::string(error) + ": " + message;
+        m_logger->info(formattedMessage);
     }
 }
 
@@ -20,8 +20,8 @@ void PhysXMessenger::warningCallback(const char *error, const char *message)
 {
     if (m_logger)
     {
-        const std::string message = "PhysX " + std::string(error) + ": " + message;
-        m_logger->warning(message);
+        const std::string formattedMessage = "PhysX " + std::string(error) + ": " + message;
+        m_logger->warning(formattedMessage);
     }
 }
 
@@ -29,8 +29,8 @@ void PhysXMessenger::errorCallback(const char *error, const char *message)
 {
     if (m_logger)
     {
-        const std::string message = "PhysX " + std::string(error) + ": " + message;
-        m_logger->error(message);
+        const std::string formattedMessage = "PhysX " + std::string(error) + ": " + message;
+        m_logger->error(formattedMessage);
     }
 }
 
@@ -38,7 +38,7 @@ void PhysXMessenger::reportError(physx::PxErrorCode::Enum code, const char *mess
 {
     const char *error = nullptr;
 
-    std::function<void(const char *, const char *)> loggingCallback;
+    std::function<void(const char *, const char *)> loggingCallback = nullptr;
 
     switch (code)
     {
@@ -84,7 +84,8 @@ void PhysXMessenger::reportError(physx::PxErrorCode::Enum code, const char *mess
         break;
     }
 
-    loggingCallback(error, message);
+    if (error && loggingCallback)
+        loggingCallback(error, message);
 }
 
 ELIX_NESTED_NAMESPACE_END

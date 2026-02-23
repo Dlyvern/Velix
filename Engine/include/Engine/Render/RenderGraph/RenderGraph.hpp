@@ -5,6 +5,7 @@
 #include "Core/SwapChain.hpp"
 #include "Core/CommandBuffer.hpp"
 #include "Core/CommandPool.hpp"
+#include "Core/DescriptorPool.hpp"
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 #include "Engine/Scene.hpp"
@@ -54,6 +55,15 @@ public:
         return ptr;
     }
 
+    int getRenderGraphPassId(IRenderGraphPass *pass)
+    {
+        for (auto &[_, renderGraphPass] : m_renderGraphPasses)
+            if (renderGraphPass.renderGraphPass.get() == pass)
+                return renderGraphPass.id;
+
+        return -1;
+    }
+
     RenderGraphPassData *findRenderGraphPassById(uint32_t id)
     {
         for (auto &[_, renderGraphPass] : m_renderGraphPasses)
@@ -95,6 +105,8 @@ private:
     void sortRenderGraphPasses();
     void prepareFrameDataFromScene(Scene *scene);
 
+    void recreateSwapChain();
+
     bool begin();
     void end();
 
@@ -104,7 +116,7 @@ private:
 
     void compile();
     std::unordered_map<std::type_index, RenderGraphPassData> m_renderGraphPasses;
-    std::unordered_set<IRenderGraphPass *> m_sortedRenderGraphPasses;
+    std::vector<IRenderGraphPass *> m_sortedRenderGraphPasses;
 
     VkDevice m_device{VK_NULL_HANDLE};
 
@@ -113,7 +125,7 @@ private:
     uint32_t m_imageIndex{0};
     uint32_t m_currentFrame{0};
 
-    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
+    core::DescriptorPool::SharedPtr m_descriptorPool{VK_NULL_HANDLE};
 
     std::vector<core::Buffer::SharedPtr> m_lightSSBOs;
 

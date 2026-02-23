@@ -32,10 +32,18 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 ShaderHandler::ShaderHandler() = default;
 
-ShaderHandler::~ShaderHandler()
+void ShaderHandler::destroyVk()
 {
     if (m_shaderModule)
+    {
         vkDestroyShaderModule(VulkanContext::getContext()->getDevice(), m_shaderModule, nullptr);
+        m_shaderModule = VK_NULL_HANDLE;
+    }
+}
+
+ShaderHandler::~ShaderHandler()
+{
+    destroyVk();
 }
 
 // TODO get name from filename

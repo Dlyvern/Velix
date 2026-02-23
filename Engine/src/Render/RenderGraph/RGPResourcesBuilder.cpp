@@ -20,6 +20,13 @@ RGPResourceHandler RGPResourcesBuilder::createTexture(const RGPTextureDescriptio
     return handler;
 }
 
+const RGPTextureDescription *RGPResourcesBuilder::getTextureDescription(const RGPResourceHandler &handler) const
+{
+    auto it = m_textureDescriptions.find(handler);
+
+    return it == m_textureDescriptions.end() ? nullptr : &it->second;
+}
+
 const std::unordered_map<RGPResourceHandler, RGPTextureDescription> &RGPResourcesBuilder::getAllTextureDescriptions() const
 {
     return m_textureDescriptions;

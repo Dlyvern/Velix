@@ -34,17 +34,12 @@ public:
 
     void createVk(VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, VkBufferCreateFlags flags = 0);
 
-    void copyImageToBuffer(VkImage image, VkOffset3D imageOffset);
-
-    static CommandBuffer copy(Ptr srcBuffer, Ptr dstBuffer, CommandPool::SharedPtr commandPool, VkDeviceSize size);
-
-    static SharedPtr createCopied(const void *data, VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, CommandPool::SharedPtr commandPool = nullptr);
-
     ~Buffer();
 
 private:
     allocators::AllocatedBuffer m_bufferAllocation;
     VkDeviceSize m_size;
+    bool m_isMapped{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

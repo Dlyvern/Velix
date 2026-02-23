@@ -4,9 +4,24 @@ add_subdirectory(tinyobjloader)
 add_subdirectory(volk)
 add_subdirectory(fbx_sdk)
 add_subdirectory(glm) #glm::glm
+add_subdirectory(SPIRV-Headers)
 add_subdirectory(SPIRV-Cross)
 add_subdirectory(physx)
 add_subdirectory(VulkanMemoryAllocator)
+add_subdirectory(SPIRV-Tools)
+add_subdirectory(glslang)
+
+set(SHADERC_SKIP_TESTS ON CACHE BOOL "Skip building shaderc tests" FORCE)
+set(SHADERC_SKIP_EXAMPLES ON CACHE BOOL "Skip building shaderc examples" FORCE)
+set(SHADERC_ENABLE_INSTALL ON CACHE BOOL "Enable installation" FORCE)
+
+set(SPIRV_SKIP_TESTS ON CACHE BOOL "Skip building SPIRV-Tools tests" FORCE)
+set(SPIRV_SKIP_EXECUTABLES ON CACHE BOOL "Skip building SPIRV-Tools executables" FORCE)
+set(SPIRV_TOOLS_BUILD_STATIC ON CACHE BOOL "Build SPIRV-Tools static libraries" FORCE)
+
+set(GLSANG_SKIP_TESTS ON CACHE BOOL "Skip building glslang tests" FORCE)
+set(ENABLE_GLSLANG_INSTALL ON CACHE BOOL "Enable glslang install" FORCE)
+add_subdirectory(shaderc)
 
 target_compile_definitions(glm INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS)
 

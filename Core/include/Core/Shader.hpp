@@ -23,6 +23,8 @@ public:
     ShaderHandler &getVertexHandler();
     const std::vector<VkPipelineShaderStageCreateInfo> &getShaderStages() const;
 
+    void destroyVk();
+
 private:
     ShaderHandler m_fragmentHandler;
     ShaderHandler m_vertexHandler;

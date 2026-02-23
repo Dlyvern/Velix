@@ -24,6 +24,8 @@
 #include "Engine/Caches/GraphicsPipelineCache.hpp"
 #include "Editor/RenderGraphPasses/PreviewAssetsRenderGraphPass.hpp"
 
+#include "Engine/Builders/GraphicsPipelineManager.hpp"
+
 #include "Editor/FileHelper.hpp"
 
 #include "Editor/ProjectLoader.hpp"
@@ -59,7 +61,7 @@ int main(int argc, char **argv)
     elix::engine::AssetsLoader::registerAssetLoader(std::make_shared<elix::engine::FBXAssetLoader>());
     elix::engine::AssetsLoader::registerAssetLoader(std::make_shared<elix::engine::MaterialAssetLoader>());
 
-    auto window = elix::platform::Window::create(800, 600, "Velix", elix::platform::Window::WindowFlags::EWINDOW_FLAGS_FULLSCREEN_WINDOWED);
+    auto window = elix::platform::Window::create(800, 600, "Velix", elix::platform::Window::WindowFlags::EWINDOW_FLAGS_DEFAULT);
     auto vulkanContext = elix::core::VulkanContext::create(window);
     auto props = vulkanContext->getPhysicalDevicePoperties();
 
@@ -86,15 +88,20 @@ int main(int argc, char **argv)
 
     // TODO: Change order to see if RenderGraph compile works
 
+    elix::engine::GraphicsPipelineManager::init();
+
     auto renderGraph = new elix::engine::renderGraph::RenderGraph(vulkanContext->getDevice(), vulkanContext->getSwapchain());
     renderGraph->createDescriptorSetPool();
-    auto editor = std::make_shared<elix::editor::Editor>(renderGraph->getDescriptorPool());
+    auto editor = std::make_shared<elix::editor::Editor>();
 
     auto shadowRenderPass = renderGraph->addPass<elix::engine::renderGraph::ShadowRenderGraphPass>();
-    auto offscreenRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::OffscreenRenderGraphPass>(renderGraph->getDescriptorPool(),
-                                                                                                              shadowRenderPass->getShadowHandler());
+    auto shadowId = renderGraph->getRenderGraphPassId(shadowRenderPass);
 
-    auto imguiRenderGraphPass = renderGraph->addPass<elix::editor::ImGuiRenderGraphPass>(editor, offscreenRenderGraphPass->getColorTextureHandlers(),
+    auto offscreenRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::OffscreenRenderGraphPass>(renderGraph->getDescriptorPool(), shadowId,
+                                                                                                              shadowRenderPass->getShadowHandler());
+    auto offscreenId = renderGraph->getRenderGraphPassId(offscreenRenderGraphPass);
+
+    auto imguiRenderGraphPass = renderGraph->addPass<elix::editor::ImGuiRenderGraphPass>(editor, offscreenId, offscreenRenderGraphPass->getColorTextureHandlers(),
                                                                                          offscreenRenderGraphPass->getObjectTextureHandler());
 
     VkExtent2D extent{.width = 50, .height = 30};
@@ -126,15 +133,12 @@ int main(int argc, char **argv)
     elix::engine::Texture::SharedPtr dummyTexture = std::make_shared<elix::engine::Texture>();
     dummyTexture->createFromPixels(0xFFFFFFFF);
 
-    elix::engine::Material::createDefaultMaterial(renderGraph->getDescriptorPool(), dummyTexture);
+    elix::engine::Material::createDefaultMaterial(dummyTexture);
 
-    // editor->addOnViewportChangedCallback([&](float w, float h)
-    //                                      {
-    //     VkViewport viewport{0.0f, 0.0f, w, h,  0.0f, 1.0f};
-
-    //     VkRect2D scissor{VkOffset2D{0, 0}, VkExtent2D{w, h}};
-    //     offscreenRenderGraphPass->setViewport(viewport);
-    //     offscreenRenderGraphPass->setScissor(scissor); });
+    editor->addOnViewportChangedCallback([&](uint32_t w, uint32_t h)
+                                         {
+        VkExtent2D extent{.width = w, .height = h};
+        offscreenRenderGraphPass->setExtent(extent); });
 
     float lastFrame = 0.0f;
     float deltaTime = 0.0f;
@@ -219,6 +223,9 @@ int main(int argc, char **argv)
     }
 
     elix::engine::cache::GraphicsPipelineCache::saveCacheToFile(vulkanContext->getDevice(), graphicsPipelineCache);
+    elix::engine::GraphicsPipelineManager::destroy();
+    elix::engine::cache::GraphicsPipelineCache::deleteCache(vulkanContext->getDevice());
+
     // To clean all needed Vulkan resources before VulkanContex is cleared
     renderGraph->cleanResources();
     delete renderGraph;

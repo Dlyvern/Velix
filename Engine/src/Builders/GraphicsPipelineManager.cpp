@@ -1,7 +1,6 @@
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 
 #include "Core/VulkanContext.hpp"
-#include "Core/Shader.hpp"
 
 #include "Engine/Builders/GraphicsPipelineBuilder.hpp"
 #include "Engine/Caches/GraphicsPipelineCache.hpp"
@@ -29,48 +28,66 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(GraphicsP
     return created;
 }
 
+void GraphicsPipelineManager::init()
+{
+    staticShader = std::make_shared<core::Shader>("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
+    skeletonShader = std::make_shared<core::Shader>("./resources/shaders/skeleton_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
+    wireframeShader = std::make_shared<core::Shader>("./resources/shaders/wireframe_mesh.vert.spv", "./resources/shaders/debug_red.frag.spv");
+    stencilShader = std::make_shared<core::Shader>("./resources/shaders/wireframe_mesh.vert.spv", "./resources/shaders/debug_yellow.frag.spv");
+    shadowStaticShader = std::make_shared<core::Shader>("./resources/shaders/static_mesh_shadow.vert.spv",
+                                                        "./resources/shaders/empty.frag.spv");
+
+    previewMeshShader = std::make_shared<core::Shader>("./resources/shaders/shader_simple_textured_mesh.vert.spv",
+                                                       "./resources/shaders/shader_simple_textured_mesh.frag.spv");
+
+    skyboxHDRShader = std::make_shared<core::Shader>("./resources/shaders/skybox.vert.spv", "./resources/shaders/skybox_hdr.frag.spv");
+    skyboxShader = std::make_shared<core::Shader>("./resources/shaders/skybox.vert.spv", "./resources/shaders/skybox.frag.spv");
+}
+
+void GraphicsPipelineManager::destroy()
+{
+    staticShader->destroyVk();
+    skeletonShader->destroyVk();
+    wireframeShader->destroyVk();
+    stencilShader->destroyVk();
+    shadowStaticShader->destroyVk();
+    previewMeshShader->destroyVk();
+    skyboxHDRShader->destroyVk();
+    skyboxShader->destroyVk();
+
+    for (const auto &key : m_pipelines)
+        key.second->destroyVk();
+}
+
 core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const GraphicsPipelineKey &key)
 {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
 
-    core::Shader staticShader("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
-    core::Shader skeletonShader("./resources/shaders/skeleton_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
-    core::Shader wireframeShader("./resources/shaders/wireframe_mesh.vert.spv", "./resources/shaders/debug_red.frag.spv");
-    core::Shader stencilShader("./resources/shaders/wireframe_mesh.vert.spv", "./resources/shaders/debug_yellow.frag.spv");
-    core::Shader shadowStaticShader("./resources/shaders/static_mesh_shadow.vert.spv",
-                                    "./resources/shaders/empty.frag.spv");
-
-    core::Shader previewMeshShader("./resources/shaders/shader_simple_textured_mesh.vert.spv",
-                                   "./resources/shaders/shader_simple_textured_mesh.frag.spv");
-
-    core::Shader skyboxHDRShader("./resources/shaders/skybox.vert.spv", "./resources/shaders/skybox_hdr.frag.spv");
-    core::Shader skyboxShader("./resources/shaders/skybox.vert.spv", "./resources/shaders/skybox.frag.spv");
-
     switch (key.shader)
     {
     case ShaderId::StaticMesh:
-        stages = staticShader.getShaderStages();
+        stages = staticShader->getShaderStages();
         break;
     case ShaderId::SkinnedMesh:
-        stages = skeletonShader.getShaderStages();
+        stages = skeletonShader->getShaderStages();
         break;
     case ShaderId::Wireframe:
-        stages = stencilShader.getShaderStages();
+        stages = stencilShader->getShaderStages();
         break;
     case ShaderId::Stencil:
-        stages = stencilShader.getShaderStages();
+        stages = stencilShader->getShaderStages();
         break;
     case ShaderId::StaticShadow:
-        stages = shadowStaticShader.getShaderStages();
+        stages = shadowStaticShader->getShaderStages();
         break;
     case ShaderId::PreviewMesh:
-        stages = previewMeshShader.getShaderStages();
+        stages = previewMeshShader->getShaderStages();
         break;
     case ShaderId::SkyboxHDR:
-        stages = skyboxHDRShader.getShaderStages();
+        stages = skyboxHDRShader->getShaderStages();
         break;
     case ShaderId::Skybox:
-        stages = skyboxShader.getShaderStages();
+        stages = skyboxShader->getShaderStages();
         break;
 
     default:
@@ -178,7 +195,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     auto graphicsPipeline = core::GraphicsPipeline::createShared(
         pipelineRenderingCI,
         stages,
-        *pipelineLayout,
+        pipelineLayout,
         dynamicState,
         colorBlending,
         msaa,

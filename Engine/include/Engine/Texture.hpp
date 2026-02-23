@@ -4,6 +4,7 @@
 #include "Core/Macros.hpp"
 #include "Core/Image.hpp"
 #include "Core/CommandPool.hpp"
+#include "Core/Sampler.hpp"
 
 #include <string>
 #include <array>
@@ -24,8 +25,6 @@ public:
     void freePixels();
 
     bool loadCubemap(const std::array<std::string, 6> &cubemaps, core::CommandPool::SharedPtr commandPool = nullptr, bool freePixelsOnLoad = true);
-
-    void NewFunction(elix::core::Buffer::SPtr &buffer);
 
     bool loadHDR(const std::string &filepath);
     bool createCubemapFromHDR(const std::string &hdrPath, uint32_t cubemapSize = 512);
@@ -49,7 +48,7 @@ private:
     int m_channels{0};
     core::Image::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};
-    VkSampler m_sampler{VK_NULL_HANDLE};
+    core::Sampler::SharedPtr m_sampler{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

@@ -10,9 +10,10 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 class RGPResourcesCompiler
 {
 public:
-    void compile(RGPResourcesBuilder &builder, RGPResourcesStorage &storage);
+    std::vector<VkImageMemoryBarrier2> compile(RGPResourcesBuilder &builder, RGPResourcesStorage &storage);
+    std::vector<VkImageMemoryBarrier2> compile(const std::vector<RGPResourceHandler> &resourcesIds, RGPResourcesBuilder &builder, RGPResourcesStorage &storage);
 
-    void onSwapChainResized(RGPResourcesBuilder &builder, RGPResourcesStorage &storage);
+    std::vector<VkImageMemoryBarrier2> onSwapChainResized(RGPResourcesBuilder &builder, RGPResourcesStorage &storage);
 };
 
 ELIX_CUSTOM_NAMESPACE_END

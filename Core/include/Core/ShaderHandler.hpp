@@ -33,6 +33,8 @@ public:
     ShaderHandler();
     ~ShaderHandler();
 
+    void destroyVk();
+
 private:
     VkShaderModule createShaderModule(const std::vector<uint32_t> &code);
     void createInfo();

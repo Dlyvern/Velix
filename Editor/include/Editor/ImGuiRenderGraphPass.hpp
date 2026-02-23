@@ -2,6 +2,7 @@
 #define IMGUI_RENDER_GRAPH_PASS_HPP
 
 #include "Core/Sampler.hpp"
+#include "Core/DescriptorPool.hpp"
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 
@@ -19,7 +20,7 @@ public:
     using SharedPtr = std::shared_ptr<ImGuiRenderGraphPass>;
 
     //! Maybe this is not a good idea
-    ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
+    ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, uint32_t offscreenId, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
                          engine::renderGraph::RGPResourceHandler &objectIdTextureHandler);
 
     void setup(engine::renderGraph::RGPResourcesBuilder &builder) override;
@@ -28,12 +29,7 @@ public:
                 const engine::RenderGraphPassContext &renderContext) override;
     std::vector<RenderPassExecution> getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const override;
 
-    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context) override;
-    void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context) override;
-
     void setViewportImages(const std::vector<VkImageView> &imageViews);
-
-    void onSwapChainResized(engine::renderGraph::RGPResourcesStorage &storage) override;
 
     void cleanup();
 
@@ -57,7 +53,7 @@ private:
     std::vector<engine::renderGraph::RGPResourceHandler> &m_offscreenTextureHandler;
     engine::renderGraph::RGPResourceHandler &m_objectIdTextureHandler;
 
-    VkDescriptorPool m_imguiDescriptorPool{VK_NULL_HANDLE};
+    core::DescriptorPool::SharedPtr m_imguiDescriptorPool{VK_NULL_HANDLE};
 };
 
 ELIX_NESTED_NAMESPACE_END

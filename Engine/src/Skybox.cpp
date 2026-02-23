@@ -1,6 +1,7 @@
 #include "Engine/Skybox.hpp"
 #include "Engine/Shaders/PushConstant.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
+#include "Engine/Utilities/BufferUtilities.hpp"
 #include "Core/VulkanContext.hpp"
 
 struct PushConstantView
@@ -79,11 +80,22 @@ void Skybox::createResources(VkDescriptorPool descriptorPool)
     VkDeviceSize skyboxSize = sizeof(skyboxVertices[0]) * skyboxVertices.size();
     m_vertexCount = static_cast<uint32_t>(skyboxVertices.size()) / 3;
 
-    m_vertexBuffer = core::Buffer::createCopied(skyboxVertices.data(), skyboxSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                                core::memory::MemoryUsage::CPU_TO_GPU);
+    auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
+    commandBuffer.begin();
+
+    auto vertexStaging = core::Buffer::create(skyboxSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
+    vertexStaging.upload(skyboxVertices.data(), skyboxSize);
+
+    m_vertexBuffer = core::Buffer::createShared(skyboxSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
+
+    utilities::BufferUtilities::copyBuffer(vertexStaging, *m_vertexBuffer, commandBuffer, skyboxSize);
+    commandBuffer.end();
+
+    commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
+    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
 
     VkDescriptorSetLayoutBinding cubemapBinding{};
-    cubemapBinding.binding = 1;
+    cubemapBinding.binding = 0;
     cubemapBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     cubemapBinding.descriptorCount = 1;
     cubemapBinding.pImmutableSamplers = nullptr;
@@ -96,7 +108,7 @@ void Skybox::createResources(VkDescriptorPool descriptorPool)
     m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{m_descriptorSetLayout}, std::vector<VkPushConstantRange>{pushConstant});
 
     m_descriptorSet = DescriptorSetBuilder::begin()
-                          .addImage(m_skyboxTexture->vkImageView(), m_skyboxTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
+                          .addImage(m_skyboxTexture->vkImageView(), m_skyboxTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
                           .build(device, descriptorPool, m_descriptorSetLayout);
 }
 

@@ -19,7 +19,8 @@ public:
                  VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
                  core::memory::MemoryUsage memFlags = core::memory::MemoryUsage::GPU_ONLY, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL) : m_device(device), m_aspect(aspect), m_format(format)
     {
-        m_image = core::Image::createShared(extent.width, extent.height, usage, memFlags, format, tiling);
+        m_image = core::Image::createShared(extent, usage, memFlags, format, tiling);
+        m_extent = extent;
     }
 
     RenderTarget(VkDevice device, VkFormat format, VkImageAspectFlags aspect, core::Image::SharedPtr image) : m_device(device), m_format(format), m_aspect(aspect), m_image(image)
@@ -34,6 +35,7 @@ public:
 
     void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, core::memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling)
     {
+        m_extent = extent;
         m_image->createVk(extent, usage, memFlags, format, tiling);
     }
 
@@ -98,6 +100,7 @@ public:
     }
 
 private:
+    VkExtent2D m_extent;
     VkDevice m_device{VK_NULL_HANDLE};
     core::Image::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};

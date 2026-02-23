@@ -2,40 +2,49 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-Shader::Shader(const std::string& vertexPath, const std::string& fragmentPath)
+Shader::Shader(const std::string &vertexPath, const std::string &fragmentPath)
 {
     m_vertexHandler.loadFromFile(vertexPath, ShaderStage::VERTEX);
     m_fragmentHandler.loadFromFile(fragmentPath, ShaderStage::FRAGMENT);
     m_shaderStages = {m_vertexHandler.getInfo(), m_fragmentHandler.getInfo()};
 }
 
-Shader::Shader(const std::vector<uint32_t>& vertexCode, const std::vector<uint32_t>& fragmentCode)
+Shader::Shader(const std::vector<uint32_t> &vertexCode, const std::vector<uint32_t> &fragmentCode)
 {
     m_vertexHandler.loadFromCode(vertexCode, ShaderStage::VERTEX);
     m_fragmentHandler.loadFromCode(fragmentCode, ShaderStage::FRAGMENT);
     m_shaderStages = {m_vertexHandler.getInfo(), m_fragmentHandler.getInfo()};
 }
 
-Shader::SharedPtr Shader::create(const std::string& vertexPath, const std::string& fragmentPath)
+void Shader::destroyVk()
+{
+    m_fragmentHandler.destroyVk();
+    m_vertexHandler.destroyVk();
+}
+
+Shader::SharedPtr Shader::create(const std::string &vertexPath, const std::string &fragmentPath)
 {
     return std::make_shared<Shader>(vertexPath, fragmentPath);
 }
 
-const std::vector<VkPipelineShaderStageCreateInfo>& Shader::getShaderStages() const
+const std::vector<VkPipelineShaderStageCreateInfo> &Shader::getShaderStages() const
 {
     return m_shaderStages;
 }
 
-ShaderHandler& Shader::getFragmentHandler()
+ShaderHandler &Shader::getFragmentHandler()
 {
     return m_fragmentHandler;
 }
 
-ShaderHandler& Shader::getVertexHandler()
+ShaderHandler &Shader::getVertexHandler()
 {
     return m_vertexHandler;
 }
 
-Shader::~Shader() = default;
+Shader::~Shader()
+{
+    destroyVk();
+}
 
 ELIX_NESTED_NAMESPACE_END

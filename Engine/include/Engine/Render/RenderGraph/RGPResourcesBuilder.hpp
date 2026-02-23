@@ -19,6 +19,8 @@ public:
     void write(const RGPResourceHandler &handler, RGPTextureUsage usage);
     void read(const RGPResourceHandler &handler, RGPTextureUsage usage);
 
+    const RGPTextureDescription *getTextureDescription(const RGPResourceHandler &handler) const;
+
     const std::unordered_map<RGPResourceHandler, RGPTextureDescription> &getAllTextureDescriptions() const;
 
 private:

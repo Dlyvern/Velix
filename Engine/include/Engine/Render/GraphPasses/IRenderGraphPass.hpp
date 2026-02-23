@@ -28,6 +28,8 @@ public:
         VkFormat depthFormat;
 
         bool useDepth{true};
+
+        std::unordered_map<RGPResourceHandler, const RenderTarget *> targets;
     };
 
     using SharedPtr = std::shared_ptr<IRenderGraphPass>;
@@ -45,13 +47,7 @@ public:
 
     virtual std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const = 0;
 
-    virtual void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) {}
-
-    virtual void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) {}
-
     virtual void cleanup() {}
-
-    virtual void onSwapChainResized(renderGraph::RGPResourcesStorage &storage) {}
 
     virtual ~IRenderGraphPass() = default;
 
@@ -80,8 +76,19 @@ public:
         return m_needsRecompilation;
     }
 
+    void addDependOnRenderGraphPass(uint32_t id)
+    {
+        m_dependOnRenderGraphPasses.push_back(id);
+    }
+
+    const std::vector<uint32_t> &getDependOnRenderGraphPassesIds() const
+    {
+        return m_dependOnRenderGraphPasses;
+    }
+
 private:
     std::string m_debugName;
+    std::vector<uint32_t> m_dependOnRenderGraphPasses;
     bool m_needsRecompilation{false};
 };
 

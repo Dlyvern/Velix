@@ -2,6 +2,8 @@
 
 #include "Core/VulkanContext.hpp"
 
+#include "Engine/Utilities/ImageUtilities.hpp"
+
 namespace
 {
     static VkImageUsageFlags toVkUsage(elix::engine::renderGraph::RGPTextureUsage usage)
@@ -26,26 +28,115 @@ namespace
         return 0;
     }
 
-    static VkImageAspectFlags chooseAspect(VkFormat format)
+    static void chooseDstSync(VkImageLayout layout,
+                              VkPipelineStageFlags2 &dstStage,
+                              VkAccessFlags2 &dstAccess)
     {
-        if (format == VK_FORMAT_D32_SFLOAT ||
-            format == VK_FORMAT_D24_UNORM_S8_UINT ||
-            format == VK_FORMAT_D32_SFLOAT_S8_UINT)
+        switch (layout)
         {
-            return VK_IMAGE_ASPECT_DEPTH_BIT;
-        }
+        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+            dstStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+            dstAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+            return;
 
-        return VK_IMAGE_ASPECT_COLOR_BIT;
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+            dstStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+            dstAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            return;
+
+        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+            dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+            return;
+
+        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+            dstStage = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+            dstAccess = VK_ACCESS_2_TRANSFER_READ_BIT;
+            return;
+
+        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+            dstStage = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+            dstAccess = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            return;
+
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+            dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+            return;
+
+        default:
+            // Safe fallback: make it explicit if you forgot to handle something
+            throw std::runtime_error("chooseDstSync: unsupported initial layout");
+        }
     }
 }
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-void RGPResourcesCompiler::compile(RGPResourcesBuilder &builder, RGPResourcesStorage &storage)
+std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(const std::vector<RGPResourceHandler> &resourcesIds,
+                                                                 RGPResourcesBuilder &builder, RGPResourcesStorage &storage)
 {
     const auto &vulkanContext = core::VulkanContext::getContext();
     const auto &device = vulkanContext->getDevice();
+
+    std::vector<VkImageMemoryBarrier2> barriers;
+
+    for (const auto &idHandler : resourcesIds)
+    {
+        auto textureDescription = builder.getTextureDescription(idHandler);
+
+        if (!textureDescription)
+            continue;
+
+        if (textureDescription->getIsSwapChainTarget())
+            continue;
+
+        auto *renderTarget = storage.getTexture(idHandler);
+        renderTarget->destroyVkImage();
+        renderTarget->destroyVkImageView();
+
+        auto extent = textureDescription->getCustomExtentFunction() ? textureDescription->getCustomExtentFunction()() : textureDescription->getExtent();
+
+        renderTarget->createVkImage(extent, toVkUsage(textureDescription->getUsage()), core::memory::MemoryUsage::AUTO, textureDescription->getFormat(), VK_IMAGE_TILING_OPTIMAL);
+        renderTarget->createVkImageView();
+
+        if (textureDescription->getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription->getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
+            continue;
+
+        // Help to translate image from VK_IMAGE_LAYOUT_UNDEFINED
+        const auto &image = storage.getTexture(idHandler);
+
+        VkImageSubresourceRange subresourceRange{};
+        subresourceRange.aspectMask = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription->getFormat());
+        subresourceRange.baseMipLevel = 0;
+        subresourceRange.levelCount = 1;
+        subresourceRange.baseArrayLayer = 0;
+        subresourceRange.layerCount = 1;
+
+        VkPipelineStageFlags2 srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+        VkAccessFlags2 srcAccessMask = 0;
+        VkPipelineStageFlags2 dstStageMask;
+        VkAccessFlags2 dstAccessMask;
+
+        chooseDstSync(textureDescription->getInitialLayout(), dstStageMask, dstAccessMask);
+
+        auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*image->getImage(), srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                                           textureDescription->getInitialLayout(), srcStageMask,
+                                                                           dstStageMask, subresourceRange);
+
+        barriers.push_back(barrier);
+    }
+
+    return barriers;
+}
+
+std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBuilder &builder, RGPResourcesStorage &storage)
+{
+    const auto &vulkanContext = core::VulkanContext::getContext();
+    const auto &device = vulkanContext->getDevice();
+
+    std::vector<VkImageMemoryBarrier2> barriers;
 
     for (const auto &[id, textureDescription] : builder.getAllTextureDescriptions())
     {
@@ -62,26 +153,72 @@ void RGPResourcesCompiler::compile(RGPResourcesBuilder &builder, RGPResourcesSto
                 const auto &image = swapChain->getImages().at(imageIndex);
                 auto wrapImage = core::Image::createShared(image);
 
-                // RenderTarget renderTarget(device, swapChain->getImageFormat(),
-                //                           chooseAspect(textureDescription.getFormat()), wrapImage);
-
                 auto renderTarget = std::make_shared<RenderTarget>(device, swapChain->getImageFormat(),
-                                                                   chooseAspect(textureDescription.getFormat()), wrapImage);
+                                                                   utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat()), wrapImage);
 
                 storage.addSwapChainTexture(id, std::move(renderTarget));
+
+                if (textureDescription.getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription.getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
+                    continue;
+
+                // Help to translate image from VK_IMAGE_LAYOUT_UNDEFINED
+
+                VkImageSubresourceRange subresourceRange{};
+                subresourceRange.aspectMask = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat());
+                subresourceRange.baseMipLevel = 0;
+                subresourceRange.levelCount = 1;
+                subresourceRange.baseArrayLayer = 0;
+                subresourceRange.layerCount = 1;
+
+                VkPipelineStageFlags2 srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+                VkAccessFlags2 srcAccessMask = 0;
+                VkPipelineStageFlags2 dstStageMask;
+                VkAccessFlags2 dstAccessMask;
+
+                chooseDstSync(textureDescription.getInitialLayout(), dstStageMask, dstAccessMask);
+
+                auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*wrapImage, srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                                                   textureDescription.getInitialLayout(), srcStageMask,
+                                                                                   dstStageMask, subresourceRange);
+
+                barriers.push_back(barrier);
             }
         }
         else
         {
-            // RenderTarget renderTarget(device, textureDescription.getExtent(), textureDescription.getFormat(), toVkUsage(textureDescription.getUsage()),
-            //                           chooseAspect(textureDescription.getFormat()), core::memory::MemoryUsage::AUTO);
-            // renderTarget.createVkImageView();
+            auto extent = textureDescription.getCustomExtentFunction() ? textureDescription.getCustomExtentFunction()() : textureDescription.getExtent();
 
-            auto renderTarget = std::make_shared<RenderTarget>(device, textureDescription.getExtent(), textureDescription.getFormat(), toVkUsage(textureDescription.getUsage()),
-                                                               chooseAspect(textureDescription.getFormat()), core::memory::MemoryUsage::AUTO);
+            auto renderTarget = std::make_shared<RenderTarget>(device, extent, textureDescription.getFormat(), toVkUsage(textureDescription.getUsage()),
+                                                               utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat()), core::memory::MemoryUsage::AUTO);
             renderTarget->createVkImageView();
 
             storage.addTexture(id, std::move(renderTarget));
+
+            if (textureDescription.getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription.getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
+                continue;
+
+            // Help to translate image from VK_IMAGE_LAYOUT_UNDEFINED
+            const auto &image = storage.getTexture(id);
+
+            VkImageSubresourceRange subresourceRange{};
+            subresourceRange.aspectMask = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat());
+            subresourceRange.baseMipLevel = 0;
+            subresourceRange.levelCount = 1;
+            subresourceRange.baseArrayLayer = 0;
+            subresourceRange.layerCount = 1;
+
+            VkPipelineStageFlags2 srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+            VkAccessFlags2 srcAccessMask = 0;
+            VkPipelineStageFlags2 dstStageMask;
+            VkAccessFlags2 dstAccessMask;
+
+            chooseDstSync(textureDescription.getInitialLayout(), dstStageMask, dstAccessMask);
+
+            auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*image->getImage(), srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                                               textureDescription.getInitialLayout(), srcStageMask,
+                                                                               dstStageMask, subresourceRange);
+
+            barriers.push_back(barrier);
         }
 
         VkDeviceSize after = core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM();
@@ -89,12 +226,15 @@ void RGPResourcesCompiler::compile(RGPResourcesBuilder &builder, RGPResourcesSto
         const std::string textureName = textureDescription.getIsSwapChainTarget() ? "swap chain" : "common";
         std::cout << "New " << textureName << " " << textureDescription.getDebugName() << " texture allocated " << delta << '\n';
     }
+
+    return barriers;
 }
 
-void RGPResourcesCompiler::onSwapChainResized(RGPResourcesBuilder &builder, RGPResourcesStorage &storage)
+std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::onSwapChainResized(RGPResourcesBuilder &builder, RGPResourcesStorage &storage)
 {
     const auto &vulkanContext = core::VulkanContext::getContext();
     const auto &device = vulkanContext->getDevice();
+    std::vector<VkImageMemoryBarrier2> barriers;
 
     for (const auto &[id, textureDescription] : builder.getAllTextureDescriptions())
     {
@@ -108,15 +248,41 @@ void RGPResourcesCompiler::onSwapChainResized(RGPResourcesBuilder &builder, RGPR
             const auto &image = swapChain->getImages().at(imageIndex);
             auto wrapImage = core::Image::createShared(image);
 
-            // RenderTarget renderTarget(device, swapChain->getImageFormat(),
-            //                           chooseAspect(textureDescription.getFormat()), wrapImage);
+            auto *swapChainRenderTarget = storage.getSwapChainTexture(id, imageIndex);
+            swapChainRenderTarget->destroyVkImage();
+            swapChainRenderTarget->destroyVkImageView();
 
-            auto renderTarget = std::make_shared<RenderTarget>(device, swapChain->getImageFormat(),
-                                                               chooseAspect(textureDescription.getFormat()), wrapImage);
+            swapChainRenderTarget->resetVkImage(wrapImage);
+            swapChainRenderTarget->createVkImageView();
 
-            storage.addSwapChainTexture(id, std::move(renderTarget), imageIndex);
+            if (textureDescription.getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription.getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
+                continue;
+
+            // Help to translate image from VK_IMAGE_LAYOUT_UNDEFINED
+
+            VkImageSubresourceRange subresourceRange{};
+            subresourceRange.aspectMask = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat());
+            subresourceRange.baseMipLevel = 0;
+            subresourceRange.levelCount = 1;
+            subresourceRange.baseArrayLayer = 0;
+            subresourceRange.layerCount = 1;
+
+            VkPipelineStageFlags2 srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+            VkAccessFlags2 srcAccessMask = 0;
+            VkPipelineStageFlags2 dstStageMask;
+            VkAccessFlags2 dstAccessMask;
+
+            chooseDstSync(textureDescription.getInitialLayout(), dstStageMask, dstAccessMask);
+
+            auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*wrapImage, srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                                               textureDescription.getInitialLayout(), srcStageMask,
+                                                                               dstStageMask, subresourceRange);
+
+            barriers.push_back(barrier);
         }
     }
+
+    return barriers;
 }
 
 ELIX_CUSTOM_NAMESPACE_END

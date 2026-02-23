@@ -114,6 +114,7 @@ void VulkanContext::createLogicalDevice()
 
     VkPhysicalDeviceVulkan13Features v13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     v13.dynamicRendering = VK_TRUE;
+    v13.synchronization2 = VK_TRUE;
 
     VkDeviceCreateInfo createInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     createInfo.queueCreateInfoCount = queueCreateInfos.size();
@@ -143,11 +144,31 @@ void VulkanContext::createLogicalDevice()
     m_transferCommandPool = CommandPool::createShared(m_vkDevice, m_queueFamilyIndices.transferFamily.value(),
                                                       VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
-    m_graphicsCommandPool = CommandPool::createShared(m_vkDevice, m_queueFamilyIndices.transferFamily.value(),
+    m_graphicsCommandPool = CommandPool::createShared(m_vkDevice, m_queueFamilyIndices.graphicsFamily.value(),
                                                       VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+
+    std::vector<VkDescriptorPoolSize> descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+        {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+
+    m_descriptorPool = DescriptorPool::createShared(m_vkDevice, descriptorPoolSizes, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT, 1000);
 
     auto vmaAllocator = std::make_unique<allocators::VMAAllocator>(m_instance, m_physicalDevice, m_vkDevice);
     m_device = Device::createShared(m_vkDevice, m_physicalDevice, std::move(vmaAllocator));
+}
+
+DescriptorPool::SharedPtr VulkanContext::getPersistentDescriptorPool() const
+{
+    return m_descriptorPool;
 }
 
 uint32_t VulkanContext::getGraphicsFamily() const
@@ -189,11 +210,17 @@ VulkanContext::QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDev
         }
 
         if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT))
+        {
             indices.computeFamily = index;
+            std::cout << "Has compute family\n";
+        }
 
         if (queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
             !(queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT))
+        {
             indices.transferFamily = index;
+            std::cout << "Hast transfer family\n";
+        }
 
         if (presentSupport && !indices.presentFamily.has_value())
             indices.presentFamily = index;
@@ -546,6 +573,7 @@ void VulkanContext::cleanup()
 
     m_graphicsCommandPool->destroyVk();
     m_transferCommandPool->destroyVk();
+    m_descriptorPool->destroyVk();
 
     if (m_device)
         m_device->clean();

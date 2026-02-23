@@ -5,6 +5,8 @@
 #include "Engine/Shaders/PushConstant.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 
+#include "Engine/Utilities/ImageUtilities.hpp"
+
 #include <glm/mat4x4.hpp>
 
 struct LightSpaceMatrixPushConstant
@@ -36,6 +38,8 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
     RGPTextureDescription depthTextureDescription(m_depthFormat, RGPTextureUsage::DEPTH_STENCIL);
     depthTextureDescription.setDebugName("__ELIX_SHADOW_DEPTH_TEXTURE__");
     depthTextureDescription.setExtent(m_extent);
+    depthTextureDescription.setInitialLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    depthTextureDescription.setFinalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 
     builder.createTexture(depthTextureDescription, m_depthTextureHandler);
     builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
@@ -47,39 +51,6 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
 void ShadowRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 {
     m_renderTarget = storage.getTexture(m_depthTextureHandler);
-
-    m_renderTarget->getImage()->insertImageMemoryBarrier(
-        0,
-        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1});
-}
-
-void ShadowRenderGraphPass::endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context)
-{
-    m_renderTarget->getImage()->insertImageMemoryBarrier(
-        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        VK_ACCESS_SHADER_READ_BIT,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}, *commandBuffer);
-}
-
-void ShadowRenderGraphPass::startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context)
-{
-    m_renderTarget->getImage()->insertImageMemoryBarrier(
-        VK_ACCESS_SHADER_READ_BIT,
-        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}, *commandBuffer);
 }
 
 void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
@@ -144,6 +115,8 @@ std::vector<IRenderGraphPass::RenderPassExecution> ShadowRenderGraphPass::getRen
 
     renderPassExecution.colorFormats = {};
     renderPassExecution.depthFormat = m_depthFormat;
+
+    renderPassExecution.targets[m_depthTextureHandler] = m_renderTarget;
 
     return {renderPassExecution};
 }

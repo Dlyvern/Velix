@@ -32,9 +32,6 @@ public:
     void record(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data,
                 const engine::RenderGraphPassContext &renderContext) override;
 
-    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context) override;
-    void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassContext &context) override;
-
     std::vector<RenderPassExecution> getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const override;
 
     std::vector<VkImageView> getRenderedImages() const

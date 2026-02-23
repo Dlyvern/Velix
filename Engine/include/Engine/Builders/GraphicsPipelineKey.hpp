@@ -2,8 +2,6 @@
 #define ELIX_GRAPHICS_PIPELINE_KEY_HPP
 
 #include "Core/Macros.hpp"
-#include "Core/PipelineLayout.hpp"
-
 #include "Engine/Caches/Hash.hpp"
 
 #include <cstdint>
@@ -63,7 +61,7 @@ struct GraphicsPipelineKey
     VkPolygonMode polygonMode{VK_POLYGON_MODE_FILL};
     VkPrimitiveTopology topology{VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
 
-    core::PipelineLayout::SharedPtr pipelineLayout{nullptr}; // TODO VkPipelineLayout layout{VK_NULL_HANDLE};
+    VkPipelineLayout pipelineLayout{VK_NULL_HANDLE};
 
     std::vector<VkFormat> colorFormats;
     VkFormat depthFormat;
@@ -73,6 +71,7 @@ struct GraphicsPipelineKey
         return shader == o.shader &&
                blend == o.blend &&
                cull == o.cull &&
+               pipelineLayout == o.pipelineLayout &&
                depthTest == o.depthTest &&
                depthWrite == o.depthWrite &&
                depthCompare == o.depthCompare &&
@@ -97,6 +96,7 @@ struct GraphicsPipelineKeyHash
         hashing::hash(data, static_cast<uint32_t>(k.depthCompare));
         hashing::hash(data, static_cast<uint32_t>(k.polygonMode));
         hashing::hash(data, static_cast<uint32_t>(k.topology));
+        // hashing::hash(data, static_cast<uint32_t>(k.pipelineLayout));
 
         for (const auto &colorFormat : k.colorFormats)
             hashing::hash(data, static_cast<uint32_t>(colorFormat));

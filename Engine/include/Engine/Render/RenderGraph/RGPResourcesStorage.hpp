@@ -21,6 +21,9 @@ public:
     const RenderTarget *getTexture(const RGPResourceHandler &handler) const;
     const RenderTarget *getSwapChainTexture(const RGPResourceHandler &handler, int imageIndex) const;
 
+    RenderTarget *getSwapChainTexture(const RGPResourceHandler &handler, int imageIndex);
+    RenderTarget *getTexture(const RGPResourceHandler &handler);
+
     void cleanup();
 
 private:

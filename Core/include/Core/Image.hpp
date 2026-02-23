@@ -20,7 +20,7 @@ class Image
     DECLARE_VK_SMART_PTRS(Image, VkImage)
     ELIX_DECLARE_VK_LIFECYCLE()
 public:
-    Image(uint32_t width, uint32_t height, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB,
+    Image(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
           VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0);
 
     Image(VkImage image);
@@ -31,20 +31,7 @@ public:
     void bind(VkDeviceSize memoryOffset = 0);
 
     void createVk(VkExtent2D extent, VkImageUsageFlags usage,
-                  memory::MemoryUsage memFlags, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0);
-
-    void insertImageMemoryBarrier(VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,
-                                  VkImageLayout oldImageLayout, VkImageLayout newImageLayout, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
-                                  VkImageSubresourceRange subresourceRange, CommandPool::SharedPtr commandPool = nullptr, VkQueue queue = VK_NULL_HANDLE);
-
-    void insertImageMemoryBarrier(VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,
-                                  VkImageLayout oldImageLayout, VkImageLayout newImageLayout, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
-                                  VkImageSubresourceRange subresourceRange, CommandBuffer &commandBuffer);
-
-    void transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, CommandPool::SharedPtr commandPool = nullptr, VkQueue queue = VK_NULL_HANDLE, uint32_t layerCount = 1,
-                               core::CommandBuffer::SharedPtr comandBuffer = nullptr);
-
-    void copyBufferToImage(Buffer::SharedPtr buffer, uint32_t width, uint32_t height, CommandPool::SharedPtr commandPool, VkQueue queue, uint32_t layerCount = 1, uint32_t baseLayer = 0);
+                  memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0);
 
     ~Image();
 

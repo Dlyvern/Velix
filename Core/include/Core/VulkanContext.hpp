@@ -6,6 +6,7 @@
 #include "Core/SwapChain.hpp"
 #include "Core/CommandPool.hpp"
 #include "Core/Device.hpp"
+#include "Core/DescriptorPool.hpp"
 
 #include <volk.h>
 
@@ -41,6 +42,8 @@ public:
 
     CommandPool::SharedPtr getTransferCommandPool() const;
     CommandPool::SharedPtr getGraphicsCommandPool() const;
+
+    DescriptorPool::SharedPtr getPersistentDescriptorPool() const;
 
     void cleanup();
 
@@ -114,6 +117,8 @@ private:
 
     CommandPool::SharedPtr m_transferCommandPool{nullptr};
     CommandPool::SharedPtr m_graphicsCommandPool{nullptr};
+
+    DescriptorPool::SharedPtr m_descriptorPool{nullptr};
 
     QueueFamilyIndices m_queueFamilyIndices;
 

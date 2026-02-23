@@ -17,19 +17,15 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 class OffscreenRenderGraphPass : public IRenderGraphPass
 {
 public:
-    OffscreenRenderGraphPass(VkDescriptorPool descriptorPool, RGPResourceHandler &shadowTextureHandler);
+    OffscreenRenderGraphPass(VkDescriptorPool descriptorPool, uint32_t shadowId, RGPResourceHandler &shadowTextureHandler);
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
 
     void setExtent(VkExtent2D extent);
 
-    void onSwapChainResized(renderGraph::RGPResourcesStorage &storage) override;
     void compile(renderGraph::RGPResourcesStorage &storage) override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
-
-    void endBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
-    void startBeginRenderPass(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassContext &context) override;
 
     std::vector<RGPResourceHandler> &getColorTextureHandlers()
     {

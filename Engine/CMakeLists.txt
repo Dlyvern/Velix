@@ -25,7 +25,7 @@ target_link_libraries(${PROJECT_NAME}
         VelixCore
         spirv-cross-core
         spirv-cross-cpp
-
         spirv-cross-glsl
+        shaderc
         physx
 )
