@@ -23,7 +23,7 @@ void RGPResourcesStorage::addSwapChainTexture(const RGPResourceHandler &handler,
 
     if (it == m_swapChainTextures.end())
     {
-        std::cerr << "Failed to find swap chain texture\n";
+        VX_ENGINE_ERROR_STREAM("Failed to find swap chain texture\n");
         return;
     }
 
@@ -32,7 +32,7 @@ void RGPResourcesStorage::addSwapChainTexture(const RGPResourceHandler &handler,
     // TODO if image index is kinda good just push to the vector
     if (index > vec.size())
     {
-        std::cerr << "Index is too high\n";
+        VX_ENGINE_ERROR_STREAM("Index is too high\n");
         return;
     }
 

@@ -58,7 +58,7 @@ void GraphicsPipelineCache::loadCacheFromFile(VkDevice device, const std::string
 
     if (!file.is_open())
     {
-        std::cerr << "Failed to load cache from file\n";
+        VX_ENGINE_ERROR_STREAM("Failed to load cache from file\n");
         return;
     }
 

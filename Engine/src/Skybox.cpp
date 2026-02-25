@@ -2,6 +2,7 @@
 #include "Engine/Shaders/PushConstant.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 #include "Engine/Utilities/BufferUtilities.hpp"
+#include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 #include "Core/VulkanContext.hpp"
 
 struct PushConstantView
@@ -153,7 +154,7 @@ void Skybox::render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat
 
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
 
-    vkCmdDraw(commandBuffer, m_vertexCount, 1, 0, 0);
+    renderGraph::profiling::cmdDraw(commandBuffer, m_vertexCount, 1, 0, 0);
 }
 
 ELIX_NESTED_NAMESPACE_END

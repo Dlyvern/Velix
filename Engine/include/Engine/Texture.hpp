@@ -19,7 +19,9 @@ public:
 
     Texture();
 
-    void createFromPixels(uint32_t pixels = 0xFFFFFFFF, core::CommandPool::SharedPtr commandPool = nullptr);
+    static uint32_t packRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+
+    void createFromPixels(uint32_t pixels = 0xFFFFFFFF, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB);
 
     bool load(const std::string &path, core::CommandPool::SharedPtr commandPool = nullptr, bool freePixelsOnLoad = true);
     void freePixels();
@@ -40,6 +42,15 @@ public:
 
     ~Texture();
 
+    void destroy();
+
+    static void createDefaults();
+    static void destroyDefaults();
+    static SharedPtr getDefaultWhiteTexture();
+    static SharedPtr getDefaultNormalTexture();
+    static SharedPtr getDefaultOrmTexture();
+    static SharedPtr getDefaultBlackTexture();
+
 private:
     VkDevice m_device{VK_NULL_HANDLE};
     unsigned char *m_pixels{nullptr};
@@ -49,6 +60,11 @@ private:
     core::Image::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};
     core::Sampler::SharedPtr m_sampler{nullptr};
+
+    static inline SharedPtr s_whiteTexture{nullptr};
+    static inline SharedPtr s_normalTexture{nullptr};
+    static inline SharedPtr s_ormTexture{nullptr};
+    static inline SharedPtr s_blackTexture{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

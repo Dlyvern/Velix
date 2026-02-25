@@ -26,11 +26,13 @@ public:
     [[nodiscard]] float getFOV() const;
     [[nodiscard]] float getNear() const;
     [[nodiscard]] float getFar() const;
+    [[nodiscard]] float getAspect() const;
 
     void setYaw(float yaw);
     void setPitch(float pitch);
     void setPosition(const glm::vec3 &position);
     void setFOV(float fov);
+    void setAspect(float aspect);
 
     void updateCameraVectors();
 

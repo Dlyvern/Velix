@@ -1,14 +1,17 @@
 #include "Engine/Render/RenderGraph/RenderGraph.hpp"
 #include "Core/VulkanContext.hpp"
+#include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 
 #include <iostream>
 #include <array>
 #include <cstring>
 #include <stdexcept>
 #include <algorithm>
+#include <chrono>
 
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
+#include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 
@@ -22,6 +25,8 @@ struct CameraUBO
 {
     glm::mat4 view;
     glm::mat4 projection;
+    glm::mat4 invView;
+    glm::mat4 invProjection;
 };
 
 struct LightData
@@ -84,137 +89,195 @@ RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain) 
 
 void RenderGraph::prepareFrameDataFromScene(Scene *scene)
 {
-    //! Store last scene
-    static std::size_t lastEntitiesSize = 0;
-    const std::size_t entitiesSize = scene->getEntities().size();
+    const auto &sceneEntities = scene->getEntities();
 
-    // Something has changed in the scene
+    static std::size_t lastEntitiesSize = 0;
+    const std::size_t entitiesSize = sceneEntities.size();
+
     if (entitiesSize != lastEntitiesSize)
     {
-        // Find and delete 'deleted' entity
         if (entitiesSize < lastEntitiesSize)
         {
-            std::cout << "Entity was deleted\n";
-
-            const auto &en = scene->getEntities();
-
-            auto it = m_perFrameData.drawItems.begin();
-
-            while (it != m_perFrameData.drawItems.end())
-            {
-                if (std::find(en.begin(), en.end(), it->first) == en.end())
-                {
-                    m_perFrameData.drawItems.erase(it);
-                    break;
-                }
-                else
-                    ++it;
-            }
+            VX_ENGINE_INFO_STREAM("Entity was deleted\n");
         }
         else if (entitiesSize > lastEntitiesSize)
         {
-            std::cout << "Entity was addded\n";
+            VX_ENGINE_INFO_STREAM("Entity was addded\n");
         }
 
         lastEntitiesSize = entitiesSize;
     }
 
-    for (const auto &entity : scene->getEntities())
+    for (auto it = m_perFrameData.drawItems.begin(); it != m_perFrameData.drawItems.end();)
     {
-        auto entityIt = m_perFrameData.drawItems.find(entity);
-
-        // Just update transformation
-        if (entityIt != m_perFrameData.drawItems.end())
-        {
-            entityIt->second.transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f);
-
-            //! if animatios is playing get finalMatrices, bind poses otherwise
-            if (auto skeletalComponent = entity->getComponent<SkeletalMeshComponent>())
-                entityIt->second.finalBones = skeletalComponent->getSkeleton().getBindPoses();
-
-            glm::mat4 *mapped;
-            m_bonesSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(mapped));
-            for (int i = 0; i < entityIt->second.finalBones.size(); ++i)
-                mapped[i] = entityIt->second.finalBones.at(i);
-
-            m_bonesSSBOs[m_currentFrame]->unmap();
-
-            m_perFrameData.perObjectDescriptorSet = m_perObjectDescriptorSets[m_currentFrame];
-
-            continue;
-        }
-
-        // Create a new GPU mesh
-        std::vector<CPUMesh> meshes;
-
-        if (auto component = entity->getComponent<StaticMeshComponent>())
-            meshes = component->getMeshes();
-        else if (auto component = entity->getComponent<SkeletalMeshComponent>())
-            meshes = component->getMeshes();
-
-        if (meshes.empty())
-            continue;
-
-        std::vector<GPUMesh::SharedPtr> gpuMeshes;
-
-        for (const auto &mesh : meshes)
-        {
-            std::size_t hashData{0};
-
-            hashing::hash(hashData, mesh.vertexStride);
-            hashing::hash(hashData, mesh.vertexLayoutHash);
-
-            for (const auto &vertex : mesh.vertexData)
-                hashing::hash(hashData, vertex);
-
-            for (const auto &index : mesh.indices)
-                hashing::hash(hashData, index);
-
-            if (m_meshes.find(hashData) == m_meshes.end())
-            {
-                m_meshes[hashData] = GPUMesh::createFromMesh(mesh);
-                std::cout << "New mesh\n";
-            }
-
-            auto gpuMesh = m_meshes[hashData];
-
-            if (mesh.material.albedoTexture.empty())
-                gpuMesh->material = Material::getDefaultMaterial();
-            else
-            {
-                auto textureImage = std::make_shared<Texture>();
-                textureImage->load(mesh.material.albedoTexture);
-
-                auto material = Material::create(textureImage);
-                gpuMesh->material = material;
-            }
-
-            gpuMeshes.push_back(gpuMesh);
-        }
-
-        DrawItem drawItem{
-            .meshes = gpuMeshes,
-            .transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f),
-        };
-
-        //! if animatios is playing get finalMatrices, bind poses otherwise
-        if (auto skeletalComponent = entity->getComponent<SkeletalMeshComponent>())
-            drawItem.finalBones = skeletalComponent->getSkeleton().getBindPoses();
-
-        glm::mat4 *mapped;
-        m_bonesSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(mapped));
-        for (int i = 0; i < drawItem.finalBones.size(); ++i)
-            mapped[i] = drawItem.finalBones.at(i);
-
-        m_bonesSSBOs[m_currentFrame]->unmap();
-
-        m_perFrameData.drawItems[entity] = drawItem;
-
-        m_perFrameData.perObjectDescriptorSet = m_perObjectDescriptorSets[m_currentFrame];
+        if (std::find(sceneEntities.begin(), sceneEntities.end(), it->first) == sceneEntities.end())
+            it = m_perFrameData.drawItems.erase(it);
+        else
+            ++it;
     }
+
+    auto computeMeshGeometryHash = [](const CPUMesh &mesh) -> std::size_t
+    {
+        std::size_t hashData{0};
+        hashing::hash(hashData, mesh.vertexStride);
+        hashing::hash(hashData, mesh.vertexLayoutHash);
+
+        for (const auto &vertexByte : mesh.vertexData)
+            hashing::hash(hashData, vertexByte);
+
+        for (const auto &index : mesh.indices)
+            hashing::hash(hashData, index);
+
+        return hashData;
+    };
+
+    auto getOrCreateSharedGeometryMesh = [&](const CPUMesh &mesh) -> GPUMesh::SharedPtr
+    {
+        const std::size_t hashData = computeMeshGeometryHash(mesh);
+
+        auto it = m_meshes.find(hashData);
+        if (it != m_meshes.end())
+            return it->second;
+
+        auto createdMesh = GPUMesh::createFromMesh(mesh);
+        m_meshes[hashData] = createdMesh;
+        return createdMesh;
+    };
+
+    auto createDrawMeshInstance = [&](const CPUMesh &mesh) -> GPUMesh::SharedPtr
+    {
+        auto sharedGeometry = getOrCreateSharedGeometryMesh(mesh);
+
+        auto instance = std::make_shared<GPUMesh>();
+        instance->indexBuffer = sharedGeometry->indexBuffer;
+        instance->vertexBuffer = sharedGeometry->vertexBuffer;
+        instance->indicesCount = sharedGeometry->indicesCount;
+        instance->indexType = sharedGeometry->indexType;
+        instance->vertexStride = sharedGeometry->vertexStride;
+        instance->vertexLayoutHash = sharedGeometry->vertexLayoutHash;
+
+        return instance;
+    };
+
+    auto resolveMeshMaterial = [&](const CPUMesh &mesh, StaticMeshComponent *staticComponent, SkeletalMeshComponent *skeletalComponent, size_t slot) -> Material::SharedPtr
+    {
+        if (staticComponent)
+        {
+            auto overrideMaterial = staticComponent->getMaterialOverride(slot);
+            if (overrideMaterial)
+                return overrideMaterial;
+        }
+        else if (skeletalComponent)
+        {
+            auto overrideMaterial = skeletalComponent->getMaterialOverride(slot);
+            if (overrideMaterial)
+                return overrideMaterial;
+        }
+
+        if (mesh.material.albedoTexture.empty())
+            return Material::getDefaultMaterial();
+
+        auto materialIt = m_materialsByAlbedoPath.find(mesh.material.albedoTexture);
+        if (materialIt != m_materialsByAlbedoPath.end())
+            return materialIt->second;
+
+        auto textureImage = std::make_shared<Texture>();
+        if (!textureImage->load(mesh.material.albedoTexture))
+        {
+            VX_ENGINE_ERROR_STREAM("Failed to load mesh albedo texture: " << mesh.material.albedoTexture << '\n');
+            return Material::getDefaultMaterial();
+        }
+
+        auto material = Material::create(textureImage);
+        m_materialsByAlbedoPath[mesh.material.albedoTexture] = material;
+        return material;
+    };
+
+    auto updateDrawItemBones = [](DrawItem &drawItem, Entity::SharedPtr entity)
+    {
+        if (auto skeletalComponent = entity->getComponent<SkeletalMeshComponent>())
+        {
+            auto &skeleton = skeletalComponent->getSkeleton();
+            if (auto animator = entity->getComponent<AnimatorComponent>(); animator && animator->isAnimationPlaying())
+                drawItem.finalBones = skeleton.getFinalMatrices();
+            else
+                drawItem.finalBones = skeleton.getBindPoses();
+        }
+        else
+            drawItem.finalBones.clear();
+    };
+
+    for (const auto &entity : sceneEntities)
+    {
+        auto staticMeshComponent = entity->getComponent<StaticMeshComponent>();
+        auto skeletalMeshComponent = entity->getComponent<SkeletalMeshComponent>();
+
+        const std::vector<CPUMesh> *meshes = nullptr;
+        if (staticMeshComponent)
+            meshes = &staticMeshComponent->getMeshes();
+        else if (skeletalMeshComponent)
+            meshes = &skeletalMeshComponent->getMeshes();
+
+        if (!meshes || meshes->empty())
+        {
+            auto drawItemIt = m_perFrameData.drawItems.find(entity);
+            if (drawItemIt != m_perFrameData.drawItems.end())
+                m_perFrameData.drawItems.erase(drawItemIt);
+            continue;
+        }
+
+        auto drawItemIt = m_perFrameData.drawItems.find(entity);
+        if (drawItemIt == m_perFrameData.drawItems.end())
+            drawItemIt = m_perFrameData.drawItems.emplace(entity, DrawItem{}).first;
+
+        auto &drawItem = drawItemIt->second;
+        drawItem.transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f);
+        drawItem.bonesOffset = 0;
+        updateDrawItemBones(drawItem, entity);
+
+        if (drawItem.meshes.size() != meshes->size())
+        {
+            drawItem.meshes.clear();
+            drawItem.meshes.reserve(meshes->size());
+
+            for (const auto &mesh : *meshes)
+                drawItem.meshes.push_back(createDrawMeshInstance(mesh));
+        }
+
+        for (size_t meshIndex = 0; meshIndex < meshes->size() && meshIndex < drawItem.meshes.size(); ++meshIndex)
+            drawItem.meshes[meshIndex]->material = resolveMeshMaterial((*meshes)[meshIndex], staticMeshComponent, skeletalMeshComponent, meshIndex);
+    }
+
+    std::vector<glm::mat4> frameBones;
+
+    for (auto &[_, drawItem] : m_perFrameData.drawItems)
+    {
+        drawItem.bonesOffset = 0;
+
+        if (drawItem.finalBones.empty())
+            continue;
+
+        drawItem.bonesOffset = static_cast<uint32_t>(frameBones.size());
+        frameBones.insert(frameBones.end(), drawItem.finalBones.begin(), drawItem.finalBones.end());
+    }
+
+    const VkDeviceSize requiredBonesSize = static_cast<VkDeviceSize>(frameBones.size() * sizeof(glm::mat4));
+    const VkDeviceSize availableBonesSize = m_bonesSSBOs[m_currentFrame]->getSize();
+
+    if (requiredBonesSize > availableBonesSize)
+        throw std::runtime_error("Bones SSBO size is too small for current frame. Increase initial bones buffer size.");
+
+    glm::mat4 *mapped = nullptr;
+    m_bonesSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(mapped));
+
+    if (!frameBones.empty())
+        std::memcpy(mapped, frameBones.data(), frameBones.size() * sizeof(glm::mat4));
+
+    m_bonesSSBOs[m_currentFrame]->unmap();
+    m_perFrameData.perObjectDescriptorSet = m_perObjectDescriptorSets[m_currentFrame];
 }
 
-void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene)
+void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime)
 {
     prepareFrameDataFromScene(scene);
 
@@ -222,12 +285,15 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene)
     m_perFrameData.swapChainScissor = m_swapchain->getScissor();
     m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
     m_perFrameData.previewCameraDescriptorSet = m_previewCameraDescriptorSets[m_currentFrame];
+    m_perFrameData.deltaTime = deltaTime;
 
     CameraUBO cameraUBO{};
 
     cameraUBO.view = camera ? camera->getViewMatrix() : glm::mat4(1.0f);
     cameraUBO.projection = camera ? camera->getProjectionMatrix() : glm::mat4(1.0f);
     cameraUBO.projection[1][1] *= -1;
+    cameraUBO.invProjection = glm::inverse(cameraUBO.projection);
+    cameraUBO.invView = glm::inverse(cameraUBO.view);
 
     m_perFrameData.projection = cameraUBO.projection;
     m_perFrameData.view = cameraUBO.view;
@@ -277,81 +343,98 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene)
     //     vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
     // }
 
-    auto lights = scene->getLights();
-
     // size_t requiredSize = sizeof(LightData) * (lights.size() * sizeof(LightData));
 
-    void *mapped;
+    const auto lights = scene->getLights();
+
+    void *mapped = nullptr;
     m_lightSSBOs[m_currentFrame]->map(mapped);
 
     LightSSBO *ssboData = static_cast<LightSSBO *>(mapped);
     ssboData->lightCount = static_cast<int>(lights.size());
 
+    const glm::mat4 view = cameraUBO.view;
+    const glm::mat3 view3 = glm::mat3(view);
+
     for (size_t i = 0; i < lights.size(); ++i)
     {
-        auto lightComponent = lights[i];
+        const auto &lightComponent = lights[i];
 
-        ssboData->lights[i].position = glm::vec4(lightComponent->position, 0.0f);
+        ssboData->lights[i].position = glm::vec4(0.0f);
+        ssboData->lights[i].direction = glm::vec4(0.0f, 0.0f, -1.0f, 0.0f);
         ssboData->lights[i].parameters = glm::vec4(1.0f);
         ssboData->lights[i].colorStrength = glm::vec4(lightComponent->color, lightComponent->strength);
 
         if (auto directionalLight = dynamic_cast<DirectionalLight *>(lightComponent.get()))
         {
-            ssboData->lights[i].direction = glm::vec4{glm::normalize(directionalLight->direction), 0.0f};
-            ssboData->lights[i].parameters.w = 0;
+            glm::vec3 dirWorld = glm::normalize(directionalLight->direction);
+            glm::vec3 dirView = glm::normalize(view3 * dirWorld);
+
+            ssboData->lights[i].direction = glm::vec4(dirView, 0.0f);
+            ssboData->lights[i].parameters.w = 0.0f;
         }
         else if (auto pointLight = dynamic_cast<PointLight *>(lightComponent.get()))
         {
+            glm::vec3 posWorld = lightComponent->position;
+            glm::vec3 posView = glm::vec3(view * glm::vec4(posWorld, 1.0f));
+
+            ssboData->lights[i].position = glm::vec4(posView, 1.0f);
             ssboData->lights[i].parameters.z = pointLight->radius;
-            ssboData->lights[i].parameters.w = 2;
+            ssboData->lights[i].parameters.w = 2.0f;
         }
         else if (auto spotLight = dynamic_cast<SpotLight *>(lightComponent.get()))
         {
-            ssboData->lights[i].direction = glm::vec4(glm::normalize(spotLight->direction), 0.0f);
-            ssboData->lights[i].parameters.w = 1;
+            glm::vec3 posView = glm::vec3(view * glm::vec4(lightComponent->position, 1.0f));
+            glm::vec3 dirView = glm::normalize(view3 * glm::normalize(spotLight->direction));
+
+            ssboData->lights[i].position = glm::vec4(posView, 1.0f);
+            ssboData->lights[i].direction = glm::vec4(dirView, 0.0f);
+
+            ssboData->lights[i].parameters.w = 1.0f;
             ssboData->lights[i].parameters.x = glm::cos(glm::radians(spotLight->innerAngle));
             ssboData->lights[i].parameters.y = glm::cos(glm::radians(spotLight->outerAngle));
+            // ssboData->lights[i].parameters.z = spotLight->radius;
         }
     }
 
     m_lightSSBOs[m_currentFrame]->unmap();
 
+    m_perFrameData.lightSpaceMatrix = glm::mat4(1.0f);
+    m_perFrameData.directionalLightDirection = glm::vec3(0.0f, -1.0f, 0.0f);
+    m_perFrameData.directionalLightStrength = 0.0f;
+
     for (size_t i = 0; i < lights.size(); ++i)
     {
-        auto light = lights[i];
-
-        auto directionalLight = dynamic_cast<DirectionalLight *>(light.get());
-
+        auto directionalLight = dynamic_cast<DirectionalLight *>(lights[i].get());
         if (!directionalLight)
             continue;
 
         LightSpaceMatrixUBO lightSpaceMatrixUBO{};
 
         glm::vec3 lightDirection = glm::normalize(directionalLight->direction);
+        m_perFrameData.directionalLightDirection = lightDirection;
+        m_perFrameData.directionalLightStrength = directionalLight->strength;
 
-        glm::vec3 lightTarget{0.0f};
-        float nearPlane = 50.0f;
-        float farPlane = 1000.0f;
-        // Position 'light camera' 20 units away from the target
-        glm::vec3 lightPosition = lightTarget - lightDirection * 20.0f;
+        glm::mat4 invView = glm::inverse(cameraUBO.view);
+        glm::vec3 camPos = glm::vec3(invView[3]);
+        glm::vec3 camForward = glm::normalize(glm::vec3(invView * glm::vec4(0, 0, -1, 0)));
 
-        glm::mat4 lightView = glm::lookAt(lightPosition, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::vec3 lightTarget = camPos + camForward * 20.0f; // center shadow area in front of camera
+        glm::vec3 lightPos = lightTarget - lightDirection * 30.0f;
 
-        glm::mat4 lightProjection = glm::ortho(-30.0f, 30.0f, -30.0f, 30.0f, 1.0f, 40.0f);
+        glm::vec3 up = (std::abs(glm::dot(lightDirection, glm::vec3(0, 1, 0))) > 0.95f)
+                           ? glm::vec3(0, 0, 1)
+                           : glm::vec3(0, 1, 0);
 
-        // glm::mat4 lightProjection = glm::perspective(glm::radians(45.0f), 1.0f, nearPlane, farPlane);
-
-        glm::mat4 lightMatrix = lightProjection * lightView;
-
+        glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, up);
+        glm::mat4 lightProj = glm::ortho(-25.0f, 25.0f, -25.0f, 25.0f, 1.0f, 80.0f);
+        glm::mat4 lightMatrix = lightProj * lightView;
         lightSpaceMatrixUBO.lightSpaceMatrix = lightMatrix;
 
         std::memcpy(m_lightMapped[m_currentFrame], &lightSpaceMatrixUBO, sizeof(LightSpaceMatrixUBO));
-
-        // m_lightSpaceMatrixUniformObjects[m_currentFrame]->update(&lightSpaceMatrixUBO);
-
         m_perFrameData.lightSpaceMatrix = lightMatrix;
 
-        //! Only one directional light. Fix it later
+        // Only one directional light for now
         break;
     }
 }
@@ -395,17 +478,156 @@ void RenderGraph::recreateSwapChain()
         renderPass.renderGraphPass->compile(m_renderGraphPassesStorage);
 }
 
+void RenderGraph::initTimestampQueryPool()
+{
+    destroyTimestampQueryPool();
+
+    auto context = core::VulkanContext::getContext();
+    if (!context)
+        return;
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(context->getPhysicalDevice(), &properties);
+    m_timestampPeriodNs = properties.limits.timestampPeriod;
+
+    uint32_t queueFamiliesCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(context->getPhysicalDevice(), &queueFamiliesCount, nullptr);
+
+    if (queueFamiliesCount == 0)
+        return;
+
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamiliesCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(context->getPhysicalDevice(), &queueFamiliesCount, queueFamilies.data());
+
+    const uint32_t graphicsFamily = context->getGraphicsFamily();
+
+    if (graphicsFamily >= queueFamiliesCount || queueFamilies[graphicsFamily].timestampValidBits == 0)
+        return;
+
+    const uint32_t passCount = std::max<uint32_t>(1u, static_cast<uint32_t>(m_renderGraphPasses.size()));
+    const uint32_t maxExecutions = MAX_RENDER_JOBS + passCount + 16u;
+    m_timestampQueryCapacity = maxExecutions * 2u;
+
+    VkQueryPoolCreateInfo queryPoolCI{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    queryPoolCI.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    queryPoolCI.queryCount = m_timestampQueryCapacity;
+
+    if (vkCreateQueryPool(m_device, &queryPoolCI, nullptr, &m_timestampQueryPool) == VK_SUCCESS)
+    {
+        m_isGpuTimingAvailable = true;
+    }
+    else
+    {
+        m_timestampQueryPool = VK_NULL_HANDLE;
+        m_timestampQueryCapacity = 0;
+        m_isGpuTimingAvailable = false;
+        VX_ENGINE_ERROR_STREAM("Failed to create render graph timestamp query pool\n");
+    }
+}
+
+void RenderGraph::destroyTimestampQueryPool()
+{
+    if (m_timestampQueryPool != VK_NULL_HANDLE)
+    {
+        vkDestroyQueryPool(m_device, m_timestampQueryPool, nullptr);
+        m_timestampQueryPool = VK_NULL_HANDLE;
+    }
+
+    m_timestampQueryCapacity = 0;
+    m_usedTimestampQueries = 0;
+    m_isGpuTimingAvailable = false;
+}
+
+void RenderGraph::resolveFrameProfilingData()
+{
+    RenderGraphFrameProfilingData frameProfilingData{};
+    frameProfilingData.frameIndex = ++m_profiledFrameIndex;
+    frameProfilingData.totalDrawCalls = 0;
+    frameProfilingData.cpuTotalTimeMs = 0.0;
+    frameProfilingData.gpuTotalTimeMs = 0.0;
+    frameProfilingData.gpuTimingAvailable = false;
+    frameProfilingData.passes.reserve(m_passExecutionProfilingData.size());
+
+    std::vector<uint64_t> timestampData;
+    bool hasGpuData = false;
+
+    if (m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && m_usedTimestampQueries > 0)
+    {
+        timestampData.resize(m_usedTimestampQueries);
+
+        const VkResult result = vkGetQueryPoolResults(
+            m_device,
+            m_timestampQueryPool,
+            0,
+            m_usedTimestampQueries,
+            timestampData.size() * sizeof(uint64_t),
+            timestampData.data(),
+            sizeof(uint64_t),
+            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+
+        hasGpuData = result == VK_SUCCESS;
+
+        if (!hasGpuData)
+            VX_ENGINE_ERROR_STREAM("Failed to collect timestamp query results for render graph profiling\n");
+    }
+
+    frameProfilingData.gpuTimingAvailable = hasGpuData;
+
+    std::unordered_map<std::string, size_t> passIndexByName;
+    passIndexByName.reserve(m_passExecutionProfilingData.size());
+
+    for (const auto &executionData : m_passExecutionProfilingData)
+    {
+        const std::string passName = executionData.passName.empty() ? "Unnamed pass" : executionData.passName;
+
+        size_t passIndex = 0;
+        auto passIt = passIndexByName.find(passName);
+
+        if (passIt == passIndexByName.end())
+        {
+            passIndex = frameProfilingData.passes.size();
+            passIndexByName.emplace(passName, passIndex);
+            frameProfilingData.passes.push_back(RenderGraphPassProfilingData{.passName = passName});
+        }
+        else
+            passIndex = passIt->second;
+
+        auto &passProfilingData = frameProfilingData.passes[passIndex];
+        passProfilingData.executions++;
+        passProfilingData.drawCalls += executionData.drawCalls;
+        passProfilingData.cpuTimeMs += executionData.cpuTimeMs;
+
+        frameProfilingData.totalDrawCalls += executionData.drawCalls;
+        frameProfilingData.cpuTotalTimeMs += executionData.cpuTimeMs;
+
+        if (hasGpuData && executionData.startQueryIndex < m_usedTimestampQueries && executionData.endQueryIndex < m_usedTimestampQueries)
+        {
+            const uint64_t start = timestampData[executionData.startQueryIndex];
+            const uint64_t end = timestampData[executionData.endQueryIndex];
+
+            if (end >= start)
+            {
+                const double gpuTimeMs = static_cast<double>(end - start) * static_cast<double>(m_timestampPeriodNs) * 1e-6;
+                passProfilingData.gpuTimeMs += gpuTimeMs;
+                frameProfilingData.gpuTotalTimeMs += gpuTimeMs;
+            }
+        }
+    }
+
+    m_lastFrameProfilingData = std::move(frameProfilingData);
+}
+
 bool RenderGraph::begin()
 {
     if (VkResult result = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX); result != VK_SUCCESS)
     {
-        std::cerr << "Failed to wait for fences: " << core::helpers::vulkanResultToString(result) << '\n';
+        VX_ENGINE_ERROR_STREAM("Failed to wait for fences: " << core::helpers::vulkanResultToString(result) << '\n');
         return false;
     }
 
     if (VkResult result = vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]); result != VK_SUCCESS)
     {
-        std::cerr << "Failed to reset fences: " << core::helpers::vulkanResultToString(result) << '\n';
+        VX_ENGINE_ERROR_STREAM("Failed to reset fences: " << core::helpers::vulkanResultToString(result) << '\n');
         return false;
     }
 
@@ -421,7 +643,7 @@ bool RenderGraph::begin()
     }
     else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
     {
-        std::cerr << "Failed to acquire swap chain image: " << core::helpers::vulkanResultToString(result) << '\n';
+        VX_ENGINE_ERROR_STREAM("Failed to acquire swap chain image: " << core::helpers::vulkanResultToString(result) << '\n');
         return false;
     }
 
@@ -472,6 +694,12 @@ bool RenderGraph::begin()
 
     primaryCommandBuffer->begin();
 
+    m_passExecutionProfilingData.clear();
+    m_usedTimestampQueries = 0;
+
+    if (m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && m_timestampQueryCapacity > 0)
+        vkCmdResetQueryPool(primaryCommandBuffer->vk(), m_timestampQueryPool, 0, m_timestampQueryCapacity);
+
     size_t passIndex = 0;
 
     size_t secIndex = 0;
@@ -518,6 +746,10 @@ bool RenderGraph::begin()
             std::vector<VkImageMemoryBarrier2> firstBarriers;
             std::vector<VkImageMemoryBarrier2> secondBarriers;
 
+            PassExecutionProfilingData executionProfilingData{};
+            executionProfilingData.passName = renderGraphPass->getDebugName().empty() ? ("Pass " + std::to_string(passIndex))
+                                                                                      : renderGraphPass->getDebugName();
+
             for (const auto &[id, target] : execution.targets)
             {
                 auto textureDescription = m_renderGraphPassesBuilder.getTextureDescription(id);
@@ -553,6 +785,16 @@ bool RenderGraph::begin()
                 secondBarriers.push_back(postBarrier);
             }
 
+            if (m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && (m_usedTimestampQueries + 1) < m_timestampQueryCapacity)
+            {
+                executionProfilingData.startQueryIndex = m_usedTimestampQueries++;
+                executionProfilingData.endQueryIndex = m_usedTimestampQueries++;
+
+                vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_timestampQueryPool, executionProfilingData.startQueryIndex);
+            }
+
+            const auto cpuStartTime = std::chrono::high_resolution_clock::now();
+
             VkDependencyInfo firstDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
             firstDep.imageMemoryBarrierCount = static_cast<uint32_t>(firstBarriers.size());
             firstDep.pImageMemoryBarriers = firstBarriers.data();
@@ -563,7 +805,10 @@ bool RenderGraph::begin()
 
             secCB->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inherit);
 
-            renderGraphPass->record(secCB, m_perFrameData, m_passContextData);
+            {
+                profiling::ScopedDrawCallCounter scopedDrawCallCounter(executionProfilingData.drawCalls);
+                renderGraphPass->record(secCB, m_perFrameData, m_passContextData);
+            }
 
             secCB->end();
 
@@ -576,6 +821,14 @@ bool RenderGraph::begin()
             secondDep.pImageMemoryBarriers = secondBarriers.data();
 
             vkCmdPipelineBarrier2(primaryCommandBuffer, &secondDep);
+
+            if (executionProfilingData.endQueryIndex != UINT32_MAX)
+                vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_timestampQueryPool, executionProfilingData.endQueryIndex);
+
+            const auto cpuEndTime = std::chrono::high_resolution_clock::now();
+            executionProfilingData.cpuTimeMs = std::chrono::duration<double, std::milli>(cpuEndTime - cpuStartTime).count();
+
+            m_passExecutionProfilingData.push_back(std::move(executionProfilingData));
 
             secIndex++;
         }
@@ -600,6 +853,7 @@ void RenderGraph::end()
                                  m_inFlightFences[m_currentFrame]);
 
     vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    resolveFrameProfilingData();
 
     VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     presentInfo.waitSemaphoreCount = static_cast<uint32_t>(signalSemaphores.size());
@@ -704,7 +958,7 @@ void RenderGraph::setup()
 
         if (!renderGraphPass)
         {
-            std::cerr << "failed to find render graph pass\n";
+            VX_ENGINE_ERROR_STREAM("failed to find render graph pass\n");
             continue;
         }
 
@@ -793,7 +1047,7 @@ void RenderGraph::sortRenderGraphPasses()
 
         if (!renderGraphPass)
         {
-            std::cerr << "Failed to find pass. Error...\n";
+            VX_ENGINE_ERROR_STREAM("Failed to find pass. Error...\n");
             continue;
         }
 
@@ -803,7 +1057,7 @@ void RenderGraph::sortRenderGraphPasses()
 
             if (!dstRenderGraphPass)
             {
-                std::cerr << "Failed to find dst pass. Error...\n";
+                VX_ENGINE_ERROR_STREAM("Failed to find dst pass. Error...\n");
                 continue;
             }
 
@@ -814,7 +1068,7 @@ void RenderGraph::sortRenderGraphPasses()
 
     if (sorted.size() != m_renderGraphPasses.size())
     {
-        std::cerr << "Failed to build graph tree\n";
+        VX_ENGINE_ERROR_STREAM("Failed to build graph tree\n");
         return;
     }
 
@@ -827,7 +1081,7 @@ void RenderGraph::sortRenderGraphPasses()
 
         if (!renderGraphPass)
         {
-            std::cerr << "Failed to find sorted node\n";
+            VX_ENGINE_ERROR_STREAM("Failed to find sorted node\n");
             continue;
         }
 
@@ -835,14 +1089,14 @@ void RenderGraph::sortRenderGraphPasses()
     }
 
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
-        std::cout << "Node: " << renderGraphPass->getDebugName() << '\n';
+        VX_ENGINE_INFO_STREAM("Node: " << renderGraphPass->getDebugName() << '\n');
 }
 
 void RenderGraph::compile()
 {
     auto barriers = m_renderGraphPassesCompiler.compile(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
 
-    // std::cout << "Memory before render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n';
+    // VX_ENGINE_INFO_STREAM("Memory before render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n');
 
     auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
     commandBuffer.begin();
@@ -865,7 +1119,7 @@ void RenderGraph::compile()
     core::VulkanContext::getContext()->getSwapchain()->getWindow()->addResizeCallback([this](platform::Window *, int, int)
                                                                                       { recreateSwapChain(); });
 
-    // std::cout << "Memory after render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n';
+    // VX_ENGINE_INFO_STREAM("Memory after render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n');
 }
 
 void RenderGraph::createPreviewCameraDescriptorSets()
@@ -908,7 +1162,7 @@ void RenderGraph::createPerObjectDescriptorSets()
     }
 }
 
-void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imageView)
+void RenderGraph::createCameraDescriptorSets()
 {
     m_cameraDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
     m_cameraMapped.resize(MAX_FRAMES_IN_FLIGHT);
@@ -938,8 +1192,7 @@ void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imag
         m_cameraDescriptorSets[i] = DescriptorSetBuilder::begin()
                                         .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                                         .addBuffer(lightBuffer, sizeof(LightSpaceMatrixUBO), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                                        .addImage(imageView, sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 2)
-                                        .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                                        .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                                         .build(m_device, m_descriptorPool, EngineShaderFamilies::cameraDescriptorSetLayout->vk());
     }
 
@@ -949,6 +1202,9 @@ void RenderGraph::createCameraDescriptorSets(VkSampler sampler, VkImageView imag
 
 void RenderGraph::createRenderGraphResources()
 {
+    createDescriptorSetPool();
+    createCameraDescriptorSets();
+
     for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
     {
         auto commandPool = m_commandPools.emplace_back(core::CommandPool::createShared(core::VulkanContext::getContext()->getDevice(),
@@ -963,6 +1219,7 @@ void RenderGraph::createRenderGraphResources()
     }
 
     sortRenderGraphPasses();
+    initTimestampQueryPool();
 }
 
 void RenderGraph::cleanResources()
@@ -978,6 +1235,41 @@ void RenderGraph::cleanResources()
 
     for (const auto &renderPass : m_renderGraphPasses)
         renderPass.second.renderGraphPass->cleanup();
+
+    for (auto &semaphore : m_imageAvailableSemaphores)
+    {
+        if (semaphore != VK_NULL_HANDLE)
+        {
+            vkDestroySemaphore(m_device, semaphore, nullptr);
+            semaphore = VK_NULL_HANDLE;
+        }
+    }
+
+    for (auto &semaphore : m_renderFinishedSemaphores)
+    {
+        if (semaphore != VK_NULL_HANDLE)
+        {
+            vkDestroySemaphore(m_device, semaphore, nullptr);
+            semaphore = VK_NULL_HANDLE;
+        }
+    }
+
+    for (auto &fence : m_inFlightFences)
+    {
+        if (fence != VK_NULL_HANDLE)
+        {
+            vkDestroyFence(m_device, fence, nullptr);
+            fence = VK_NULL_HANDLE;
+        }
+    }
+
+    m_imageAvailableSemaphores.clear();
+    m_renderFinishedSemaphores.clear();
+    m_inFlightFences.clear();
+
+    destroyTimestampQueryPool();
+    m_passExecutionProfilingData.clear();
+    m_lastFrameProfilingData = {};
 
     m_perFrameData.drawItems.clear();
     m_renderGraphPassesStorage.cleanup();

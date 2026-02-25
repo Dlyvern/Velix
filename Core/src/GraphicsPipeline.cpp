@@ -1,7 +1,6 @@
 #include "Core/GraphicsPipeline.hpp"
 #include "Core/VulkanContext.hpp"
-
-#include <stdexcept>
+#include "Core/VulkanAssert.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -48,8 +47,7 @@ void GraphicsPipeline::createVk(VkPipelineRenderingCreateInfo pipelineRendering,
     pipelineInfo.basePipelineIndex = -1;
     pipelineInfo.pDepthStencilState = &depthStencil;
 
-    if (vkCreateGraphicsPipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_handle) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create graphics pipeline");
+    VX_VK_CHECK(vkCreateGraphicsPipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_handle));
 
     ELIX_VK_CREATE_GUARD_DONE()
 }
@@ -78,8 +76,7 @@ void GraphicsPipeline::createVk(VkDevice device, VkRenderPass renderPass, const 
     pipelineInfo.basePipelineIndex = -1;
     pipelineInfo.pDepthStencilState = &depthStencil;
 
-    if (vkCreateGraphicsPipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_handle) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create graphics pipeline");
+    VX_VK_CHECK(vkCreateGraphicsPipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_handle));
 
     ELIX_VK_CREATE_GUARD_DONE()
 }

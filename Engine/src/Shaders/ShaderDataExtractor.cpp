@@ -14,7 +14,7 @@ std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandl
 
     if (handler.getCode().empty())
     {
-        std::cerr << "SPIRV from shader is empty" << std::endl;
+        VX_ENGINE_ERROR_STREAM("SPIRV from shader is empty" << std::endl);
         return reflections;
     }
 
@@ -29,8 +29,8 @@ std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandl
         auto name = compiler.get_name(uniformBuffer.id);
         auto size = compiler.get_declared_struct_size(type);
 
-        std::cout << "UBO: " << name << " set=" << set << " binding=" << binding
-                  << " size=" << size << std::endl;
+        VX_ENGINE_INFO_STREAM("UBO: " << name << " set=" << set << " binding=" << binding
+                  << " size=" << size << std::endl);
     }
 
     for (auto &sampler : resources.sampled_images)
@@ -39,22 +39,22 @@ std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandl
         auto binding = compiler.get_decoration(sampler.id, spv::DecorationBinding);
         auto name = compiler.get_name(sampler.id);
 
-        std::cout << "Texture: " << name << " set=" << set << " binding=" << binding << std::endl;
+        VX_ENGINE_INFO_STREAM("Texture: " << name << " set=" << set << " binding=" << binding << std::endl);
     }
 
     for (auto &pushConstant : resources.push_constant_buffers)
     {
         auto &type = compiler.get_type(pushConstant.base_type_id);
         size_t size = compiler.get_declared_struct_size(type);
-        std::cout << "PushConstant: " << compiler.get_name(pushConstant.id)
-                  << " size=" << size << std::endl;
+        VX_ENGINE_INFO_STREAM("PushConstant: " << compiler.get_name(pushConstant.id)
+                  << " size=" << size << std::endl);
     }
 
     for (auto &input : resources.stage_inputs)
     {
         auto location = compiler.get_decoration(input.id, spv::DecorationLocation);
         auto name = compiler.get_name(input.id);
-        std::cout << "Vertex Input: " << name << " location=" << location << std::endl;
+        VX_ENGINE_INFO_STREAM("Vertex Input: " << name << " location=" << location << std::endl);
     }
 
     // auto& type = compiler.get_type(resource.type_id);

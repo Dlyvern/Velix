@@ -6,10 +6,6 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 Skeleton::Skeleton()
 {
-    m_finalBoneMatrices.reserve(100);
-
-    for (int i = 0; i < 100; i++)
-        m_finalBoneMatrices.emplace_back(1.0f);
 }
 
 unsigned int Skeleton::addBone(const BoneInfo &bone)
@@ -20,7 +16,10 @@ unsigned int Skeleton::addBone(const BoneInfo &bone)
 
     const unsigned int boneID = m_bonesInfo.size();
     m_boneMap[bone.name] = boneID;
-    m_bonesInfo.push_back(bone);
+
+    auto boneInfo = bone;
+    boneInfo.id = static_cast<int>(boneID);
+    m_bonesInfo.push_back(boneInfo);
 
     return boneID;
 }
@@ -35,14 +34,14 @@ void Skeleton::printBonesHierarchy()
 {
     for (const auto &bone : m_bonesInfo)
     {
-        std::cout << "Bone: " << bone.name << " (ID: " << bone.id << "), Parent: "
+        VX_ENGINE_INFO_STREAM("Bone: " << bone.name << " (ID: " << bone.id << "), Parent: "
                   << (bone.parentId == -1 ? "None" : m_bonesInfo[bone.parentId].name)
-                  << ", Children: ";
+                  << ", Children: ");
         for (int child : bone.children)
         {
-            std::cout << m_bonesInfo[child].name << " ";
+            VX_ENGINE_INFO_STREAM(m_bonesInfo[child].name << " ");
         }
-        std::cout << std::endl;
+        VX_ENGINE_INFO_STREAM(std::endl);
     }
 }
 
@@ -70,7 +69,7 @@ Skeleton::BoneInfo *Skeleton::getBone(const std::string &boneName)
 
 Skeleton::BoneInfo *Skeleton::getBone(int boneID)
 {
-    if (m_bonesInfo.size() < boneID)
+    if (boneID < 0 || static_cast<size_t>(boneID) >= m_bonesInfo.size())
         return nullptr;
 
     return &m_bonesInfo[boneID];
@@ -87,7 +86,11 @@ Skeleton::BoneInfo *Skeleton::getParent()
 
 void Skeleton::calculateBindPoseTransforms()
 {
-    m_bindPoseTransform.resize(m_bonesInfo.size(), glm::mat4(1.0f));
+    m_bindPoseTransform.assign(m_bonesInfo.size(), glm::mat4(1.0f));
+    m_finalBoneMatrices.assign(m_bonesInfo.size(), glm::mat4(1.0f));
+
+    if (m_bonesInfo.empty())
+        return;
 
     glm::mat4 identity(1.0f);
 
@@ -96,11 +99,8 @@ void Skeleton::calculateBindPoseTransforms()
         BoneInfo &bone = m_bonesInfo[boneID];
         glm::mat4 globalTransform = parentTransform * bone.localBindTransform;
 
-        // m_bindPoseTransform[boneID] = globalTransform * bone.offsetMatrix;
-        m_bindPoseTransform[boneID] = globalTransform;
-
-        // bone.finalTransformation = globalTransform * bone.offsetMatrix;
-        // bone.finalTransformation = globalTransform;
+        bone.globalBindTransform = globalTransform;
+        bone.finalTransformation = globalTransform;
 
         for (int childID : bone.children)
             self(childID, globalTransform, self);
@@ -113,24 +113,22 @@ void Skeleton::calculateBindPoseTransforms()
 
 const std::vector<glm::mat4> &Skeleton::getBindPoses()
 {
-    // return m_bindPoseTransform;
+    if (m_bindPoseTransform.size() < m_bonesInfo.size())
+        m_bindPoseTransform.resize(m_bonesInfo.size(), glm::mat4(1.0f));
 
-    for (auto &m : m_bindPoseTransform)
-        m = glm::mat4(1.0f);
+    for (const auto &bone : m_bonesInfo)
+        m_bindPoseTransform[bone.id] = bone.globalBindTransform * bone.offsetMatrix;
 
     return m_bindPoseTransform;
 }
 
 const std::vector<glm::mat4> &Skeleton::getFinalMatrices()
 {
-    // for (const auto &bone : m_bonesInfo)
-    //     m_finalBoneMatrices[bone.id] = bone.finalTransformation;
+    if (m_finalBoneMatrices.size() < m_bonesInfo.size())
+        m_finalBoneMatrices.resize(m_bonesInfo.size(), glm::mat4(1.0f));
 
     for (const auto &bone : m_bonesInfo)
         m_finalBoneMatrices[bone.id] = bone.finalTransformation * bone.offsetMatrix;
-
-    // for (auto &m : m_finalBoneMatrices)
-    //     m = glm::mat4(1.0f);
 
     return m_finalBoneMatrices;
 }

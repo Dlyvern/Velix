@@ -9,6 +9,7 @@
 #include <volk.h>
 #include <array>
 #include <string>
+#include <cmath>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include "glm/glm.hpp"
@@ -182,10 +183,13 @@ struct Vertex3D
     glm::vec3 position{1.0f};
     glm::vec2 textureCoordinates{1.0f};
     glm::vec3 normal{1.0f};
+    glm::vec3 tangent{1.0f};
+    glm::vec3 bitangent{1.0f};
 
     Vertex3D() = default;
 
-    Vertex3D(const glm::vec3 &pos, const glm::vec2 &texCoords, const glm::vec3 &nor) : position(pos), textureCoordinates(texCoords), normal(nor)
+    Vertex3D(const glm::vec3 &pos, const glm::vec2 &texCoords, const glm::vec3 &nor, const glm::vec3 &tan, const glm::vec3 &bitan)
+        : position(pos), textureCoordinates(texCoords), normal(nor), tangent(tan), bitangent(bitan)
     {
     }
 
@@ -193,16 +197,20 @@ struct Vertex3D
     {
         return position == other.position &&
                normal == other.normal &&
-               textureCoordinates == other.textureCoordinates;
+               textureCoordinates == other.textureCoordinates &&
+               tangent == other.tangent &&
+               bitangent == other.bitangent;
     }
 
     static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions()
     {
-        std::vector<VkVertexInputAttributeDescription> attributes(3);
+        std::vector<VkVertexInputAttributeDescription> attributes(5);
 
         attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex3D, position)};
         attributes[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex3D, textureCoordinates)};
         attributes[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex3D, normal)};
+        attributes[3] = {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex3D, tangent)};
+        attributes[4] = {4, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex3D, bitangent)};
 
         return attributes;
     }
@@ -298,6 +306,79 @@ struct VertexTraits<vertex::VertexSkinned>
         return layout;
     }
 };
+
+inline void generateTangents(std::vector<vertex::Vertex3D> &vertices, const std::vector<uint32_t> &indices)
+{
+    for (auto &v : vertices)
+    {
+        v.tangent = glm::vec3(0.0f);
+        v.bitangent = glm::vec3(0.0f);
+    }
+
+    for (size_t i = 0; i + 2 < indices.size(); i += 3)
+    {
+        vertex::Vertex3D &v0 = vertices[indices[i + 0]];
+        vertex::Vertex3D &v1 = vertices[indices[i + 1]];
+        vertex::Vertex3D &v2 = vertices[indices[i + 2]];
+
+        glm::vec3 p0 = v0.position;
+        glm::vec3 p1 = v1.position;
+        glm::vec3 p2 = v2.position;
+
+        glm::vec2 uv0 = v0.textureCoordinates;
+        glm::vec2 uv1 = v1.textureCoordinates;
+        glm::vec2 uv2 = v2.textureCoordinates;
+
+        glm::vec3 e1 = p1 - p0;
+        glm::vec3 e2 = p2 - p0;
+
+        glm::vec2 dUV1 = uv1 - uv0;
+        glm::vec2 dUV2 = uv2 - uv0;
+
+        float det = dUV1.x * dUV2.y - dUV1.y * dUV2.x;
+
+        if (std::abs(det) < 1e-8f)
+            continue;
+
+        float invDet = 1.0f / det;
+
+        glm::vec3 T = invDet * (e1 * dUV2.y - e2 * dUV1.y);
+        glm::vec3 B = invDet * (-e1 * dUV2.x + e2 * dUV1.x);
+
+        v0.tangent += T;
+        v1.tangent += T;
+        v2.tangent += T;
+
+        v0.bitangent += B;
+        v1.bitangent += B;
+        v2.bitangent += B;
+    }
+
+    for (auto &v : vertices)
+    {
+        glm::vec3 N = glm::normalize(v.normal);
+
+        glm::vec3 T = v.tangent - N * glm::dot(N, v.tangent);
+        if (glm::length(T) < 1e-6f)
+        {
+            T = glm::abs(N.z) < 0.999f
+                    ? glm::normalize(glm::cross(N, glm::vec3(0, 0, 1)))
+                    : glm::normalize(glm::cross(N, glm::vec3(0, 1, 0)));
+        }
+        else
+        {
+            T = glm::normalize(T);
+        }
+
+        glm::vec3 B = glm::normalize(glm::cross(N, T));
+
+        if (glm::dot(B, v.bitangent) < 0.0f)
+            B = -B;
+
+        v.tangent = T;
+        v.bitangent = B;
+    }
+}
 
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END

@@ -9,6 +9,8 @@
 
 #include "Engine/Material.hpp"
 
+#include "Editor/AssetsPreviewSystem.hpp"
+
 #include <string>
 #include <filesystem>
 #include <unordered_set>
@@ -20,22 +22,27 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 class AssetsWindow
 {
 public:
-    AssetsWindow(EditorResourcesStorage *resourcesStorage, std::vector<engine::Material *> &previewMaterialJobs);
+    AssetsWindow(EditorResourcesStorage *resourcesStorage, AssetsPreviewSystem &assetsPreviewSystem);
 
     void setProject(Project *project);
 
     void draw();
 
-    void setDoneMaterialJobs(const std::vector<VkDescriptorSet> &doneMaterialPreviewJobs)
+    void setOnMaterialOpenRequest(const std::function<void(const std::filesystem::path &)> &function)
     {
-        m_doneMaterialPreviewJobs = doneMaterialPreviewJobs;
+        m_onMaterialOpenRequestFunction = function;
+    }
+
+    void setOnTextAssetOpenRequest(const std::function<void(const std::filesystem::path &)> &function)
+    {
+        m_onTextAssetOpenRequestFunction = function;
     }
 
 private:
-    std::pair<engine::Texture::SharedPtr, elix::engine::CPUMaterial> tryToPreloadTexture(const std::string &path);
+    std::function<void(const std::filesystem::path &)> m_onMaterialOpenRequestFunction{nullptr};
+    std::function<void(const std::filesystem::path &)> m_onTextAssetOpenRequestFunction{nullptr};
 
-    std::vector<VkDescriptorSet> m_doneMaterialPreviewJobs;
-    std::unordered_map<std::string, uint32_t> m_materialPreviewSlots;
+    AssetsPreviewSystem &m_assetsPreviewSystem;
 
     struct TreeNode
     {
@@ -58,14 +65,18 @@ private:
     void syncTreeWithCurrentDirectory();
     void goUpOneDirectory();
     void refreshTree();
+    void startRenamingAsset(const std::filesystem::path &path);
+    void startDeletingAsset(const std::filesystem::path &path);
+    bool renameAsset(const std::filesystem::path &path, const std::string &newName);
+    bool deleteAsset(const std::filesystem::path &path);
+    bool duplicateAsset(const std::filesystem::path &path);
+    bool createMaterialFromTexture(const std::filesystem::path &texturePath);
 
     void navigateToDirectory(const std::filesystem::path &path);
     std::string formatFileSize(uintmax_t size) const;
 
     bool matchesSearch(const std::string &filename) const;
     void refreshCurrentDirectory();
-
-    void drawMaterialEditor();
 
     Project *m_currentProject{nullptr};
     EditorResourcesStorage *m_resourcesStorage{nullptr};
@@ -81,40 +92,23 @@ private:
 
     std::shared_ptr<TreeNode> m_treeRoot;
     TreeNode *m_selectedTreeNode = nullptr;
+    std::filesystem::path m_selectedAssetPath;
+    std::filesystem::path m_contextAssetPath;
+    std::filesystem::path m_renameAssetPath;
+    std::filesystem::path m_deleteAssetPath;
+    bool m_openRenamePopupRequested{false};
+    bool m_openDeletePopupRequested{false};
+    char m_renameBuffer[256] = "";
 
+    std::unordered_set<std::string> m_textureExtensions = {".png", ".jpg", ".jpeg"};
     std::unordered_set<std::string> m_velixExtensions = {".scene", ".elixproject", ".cc", ".cxx"};
-
     std::unordered_set<std::string> m_cppExtensions = {".cpp", ".c", ".cc", ".cxx"};
     std::unordered_set<std::string> m_headerExtensions = {".h", ".hpp", ".hh", ".hxx"};
     std::unordered_set<std::string> m_imageExtensions = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff", ".psd", ".gif"};
-    std::unordered_set<std::string> m_modelExtensions = {".obj", ".fbx", ".gltf", ".glb", ".dae", ".blend", ".3ds"};
+    std::unordered_set<std::string> m_modelExtensions = {".obj", ".OBJ", ".fbx", ".FBX"};
     std::unordered_set<std::string> m_sceneExtensions = {".scene", ".json", ".yaml", ".yml"};
     std::unordered_set<std::string> m_shaderExtensions = {".glsl", ".vert", ".frag", ".geom", ".tesc", ".tese", ".comp", ".hlsl", ".fx"};
     std::unordered_set<std::string> m_configExtensions = {".ini", ".cfg", ".toml", ".xml", ".properties"};
-
-    // TODO remove this shit from here.....
-
-    struct MaterialAssetWindow
-    {
-        engine::Material::SharedPtr material{nullptr};
-        engine::Texture::SharedPtr texture{nullptr};
-        VkDescriptorSet previewTextureDescriptorSet{nullptr};
-    };
-
-    struct TextureAssetWindow
-    {
-        engine::Texture::SharedPtr texture{nullptr};
-        VkDescriptorSet previewTextureDescriptorSet{nullptr};
-    };
-
-    std::unordered_map<std::string, TextureAssetWindow> m_texturesPreview;
-
-    std::vector<engine::Material *> &m_previewMaterialJobs;
-
-    std::unordered_map<std::string, MaterialAssetWindow> m_materials;
-    std::string m_currentEditedMaterialPath;
-
-    bool m_shotTexturePopup{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

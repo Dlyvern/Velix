@@ -23,6 +23,69 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 Texture::Texture() = default;
 
+void Texture::createDefaults()
+{
+    s_whiteTexture = std::make_shared<Texture>();
+    s_normalTexture = std::make_shared<Texture>();
+    s_ormTexture = std::make_shared<Texture>();
+    s_blackTexture = std::make_shared<Texture>();
+
+    s_whiteTexture->createFromPixels(packRGBA8(255, 255, 255, 255), VK_FORMAT_R8G8B8A8_SRGB);
+
+    s_normalTexture->createFromPixels(packRGBA8(128, 128, 255, 255), VK_FORMAT_R8G8B8A8_UNORM);
+    s_ormTexture->createFromPixels(packRGBA8(255, 255, 0, 255), VK_FORMAT_R8G8B8A8_UNORM);
+    s_blackTexture->createFromPixels(packRGBA8(0, 0, 255, 255), VK_FORMAT_R8G8B8A8_SRGB);
+}
+
+void Texture::destroyDefaults()
+{
+    s_whiteTexture->destroy();
+    s_normalTexture->destroy();
+    s_ormTexture->destroy();
+    s_blackTexture->destroy();
+}
+
+void Texture::destroy()
+{
+    if (m_imageView)
+    {
+        vkDestroyImageView(m_device, m_imageView, nullptr);
+        m_imageView = VK_NULL_HANDLE;
+    }
+
+    m_sampler->destroyVk();
+    m_image->destroyVk();
+}
+
+Texture::SharedPtr Texture::getDefaultWhiteTexture()
+{
+    return s_whiteTexture;
+}
+
+Texture::SharedPtr Texture::getDefaultNormalTexture()
+{
+    return s_normalTexture;
+}
+
+Texture::SharedPtr Texture::getDefaultOrmTexture()
+{
+    return s_ormTexture;
+}
+
+Texture::SharedPtr Texture::getDefaultBlackTexture()
+{
+    return s_blackTexture;
+}
+
+uint32_t Texture::packRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+{
+    // Matches little-endian memory layout used by most desktop CPUs for stb-style RGBA bytes
+    return (uint32_t(r) << 0) |
+           (uint32_t(g) << 8) |
+           (uint32_t(b) << 16) |
+           (uint32_t(a) << 24);
+}
+
 bool Texture::loadHDR(const std::string &filepath)
 {
     m_device = core::VulkanContext::getContext()->getDevice();
@@ -32,8 +95,8 @@ bool Texture::loadHDR(const std::string &filepath)
 
     if (!data)
     {
-        std::cerr << "Failed to load HDR image: " << filepath << std::endl;
-        std::cerr << "Reason: " << stbi_failure_reason() << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to load HDR image: " << filepath << std::endl);
+        VX_ENGINE_ERROR_STREAM("Reason: " << stbi_failure_reason() << std::endl);
         return false;
     }
 
@@ -129,7 +192,7 @@ bool Texture::createCubemapFromHDR(const std::string &hdrPath, uint32_t cubemapS
 
     if (!hdrData)
     {
-        std::cerr << "Failed to load HDR image: " << hdrPath << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to load HDR image: " << hdrPath << std::endl);
         return false;
     }
 
@@ -292,7 +355,7 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
     return true;
 }
 
-void Texture::createFromPixels(uint32_t pixels, core::CommandPool::SharedPtr commandPool)
+void Texture::createFromPixels(uint32_t pixels, VkFormat format)
 {
     m_width = 1;
     m_height = 1;
@@ -305,9 +368,9 @@ void Texture::createFromPixels(uint32_t pixels, core::CommandPool::SharedPtr com
     buffer->upload(&pixels, imageSize);
     VkExtent2D extent{.width = m_width, .height = m_height};
 
-    m_image = core::Image::createShared(extent, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY, VK_FORMAT_R8G8B8A8_SRGB);
+    m_image = core::Image::createShared(extent, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY, format);
 
-    commandPool = core::VulkanContext::getContext()->getGraphicsCommandPool();
+    core::CommandPool::SharedPtr commandPool = core::VulkanContext::getContext()->getGraphicsCommandPool();
     auto queue = core::VulkanContext::getContext()->getGraphicsQueue();
 
     auto commandBuffer = core::CommandBuffer::createShared(commandPool);
@@ -343,7 +406,7 @@ void Texture::createFromPixels(uint32_t pixels, core::CommandPool::SharedPtr com
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.image = m_image->vk();
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    viewInfo.format = format;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = 1;
@@ -353,7 +416,10 @@ void Texture::createFromPixels(uint32_t pixels, core::CommandPool::SharedPtr com
     if (VkResult result = vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView); result != VK_SUCCESS)
         throw std::runtime_error("Failed to create image view: " + core::helpers::vulkanResultToString(result));
 
-    m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
+    auto maxAnisotropyLevel = core::VulkanContext::getContext()->getPhysicalDevicePoperties().limits.maxSamplerAnisotropy;
+
+    m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_COMPARE_OP_ALWAYS,
+                                            VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_TRUE, maxAnisotropyLevel);
 }
 
 bool Texture::load(const std::string &path, core::CommandPool::SharedPtr commandPool, bool freePixelsOnLoad)
@@ -366,7 +432,7 @@ bool Texture::load(const std::string &path, core::CommandPool::SharedPtr command
 
     if (!m_pixels)
     {
-        std::cerr << "Failed to load image: " << path << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to load image: " << path << std::endl);
         return false;
     }
 
@@ -429,6 +495,55 @@ bool Texture::load(const std::string &path, core::CommandPool::SharedPtr command
     m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 
     return true;
+}
+
+VkSampler Texture::vkSampler()
+{
+    return m_sampler;
+}
+
+VkImageView Texture::vkImageView()
+{
+    return m_imageView;
+}
+
+core::Image::SharedPtr Texture::getImage()
+{
+    return m_image;
+}
+
+Texture::~Texture()
+{
+    destroy();
+}
+
+unsigned char *Texture::getPixels() const
+{
+    return m_pixels;
+}
+
+int Texture::getWidth() const
+{
+    return m_width;
+}
+
+int Texture::getHeight() const
+{
+    return m_height;
+}
+
+int Texture::getChannels() const
+{
+    return m_channels;
+}
+
+void Texture::freePixels()
+{
+    if (!m_pixels)
+        return;
+
+    stbi_image_free(m_pixels);
+    m_pixels = nullptr;
 }
 
 // TODO does not work
@@ -510,58 +625,6 @@ bool Texture::loadCubemap(const std::array<std::string, 6> &cubemaps,
     // m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 
     // return true;
-}
-
-VkSampler Texture::vkSampler()
-{
-    return m_sampler;
-}
-
-VkImageView Texture::vkImageView()
-{
-    return m_imageView;
-}
-
-core::Image::SharedPtr Texture::getImage()
-{
-    return m_image;
-}
-
-Texture::~Texture()
-{
-    if (m_imageView)
-        vkDestroyImageView(m_device, m_imageView, nullptr);
-    if (m_sampler)
-        vkDestroySampler(m_device, m_sampler, nullptr);
-}
-
-unsigned char *Texture::getPixels() const
-{
-    return m_pixels;
-}
-
-int Texture::getWidth() const
-{
-    return m_width;
-}
-
-int Texture::getHeight() const
-{
-    return m_height;
-}
-
-int Texture::getChannels() const
-{
-    return m_channels;
-}
-
-void Texture::freePixels()
-{
-    if (!m_pixels)
-        return;
-
-    stbi_image_free(m_pixels);
-    m_pixels = nullptr;
 }
 
 ELIX_NESTED_NAMESPACE_END

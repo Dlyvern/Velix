@@ -1,6 +1,5 @@
 #include "Core/CommandPool.hpp"
-#include "Core/VulkanHelpers.hpp"
-#include <stdexcept>
+#include "Core/VulkanAssert.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -17,8 +16,7 @@ void CommandPool::createVk(uint32_t queueFamiliIndices, VkCommandPoolCreateFlags
     poolInfo.flags = flags;
     poolInfo.queueFamilyIndex = queueFamiliIndices;
 
-    if (VkResult result = vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_handle); result != VK_SUCCESS)
-        throw std::runtime_error("Failed to create command pool " + helpers::vulkanResultToString(result));
+    VX_VK_CHECK(vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_handle));
 
     ELIX_VK_CREATE_GUARD_DONE()
 }
@@ -34,7 +32,7 @@ void CommandPool::destroyVkImpl()
 
 void CommandPool::reset(VkCommandPoolResetFlags flags)
 {
-    vkResetCommandPool(m_device, m_handle, flags);
+    VX_VK_TRY(vkResetCommandPool(m_device, m_handle, flags));
 }
 
 CommandPool::~CommandPool()

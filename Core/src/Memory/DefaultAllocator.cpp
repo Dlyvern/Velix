@@ -1,7 +1,35 @@
 #include "Core/Memory/DefaultAllocator.hpp"
 #include "Core/VulkanHelpers.hpp"
+#include "Core/VulkanAssert.hpp"
 
-#include <stdexcept>
+#include <sstream>
+
+namespace
+{
+std::string describeImageCreateInfo(const VkImageCreateInfo &createInfo)
+{
+    std::ostringstream stream;
+    stream << "format=" << static_cast<int>(createInfo.format)
+           << ", extent=" << createInfo.extent.width << "x" << createInfo.extent.height << "x" << createInfo.extent.depth
+           << ", usage=0x" << std::hex << createInfo.usage << std::dec
+           << ", tiling=" << static_cast<int>(createInfo.tiling)
+           << ", arrayLayers=" << createInfo.arrayLayers
+           << ", mipLevels=" << createInfo.mipLevels
+           << ", samples=" << static_cast<int>(createInfo.samples)
+           << ", flags=0x" << std::hex << createInfo.flags << std::dec;
+    return stream.str();
+}
+
+std::string describeBufferCreateInfo(const VkBufferCreateInfo &createInfo)
+{
+    std::ostringstream stream;
+    stream << "size=" << static_cast<unsigned long long>(createInfo.size)
+           << ", usage=0x" << std::hex << createInfo.usage << std::dec
+           << ", sharingMode=" << static_cast<int>(createInfo.sharingMode)
+           << ", flags=0x" << std::hex << createInfo.flags << std::dec;
+    return stream.str();
+}
+} // namespace
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 ELIX_CUSTOM_NAMESPACE_BEGIN(allocators)
@@ -27,8 +55,7 @@ AllocatedImage DefaultAllocator::createImage(VkDevice device, VkPhysicalDevice p
 {
     AllocatedImage allocatedImage;
 
-    if (vkCreateImage(device, &createInfo, allocationCallbacks_, &allocatedImage.image) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create image");
+    VX_VK_CHECK_MSG(vkCreateImage(device, &createInfo, allocationCallbacks_, &allocatedImage.image), describeImageCreateInfo(createInfo));
 
     VkMemoryRequirements memRequirements;
     vkGetImageMemoryRequirements(device, allocatedImage.image, &memRequirements);
@@ -37,8 +64,7 @@ AllocatedImage DefaultAllocator::createImage(VkDevice device, VkPhysicalDevice p
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = helpers::findMemoryType(physicalDevice, memRequirements.memoryTypeBits, toVkMemoryFlags(memFlags));
 
-    if (vkAllocateMemory(device, &allocInfo, allocationCallbacks_, reinterpret_cast<VkDeviceMemory *>(&allocatedImage.allocation)) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate image memory");
+    VX_VK_CHECK(vkAllocateMemory(device, &allocInfo, allocationCallbacks_, reinterpret_cast<VkDeviceMemory *>(&allocatedImage.allocation)));
 
     bindImageMemory(device, allocatedImage);
 
@@ -62,12 +88,12 @@ void DefaultAllocator::destroyImage(VkDevice device, AllocatedImage &image)
 
 void DefaultAllocator::bindImageMemory(VkDevice device, const AllocatedImage &image, VkDeviceSize memoryOffset)
 {
-    vkBindImageMemory(device, image.image, reinterpret_cast<VkDeviceMemory>(image.allocation), memoryOffset);
+    VX_VK_CHECK(vkBindImageMemory(device, image.image, reinterpret_cast<VkDeviceMemory>(image.allocation), memoryOffset));
 }
 
 void DefaultAllocator::mapMemory(VkDevice device, void *allocation, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void *&data)
 {
-    vkMapMemory(device, reinterpret_cast<VkDeviceMemory>(allocation), offset, size, flags, &data);
+    VX_VK_CHECK(vkMapMemory(device, reinterpret_cast<VkDeviceMemory>(allocation), offset, size, flags, &data));
 }
 
 void DefaultAllocator::unmapMemory(VkDevice device, void *allocation)
@@ -79,8 +105,7 @@ AllocatedBuffer DefaultAllocator::createBuffer(VkDevice device, VkPhysicalDevice
 {
     AllocatedBuffer buffer;
 
-    if (VkResult result = vkCreateBuffer(device, &createInfo, allocationCallbacks_, &buffer.buffer); result != VK_SUCCESS)
-        throw std::runtime_error("Failed to create buffer");
+    VX_VK_CHECK_MSG(vkCreateBuffer(device, &createInfo, allocationCallbacks_, &buffer.buffer), describeBufferCreateInfo(createInfo));
 
     VkMemoryRequirements memRequirements;
     vkGetBufferMemoryRequirements(device, buffer.buffer, &memRequirements);
@@ -89,8 +114,7 @@ AllocatedBuffer DefaultAllocator::createBuffer(VkDevice device, VkPhysicalDevice
     allocateInfo.allocationSize = memRequirements.size;
     allocateInfo.memoryTypeIndex = core::helpers::findMemoryType(physicalDevice, memRequirements.memoryTypeBits, toVkMemoryFlags(memFlags));
 
-    if (vkAllocateMemory(device, &allocateInfo, allocationCallbacks_, reinterpret_cast<VkDeviceMemory *>(&buffer.allocation)) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate buffer memory");
+    VX_VK_CHECK(vkAllocateMemory(device, &allocateInfo, allocationCallbacks_, reinterpret_cast<VkDeviceMemory *>(&buffer.allocation)));
 
     bindBufferMemory(device, buffer);
 
@@ -114,7 +138,7 @@ void DefaultAllocator::destroyBuffer(VkDevice device, AllocatedBuffer &buffer)
 
 void DefaultAllocator::bindBufferMemory(VkDevice device, const AllocatedBuffer &buffer, VkDeviceSize memoryOffset)
 {
-    vkBindBufferMemory(device, buffer.buffer, reinterpret_cast<VkDeviceMemory>(buffer.allocation), memoryOffset);
+    VX_VK_CHECK(vkBindBufferMemory(device, buffer.buffer, reinterpret_cast<VkDeviceMemory>(buffer.allocation), memoryOffset));
 }
 
 VkMemoryPropertyFlags DefaultAllocator::toVkMemoryFlags(core::memory::MemoryUsage usage)

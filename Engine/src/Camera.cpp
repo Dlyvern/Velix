@@ -1,5 +1,7 @@
 #include "Engine/Camera.hpp"
 
+#include <algorithm>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -55,6 +57,11 @@ float Camera::getFar() const
     return m_far;
 };
 
+float Camera::getAspect() const
+{
+    return m_aspect;
+}
+
 glm::mat4 Camera::getProjectionMatrix() const
 {
     return glm::perspective(glm::radians(m_fov), m_aspect, m_near, m_far);
@@ -69,6 +76,11 @@ void Camera::setYaw(float yaw)
 void Camera::setFOV(float fov)
 {
     m_fov = fov;
+}
+
+void Camera::setAspect(float aspect)
+{
+    m_aspect = std::max(aspect, 0.001f);
 }
 
 void Camera::setPosition(const glm::vec3 &position)

@@ -6,6 +6,8 @@ SkeletalMeshComponent::SkeletalMeshComponent(const std::vector<CPUMesh> &meshes,
                                                                                                              m_skeleton(skeleton)
 {
     m_skeleton.calculateBindPoseTransforms();
+    m_perMeshMaterialOverrides.resize(m_meshes.size(), nullptr);
+    m_perMeshMaterialOverridePaths.resize(m_meshes.size());
 }
 
 const std::vector<CPUMesh> &SkeletalMeshComponent::getMeshes() const

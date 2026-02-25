@@ -3,8 +3,11 @@
 
 #include "Core/Macros.hpp"
 
+#include <volk.h>
+
 #include <cstdint>
 #include <iostream>
+#include <string>
 #include <vector>
 
 //!!!! FOR PRODUCTION THIS FILE IS NOT SUITABLE. FIX IT
@@ -22,7 +25,7 @@ namespace helpers
             if((typeFilter & (1 << i)) && (memoryProperties.memoryTypes[i].propertyFlags & flags) == flags)
                 return i;
 
-        std::cerr << "Failed to find suitable memory type" << std::endl;
+        VX_CORE_ERROR_STREAM("Failed to find suitable memory type" << std::endl);
 
         return 0xFFFFFFFF;
     }
@@ -40,7 +43,7 @@ namespace helpers
                 return format;
         }
 
-        std::cerr << "Failed to fund suitable supported format" << std::endl;
+        VX_CORE_ERROR_STREAM("Failed to fund suitable supported format" << std::endl);
 
         return VK_FORMAT_UNDEFINED;
     }
@@ -51,7 +54,7 @@ namespace helpers
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 
         if(format == VK_FORMAT_UNDEFINED)
-            std::cerr << "Failed to fund depth format" << std::endl;
+            VX_CORE_ERROR_STREAM("Failed to fund depth format" << std::endl);
 
         return format;
     }

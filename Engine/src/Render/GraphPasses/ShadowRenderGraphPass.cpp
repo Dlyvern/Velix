@@ -3,9 +3,11 @@
 #include "Core/VulkanHelpers.hpp"
 
 #include "Engine/Shaders/PushConstant.hpp"
+#include "Engine/Shaders/ShaderFamily.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 
 #include "Engine/Utilities/ImageUtilities.hpp"
+#include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 
 #include <glm/mat4x4.hpp>
 
@@ -13,6 +15,8 @@ struct LightSpaceMatrixPushConstant
 {
     glm::mat4 lightSpaceMatrix;
     glm::mat4 model;
+    uint32_t bonesOffset{0};
+    uint32_t padding[3];
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -32,7 +36,7 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
     m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
     const auto device = core::VulkanContext::getContext()->getDevice();
 
-    m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{},
+    m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{EngineShaderFamilies::objectDescriptorSetLayout},
                                                           std::vector<VkPushConstantRange>{PushConstant<LightSpaceMatrixPushConstant>::getRange(VK_SHADER_STAGE_VERTEX_BIT)});
 
     RGPTextureDescription depthTextureDescription(m_depthFormat, RGPTextureUsage::DEPTH_STENCIL);
@@ -43,9 +47,6 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
     builder.createTexture(depthTextureDescription, m_depthTextureHandler);
     builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
-
-    m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-                                            VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE, VK_COMPARE_OP_ALWAYS, VK_SAMPLER_MIPMAP_MODE_LINEAR);
 }
 
 void ShadowRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
@@ -63,8 +64,9 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     for (const auto &[entity, drawItem] : data.drawItems)
     {
         GraphicsPipelineKey key{};
-        key.shader = ShaderId::StaticShadow;
-        key.cull = CullMode::None;
+        const bool isSkinned = !drawItem.finalBones.empty();
+        key.shader = isSkinned ? ShaderId::SkinnedShadow : ShaderId::StaticShadow;
+        key.cull = CullMode::Front;
         key.depthTest = true;
         key.depthWrite = true;
         key.depthCompare = VK_COMPARE_OP_LESS;
@@ -88,11 +90,15 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
 
             LightSpaceMatrixPushConstant lightSpaceMatrixPushConstant{
                 .lightSpaceMatrix = data.lightSpaceMatrix,
-                .model = drawItem.transform};
+                .model = drawItem.transform,
+                .bonesOffset = drawItem.bonesOffset};
+
+            if (isSkinned)
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &data.perObjectDescriptorSet, 0, nullptr);
 
             vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(LightSpaceMatrixPushConstant),
                                &lightSpaceMatrixPushConstant);
-            vkCmdDrawIndexed(commandBuffer, mesh->indicesCount, 1, 0, 0, 0);
+            profiling::cmdDrawIndexed(commandBuffer, mesh->indicesCount, 1, 0, 0, 0);
         }
     }
 }

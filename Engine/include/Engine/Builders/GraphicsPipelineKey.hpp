@@ -10,14 +10,18 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 enum class ShaderId : uint8_t
 {
-    StaticMesh,
-    SkinnedMesh,
-    Wireframe,
-    Stencil,
     StaticShadow,
+    SkinnedShadow,
     PreviewMesh,
     SkyboxHDR,
     Skybox,
+    SkyLight,
+    ToneMap,
+    SelectionOverlay,
+    Present,
+    GBufferStatic,
+    GBufferSkinned,
+    Lighting,
     None
 };
 
@@ -41,15 +45,6 @@ enum class CullMode : uint8_t
     Front
 };
 
-struct MaterialRenderState
-{
-    RenderQueue queue = RenderQueue::Opaque;
-    BlendMode blend = BlendMode::None; // AlphaBlend => transparent
-    CullMode cull = CullMode::Back;
-    bool castShadow = true;
-    bool receiveShadow = true;
-};
-
 struct GraphicsPipelineKey
 {
     ShaderId shader{ShaderId::None};
@@ -64,7 +59,7 @@ struct GraphicsPipelineKey
     VkPipelineLayout pipelineLayout{VK_NULL_HANDLE};
 
     std::vector<VkFormat> colorFormats;
-    VkFormat depthFormat;
+    VkFormat depthFormat{VK_FORMAT_UNDEFINED};
 
     bool operator==(const GraphicsPipelineKey &o) const noexcept
     {

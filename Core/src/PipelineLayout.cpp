@@ -1,6 +1,6 @@
 #include "Core/PipelineLayout.hpp"
+#include "Core/VulkanAssert.hpp"
 #include <cstdint>
-#include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -27,8 +27,7 @@ void PipelineLayout::createVk(const std::vector<DescriptorSetLayout::SharedPtr> 
     pipelineLayoutInfo.pushConstantRangeCount = static_cast<uint32_t>(pushConstants.size());
     pipelineLayoutInfo.pPushConstantRanges = pushConstants.data();
 
-    if (vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_handle) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create pipeline layout");
+    VX_VK_CHECK(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_handle));
 
     ELIX_VK_CREATE_GUARD_DONE()
 }

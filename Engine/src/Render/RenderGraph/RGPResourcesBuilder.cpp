@@ -41,7 +41,7 @@ void RGPResourcesBuilder::write(const RGPResourceHandler &handler, RGPTextureUsa
 {
     if (!m_currentPass)
     {
-        std::cerr << "No current pass(Write abort)\n";
+        VX_ENGINE_ERROR_STREAM("No current pass(Write abort)\n");
         return;
     }
 
@@ -52,7 +52,7 @@ void RGPResourcesBuilder::read(const RGPResourceHandler &handler, RGPTextureUsag
 {
     if (!m_currentPass)
     {
-        std::cerr << "No current pass(Read abort)\n";
+        VX_ENGINE_ERROR_STREAM("No current pass(Read abort)\n");
         return;
     }
 

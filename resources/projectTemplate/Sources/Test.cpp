@@ -1,4 +1,3 @@
-#include <iostream>
 #include "Engine/Scripting/ScriptMacroses.hpp"
 
 class Test : public elix::engine::Script
@@ -6,12 +5,12 @@ class Test : public elix::engine::Script
 public:
     void onUpdate(float deltaTime) override
     {
-        std::cout << "OnUpdate" << std::endl;
+        VX_DEV_INFO_STREAM("OnUpdate");
     }
 
     void onStart() override
     {
-        std::cout << "OnStart" << std::endl;
+        VX_DEV_INFO_STREAM("OnStart");
     }
 };
 

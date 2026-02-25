@@ -4,16 +4,27 @@ layout(location = 0) in vec2 fragTextureCoordinates;
 
 layout(location = 0) out vec4 outColor;
 
-layout(set = 1, binding = 0) uniform sampler2D texSampler;
+layout(set = 1, binding = 0) uniform sampler2D uAlbedoTex;
 
-layout(set = 1, binding = 1) uniform MaterialColor
+layout(set = 1, binding = 4) uniform MaterialParams
 {
-    vec4 color;
-} materialColor;
+    vec4 baseColorFactor;
+    vec4 emissiveFactor;
+    vec4 uvTransform;
 
-void main() 
+    float metallicFactor;
+    float roughnessFactor;
+    float normalScale;
+    float aoStrength;
+
+    uint flags;
+    float alphaCutoff;
+    vec2 _padding;
+} material;
+
+void main()
 {
-    vec4 textureSample = texture(texSampler, fragTextureCoordinates);
-    vec3 albedo = (textureSample.a > 0.0) ? textureSample.rgb : materialColor.color.rgb;
-    outColor = vec4(albedo, 1.0);
+    vec4 textureSample = texture(uAlbedoTex, fragTextureCoordinates);
+    vec4 baseColor = textureSample * material.baseColorFactor;
+    outColor = vec4(baseColor.rgb, 1.0);
 }

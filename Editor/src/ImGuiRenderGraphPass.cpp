@@ -23,6 +23,12 @@ ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, uint3
 
 void ImGuiRenderGraphPass::setViewportImages(const std::vector<VkImageView> &imageViews)
 {
+    for (auto descriptorSet : m_descriptorSets)
+    {
+        if (descriptorSet != VK_NULL_HANDLE)
+            ImGui_ImplVulkan_RemoveTexture(descriptorSet);
+    }
+
     m_descriptorSets.clear();
 
     for (int index = 0; index < imageViews.size(); ++index)
@@ -47,7 +53,7 @@ void ImGuiRenderGraphPass::compile(engine::renderGraph::RGPResourcesStorage &sto
         if (offscreenColorTexture)
             offscreenImageViews.push_back(offscreenColorTexture->vkImageView());
         else
-            std::cerr << "Failed to find offscreen color texture\n";
+            VX_EDITOR_ERROR_STREAM("Failed to find offscreen color texture\n");
     }
 
     setViewportImages(offscreenImageViews);
@@ -91,10 +97,10 @@ void ImGuiRenderGraphPass::initImGui()
     (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-
-    io.ConfigDockingWithShift = true;
-    io.ConfigWindowsResizeFromEdges = true;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+
+    io.ConfigDockingWithShift = false;
+    io.ConfigWindowsResizeFromEdges = true;
 
     ImGui::StyleColorsDark();
 
@@ -132,19 +138,17 @@ void ImGuiRenderGraphPass::initImGui()
     imguiInitInfo.DescriptorPool = m_imguiDescriptorPool;
     imguiInitInfo.MinImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     imguiInitInfo.ImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
-    imguiInitInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    imguiInitInfo.Subpass = 0;
+    imguiInitInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    imguiInitInfo.PipelineInfoMain.Subpass = 0;
     imguiInitInfo.CheckVkResultFn = nullptr;
     imguiInitInfo.Allocator = nullptr;
 
     imguiInitInfo.UseDynamicRendering = true;
-    imguiInitInfo.PipelineRenderingCreateInfo = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    imguiInitInfo.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+    imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
 
     VkFormat format = m_colorFormat;
-    imguiInitInfo.PipelineRenderingCreateInfo.pColorAttachmentFormats = &format;
-
-    imguiInitInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &format;
 
     ImGui_ImplVulkan_Init(&imguiInitInfo);
 
@@ -227,6 +231,14 @@ void ImGuiRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, 
 
 void ImGuiRenderGraphPass::cleanup()
 {
+    for (auto descriptorSet : m_descriptorSets)
+    {
+        if (descriptorSet != VK_NULL_HANDLE)
+            ImGui_ImplVulkan_RemoveTexture(descriptorSet);
+    }
+
+    m_descriptorSets.clear();
+
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

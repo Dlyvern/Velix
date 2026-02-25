@@ -5,15 +5,97 @@
 #include <vector>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <cctype>
+#include <cstring>
 #include <glm/gtc/type_ptr.hpp>
-// Todo remove it...
-#include "Engine/Assets/AssetsLoader.hpp"
-#include <backends/imgui_impl_vulkan.h>
+#include <nlohmann/json.hpp>
+
+namespace
+{
+    std::filesystem::path makeUniquePathWithExtension(const std::filesystem::path &directory,
+                                                      const std::string &baseName,
+                                                      const std::string &extension)
+    {
+        std::filesystem::path candidate = directory / (baseName + extension);
+
+        if (!std::filesystem::exists(candidate))
+            return candidate;
+
+        uint32_t suffix = 1;
+
+        while (true)
+        {
+            candidate = directory / (baseName + "_" + std::to_string(suffix) + extension);
+
+            if (!std::filesystem::exists(candidate))
+                return candidate;
+
+            ++suffix;
+        }
+    }
+
+    std::filesystem::path makeUniqueMaterialPath(const std::filesystem::path &directory, const std::string &baseName)
+    {
+        return makeUniquePathWithExtension(directory, baseName, ".elixmat");
+    }
+
+    std::filesystem::path makeUniqueDuplicatePath(const std::filesystem::path &sourcePath)
+    {
+        const auto parentPath = sourcePath.parent_path();
+        const auto stem = sourcePath.stem().string();
+        const auto extension = sourcePath.has_extension() ? sourcePath.extension().string() : "";
+
+        std::filesystem::path candidate = parentPath / (stem + "_Copy" + extension);
+
+        if (!std::filesystem::exists(candidate))
+            return candidate;
+
+        uint32_t suffix = 1;
+
+        while (true)
+        {
+            candidate = parentPath / (stem + "_Copy_" + std::to_string(suffix) + extension);
+
+            if (!std::filesystem::exists(candidate))
+                return candidate;
+
+            ++suffix;
+        }
+    }
+
+    bool writeDefaultMaterialAsset(const std::filesystem::path &materialPath, const std::string &albedoTexturePath = "")
+    {
+        nlohmann::json json;
+        json["name"] = materialPath.stem().string();
+        json["texture_path"] = albedoTexturePath;
+        json["normal_texture"] = "";
+        json["orm_texture"] = "";
+        json["emissive_texture"] = "";
+        json["color"] = {1.0f, 1.0f, 1.0f, 1.0f};
+        json["emissive"] = {0.0f, 0.0f, 0.0f};
+        json["metallic"] = 0.0f;
+        json["roughness"] = 1.0f;
+        json["ao_strength"] = 1.0f;
+        json["normal_scale"] = 1.0f;
+        json["alpha_cutoff"] = 0.5f;
+        json["flags"] = 0u;
+        json["uv_scale"] = {1.0f, 1.0f};
+        json["uv_offset"] = {0.0f, 0.0f};
+
+        std::ofstream file(materialPath);
+        if (!file.is_open())
+            return false;
+
+        file << std::setw(4) << json << '\n';
+        return file.good();
+    }
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage, std::vector<engine::Material *> &previewMaterialJobs) : m_resourcesStorage(resourcesStorage),
-                                                                                                                             m_previewMaterialJobs(previewMaterialJobs)
+AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage, AssetsPreviewSystem &assetsPreviewSystem) : m_resourcesStorage(resourcesStorage),
+                                                                                                                 m_assetsPreviewSystem(assetsPreviewSystem)
 {
 }
 
@@ -45,9 +127,8 @@ void AssetsWindow::draw()
     drawAssetGrid();
 
     const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-    ImGuiIO &io = ImGui::GetIO();
 
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+    if (hovered && !ImGui::IsAnyItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
     {
         if (ImGui::IsPopupOpen("CreateNewSomething"))
             ImGui::CloseCurrentPopup();
@@ -59,29 +140,15 @@ void AssetsWindow::draw()
     {
         if (ImGui::Button("Material"))
         {
-            std::ofstream newMaterialFile;
+            const auto newMaterialPath = makeUniqueMaterialPath(m_currentDirectory, "NewMaterial");
 
-            std::string currentDir = m_currentDirectory;
+            if (!writeDefaultMaterialAsset(newMaterialPath))
+                VX_EDITOR_ERROR_STREAM("Failed to create material asset: " << newMaterialPath << '\n');
+            else if (m_onMaterialOpenRequestFunction)
+                m_onMaterialOpenRequestFunction(newMaterialPath);
 
-            if (m_currentDirectory.string().back() != '/')
-                currentDir += '/';
-
-            std::cout << currentDir << std::endl;
-
-            std::string newMaterialName = currentDir + "newMaterial";
-
-            // TODO remake this fucking shit
-            while (true)
-            {
-                if (std::filesystem::exists(newMaterialName + ".elixmat"))
-                    newMaterialName += "_1";
-                else
-                    break;
-            }
-
-            newMaterialName += ".elixmat";
-
-            newMaterialFile.open(newMaterialName);
+            ImGui::CloseCurrentPopup();
+            refreshTree();
         }
         ImGui::EndPopup();
     }
@@ -230,360 +297,453 @@ void AssetsWindow::drawTreeView()
     drawTreeNode(m_treeRoot.get());
 }
 
-std::pair<engine::Texture::SharedPtr, elix::engine::CPUMaterial> AssetsWindow::tryToPreloadTexture(const std::string &path)
-{
-    auto materialAsset = engine::AssetsLoader::loadMaterial(path);
-
-    if (!materialAsset.has_value())
-    {
-        std::cerr << "Something is weird, failed to load material asset\n";
-        return {nullptr, {}};
-    }
-
-    auto materialCPU = materialAsset.value().material;
-
-    auto texture = std::make_shared<engine::Texture>();
-
-    if (!texture->load(materialCPU.albedoTexture))
-    {
-        std::cerr << "Something is weird, failed to load texture for material\n";
-        return {nullptr, {}};
-    }
-
-    return {texture, materialCPU};
-}
-
 void AssetsWindow::drawAssetGrid()
 {
     auto entries = getFilteredEntries();
+
+    if (!m_selectedAssetPath.empty() && !std::filesystem::exists(m_selectedAssetPath))
+        m_selectedAssetPath.clear();
+
+    const bool assetGridFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    if (assetGridFocused && !m_selectedAssetPath.empty() && ImGui::IsKeyPressed(ImGuiKey_F2, false))
+        startRenamingAsset(m_selectedAssetPath);
+    if (assetGridFocused && !m_selectedAssetPath.empty() && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+        startDeletingAsset(m_selectedAssetPath);
 
     if (entries.empty())
     {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
                            m_searchQuery.empty() ? "No assets in this directory." : "No assets match your search.");
-        return;
     }
-
-    float windowWidth = ImGui::GetContentRegionAvail().x;
-    float itemWidth = 80.0f;
-    int columns = std::max(1, (int)(windowWidth / itemWidth));
-
-    ImGui::Columns(columns, "AssetsColumns", false);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-
-    for (const auto &entry : entries)
+    else
     {
-        std::string id = entry.path().string();
-        ImGui::PushID(id.c_str());
+        float windowWidth = ImGui::GetContentRegionAvail().x;
+        float itemWidth = 80.0f;
+        int columns = std::max(1, (int)(windowWidth / itemWidth));
 
-        ImGui::BeginGroup();
+        ImGui::Columns(columns, "AssetsColumns", false);
 
-        VkDescriptorSet icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/file.png");
-        std::string filename = entry.path().filename().string();
-        std::string extension = entry.path().extension().string();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
 
-        if (entry.is_directory())
+        for (const auto &entry : entries)
         {
-            icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/folder.png");
-        }
-        else
-        {
-            if (extension == ".elixmat")
-            {
-                if (m_materialPreviewSlots.find(entry.path().string()) == m_materialPreviewSlots.end())
-                {
-                    uint32_t index = m_previewMaterialJobs.size();
+            const auto assetPath = entry.path();
+            std::string id = assetPath.string();
+            ImGui::PushID(id.c_str());
 
-                    auto textureMaterial = tryToPreloadTexture(entry.path().string());
-                    auto texture = textureMaterial.first;
-                    auto materialCPU = textureMaterial.second;
+            ImGui::BeginGroup();
 
-                    if (texture)
-                    {
-                        MaterialAssetWindow materialAssetWindow;
-                        materialAssetWindow.material = engine::Material::create(texture);
-                        materialAssetWindow.texture = texture;
+            VkDescriptorSet icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/file.png");
+            std::string filename = assetPath.filename().string();
+            std::string extension = assetPath.extension().string();
+            std::string extensionLower = extension;
+            std::transform(extensionLower.begin(), extensionLower.end(), extensionLower.begin(), [](unsigned char character)
+                           { return static_cast<char>(std::tolower(character)); });
 
-                        materialAssetWindow.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-                        m_texturesPreview[materialCPU.albedoTexture].previewTextureDescriptorSet = materialAssetWindow.previewTextureDescriptorSet;
-                        m_materials[entry.path().string()] = materialAssetWindow;
-
-                        m_previewMaterialJobs.push_back(materialAssetWindow.material.get());
-                        m_materialPreviewSlots[entry.path().string()] = index;
-                    }
-                }
-
-                auto it = m_materialPreviewSlots.find(entry.path().string());
-
-                if (it != m_materialPreviewSlots.end())
-                {
-                    uint32_t slot = it->second;
-
-                    if (slot < m_doneMaterialPreviewJobs.size())
-                        icon = m_doneMaterialPreviewJobs[slot];
-                }
-            }
-            else if (m_velixExtensions.find(extension) != m_velixExtensions.end())
-            {
-                icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.png");
-            }
-
-            // Choose icon based on file extension
-            // if (m_cppExtensions.find(extension) != m_cppExtensions.end())
-            //     icon = m_cppIcon;
-            // else if (m_headerExtensions.find(extension) != m_headerExtensions.end())
-            //     icon = m_headerIcon;
-            // else if (m_imageExtensions.find(extension) != m_imageExtensions.end())
-            //     icon = m_imageIcon;
-            // else if (m_modelExtensions.find(extension) != m_modelExtensions.end())
-            //     icon = m_modelIcon;
-            // else if (m_sceneExtensions.find(extension) != m_sceneExtensions.end())
-            //     icon = m_sceneIcon;
-            // else if (m_shaderExtensions.find(extension) != m_shaderExtensions.end())
-            //     icon = m_shaderIcon;
-            // else if (m_configExtensions.find(extension) != m_configExtensions.end())
-            //     icon = m_configIcon;
-        }
-
-        ImGui::ImageButton(id.c_str(), icon, ImVec2(50, 50));
-
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-        {
             if (entry.is_directory())
-                navigateToDirectory(entry.path());
+            {
+                icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/folder.png");
+            }
             else
             {
-                if (extension == ".elixmat")
+                if (extensionLower == ".elixmat")
                 {
-                    if (ImGui::IsPopupOpen("MaterialEditor"))
-                        ImGui::CloseCurrentPopup();
+                    icon = m_assetsPreviewSystem.getOrRequestMaterialPreview(assetPath.string());
+                }
+                else if (m_velixExtensions.find(extensionLower) != m_velixExtensions.end())
+                {
+                    icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.png");
+                }
+                else if (m_textureExtensions.find(extensionLower) != m_textureExtensions.end())
+                {
+                    icon = m_assetsPreviewSystem.getOrRequestTexturePreview(assetPath.string());
+                }
+                else if (m_modelExtensions.find(extensionLower) != m_modelExtensions.end())
+                {
+                    icon = m_assetsPreviewSystem.getOrRequestModelPreview(assetPath.string());
+                }
+            }
+
+            const bool isSelected = !m_selectedAssetPath.empty() && m_selectedAssetPath == assetPath;
+            if (isSelected)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.35f, 0.55f, 0.45f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.42f, 0.68f, 0.55f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.19f, 0.30f, 0.48f, 0.65f));
+            }
+
+            ImGui::ImageButton(id.c_str(), icon, ImVec2(50, 50));
+
+            if (isSelected)
+                ImGui::PopStyleColor(3);
+
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            {
+                if (entry.is_directory())
+                    navigateToDirectory(assetPath);
+                else
+                {
+                    if (extensionLower == ".elixmat" && m_onMaterialOpenRequestFunction)
+                        m_onMaterialOpenRequestFunction(assetPath);
                     else
                     {
-                        m_currentEditedMaterialPath = entry.path();
-                        ImGui::OpenPopup("MaterialEditor");
+                        const bool isTextEditable =
+                            m_shaderExtensions.find(extensionLower) != m_shaderExtensions.end() ||
+                            m_cppExtensions.find(extensionLower) != m_cppExtensions.end() ||
+                            m_headerExtensions.find(extensionLower) != m_headerExtensions.end() ||
+                            m_configExtensions.find(extensionLower) != m_configExtensions.end() ||
+                            m_sceneExtensions.find(extensionLower) != m_sceneExtensions.end() ||
+                            m_velixExtensions.find(extensionLower) != m_velixExtensions.end();
+
+                        if (isTextEditable && m_onTextAssetOpenRequestFunction)
+                            m_onTextAssetOpenRequestFunction(assetPath);
                     }
                 }
             }
-        }
 
-        if (ImGui::BeginPopup("MaterialEditor"))
-        {
-            drawMaterialEditor();
-            ImGui::EndPopup();
-        }
+            ImGui::TextWrapped("%s", filename.c_str());
 
-        ImGui::TextWrapped("%s", filename.c_str());
+            ImGui::EndGroup();
 
-        ImGui::EndGroup();
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+                m_selectedAssetPath = assetPath;
 
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::BeginTooltip();
-
-            if (entry.is_directory())
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
             {
-                ImGui::Text("Folder: %s", filename.c_str());
-                ImGui::Text("Path: %s", entry.path().parent_path().string().c_str());
-            }
-            else
-            {
-                ImGui::Text("File: %s", filename.c_str());
-                ImGui::Text("Size: %s", formatFileSize(entry.file_size()).c_str());
-                ImGui::Text("Type: %s", extension.c_str());
-                ImGui::Text("Modified: %s",
-                            std::to_string(std::filesystem::last_write_time(entry.path()).time_since_epoch().count()).c_str());
-            }
-
-            ImGui::EndTooltip();
-        }
-
-        //! DOES NOT WORK Drag and drop source
-        // if (ImGui::BeginDragDropSource())
-        // {
-        //     std::string filePath = entry.path().string();
-        //     ImGui::SetDragDropPayload("ASSET_PATH", filePath.data(),
-        //                               filePath.size() + 1);
-        //     ImGui::Text("Dragging: %s", filename.c_str());
-        //     ImGui::EndDragDropSource();
-        // }
-
-        ImGui::PopID();
-        ImGui::NextColumn();
-    }
-
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor();
-    ImGui::Columns(1);
-}
-
-void AssetsWindow::drawMaterialEditor()
-{
-    if (m_materials.find(m_currentEditedMaterialPath) == m_materials.end())
-    {
-        auto materialAsset = engine::AssetsLoader::loadMaterial(m_currentEditedMaterialPath);
-
-        if (!materialAsset.has_value())
-        {
-            std::cerr << "Something is weird, failed to load material asset\n";
-            ImGui::CloseCurrentPopup();
-            return;
-        }
-
-        auto materialCPU = materialAsset.value().material;
-
-        auto texture = std::make_shared<engine::Texture>();
-
-        if (!texture->load(materialCPU.albedoTexture))
-        {
-            std::cerr << "Something is weird, failed to load texture for material\n";
-            ImGui::CloseCurrentPopup();
-            return;
-        }
-
-        MaterialAssetWindow materialAssetWindow;
-        materialAssetWindow.material = engine::Material::create(texture);
-        materialAssetWindow.texture = texture;
-
-        materialAssetWindow.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-        m_texturesPreview[materialCPU.albedoTexture].previewTextureDescriptorSet = materialAssetWindow.previewTextureDescriptorSet;
-        m_materials[m_currentEditedMaterialPath] = materialAssetWindow;
-    }
-
-    auto material = m_materials[m_currentEditedMaterialPath];
-
-    auto color = material.material->getColor();
-
-    if (ImGui::ColorEdit4("Base Color", glm::value_ptr(color)))
-    {
-        material.material->setColor(color);
-    }
-
-    ImGui::PushID("tex");
-
-    if (!material.previewTextureDescriptorSet)
-        material.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(material.texture->vkSampler(), material.texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    ImTextureID texId = (ImTextureID)(uintptr_t)material.previewTextureDescriptorSet;
-    if (ImGui::ImageButton("tex", texId, ImVec2(50, 50)))
-        m_shotTexturePopup = true;
-    ImGui::PopID();
-
-    ImGui::SameLine();
-
-    ImGui::Text("Albedo");
-
-    if (m_shotTexturePopup)
-    {
-        ImGui::OpenPopup("texture_selector");
-        m_shotTexturePopup = false;
-    }
-
-    if (ImGui::BeginPopup("texture_selector"))
-    {
-        ImGui::Text("Select Texture");
-        ImGui::Separator();
-
-        static char filter[128] = "";
-        ImGui::InputTextWithHint("##Search", "Search textures...", filter, sizeof(filter));
-        ImGui::Separator();
-
-        ImGui::BeginChild("TextureScroll", ImVec2(300, 200), true);
-
-        for (const auto &texturePath : m_currentProject->cache.allProjectTexturesPaths)
-        {
-            if (filter[0] != '\0' && texturePath.find(filter) == std::string::npos)
-                continue;
-
-            ImGui::PushID(texturePath.c_str());
-
-            if (m_texturesPreview.find(texturePath) == m_texturesPreview.end())
-            {
-                TextureAssetWindow textureAssetWindow;
-
-                auto texture = std::make_shared<engine::Texture>();
-                texture->load(texturePath);
-                textureAssetWindow.texture = texture;
-
-                textureAssetWindow.previewTextureDescriptorSet = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-                m_texturesPreview[texturePath] = textureAssetWindow;
-            }
-
-            ImTextureID imguiTexId = (ImTextureID)(uintptr_t)m_texturesPreview[texturePath].previewTextureDescriptorSet;
-
-            if (ImGui::ImageButton(texturePath.c_str(), imguiTexId, ImVec2(50, 50)))
-            {
-                ImGui::CloseCurrentPopup();
+                m_selectedAssetPath = assetPath;
+                m_contextAssetPath = assetPath;
+                ImGui::OpenPopup("AssetItemContextMenu");
             }
 
             if (ImGui::IsItemHovered())
             {
                 ImGui::BeginTooltip();
-                ImGui::Text("%s", texturePath.c_str());
+
+                if (entry.is_directory())
+                {
+                    ImGui::Text("Folder: %s", filename.c_str());
+                    ImGui::Text("Path: %s", assetPath.parent_path().string().c_str());
+                }
+                else
+                {
+                    ImGui::Text("File: %s", filename.c_str());
+                    ImGui::Text("Size: %s", formatFileSize(entry.file_size()).c_str());
+                    ImGui::Text("Type: %s", extension.c_str());
+                }
+
                 ImGui::EndTooltip();
             }
 
-            const std::string fileName = std::filesystem::path(texturePath).filename();
-
-            ImGui::SameLine();
-
-            ImGui::TextWrapped("%s", fileName.c_str());
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+            {
+                const std::string filePath = assetPath.string();
+                ImGui::SetDragDropPayload("ASSET_PATH", filePath.c_str(), filePath.size() + 1);
+                ImGui::Text("Dragging: %s", filename.c_str());
+                ImGui::EndDragDropSource();
+            }
 
             ImGui::PopID();
+            ImGui::NextColumn();
         }
 
-        // for (const auto &[texturePath, texture] : m_currentProject->cache.assetsCache.getTextures())
-        // {
-        //     if (filter[0] != '\0' && texturePath.find(filter) == std::string::npos)
-        //         continue;
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor();
+        ImGui::Columns(1);
+    }
 
-        //     ImGui::PushID(texturePath.c_str());
+    if (ImGui::BeginPopup("AssetItemContextMenu"))
+    {
+        const bool assetExists = !m_contextAssetPath.empty() && std::filesystem::exists(m_contextAssetPath);
 
-        //     if (m_texturesPreview.find(texturePath) == m_texturesPreview.end())
-        //     {
-        //         m_texturesPreview[texturePath] = ImGui_ImplVulkan_AddTexture(texture->vkSampler(), texture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        //     }
-
-        //     ImTextureID imguiTexId = (ImTextureID)(uintptr_t)m_texturesPreview[texturePath];
-
-        //     if (ImGui::ImageButton(texturePath.c_str(), imguiTexId, ImVec2(50, 50)))
-        //     {
-        //         ImGui::CloseCurrentPopup();
-        //     }
-
-        //     if (ImGui::IsItemHovered())
-        //     {
-        //         ImGui::BeginTooltip();
-        //         ImGui::Text("%s", texturePath.c_str());
-        //         ImGui::EndTooltip();
-        //     }
-
-        //     const std::string fileName = std::filesystem::path(texturePath).filename();
-
-        //     ImGui::SameLine();
-
-        //     ImGui::TextWrapped("%s", fileName.c_str());
-
-        //     ImGui::PopID();
-        // }
-
-        ImGui::EndChild();
-
-        // Close button
-        ImGui::Separator();
-        if (ImGui::Button("Close"))
+        if (!assetExists)
         {
-            ImGui::CloseCurrentPopup();
+            ImGui::TextDisabled("Asset no longer exists.");
         }
+        else
+        {
+            const bool isDirectory = std::filesystem::is_directory(m_contextAssetPath);
+            std::string extension = m_contextAssetPath.extension().string();
+            std::string extensionLower = extension;
+            std::transform(extensionLower.begin(), extensionLower.end(), extensionLower.begin(), [](unsigned char character)
+                           { return static_cast<char>(std::tolower(character)); });
+
+            if (isDirectory)
+            {
+                if (ImGui::MenuItem("Open"))
+                    navigateToDirectory(m_contextAssetPath);
+            }
+            else
+            {
+                if (extensionLower == ".elixmat" && ImGui::MenuItem("Open Material"))
+                {
+                    if (m_onMaterialOpenRequestFunction)
+                        m_onMaterialOpenRequestFunction(m_contextAssetPath);
+                }
+
+                const bool isTextEditable =
+                    m_shaderExtensions.find(extensionLower) != m_shaderExtensions.end() ||
+                    m_cppExtensions.find(extensionLower) != m_cppExtensions.end() ||
+                    m_headerExtensions.find(extensionLower) != m_headerExtensions.end() ||
+                    m_configExtensions.find(extensionLower) != m_configExtensions.end() ||
+                    m_sceneExtensions.find(extensionLower) != m_sceneExtensions.end() ||
+                    m_velixExtensions.find(extensionLower) != m_velixExtensions.end();
+
+                if (isTextEditable && m_onTextAssetOpenRequestFunction && ImGui::MenuItem("Open in Editor"))
+                    m_onTextAssetOpenRequestFunction(m_contextAssetPath);
+
+                if (m_textureExtensions.find(extensionLower) != m_textureExtensions.end())
+                {
+                    if (ImGui::MenuItem("Create Material From Texture"))
+                        createMaterialFromTexture(m_contextAssetPath);
+                }
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Rename", "F2"))
+                startRenamingAsset(m_contextAssetPath);
+
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, !isDirectory))
+                duplicateAsset(m_contextAssetPath);
+
+            if (ImGui::MenuItem("Copy Path"))
+            {
+                const std::string pathString = m_contextAssetPath.string();
+                ImGui::SetClipboardText(pathString.c_str());
+            }
+
+            if (ImGui::MenuItem("Delete", "Del"))
+                startDeletingAsset(m_contextAssetPath);
+        }
+
         ImGui::EndPopup();
     }
 
-    if (ImGui::Button("Close"))
-        ImGui::CloseCurrentPopup();
+    if (m_openRenamePopupRequested)
+    {
+        ImGui::OpenPopup("Rename Asset");
+        m_openRenamePopupRequested = false;
+    }
+
+    if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("Rename: %s", m_renameAssetPath.filename().string().c_str());
+        ImGui::Separator();
+
+        ImGui::SetNextItemWidth(320.0f);
+        ImGui::InputText("##RenameAssetInput", m_renameBuffer, sizeof(m_renameBuffer));
+
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere(-1);
+
+        if (ImGui::Button("Rename"))
+        {
+            if (renameAsset(m_renameAssetPath, m_renameBuffer))
+            {
+                ImGui::CloseCurrentPopup();
+                refreshTree();
+            }
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+
+    if (m_openDeletePopupRequested)
+    {
+        ImGui::OpenPopup("Delete Asset");
+        m_openDeletePopupRequested = false;
+    }
+
+    if (ImGui::BeginPopupModal("Delete Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("Delete '%s' ?", m_deleteAssetPath.filename().string().c_str());
+        if (std::filesystem::is_directory(m_deleteAssetPath))
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "This will delete the entire directory recursively.");
+
+        ImGui::Separator();
+
+        if (ImGui::Button("Delete"))
+        {
+            if (deleteAsset(m_deleteAssetPath))
+            {
+                ImGui::CloseCurrentPopup();
+                refreshTree();
+            }
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+}
+
+void AssetsWindow::startRenamingAsset(const std::filesystem::path &path)
+{
+    if (path.empty() || !std::filesystem::exists(path))
+        return;
+
+    m_renameAssetPath = path;
+    std::memset(m_renameBuffer, 0, sizeof(m_renameBuffer));
+
+    const std::string fileName = path.filename().string();
+    std::strncpy(m_renameBuffer, fileName.c_str(), sizeof(m_renameBuffer) - 1);
+
+    m_openRenamePopupRequested = true;
+}
+
+void AssetsWindow::startDeletingAsset(const std::filesystem::path &path)
+{
+    if (path.empty() || !std::filesystem::exists(path))
+        return;
+
+    m_deleteAssetPath = path;
+    m_openDeletePopupRequested = true;
+}
+
+bool AssetsWindow::renameAsset(const std::filesystem::path &path, const std::string &newName)
+{
+    if (path.empty() || !std::filesystem::exists(path))
+        return false;
+
+    auto trimmedName = newName;
+    trimmedName.erase(trimmedName.begin(), std::find_if(trimmedName.begin(), trimmedName.end(), [](unsigned char ch)
+                                                        { return !std::isspace(ch); }));
+    trimmedName.erase(std::find_if(trimmedName.rbegin(), trimmedName.rend(), [](unsigned char ch)
+                                   { return !std::isspace(ch); })
+                          .base(),
+                      trimmedName.end());
+
+    if (trimmedName.empty())
+        return false;
+
+    if (trimmedName.find('/') != std::string::npos || trimmedName.find('\\') != std::string::npos)
+        return false;
+
+    const std::filesystem::path newPath = path.parent_path() / trimmedName;
+
+    if (newPath == path)
+        return true;
+
+    if (std::filesystem::exists(newPath))
+        return false;
+
+    try
+    {
+        std::filesystem::rename(path, newPath);
+    }
+    catch (const std::filesystem::filesystem_error &e)
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to rename asset: " << e.what() << '\n');
+        return false;
+    }
+
+    if (m_selectedAssetPath == path)
+        m_selectedAssetPath = newPath;
+
+    if (m_contextAssetPath == path)
+        m_contextAssetPath = newPath;
+
+    const std::string oldCurrent = path.lexically_normal().string();
+    const std::string activeCurrent = m_currentDirectory.lexically_normal().string();
+
+    if (m_currentDirectory == path)
+        m_currentDirectory = newPath;
+    else if (activeCurrent.rfind(oldCurrent + "/", 0) == 0)
+    {
+        const std::string suffix = activeCurrent.substr(oldCurrent.size() + 1);
+        m_currentDirectory = newPath / std::filesystem::path(suffix);
+    }
+
+    return true;
+}
+
+bool AssetsWindow::deleteAsset(const std::filesystem::path &path)
+{
+    if (path.empty() || !std::filesystem::exists(path))
+        return false;
+
+    auto pathContains = [](const std::filesystem::path &parent, const std::filesystem::path &candidate) -> bool
+    {
+        const std::string parentPath = parent.lexically_normal().string();
+        const std::string candidatePath = candidate.lexically_normal().string();
+
+        return candidatePath == parentPath || candidatePath.rfind(parentPath + "/", 0) == 0;
+    };
+
+    try
+    {
+        if (std::filesystem::is_directory(path))
+            std::filesystem::remove_all(path);
+        else
+            std::filesystem::remove(path);
+    }
+    catch (const std::filesystem::filesystem_error &e)
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to delete asset: " << e.what() << '\n');
+        return false;
+    }
+
+    if (!m_selectedAssetPath.empty() && pathContains(path, m_selectedAssetPath))
+        m_selectedAssetPath.clear();
+
+    if (!m_contextAssetPath.empty() && pathContains(path, m_contextAssetPath))
+        m_contextAssetPath.clear();
+
+    if (!m_currentDirectory.empty() && pathContains(path, m_currentDirectory))
+        m_currentDirectory = m_currentProject ? std::filesystem::path(m_currentProject->fullPath) : std::filesystem::current_path();
+
+    return true;
+}
+
+bool AssetsWindow::duplicateAsset(const std::filesystem::path &path)
+{
+    if (path.empty() || !std::filesystem::exists(path) || std::filesystem::is_directory(path))
+        return false;
+
+    const auto duplicatePath = makeUniqueDuplicatePath(path);
+
+    try
+    {
+        std::filesystem::copy_file(path, duplicatePath, std::filesystem::copy_options::none);
+    }
+    catch (const std::filesystem::filesystem_error &e)
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to duplicate asset: " << e.what() << '\n');
+        return false;
+    }
+
+    m_selectedAssetPath = duplicatePath;
+    refreshTree();
+    return true;
+}
+
+bool AssetsWindow::createMaterialFromTexture(const std::filesystem::path &texturePath)
+{
+    if (texturePath.empty() || !std::filesystem::exists(texturePath) || std::filesystem::is_directory(texturePath))
+        return false;
+
+    const auto materialPath = makeUniqueMaterialPath(texturePath.parent_path(), texturePath.stem().string() + "_Material");
+
+    if (!writeDefaultMaterialAsset(materialPath, texturePath.string()))
+        return false;
+
+    m_selectedAssetPath = materialPath;
+    refreshTree();
+
+    if (m_onMaterialOpenRequestFunction)
+        m_onMaterialOpenRequestFunction(materialPath);
+
+    return true;
 }
 
 std::vector<std::filesystem::directory_entry> AssetsWindow::getFilteredEntries()
@@ -622,7 +782,7 @@ std::vector<std::filesystem::directory_entry> AssetsWindow::getFilteredEntries()
     }
     catch (const std::filesystem::filesystem_error &e)
     {
-        std::cerr << "Error reading directory: " << e.what() << std::endl;
+        VX_EDITOR_ERROR_STREAM("Error reading directory: " << e.what() << std::endl);
     }
 
     return entries;
@@ -694,7 +854,7 @@ void AssetsWindow::buildTreeNode(TreeNode *node, const std::filesystem::path &pa
     }
     catch (const std::filesystem::filesystem_error &e)
     {
-        std::cerr << "Error building tree node: " << e.what() << std::endl;
+        VX_EDITOR_ERROR_STREAM("Error building tree node: " << e.what() << std::endl);
     }
 }
 

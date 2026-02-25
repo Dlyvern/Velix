@@ -10,14 +10,14 @@ LibraryHandle PluginLoader::loadLibrary(const std::string& libraryPath)
     HMODULE lib = LoadLibrary(libraryPath.c_str());
 
     if (!lib)
-        std::cerr << "Failed to load library " << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to load library " << std::endl);
 
     return lib;
 #else
     void* handle = dlopen(libraryPath.c_str(), RTLD_LAZY);
 
     if (!handle)
-        std::cerr << "Failed to load library " << dlerror();
+        VX_ENGINE_ERROR_STREAM("Failed to load library " << dlerror());
 
     return handle;
 #endif
@@ -29,14 +29,14 @@ void* PluginLoader::getFunction(const std::string& functionName, LibraryHandle l
     FARPROC function = GetProcAddress(library, functionName.c_str());
 
     if (!function)
-        std::cerr << "Failed to get function" << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to get function" << std::endl);
 
     return reinterpret_cast<void*>(function);
 #else
     void* function = dlsym(library, functionName.c_str());
 
     if (!function)
-        std::cerr << "Failed to get function " << dlerror() << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to get function " << dlerror() << std::endl);
 
     return function;
 #endif

@@ -5,6 +5,7 @@
 
 #include <vector>
 #include <array>
+#include <glm/glm.hpp>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -13,19 +14,17 @@ class PreviewAssetsRenderGraphPass : public engine::renderGraph::IRenderGraphPas
 public:
     struct PreviewJob
     {
-        engine::Material *material;
-        // GPUMesh *mesh;
-        VkImageView output;
+        engine::Material *material{nullptr};
+        engine::GPUMesh *mesh{nullptr};
+        glm::mat4 modelTransform{1.0f};
+        bool rotate{true};
     };
 
     PreviewAssetsRenderGraphPass(VkExtent2D extent);
 
-    int addMaterialPreviewJob(const PreviewJob &previewJob);
+    int addPreviewJob(const PreviewJob &previewJob);
 
-    VkImageView getVkImageView(int index)
-    {
-        return m_renderTargets[index]->vkImageView();
-    }
+    int addMaterialPreviewJob(const PreviewJob &previewJob);
 
     void setup(engine::renderGraph::RGPResourcesBuilder &builder) override;
     void compile(engine::renderGraph::RGPResourcesStorage &storage) override;

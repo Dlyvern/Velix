@@ -16,7 +16,7 @@ void RigidBodyComponent::update(float deltaTime)
 
     if (!owner)
     {
-        std::cerr << "Failed to get owner for rigid body component\n";
+        VX_ENGINE_ERROR_STREAM("Failed to get owner for rigid body component\n");
         return;
     }
 
@@ -24,7 +24,7 @@ void RigidBodyComponent::update(float deltaTime)
 
     if (!transormComponent)
     {
-        std::cerr << "Failed to get transform component\n";
+        VX_ENGINE_ERROR_STREAM("Failed to get transform component\n");
         return;
     }
 

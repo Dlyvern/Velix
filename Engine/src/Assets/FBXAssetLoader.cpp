@@ -45,6 +45,73 @@ struct VertexKeyHash
     }
 };
 
+namespace
+{
+bool hasAnyTransformCurve(FbxNode *node, FbxAnimLayer *layer)
+{
+    if (!node || !layer)
+        return false;
+
+    const bool hasTranslation = node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X) ||
+                                node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y) ||
+                                node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z);
+    const bool hasRotation = node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X) ||
+                             node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y) ||
+                             node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z);
+    const bool hasScale = node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X) ||
+                          node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y) ||
+                          node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z);
+
+    return hasTranslation || hasRotation || hasScale;
+}
+
+std::vector<FbxTime> collectTrackKeyTimes(FbxNode *node, FbxAnimLayer *layer, const FbxTime &clipStart, const FbxTime &clipEnd)
+{
+    std::vector<FbxTime> keyTimes;
+
+    auto collectCurveTimes = [&keyTimes](FbxAnimCurve *curve)
+    {
+        if (!curve)
+            return;
+
+        const int keyCount = curve->KeyGetCount();
+        keyTimes.reserve(keyTimes.size() + static_cast<size_t>(keyCount));
+
+        for (int keyIndex = 0; keyIndex < keyCount; ++keyIndex)
+            keyTimes.push_back(curve->KeyGetTime(keyIndex));
+    };
+
+    collectCurveTimes(node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X));
+    collectCurveTimes(node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y));
+    collectCurveTimes(node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z));
+
+    collectCurveTimes(node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X));
+    collectCurveTimes(node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y));
+    collectCurveTimes(node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z));
+
+    collectCurveTimes(node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X));
+    collectCurveTimes(node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y));
+    collectCurveTimes(node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z));
+
+    if (keyTimes.empty())
+        return keyTimes;
+
+    std::sort(keyTimes.begin(), keyTimes.end(), [](const FbxTime &lhs, const FbxTime &rhs)
+              { return lhs.Get() < rhs.Get(); });
+
+    keyTimes.erase(std::unique(keyTimes.begin(), keyTimes.end(), [](const FbxTime &lhs, const FbxTime &rhs)
+                               { return lhs.Get() == rhs.Get(); }),
+                   keyTimes.end());
+
+    if (keyTimes.front().Get() > clipStart.Get())
+        keyTimes.insert(keyTimes.begin(), clipStart);
+    if (keyTimes.back().Get() < clipEnd.Get())
+        keyTimes.push_back(clipEnd);
+
+    return keyTimes;
+}
+} // namespace
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 void buildSkeletonHierarchy(FbxNode *node, Skeleton &skeleton, int parentId = -1)
@@ -92,7 +159,7 @@ std::shared_ptr<IAsset> FBXAssetLoader::load(const std::string &filePath)
 
     if (!importer->Initialize(filePath.c_str(), -1, m_fbxManager->GetIOSettings()))
     {
-        std::cerr << "Failed to initialize FBX importer: " << importer->GetStatus().GetErrorString() << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to initialize FBX importer: " << importer->GetStatus().GetErrorString() << std::endl);
         importer->Destroy();
         return nullptr;
     }
@@ -108,16 +175,12 @@ std::shared_ptr<IAsset> FBXAssetLoader::load(const std::string &filePath)
 
     if (!rootNode)
     {
-        std::cerr << "Root node is invalid\n";
+        VX_ENGINE_ERROR_STREAM("Root node is invalid\n");
         scene->Destroy();
         return nullptr;
     }
 
     processNode(rootNode, meshesData);
-
-    auto animations = processAnimations(scene);
-
-    std::cout << "Found " << animations.size() << " animations\n";
 
     if (meshesData.skeleton.has_value())
     {
@@ -125,17 +188,24 @@ std::shared_ptr<IAsset> FBXAssetLoader::load(const std::string &filePath)
         buildSkeletonHierarchy(scene->GetRootNode(), skeleton);
     }
 
+    auto animations = processAnimations(scene, meshesData.skeleton);
+
+    VX_ENGINE_INFO_STREAM("Found " << animations.size() << " animations\n");
+
     scene->Destroy();
 
-    std::cout << "Parsed " << meshesData.meshes.size() << " meshes\n";
+    VX_ENGINE_INFO_STREAM("Parsed " << meshesData.meshes.size() << " meshes\n");
 
-    auto modelAsset = std::make_shared<ModelAsset>(meshesData.meshes, meshesData.skeleton);
+    auto modelAsset = std::make_shared<ModelAsset>(meshesData.meshes, meshesData.skeleton, animations);
 
     return modelAsset;
 }
 
-std::vector<Animation> FBXAssetLoader::processAnimations(FbxScene *scene)
+std::vector<Animation> FBXAssetLoader::processAnimations(FbxScene *scene, std::optional<Skeleton> &skeleton)
 {
+    if (!scene || !skeleton.has_value())
+        return {};
+
     const int animationsCount = scene->GetSrcObjectCount<FbxAnimStack>();
 
     if (animationsCount <= 0)
@@ -144,14 +214,82 @@ std::vector<Animation> FBXAssetLoader::processAnimations(FbxScene *scene)
     std::vector<Animation> animations;
     animations.reserve(animationsCount);
 
+    auto timeMode = scene->GetGlobalSettings().GetTimeMode();
+    double ticksPerSecond = FbxTime::GetFrameRate(timeMode);
+    if (ticksPerSecond <= 0.0)
+        ticksPerSecond = 30.0;
+
     for (int i = 0; i < animationsCount; ++i)
     {
-        Animation animation;
-
         FbxAnimStack *animationStack = scene->GetSrcObject<FbxAnimStack>(i);
+        if (!animationStack)
+            continue;
+
+        scene->SetCurrentAnimationStack(animationStack);
+
+        FbxTimeSpan timeSpan = animationStack->GetLocalTimeSpan();
+
+        if (timeSpan.GetDuration().Get() <= 0)
+            scene->GetGlobalSettings().GetTimelineDefaultTimeSpan(timeSpan);
+
+        const FbxTime clipStart = timeSpan.GetStart();
+        const FbxTime clipEnd = timeSpan.GetStop();
+
+        if (clipEnd.Get() < clipStart.Get())
+            continue;
+
+        auto *animationLayer = animationStack->GetMember<FbxAnimLayer>(0);
+        if (!animationLayer)
+            continue;
+
+        Animation animation;
+        animation.ticksPerSecond = ticksPerSecond;
+        animation.duration = std::max(timeSpan.GetDuration().GetSecondDouble() * ticksPerSecond, 0.001);
+
         animation.name = animationStack->GetName();
 
-        animations.push_back(animation);
+        for (size_t boneIndex = 0; boneIndex < skeleton->getBonesCount(); ++boneIndex)
+        {
+            auto *bone = skeleton->getBone(static_cast<int>(boneIndex));
+            if (!bone)
+                continue;
+
+            FbxNode *boneNode = scene->FindNodeByName(bone->name.c_str());
+            if (!boneNode || !hasAnyTransformCurve(boneNode, animationLayer))
+                continue;
+
+            auto keyTimes = collectTrackKeyTimes(boneNode, animationLayer, clipStart, clipEnd);
+            if (keyTimes.empty())
+                continue;
+
+            AnimationTrack track;
+            track.objectName = bone->name;
+            track.keyFrames.reserve(keyTimes.size());
+
+            for (const auto &keyTime : keyTimes)
+            {
+                auto localTransform = boneNode->EvaluateLocalTransform(keyTime);
+
+                auto translation = localTransform.GetT();
+                auto rotation = localTransform.GetQ();
+                auto scale = localTransform.GetS();
+
+                SQT keyFrame;
+                keyFrame.position = glm::vec3(static_cast<float>(translation[0]), static_cast<float>(translation[1]), static_cast<float>(translation[2]));
+                keyFrame.rotation = glm::normalize(glm::quat(static_cast<float>(rotation[3]), static_cast<float>(rotation[0]),
+                                                             static_cast<float>(rotation[1]), static_cast<float>(rotation[2])));
+                keyFrame.scale = glm::vec3(static_cast<float>(scale[0]), static_cast<float>(scale[1]), static_cast<float>(scale[2]));
+                keyFrame.timeStamp = static_cast<float>(std::max(0.0, (keyTime - clipStart).GetSecondDouble() * animation.ticksPerSecond));
+
+                track.keyFrames.push_back(keyFrame);
+            }
+
+            if (!track.keyFrames.empty())
+                animation.boneAnimations.push_back(std::move(track));
+        }
+
+        if (!animation.boneAnimations.empty())
+            animations.push_back(std::move(animation));
     }
 
     return animations;
@@ -195,7 +333,7 @@ void FBXAssetLoader::processNodeAttribute(FbxNodeAttribute *nodeAttribute, FbxNo
     }
     default:
     {
-        std::cerr << "Unknow attribute type " << static_cast<int>(attributeType) << std::endl;
+        VX_ENGINE_ERROR_STREAM("Unknow attribute type " << static_cast<int>(attributeType) << std::endl);
         break;
     }
     }
@@ -220,9 +358,9 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
         return;
 
     if (int removedPolygons = mesh->RemoveBadPolygons(); removedPolygons == -1)
-        std::cerr << "Failed to remove bad polygons\n";
+        VX_ENGINE_ERROR_STREAM("Failed to remove bad polygons\n");
     else if (removedPolygons > 0)
-        std::cout << "Removed " << removedPolygons << " bad polygons\n";
+        VX_ENGINE_INFO_STREAM("Removed " << removedPolygons << " bad polygons\n");
 
     std::vector<TmpVertex> vertices;
     std::vector<uint32_t> indices;
@@ -374,6 +512,13 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
 
     cpuMesh.localTransform = glmMatrix;
 
+    std::string meshName = mesh->GetName() ? mesh->GetName() : "";
+    if (meshName.empty())
+        meshName = node->GetName() ? node->GetName() : "";
+    if (meshName.empty())
+        meshName = "Mesh_" + std::to_string(meshData.meshes.size());
+    cpuMesh.name = meshName;
+
     processMaterials(node, cpuMesh);
 
     meshData.meshes.push_back(cpuMesh);
@@ -391,7 +536,7 @@ std::optional<Skeleton> FBXAssetLoader::processSkeleton(FbxMesh *mesh)
 
     const int clusterCount = skin->GetClusterCount();
 
-    std::cout << "Has " << clusterCount << " bones\n";
+    VX_ENGINE_INFO_STREAM("Has " << clusterCount << " bones\n");
 
     for (int i = 0; i < clusterCount; ++i)
     {
@@ -428,7 +573,7 @@ std::optional<Skeleton> FBXAssetLoader::processSkeleton(FbxMesh *mesh)
 
         skeleton.addBone(bone);
 
-        // std::cout << "Added " << bone.name << " bone \n";
+        // VX_ENGINE_INFO_STREAM("Added " << bone.name << " bone \n");
     }
 
     return skeleton;
@@ -452,7 +597,7 @@ void FBXAssetLoader::processMaterials(FbxNode *node, CPUMesh &mesh)
 
         const char *matName = material->GetName();
         mesh.material.name = std::string(matName);
-        std::cout << mesh.material.name << std::endl;
+        VX_ENGINE_INFO_STREAM(mesh.material.name << std::endl);
     }
 }
 

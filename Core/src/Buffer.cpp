@@ -34,6 +34,7 @@ void Buffer::createVk(VkDeviceSize size, VkBufferUsageFlags usage, memory::Memor
 void Buffer::map(void *&data, VkDeviceSize offset, VkMemoryMapFlags flags)
 {
     map(data, m_size, offset, flags);
+    m_isMapped = true;
 }
 
 void Buffer::map(void *&data, VkDeviceSize size, VkDeviceSize offset, VkMemoryMapFlags flags)

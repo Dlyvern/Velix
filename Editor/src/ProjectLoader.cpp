@@ -14,13 +14,13 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
 {
     if (projectPath.empty())
     {
-        std::cerr << "Project path is empty\n";
+        VX_EDITOR_ERROR_STREAM("Project path is empty\n");
         return nullptr;
     }
 
     if (!std::filesystem::exists(projectPath))
     {
-        std::cerr << "Project path does not exist\n";
+        VX_EDITOR_ERROR_STREAM("Project path does not exist\n");
         return nullptr;
     }
 
@@ -39,7 +39,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
             }
         }
 
-        std::cerr << "Failed to find config file in project\n";
+        VX_EDITOR_ERROR_STREAM("Failed to find config file in project\n");
 
         return nullptr;
     }
@@ -50,7 +50,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
 
     if (!configFile.is_open())
     {
-        std::cerr << "Failed to open config file: " << projectConfigPath << '\n';
+        VX_EDITOR_ERROR_STREAM("Failed to open config file: " << projectConfigPath << '\n');
         return nullptr;
     }
 
@@ -62,7 +62,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
     }
     catch (const nlohmann::json::parse_error &e)
     {
-        std::cerr << "Failed to parse scene file " << e.what() << '\n';
+        VX_EDITOR_ERROR_STREAM("Failed to parse scene file " << e.what() << '\n');
         return nullptr;
     }
 
@@ -78,13 +78,13 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
 
     if (!json.contains("path")) //*Very important
     {
-        std::cerr << "Failed to find 'path' key in config. Aborting...\n";
+        VX_EDITOR_ERROR_STREAM("Failed to find 'path' key in config. Aborting...\n");
         return nullptr;
     }
 
     if (!json.contains("scene"))
     {
-        std::cout << "No scene. Creating default scene\n";
+        VX_EDITOR_INFO_STREAM("No scene. Creating default scene\n");
     }
 
     auto project = std::make_shared<Project>();
@@ -99,7 +99,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
 
     if (!std::filesystem::exists(project->fullPath))
     {
-        std::cerr << "Project full path is not correct\n";
+        VX_EDITOR_ERROR_STREAM("Project full path is not correct\n");
         return nullptr;
     }
 
@@ -109,20 +109,12 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
 
         if (extension == ".png" || extension == ".jpg")
         {
-            std::cout << "Found texture: " << entry.path().string() << '\n';
-            assetsCache.allProjectTexturesPaths.push_back(entry.path().string());
+            VX_EDITOR_INFO_STREAM("Found texture: " << entry.path().string() << '\n');
 
-            //     auto texture = std::make_shared<engine::Texture>();
+            TextureAssetRecord texture;
+            texture.path = entry.path().string();
 
-            // if (!texture->load(entry.path().string()))
-            // {
-            //     std::cerr << "Failed to load some assets cache texture: " << entry.path().string() << '\n';
-            //     continue;
-            // }
-
-            // std::cout << "Loaded texture: " << entry.path().string() << '\n';
-
-            // assetsCache.addTexture(entry.path().string(), std::move(texture));
+            assetsCache.texturesByPath[texture.path] = texture;
         }
     }
 

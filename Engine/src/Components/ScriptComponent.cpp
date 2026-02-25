@@ -28,7 +28,7 @@ void ScriptComponent::update(float deltaTime)
     
     if(!m_script)
     {
-        std::cerr << "Script is not valid. Something is weird" << std::endl;
+        VX_ENGINE_ERROR_STREAM("Script is not valid. Something is weird" << std::endl);
         return;
     }
 

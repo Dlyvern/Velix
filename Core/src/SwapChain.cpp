@@ -2,12 +2,12 @@
 
 #include <GLFW/glfw3.h>
 #include "Core/VulkanContext.hpp"
+#include "Core/VulkanAssert.hpp"
 
 #include <limits>
 #include <iostream>
 #include <array>
 #include <algorithm>
-#include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -54,13 +54,12 @@ void SwapChain::createSwapChain()
     createInfo.clipped = VK_TRUE;
     createInfo.oldSwapchain = m_swapChain;
 
-    if (vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapChain) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create swap chain");
+    VX_VK_CHECK(vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapChain));
 
     uint32_t swapchainCount;
-    vkGetSwapchainImagesKHR(m_device, m_swapChain, &swapchainCount, nullptr);
+    VX_VK_CHECK(vkGetSwapchainImagesKHR(m_device, m_swapChain, &swapchainCount, nullptr));
     m_swapChainImages.resize(swapchainCount);
-    vkGetSwapchainImagesKHR(m_device, m_swapChain, &swapchainCount, m_swapChainImages.data());
+    VX_VK_CHECK(vkGetSwapchainImagesKHR(m_device, m_swapChain, &swapchainCount, m_swapChainImages.data()));
 
     m_imageFormat = surfaceFormat.format;
     m_extent = extent;
@@ -70,26 +69,26 @@ SwapChain::SwapChainSupportDetails SwapChain::querySwapChainSupport(VkPhysicalDe
 {
     SwapChainSupportDetails details;
 
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+    VX_VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities));
 
     uint32_t formatCount{0};
 
-    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+    VX_VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr));
 
     if (formatCount != 0)
     {
         details.formats.resize(formatCount);
-        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+        VX_VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data()));
     }
 
     uint32_t presentModeCount{0};
 
-    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+    VX_VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr));
 
     if (presentModeCount != 0)
     {
         details.presentModes.resize(presentModeCount);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+        VX_VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data()));
     }
 
     return details;
@@ -112,7 +111,7 @@ void SwapChain::recreate()
         glfwWaitEvents();
     }
 
-    vkDeviceWaitIdle(m_device);
+    VX_VK_TRY(vkDeviceWaitIdle(m_device));
 
     cleanup();
 

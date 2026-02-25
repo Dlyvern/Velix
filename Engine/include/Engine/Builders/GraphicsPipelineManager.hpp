@@ -16,22 +16,33 @@ public:
     static core::GraphicsPipeline::SharedPtr getOrCreate(GraphicsPipelineKey key);
 
     static void init();
+    static void reloadShaders();
     static void destroy();
 
 private:
     static core::GraphicsPipeline::SharedPtr createPipeline(const GraphicsPipelineKey &key);
+    static void loadShaderModules();
+    static void destroyShaderModules();
+    static void destroyPipelines();
 
     static inline std::unordered_map<GraphicsPipelineKey, core::GraphicsPipeline::SharedPtr, GraphicsPipelineKeyHash> m_pipelines;
 
-    static inline core::Shader::SharedPtr staticShader{nullptr};
-    static inline core::Shader::SharedPtr skeletonShader{nullptr};
-    static inline core::Shader::SharedPtr wireframeShader{nullptr};
-    static inline core::Shader::SharedPtr stencilShader{nullptr};
     static inline core::Shader::SharedPtr shadowStaticShader{nullptr};
+    static inline core::Shader::SharedPtr shadowSkinnedShader{nullptr};
 
     static inline core::Shader::SharedPtr previewMeshShader{nullptr};
     static inline core::Shader::SharedPtr skyboxHDRShader{nullptr};
     static inline core::Shader::SharedPtr skyboxShader{nullptr};
+
+    static inline core::Shader::SharedPtr skyLightShader{nullptr};
+    static inline core::Shader::SharedPtr toneMapShader{nullptr};
+    static inline core::Shader::SharedPtr selectionOverlayShader{nullptr};
+    static inline core::Shader::SharedPtr presentShader{nullptr};
+
+    static inline core::Shader::SharedPtr gBufferStaticShader{nullptr};
+    static inline core::Shader::SharedPtr gBufferSkinnedShader{nullptr};
+
+    static inline core::Shader::SharedPtr lightingShader{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

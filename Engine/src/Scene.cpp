@@ -130,7 +130,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
 
     if (!file.is_open())
     {
-        std::cerr << "Failed to open file: " << filePath << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to open file: " << filePath << std::endl);
         ;
         return false;
     }
@@ -143,7 +143,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
     }
     catch (const nlohmann::json::parse_error &e)
     {
-        std::cerr << "Failed to parse scene file " << e.what() << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to parse scene file " << e.what() << std::endl);
         return false;
     }
 
@@ -159,7 +159,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
             if (enviromentObject.contains("skybox"))
             {
                 //*for now, we do not have skybox
-                std::cout << "Has skybox" << std::endl;
+                VX_ENGINE_INFO_STREAM("Has skybox" << std::endl);
             }
         }
     }
@@ -173,6 +173,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
             auto gameObject = addEntity(name);
 
             CPUMesh mesh = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
+            mesh.name = "Cube";
             gameObject->addComponent<StaticMeshComponent>(std::vector<CPUMesh>{mesh});
 
             auto transformation = gameObject->getComponent<Transform3DComponent>();
@@ -218,7 +219,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
 
                         if (lightType == LightComponent::LightType::NONE)
                         {
-                            std::cerr << "Light type is none\n";
+                            VX_ENGINE_ERROR_STREAM("Light type is none\n");
                             continue;
                         }
 
@@ -352,10 +353,10 @@ void Scene::saveSceneToFile(const std::string &filePath)
     {
         file << std::setw(4) << json << std::endl;
         file.close();
-        std::cout << "Saved scene in " << filePath << '\n';
+        VX_ENGINE_INFO_STREAM("Saved scene in " << filePath << '\n');
     }
     else
-        std::cerr << "Failed to open file to save game objects: " << filePath << std::endl;
+        VX_ENGINE_ERROR_STREAM("Failed to open file to save game objects: " << filePath << std::endl);
 }
 
 bool Scene::destroyEntity(Entity *entity)

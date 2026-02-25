@@ -7,8 +7,10 @@
 #include "Engine/Shaders/ShaderFamily.hpp"
 #include "Engine/Primitives.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
+#include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 struct ModelOnly
 {
@@ -36,11 +38,19 @@ PreviewAssetsRenderGraphPass::PreviewAssetsRenderGraphPass(VkExtent2D extent) : 
     this->setDebugName("Preview assets render graph pass");
 }
 
-int PreviewAssetsRenderGraphPass::addMaterialPreviewJob(const PreviewJob &previewJob)
+int PreviewAssetsRenderGraphPass::addPreviewJob(const PreviewJob &previewJob)
 {
+    if (m_indexBusyJobs >= MAX_RENDER_JOBS)
+        return -1;
+
     uint32_t index = m_indexBusyJobs++;
     m_renderJobs[index] = previewJob;
     return index;
+}
+
+int PreviewAssetsRenderGraphPass::addMaterialPreviewJob(const PreviewJob &previewJob)
+{
+    return addPreviewJob(previewJob);
 }
 
 void PreviewAssetsRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder &builder)
@@ -50,8 +60,8 @@ void PreviewAssetsRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilde
 
     engine::renderGraph::RGPTextureDescription colorTextureDescription(format, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
     colorTextureDescription.setExtent(m_extent);
-    colorTextureDescription.setInitialLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    colorTextureDescription.setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    colorTextureDescription.setInitialLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    colorTextureDescription.setFinalLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     for (int index = 0; index < MAX_RENDER_JOBS; ++index)
     {
@@ -89,16 +99,25 @@ void PreviewAssetsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-    VkBuffer vertexBuffers[] = {m_circleGpuMesh->vertexBuffer};
+    const PreviewJob *currentJob = nullptr;
+
+    if (m_currentJob < m_indexBusyJobs)
+        currentJob = &m_renderJobs[m_currentJob];
+
+    auto mesh = (currentJob && currentJob->mesh) ? currentJob->mesh : m_circleGpuMesh.get();
+
+    VkBuffer vertexBuffers[] = {mesh->vertexBuffer};
     VkDeviceSize offset[] = {0};
 
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offset);
-    vkCmdBindIndexBuffer(commandBuffer, m_circleGpuMesh->indexBuffer, 0, m_circleGpuMesh->indexType);
+    vkCmdBindIndexBuffer(commandBuffer, mesh->indexBuffer, 0, mesh->indexType);
 
     static float angle = 0.0f;
     angle += 0.01f;
 
-    glm::mat4 model = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::mat4 model = currentJob ? currentJob->modelTransform : glm::mat4(1.0f);
+    if (!currentJob || currentJob->rotate)
+        model = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f)) * model;
 
     ModelOnly modelPushConstant{
         .model = model};
@@ -107,13 +126,12 @@ void PreviewAssetsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
 
     VkDescriptorSet descriptorSet{VK_NULL_HANDLE};
 
-    if (m_renderJobs.size() < m_currentJob)
+    if (!currentJob || !currentJob->material)
     {
-        std::cerr << "Failed to get job\n";
         descriptorSet = engine::Material::getDefaultMaterial()->getDescriptorSet(renderContext.currentFrame);
     }
     else
-        descriptorSet = m_renderJobs.at(m_currentJob).material->getDescriptorSet(renderContext.currentFrame);
+        descriptorSet = currentJob->material->getDescriptorSet(renderContext.currentFrame);
 
     std::vector<VkDescriptorSet> descriptorSets = {
         data.previewCameraDescriptorSet,
@@ -123,7 +141,7 @@ void PreviewAssetsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
                             0, static_cast<uint32_t>(descriptorSets.size()),
                             descriptorSets.data(), 0, nullptr);
 
-    vkCmdDrawIndexed(commandBuffer, m_circleGpuMesh->indicesCount, 1, 0, 0, 0);
+    engine::renderGraph::profiling::cmdDrawIndexed(commandBuffer, mesh->indicesCount, 1, 0, 0, 0);
 
     ++m_currentJob;
 }

@@ -11,17 +11,19 @@
 #include <glm/gtx/quaternion.hpp>
 
 #include "Engine/Skeleton.hpp"
+#include <algorithm>
 #include <string>
-
-class Entity;
+#include <cstddef>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+
+class Entity;
 
 struct SQT
 {
     glm::quat rotation{1, 0, 0, 0};
     glm::vec3 position{0, 0, 0};
-    glm::vec3 scale{0, 0, 0};
+    glm::vec3 scale{1, 1, 1};
     float timeStamp{0.0f};
 };
 
@@ -34,13 +36,20 @@ struct AnimationTrack
 struct Animation
 {
     std::string name;
-    double ticksPerSecond;
-    double duration;
+    double ticksPerSecond{0.0};
+    double duration{0.0};
     std::vector<AnimationTrack> boneAnimations;
     Skeleton *skeletonForAnimation{nullptr};
     Entity *gameObject{nullptr};
 
     AnimationTrack *getAnimationTrack(const std::string &name)
+    {
+        const auto it = std::find_if(boneAnimations.begin(), boneAnimations.end(), [&name](const auto &bone)
+                                     { return bone.objectName == name; });
+        return it == boneAnimations.end() ? nullptr : &(*it);
+    }
+
+    const AnimationTrack *getAnimationTrack(const std::string &name) const
     {
         const auto it = std::find_if(boneAnimations.begin(), boneAnimations.end(), [&name](const auto &bone)
                                      { return bone.objectName == name; });
@@ -52,30 +61,59 @@ class AnimatorComponent final : public ECS
 {
 public:
     void update(float deltaTime) override;
+    void onOwnerAttached() override;
+
+    void setAnimations(const std::vector<Animation> &animations, Skeleton *skeletonForAnimations = nullptr);
+    void bindSkeleton(Skeleton *skeletonForAnimations);
+
+    const std::vector<Animation> &getAnimations() const;
+
+    void setSelectedAnimationIndex(int index);
+    [[nodiscard]] int getSelectedAnimationIndex() const;
+
+    bool playAnimationByIndex(size_t index, bool repeat = true);
+    bool playAnimationByName(const std::string &name, bool repeat = true);
 
     void playAnimation(Animation *animation, bool repeat = true);
 
     void stopAnimation();
 
+    void setAnimationPaused(bool paused);
+    [[nodiscard]] bool isAnimationPaused() const;
+
+    void setAnimationLooped(bool looped);
+    [[nodiscard]] bool isAnimationLooped() const;
+
+    void setAnimationSpeed(float speed);
+    [[nodiscard]] float getAnimationSpeed() const;
+
+    void setCurrentTime(float currentTime);
+    [[nodiscard]] float getCurrentTime() const;
+    [[nodiscard]] float getCurrentAnimationDuration() const;
+
+    Animation *getCurrentAnimation();
+    const Animation *getCurrentAnimation() const;
+
     [[nodiscard]] bool isAnimationPlaying() const;
 
 private:
+    void applyCurrentAnimationPose();
+    void refreshAnimationBindings();
+
     void calculateBoneTransform(Skeleton::BoneInfo *boneInfo, const glm::mat4 &parentTransform, Animation *animation, float currentTime);
     void calculateObjectTransform(Animation *animation, float currentTime);
 
     bool m_isAnimationPaused{false};
     bool m_isAnimationLooped{true};
     bool m_isAnimationCompleted{false};
-    bool m_isInterpolating{false};
 
     float m_animationSpeed{1.0f};
     float m_currentTime{0.0f};
-    float m_haltTime{0.0f};
-    float m_interTime{0.0f};
 
+    Skeleton *m_boundSkeleton{nullptr};
+    std::vector<Animation> m_animations;
+    int m_selectedAnimationIndex{-1};
     Animation *m_currentAnimation{nullptr};
-    Animation *m_nextAnimation{nullptr};
-    Animation *m_queueAnimation{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

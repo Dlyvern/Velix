@@ -48,7 +48,7 @@ private:
     VkViewport m_viewport{};
     VkRect2D m_scissor{};
 
-    VkExtent2D m_extent{1024, 1024};
+    VkExtent2D m_extent{2096, 2096};
 
     VkClearValue m_clearValue;
 

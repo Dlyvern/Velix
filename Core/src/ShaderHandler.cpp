@@ -1,6 +1,7 @@
 #include "Core/ShaderHandler.hpp"
 
 #include "Core/VulkanContext.hpp"
+#include "Core/VulkanAssert.hpp"
 
 #include <stdexcept>
 #include <fstream>
@@ -128,8 +129,7 @@ VkShaderModule ShaderHandler::createShaderModule(const std::vector<uint32_t> &co
 
     VkShaderModule shaderModule;
 
-    if (vkCreateShaderModule(VulkanContext::getContext()->getDevice(), &createInfo, nullptr, &shaderModule) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shader module");
+    VX_VK_CHECK(vkCreateShaderModule(VulkanContext::getContext()->getDevice(), &createInfo, nullptr, &shaderModule));
 
     return shaderModule;
 }

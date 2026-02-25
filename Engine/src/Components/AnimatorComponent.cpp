@@ -1,22 +1,24 @@
 #include "Engine/Components/AnimatorComponent.hpp"
 
+#include "Engine/Entity.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 namespace
 {
-    glm::vec3 interpolate(const glm::vec3& start, const glm::vec3& end, float t) 
+    glm::vec3 interpolateVec3(const glm::vec3 &start, const glm::vec3 &end, float t)
     {
         return start + t * (end - start);
     }
 
-    glm::quat interpolate(const glm::quat& start, const glm::quat& end, float t) 
+    glm::quat interpolateQuat(const glm::quat &start, const glm::quat &end, float t)
     {
         return glm::slerp(start, end, t);
     }
 
-    float interpolate(float start, float end, float t) {
-        return start + t * (end - start);
-    }
-
-    std::pair<const elix::engine::SQT*, const elix::engine::SQT*> findKeyframes(const std::vector<elix::engine::SQT>& keyFrames, const float currentTime)
+    std::pair<const elix::engine::SQT *, const elix::engine::SQT *> findKeyframes(const std::vector<elix::engine::SQT> &keyFrames, const float currentTime)
     {
         if (keyFrames.empty())
             return {nullptr, nullptr};
@@ -31,139 +33,265 @@ namespace
             if (currentTime < keyFrames[i].timeStamp)
                 return {&keyFrames[i - 1], &keyFrames[i]};
 
-        return {nullptr, nullptr};  // Should never reach here
+        return {nullptr, nullptr};
     }
-}
+} // namespace
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
+void AnimatorComponent::onOwnerAttached()
+{
+    refreshAnimationBindings();
+}
+
+void AnimatorComponent::setAnimations(const std::vector<Animation> &animations, Skeleton *skeletonForAnimations)
+{
+    m_animations = animations;
+
+    if (skeletonForAnimations)
+        m_boundSkeleton = skeletonForAnimations;
+
+    if (m_animations.empty())
+        m_selectedAnimationIndex = -1;
+    else if (m_selectedAnimationIndex < 0 || m_selectedAnimationIndex >= static_cast<int>(m_animations.size()))
+        m_selectedAnimationIndex = 0;
+
+    m_currentAnimation = nullptr;
+    m_currentTime = 0.0f;
+    m_isAnimationPaused = false;
+    m_isAnimationCompleted = false;
+
+    refreshAnimationBindings();
+}
+
+void AnimatorComponent::bindSkeleton(Skeleton *skeletonForAnimations)
+{
+    m_boundSkeleton = skeletonForAnimations;
+    refreshAnimationBindings();
+}
+
+const std::vector<Animation> &AnimatorComponent::getAnimations() const
+{
+    return m_animations;
+}
+
+void AnimatorComponent::setSelectedAnimationIndex(int index)
+{
+    if (index < 0 || index >= static_cast<int>(m_animations.size()))
+    {
+        m_selectedAnimationIndex = -1;
+        return;
+    }
+
+    m_selectedAnimationIndex = index;
+}
+
+int AnimatorComponent::getSelectedAnimationIndex() const
+{
+    return m_selectedAnimationIndex;
+}
+
+bool AnimatorComponent::playAnimationByIndex(size_t index, bool repeat)
+{
+    if (index >= m_animations.size())
+        return false;
+
+    m_selectedAnimationIndex = static_cast<int>(index);
+    playAnimation(&m_animations[index], repeat);
+    return true;
+}
+
+bool AnimatorComponent::playAnimationByName(const std::string &name, bool repeat)
+{
+    for (size_t i = 0; i < m_animations.size(); ++i)
+    {
+        if (m_animations[i].name == name)
+            return playAnimationByIndex(i, repeat);
+    }
+
+    return false;
+}
+
 void AnimatorComponent::update(float deltaTime)
+{
+    if (!m_currentAnimation || m_isAnimationPaused)
+        return;
+
+    const float duration = getCurrentAnimationDuration();
+    const float ticksPerSecond = static_cast<float>(m_currentAnimation->ticksPerSecond > 0.0 ? m_currentAnimation->ticksPerSecond : 25.0);
+
+    if (duration <= std::numeric_limits<float>::epsilon())
+    {
+        m_currentTime = 0.0f;
+        applyCurrentAnimationPose();
+        return;
+    }
+
+    m_currentTime += ticksPerSecond * deltaTime * m_animationSpeed;
+
+    if (m_isAnimationLooped)
+    {
+        m_currentTime = std::fmod(m_currentTime, duration);
+        if (m_currentTime < 0.0f)
+            m_currentTime += duration;
+    }
+    else if (m_currentTime >= duration)
+    {
+        m_currentTime = duration;
+        m_isAnimationCompleted = true;
+        m_isAnimationPaused = true;
+    }
+
+    applyCurrentAnimationPose();
+}
+
+void AnimatorComponent::applyCurrentAnimationPose()
 {
     if (!m_currentAnimation)
         return;
 
-    m_currentTime += m_currentAnimation->ticksPerSecond * deltaTime;
-
-    if (m_isAnimationLooped)
-        m_currentTime = std::fmod(m_currentTime + m_currentAnimation->ticksPerSecond * deltaTime, m_currentAnimation->duration);
-    else if (m_currentTime > m_currentAnimation->duration)
-    {
-        m_currentTime = m_currentAnimation->duration;
-        m_currentAnimation = nullptr;
-        return;
-    }
-
-    if (m_isInterpolating)
-    {
-        if (m_queueAnimation)
-        {
-            m_currentAnimation = m_nextAnimation;
-            m_haltTime = 0.0f;
-            m_nextAnimation = m_queueAnimation;
-            m_queueAnimation = nullptr;
-            m_currentTime = 0.0f;
-            m_interTime = 0.0;
-            return;
-        }
-
-        m_isInterpolating = false;
-        m_currentAnimation = m_nextAnimation;
-        m_currentTime = 0.0;
-        m_interTime = 0.0;
-    }
-
     if (m_currentAnimation->skeletonForAnimation)
     {
-        const auto parent = m_currentAnimation->skeletonForAnimation->getParent();
-        calculateBoneTransform(parent, glm::mat4(1.0f), m_currentAnimation, m_currentTime);
+        auto *parent = m_currentAnimation->skeletonForAnimation->getParent();
+        if (parent)
+            calculateBoneTransform(parent, glm::mat4(1.0f), m_currentAnimation, m_currentTime);
     }
     else if (m_currentAnimation->gameObject)
-    {
         calculateObjectTransform(m_currentAnimation, m_currentTime);
-    }
-    //TODO Should we use it here or no? If we have no game object and skeleton to work with
-    // else
-    //     m_currentAnimation = nullptr;
 }
 
 void AnimatorComponent::calculateObjectTransform(Animation *animation, float currentTime)
 {
-    if (auto track = animation->getAnimationTrack("door"))
+    (void)animation;
+    (void)currentTime;
+
+    // TODO: Object animation tracks can be applied here once transform track extraction is added.
+}
+
+void AnimatorComponent::refreshAnimationBindings()
+{
+    auto *owner = getOwner<Entity>();
+
+    for (auto &animation : m_animations)
     {
-        // auto [startFrame, endFrame] = utilities::findKeyframes(track->keyFrames, currentTime);
-
-        // if (!startFrame || !endFrame)
-        //     return;
-
-        // float deltaTime = endFrame->timeStamp - startFrame->timeStamp;
-        // float t = (deltaTime == 0) ? 0.0f : (currentTime - startFrame->timeStamp) / deltaTime;
-        // t = glm::clamp(t, 0.0f, 1.0f);
-
-        // glm::vec3 position = utilities::interpolate(startFrame->position, endFrame->position, t);
-        // glm::quat rotation = glm::normalize(glm::slerp(startFrame->rotation, endFrame->rotation, t));
-        // glm::vec3 scale = utilities::interpolate(startFrame->scale, endFrame->scale, t);
-
-        // auto* gameObject = animation->gameObject;
-
-        // position += glm::vec3{0.0f, gameObject->getPosition().y, gameObject->getPosition().z};
-
-        // glm::quat currentGameObjectRotationInQuaternion = glm::quat(glm::radians(gameObject->getRotation()));
-
-        // rotation = glm::normalize(rotation * currentGameObjectRotationInQuaternion);
-
-        // glm::vec3 eulerDegrees = glm::degrees(glm::eulerAngles(rotation));
-
-        // std::cout << eulerDegrees.x << " " << eulerDegrees.y << " " << eulerDegrees.z << std::endl;
-
-        // gameObject->setPosition(position);
-        // gameObject->setScale(scale);
-        // gameObject->setRotation(eulerDegrees);
-
-        // glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
-        //             glm::toMat4(rotation) *
-        //             glm::scale(glm::mat4(1.0f), scale);
-        //
-        // glm::mat4 finalTransform = transform * gameObject->getTransformMatrix();
-        //
-        // gameObject->setTransformMatrix(transform);
+        animation.skeletonForAnimation = m_boundSkeleton;
+        animation.gameObject = owner;
     }
 }
 
 void AnimatorComponent::playAnimation(Animation *animation, const bool repeat)
 {
-    m_isAnimationLooped = repeat;
-
-    if (!m_currentAnimation) {
-        m_currentAnimation = animation;
+    if (!animation)
         return;
-    }
 
-    if (m_isInterpolating) {
-        if (animation != m_nextAnimation)
-            m_queueAnimation = animation;
-    }
-    else {
-        if (animation != m_nextAnimation) {
-            m_isInterpolating = true;
-            m_haltTime = fmod(m_currentTime, m_currentAnimation->duration);
-            m_nextAnimation = animation;
-            m_currentTime = 0.0f;
-            m_interTime = 0.0;
+    m_isAnimationLooped = repeat;
+    m_isAnimationPaused = false;
+    m_isAnimationCompleted = false;
+    m_currentAnimation = animation;
+    m_currentTime = 0.0f;
+
+    for (size_t i = 0; i < m_animations.size(); ++i)
+    {
+        if (&m_animations[i] == animation)
+        {
+            m_selectedAnimationIndex = static_cast<int>(i);
+            break;
         }
     }
+
+    applyCurrentAnimationPose();
 }
 
 void AnimatorComponent::stopAnimation()
 {
     m_currentAnimation = nullptr;
+    m_currentTime = 0.0f;
+    m_isAnimationPaused = false;
+    m_isAnimationCompleted = false;
+}
+
+void AnimatorComponent::setAnimationPaused(bool paused)
+{
+    m_isAnimationPaused = paused;
+}
+
+bool AnimatorComponent::isAnimationPaused() const
+{
+    return m_isAnimationPaused;
+}
+
+void AnimatorComponent::setAnimationLooped(bool looped)
+{
+    m_isAnimationLooped = looped;
+}
+
+bool AnimatorComponent::isAnimationLooped() const
+{
+    return m_isAnimationLooped;
+}
+
+void AnimatorComponent::setAnimationSpeed(float speed)
+{
+    m_animationSpeed = std::max(speed, 0.01f);
+}
+
+float AnimatorComponent::getAnimationSpeed() const
+{
+    return m_animationSpeed;
+}
+
+void AnimatorComponent::setCurrentTime(float currentTime)
+{
+    if (!m_currentAnimation)
+    {
+        m_currentTime = 0.0f;
+        return;
+    }
+
+    const float duration = getCurrentAnimationDuration();
+    if (duration <= std::numeric_limits<float>::epsilon())
+    {
+        m_currentTime = 0.0f;
+        applyCurrentAnimationPose();
+        return;
+    }
+
+    m_currentTime = std::clamp(currentTime, 0.0f, duration);
+    applyCurrentAnimationPose();
+}
+
+float AnimatorComponent::getCurrentTime() const
+{
+    return m_currentTime;
+}
+
+float AnimatorComponent::getCurrentAnimationDuration() const
+{
+    if (!m_currentAnimation)
+        return 0.0f;
+
+    return static_cast<float>(std::max(0.0, m_currentAnimation->duration));
+}
+
+Animation *AnimatorComponent::getCurrentAnimation()
+{
+    return m_currentAnimation;
+}
+
+const Animation *AnimatorComponent::getCurrentAnimation() const
+{
+    return m_currentAnimation;
 }
 
 void AnimatorComponent::calculateBoneTransform(Skeleton::BoneInfo *boneInfo, const glm::mat4 &parentTransform, Animation *animation, const float currentTime)
 {
-    std::string nodeName = boneInfo->name;
-    glm::mat4 boneTransform = boneInfo->offsetMatrix;
+    if (!boneInfo || !animation || !animation->skeletonForAnimation)
+        return;
 
-    if (const auto* boneAnimation = animation->getAnimationTrack(nodeName))
+    const std::string &nodeName = boneInfo->name;
+    glm::mat4 boneTransform = boneInfo->localBindTransform;
+
+    if (const auto *boneAnimation = animation->getAnimationTrack(nodeName); boneAnimation && !boneAnimation->keyFrames.empty())
     {
         auto [startFrame, endFrame] = findKeyframes(boneAnimation->keyFrames, currentTime);
 
@@ -174,29 +302,25 @@ void AnimatorComponent::calculateBoneTransform(Skeleton::BoneInfo *boneInfo, con
         float t = (deltaTime == 0) ? 0.0f : (currentTime - startFrame->timeStamp) / deltaTime;
         t = glm::clamp(t, 0.0f, 1.0f);
 
-        const glm::vec3 position = interpolate(startFrame->position, endFrame->position, t);
-        const glm::quat rotation = glm::normalize(glm::slerp(startFrame->rotation, endFrame->rotation, t));
-        const glm::vec3 scale = interpolate(startFrame->scale, endFrame->scale, t);
+        const glm::vec3 position = interpolateVec3(startFrame->position, endFrame->position, t);
+        const glm::quat rotation = glm::normalize(interpolateQuat(startFrame->rotation, endFrame->rotation, t));
+        const glm::vec3 scale = interpolateVec3(startFrame->scale, endFrame->scale, t);
 
         boneTransform = glm::translate(glm::mat4(1.0f), position) *
-                    glm::toMat4(rotation) *
-                    glm::scale(glm::mat4(1.0f), scale);
+                        glm::toMat4(rotation) *
+                        glm::scale(glm::mat4(1.0f), scale);
     }
 
-    glm::mat4 globalTransformation = parentTransform * boneTransform;
+    const glm::mat4 globalTransformation = parentTransform * boneTransform;
+    boneInfo->finalTransformation = globalTransformation;
 
-    auto* skeleton = animation->skeletonForAnimation;
+    auto *skeleton = animation->skeletonForAnimation;
 
-    if (const auto bone = skeleton->getBone(nodeName))
-    {
-        glm::mat4 offset = bone->offsetMatrix;
-        boneInfo->finalTransformation = globalTransformation * offset;
-    }
-
-    for (const auto& i : boneInfo->children)
+    for (const auto &i : boneInfo->children)
     {
         const auto child = skeleton->getBone(i);
-        calculateBoneTransform(child, globalTransformation, animation, currentTime);
+        if (child)
+            calculateBoneTransform(child, globalTransformation, animation, currentTime);
     }
 }
 

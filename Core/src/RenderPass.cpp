@@ -1,6 +1,6 @@
 #include "Core/RenderPass.hpp"
 #include "Core/VulkanContext.hpp"
-#include <stdexcept>
+#include "Core/VulkanAssert.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -25,8 +25,7 @@ void RenderPass::createVk(const std::vector<VkAttachmentDescription> &attachment
     renderPassCI.dependencyCount = static_cast<uint32_t>(dependencies.size());
     renderPassCI.pDependencies = dependencies.data();
 
-    if (vkCreateRenderPass(device, &renderPassCI, nullptr, &m_handle) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create render pass");
+    VX_VK_CHECK(vkCreateRenderPass(device, &renderPassCI, nullptr, &m_handle));
 
     ELIX_VK_CREATE_GUARD_DONE()
 }

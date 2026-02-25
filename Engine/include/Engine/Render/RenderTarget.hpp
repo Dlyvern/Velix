@@ -7,7 +7,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-// VkImage + VkImageView handler(+ VkSampler for now...)
+// VkImage + VkImageView handler
 class RenderTarget
 {
 public:
@@ -83,16 +83,6 @@ public:
         return m_image;
     }
 
-    void setSampler(VkSampler sampler)
-    {
-        m_sampler = sampler;
-    }
-
-    VkSampler getSampler() const
-    {
-        return m_sampler;
-    }
-
     ~RenderTarget()
     {
         destroyVkImage();
@@ -106,7 +96,6 @@ private:
     VkImageView m_imageView{VK_NULL_HANDLE};
     VkFormat m_format{VK_FORMAT_UNDEFINED};
     VkImageAspectFlags m_aspect;
-    VkSampler m_sampler{VK_NULL_HANDLE}; // TODO it needs to be fixed
 };
 
 ELIX_NESTED_NAMESPACE_END

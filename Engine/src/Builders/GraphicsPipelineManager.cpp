@@ -8,8 +8,6 @@
 
 #include "Engine/Vertex.hpp"
 
-#include <iostream>
-
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(GraphicsPipelineKey key)
@@ -19,7 +17,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(GraphicsP
     if (it != m_pipelines.end())
         return it->second;
 
-    std::cout << "Created a new key\n";
+    VX_ENGINE_INFO_STREAM("Created a new key\n");
 
     auto created = createPipeline(key);
 
@@ -30,33 +28,84 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(GraphicsP
 
 void GraphicsPipelineManager::init()
 {
-    staticShader = std::make_shared<core::Shader>("./resources/shaders/static_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
-    skeletonShader = std::make_shared<core::Shader>("./resources/shaders/skeleton_mesh.vert.spv", "./resources/shaders/static_mesh.frag.spv");
-    wireframeShader = std::make_shared<core::Shader>("./resources/shaders/wireframe_mesh.vert.spv", "./resources/shaders/debug_red.frag.spv");
-    stencilShader = std::make_shared<core::Shader>("./resources/shaders/wireframe_mesh.vert.spv", "./resources/shaders/debug_yellow.frag.spv");
+    destroyPipelines();
+    destroyShaderModules();
+    loadShaderModules();
+}
+
+void GraphicsPipelineManager::reloadShaders()
+{
+    destroyPipelines();
+    destroyShaderModules();
+    loadShaderModules();
+
+    VX_ENGINE_INFO_STREAM("Shader modules and graphics pipelines were reloaded");
+}
+
+void GraphicsPipelineManager::destroy()
+{
+    destroyPipelines();
+    destroyShaderModules();
+}
+
+void GraphicsPipelineManager::loadShaderModules()
+{
     shadowStaticShader = std::make_shared<core::Shader>("./resources/shaders/static_mesh_shadow.vert.spv",
                                                         "./resources/shaders/empty.frag.spv");
+    shadowSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/skinned_mesh_shadow.vert.spv",
+                                                         "./resources/shaders/empty.frag.spv");
 
     previewMeshShader = std::make_shared<core::Shader>("./resources/shaders/shader_simple_textured_mesh.vert.spv",
                                                        "./resources/shaders/shader_simple_textured_mesh.frag.spv");
 
     skyboxHDRShader = std::make_shared<core::Shader>("./resources/shaders/skybox.vert.spv", "./resources/shaders/skybox_hdr.frag.spv");
     skyboxShader = std::make_shared<core::Shader>("./resources/shaders/skybox.vert.spv", "./resources/shaders/skybox.frag.spv");
+    skyLightShader = std::make_shared<core::Shader>("./resources/shaders/dynamic_sky_light.vert.spv", "./resources/shaders/dynamic_sky_light.frag.spv");
+    toneMapShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/tonemap.frag.spv");
+    selectionOverlayShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/selection_overlay.frag.spv");
+
+    presentShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/present.frag.spv");
+
+    gBufferStaticShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_static.vert.spv", "./resources/shaders/gbuffer_static.frag.spv");
+    gBufferSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_skinned.vert.spv", "./resources/shaders/gbuffer_static.frag.spv");
+
+    lightingShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/lighting.frag.spv");
 }
 
-void GraphicsPipelineManager::destroy()
+void GraphicsPipelineManager::destroyShaderModules()
 {
-    staticShader->destroyVk();
-    skeletonShader->destroyVk();
-    wireframeShader->destroyVk();
-    stencilShader->destroyVk();
-    shadowStaticShader->destroyVk();
-    previewMeshShader->destroyVk();
-    skyboxHDRShader->destroyVk();
-    skyboxShader->destroyVk();
+    auto destroyShader = [](core::Shader::SharedPtr &shader)
+    {
+        if (shader)
+        {
+            shader->destroyVk();
+            shader.reset();
+        }
+    };
 
-    for (const auto &key : m_pipelines)
-        key.second->destroyVk();
+    destroyShader(shadowStaticShader);
+    destroyShader(shadowSkinnedShader);
+    destroyShader(previewMeshShader);
+    destroyShader(skyboxHDRShader);
+    destroyShader(skyboxShader);
+    destroyShader(skyLightShader);
+    destroyShader(toneMapShader);
+    destroyShader(selectionOverlayShader);
+    destroyShader(presentShader);
+    destroyShader(gBufferStaticShader);
+    destroyShader(gBufferSkinnedShader);
+    destroyShader(lightingShader);
+}
+
+void GraphicsPipelineManager::destroyPipelines()
+{
+    for (auto &[_, pipeline] : m_pipelines)
+    {
+        if (pipeline)
+            pipeline->destroyVk();
+    }
+
+    m_pipelines.clear();
 }
 
 core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const GraphicsPipelineKey &key)
@@ -65,20 +114,11 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
 
     switch (key.shader)
     {
-    case ShaderId::StaticMesh:
-        stages = staticShader->getShaderStages();
-        break;
-    case ShaderId::SkinnedMesh:
-        stages = skeletonShader->getShaderStages();
-        break;
-    case ShaderId::Wireframe:
-        stages = stencilShader->getShaderStages();
-        break;
-    case ShaderId::Stencil:
-        stages = stencilShader->getShaderStages();
-        break;
     case ShaderId::StaticShadow:
         stages = shadowStaticShader->getShaderStages();
+        break;
+    case ShaderId::SkinnedShadow:
+        stages = shadowSkinnedShader->getShaderStages();
         break;
     case ShaderId::PreviewMesh:
         stages = previewMeshShader->getShaderStages();
@@ -89,7 +129,27 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::Skybox:
         stages = skyboxShader->getShaderStages();
         break;
-
+    case ShaderId::SkyLight:
+        stages = skyLightShader->getShaderStages();
+        break;
+    case ShaderId::ToneMap:
+        stages = toneMapShader->getShaderStages();
+        break;
+    case ShaderId::SelectionOverlay:
+        stages = selectionOverlayShader->getShaderStages();
+        break;
+    case ShaderId::Present:
+        stages = presentShader->getShaderStages();
+        break;
+    case ShaderId::GBufferStatic:
+        stages = gBufferStaticShader->getShaderStages();
+        break;
+    case ShaderId::GBufferSkinned:
+        stages = gBufferSkinnedShader->getShaderStages();
+        break;
+    case ShaderId::Lighting:
+        stages = lightingShader->getShaderStages();
+        break;
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
@@ -99,7 +159,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     VkRect2D dummySc{{0, 0}, {1, 1}};
     std::vector<VkDynamicState> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
 
-    if (key.shader == ShaderId::StaticShadow)
+    if (key.shader == ShaderId::StaticShadow || key.shader == ShaderId::SkinnedShadow)
     {
         dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
     }
@@ -127,12 +187,12 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     std::vector<VkVertexInputBindingDescription> vertexBindingDescriptions;
     std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions;
 
-    if (key.shader == ShaderId::SkinnedMesh)
+    if (key.shader == ShaderId::GBufferSkinned || key.shader == ShaderId::SkinnedShadow)
     {
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::VertexSkinned))};
         vertexAttributeDescriptions = vertex::VertexSkinned::getAttributeDescriptions();
     }
-    else if (key.shader == ShaderId::SkyboxHDR || key.shader == ShaderId::Skybox)
+    else if (key.shader == ShaderId::SkyboxHDR || key.shader == ShaderId::Skybox || key.shader == ShaderId::SkyLight)
     {
         VkVertexInputBindingDescription bindingDescription{};
         bindingDescription.binding = 0;
@@ -148,6 +208,19 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         vertexBindingDescriptions = {bindingDescription};
         vertexAttributeDescriptions = {attributeDescription};
     }
+    else if (key.shader == ShaderId::ToneMap || key.shader == ShaderId::SelectionOverlay || key.shader == ShaderId::Present || key.shader == ShaderId::Lighting)
+    {
+        vertexBindingDescriptions = {};
+        vertexAttributeDescriptions = {};
+    }
+    else if (key.shader == ShaderId::PreviewMesh)
+    {
+        vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D))};
+        vertexAttributeDescriptions = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex::Vertex3D, position)},
+            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex::Vertex3D, textureCoordinates)},
+            {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex::Vertex3D, normal)}};
+    }
     else
     {
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D))};
@@ -156,25 +229,21 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
 
     auto vertexInputState = builders::GraphicsPipelineBuilder::vertexInputCI(vertexBindingDescriptions, vertexAttributeDescriptions);
 
-    std::vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments{
-        builders::GraphicsPipelineBuilder::colorBlendAttachmentCI(false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO),
-        builders::GraphicsPipelineBuilder::colorBlendAttachmentCI(false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO)};
+    std::vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments;
+    colorBlendAttachments.reserve(key.colorFormats.size());
 
-    colorBlendAttachments[1].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+    for (size_t i = 0; i < key.colorFormats.size(); ++i)
+        colorBlendAttachments.push_back(builders::GraphicsPipelineBuilder::colorBlendAttachmentCI(false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO));
 
-    if (key.shader == ShaderId::PreviewMesh)
-    {
-        colorBlendAttachments = {builders::GraphicsPipelineBuilder::colorBlendAttachmentCI(false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO)};
-    }
+    if (key.shader == ShaderId::GBufferStatic || key.shader == ShaderId::GBufferSkinned)
+        colorBlendAttachments[3].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
 
-    if (key.shader == ShaderId::StaticShadow)
+    if (key.shader == ShaderId::StaticShadow || key.shader == ShaderId::SkinnedShadow)
     {
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_TRUE;
         rasterizer.depthBiasConstantFactor = 4.0f;
         rasterizer.depthBiasSlopeFactor = 4.0f;
-
-        colorBlendAttachments.clear();
     }
 
     if (key.shader == ShaderId::SkyboxHDR)

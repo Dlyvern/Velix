@@ -6,6 +6,11 @@
 
 namespace
 {
+    static VkImageLayout chooseBootstrapLayout(VkImageLayout initialLayout, VkImageLayout finalLayout)
+    {
+        return finalLayout != VK_IMAGE_LAYOUT_UNDEFINED ? finalLayout : initialLayout;
+    }
+
     static VkImageUsageFlags toVkUsage(elix::engine::renderGraph::RGPTextureUsage usage)
     {
         switch (usage)
@@ -64,6 +69,11 @@ namespace
             dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
             return;
 
+        case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+            dstStage = VK_PIPELINE_STAGE_2_NONE;
+            dstAccess = 0;
+            return;
+
         default:
             // Safe fallback: make it explicit if you forgot to handle something
             throw std::runtime_error("chooseDstSync: unsupported initial layout");
@@ -119,10 +129,12 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(const std::vect
         VkPipelineStageFlags2 dstStageMask;
         VkAccessFlags2 dstAccessMask;
 
-        chooseDstSync(textureDescription->getInitialLayout(), dstStageMask, dstAccessMask);
+        const VkImageLayout bootstrapLayout = chooseBootstrapLayout(textureDescription->getInitialLayout(), textureDescription->getFinalLayout());
+
+        chooseDstSync(bootstrapLayout, dstStageMask, dstAccessMask);
 
         auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*image->getImage(), srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
-                                                                           textureDescription->getInitialLayout(), srcStageMask,
+                                                                           bootstrapLayout, srcStageMask,
                                                                            dstStageMask, subresourceRange);
 
         barriers.push_back(barrier);
@@ -142,7 +154,7 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
     {
         // TODO namespace above core::memory::MemoryUsage
 
-        VkDeviceSize before = core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM();
+        // VkDeviceSize before = core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM();
 
         if (textureDescription.getIsSwapChainTarget())
         {
@@ -175,10 +187,12 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
                 VkPipelineStageFlags2 dstStageMask;
                 VkAccessFlags2 dstAccessMask;
 
-                chooseDstSync(textureDescription.getInitialLayout(), dstStageMask, dstAccessMask);
+                const VkImageLayout bootstrapLayout = chooseBootstrapLayout(textureDescription.getInitialLayout(), textureDescription.getFinalLayout());
+
+                chooseDstSync(bootstrapLayout, dstStageMask, dstAccessMask);
 
                 auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*wrapImage, srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
-                                                                                   textureDescription.getInitialLayout(), srcStageMask,
+                                                                                   bootstrapLayout, srcStageMask,
                                                                                    dstStageMask, subresourceRange);
 
                 barriers.push_back(barrier);
@@ -212,19 +226,21 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
             VkPipelineStageFlags2 dstStageMask;
             VkAccessFlags2 dstAccessMask;
 
-            chooseDstSync(textureDescription.getInitialLayout(), dstStageMask, dstAccessMask);
+            const VkImageLayout bootstrapLayout = chooseBootstrapLayout(textureDescription.getInitialLayout(), textureDescription.getFinalLayout());
+
+            chooseDstSync(bootstrapLayout, dstStageMask, dstAccessMask);
 
             auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*image->getImage(), srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
-                                                                               textureDescription.getInitialLayout(), srcStageMask,
+                                                                               bootstrapLayout, srcStageMask,
                                                                                dstStageMask, subresourceRange);
 
             barriers.push_back(barrier);
         }
 
-        VkDeviceSize after = core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM();
-        VkDeviceSize delta = after - before;
-        const std::string textureName = textureDescription.getIsSwapChainTarget() ? "swap chain" : "common";
-        std::cout << "New " << textureName << " " << textureDescription.getDebugName() << " texture allocated " << delta << '\n';
+        // VkDeviceSize after = core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM();
+        // VkDeviceSize delta = after - before;
+        // const std::string textureName = textureDescription.getIsSwapChainTarget() ? "swap chain" : "common";
+        // VX_ENGINE_INFO_STREAM("New " << textureName << " " << textureDescription.getDebugName() << " texture allocated " << delta << '\n');
     }
 
     return barriers;
@@ -272,10 +288,12 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::onSwapChainResized(RGPR
             VkPipelineStageFlags2 dstStageMask;
             VkAccessFlags2 dstAccessMask;
 
-            chooseDstSync(textureDescription.getInitialLayout(), dstStageMask, dstAccessMask);
+            const VkImageLayout bootstrapLayout = chooseBootstrapLayout(textureDescription.getInitialLayout(), textureDescription.getFinalLayout());
+
+            chooseDstSync(bootstrapLayout, dstStageMask, dstAccessMask);
 
             auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*wrapImage, srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
-                                                                               textureDescription.getInitialLayout(), srcStageMask,
+                                                                               bootstrapLayout, srcStageMask,
                                                                                dstStageMask, subresourceRange);
 
             barriers.push_back(barrier);

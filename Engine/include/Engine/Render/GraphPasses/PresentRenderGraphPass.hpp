@@ -1,0 +1,57 @@
+#ifndef ELIX_PRESENT_RENDER_GRAPH_PASS_HPP
+#define ELIX_PRESENT_RENDER_GRAPH_PASS_HPP
+
+#include "Engine/Render/RenderTarget.hpp"
+#include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
+
+#include "Core/Buffer.hpp"
+#include "Core/PipelineLayout.hpp"
+#include "Core/Sampler.hpp"
+
+#include <vector>
+#include <array>
+#include <cstdint>
+
+ELIX_NESTED_NAMESPACE_BEGIN(engine)
+ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
+
+class PresentRenderGraphPass : public IRenderGraphPass
+{
+public:
+    PresentRenderGraphPass(uint32_t tonemapId, std::vector<RGPResourceHandler> &inputHandlers);
+
+    void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
+                const RenderGraphPassContext &renderContext) override;
+
+    std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
+
+    void setExtent(VkExtent2D extent);
+
+    void compile(renderGraph::RGPResourcesStorage &storage) override;
+    void setup(renderGraph::RGPResourcesBuilder &builder) override;
+
+private:
+    std::array<VkClearValue, 1> m_clearValues;
+
+    std::vector<const RenderTarget *> m_colorRenderTargets;
+
+    VkFormat m_colorFormat;
+
+    std::vector<RGPResourceHandler> &m_colorInputHandlers;
+    std::vector<RGPResourceHandler> m_colorTextureHandler;
+
+    core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
+    core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
+
+    std::vector<VkDescriptorSet> m_descriptorSets{VK_NULL_HANDLE};
+
+    VkExtent2D m_extent;
+    VkViewport m_viewport;
+    VkRect2D m_scissor;
+
+    core::Sampler::SharedPtr m_defaultSampler{nullptr};
+};
+ELIX_NESTED_NAMESPACE_END
+ELIX_CUSTOM_NAMESPACE_END
+
+#endif // ELIX_PRESENT_RENDER_GRAPH_PASS_HPP

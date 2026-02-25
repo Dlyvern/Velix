@@ -64,18 +64,10 @@ void main()
     mat3 normalMatrix = transpose(inverse(mat3(modelPushConstant.model * boneTransform)));
     vec3 worldNormal = normalize(normalMatrix * inNormal);
 
-    //TODO later
-    // vec3 worldNormal = normalize(mat3(modelPushConstant.model) * mat3(boneTransform) * inNormal);
-
     fragPositionView = viewPos.xyz;
     fragNormalView = mat3(cameraUniformObject.view) * worldNormal;
 
     fragPositionLightSpace = lightSpaceMatrixUniformObject.lightSpaceMatrix * worldPos;
 
     gl_Position = cameraUniformObject.projection * viewPos;
-
-    // gl_Position = cameraUniformObject.projection *
-    //           cameraUniformObject.view *
-    //           modelPushConstant.model *
-    //           vec4(inPosition, 1.0);
 }

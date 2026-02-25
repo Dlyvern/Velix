@@ -58,10 +58,13 @@ class RGPTextureDescription
 public:
     RGPTextureDescription() = default;
 
-    RGPTextureDescription(VkFormat format, RGPTextureUsage usage)
+    RGPTextureDescription(VkFormat format, RGPTextureUsage usage, VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                          VkImageLayout finalLayout = VK_IMAGE_LAYOUT_UNDEFINED)
     {
         m_Format = format;
         m_Usage = usage;
+        m_InitialLayout = initialLayout;
+        m_FinalLayout = finalLayout;
     }
 
     PROPERTY_FULL(VkFormat, Format)

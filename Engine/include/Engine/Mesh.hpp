@@ -12,6 +12,7 @@
 
 #include <memory>
 #include <cstdint>
+#include <string>
 
 #include <glm/glm.hpp>
 #include <cstring>
@@ -20,6 +21,8 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 struct CPUMesh
 {
+    std::string name;
+
     std::vector<uint8_t> vertexData;
     std::vector<uint32_t> indices;
 
@@ -55,6 +58,8 @@ struct GPUMesh
     core::Buffer::SharedPtr vertexBuffer{nullptr};
     uint32_t indicesCount{0};
     VkIndexType indexType{VK_INDEX_TYPE_UINT32};
+    uint32_t vertexStride{0};
+    uint64_t vertexLayoutHash{0};
 
     Material::SharedPtr material{nullptr};
 
@@ -101,7 +106,10 @@ struct GPUMesh
 
     static std::shared_ptr<GPUMesh> createFromMesh(const CPUMesh &mesh, core::CommandPool::SharedPtr commandPool = nullptr)
     {
-        return create(mesh.vertexData, mesh.indices, commandPool);
+        auto gpuMesh = create(mesh.vertexData, mesh.indices, commandPool);
+        gpuMesh->vertexStride = mesh.vertexStride;
+        gpuMesh->vertexLayoutHash = mesh.vertexLayoutHash;
+        return gpuMesh;
     }
 };
 

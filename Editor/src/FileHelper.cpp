@@ -8,17 +8,18 @@
 #elif defined(__linux__)
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <pwd.h>
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include <pwd.h>
 #endif
 
 #include <cstdint>
 #include <cstdlib>
-#include <iostream>
 #include <array>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
@@ -28,25 +29,36 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string &comman
     constexpr int kBufferSize = 128;
     std::array<char, kBufferSize> buffer{};
     std::string result;
+    int exitCode = -1;
+
+    std::string commandWithStderr = command + " 2>&1";
 
 #ifdef _WIN32
-    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(command.c_str(), "r"), _pclose);
+    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(commandWithStderr.c_str(), "r"), _pclose);
 #else
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(commandWithStderr.c_str(), "r"), pclose);
 #endif
 
     if (!pipe)
     {
-        std::cerr << "Failed to execute command";
+        VX_EDITOR_ERROR_STREAM("Failed to execute command: " << command);
         return {-1, ""};
     }
 
     while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr)
         result += buffer.data();
 
-    int executionResult = std::system(command.c_str());
+#ifdef _WIN32
+    exitCode = _pclose(pipe.release());
+#else
+    const int statusCode = pclose(pipe.release());
+    if (WIFEXITED(statusCode))
+        exitCode = WEXITSTATUS(statusCode);
+    else
+        exitCode = statusCode;
+#endif
 
-    return {executionResult, result};
+    return {exitCode, result};
 }
 
 std::filesystem::path FileHelper::getExecutablePath()

@@ -1,5 +1,6 @@
 #include "Core/Sampler.hpp"
 #include "Core/VulkanContext.hpp"
+#include "Core/VulkanAssert.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -15,6 +16,8 @@ void Sampler::createVk(VkFilter magFilter, VkSamplerAddressMode addressModeU, Vk
                        VkSamplerMipmapMode mipmapMode, VkBool32 anisotropyEnable, float maxAnisotropy,
                        VkBool32 unnormalizedCoordinates, VkBool32 compareEnable, float mipLodBias, float minLod, float maxLod)
 {
+    ELIX_VK_CREATE_GUARD()
+
     VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     samplerInfo.magFilter = magFilter;
     samplerInfo.minFilter = magFilter;
@@ -32,8 +35,9 @@ void Sampler::createVk(VkFilter magFilter, VkSamplerAddressMode addressModeU, Vk
     samplerInfo.minLod = minLod;
     samplerInfo.maxLod = maxLod;
 
-    if (vkCreateSampler(core::VulkanContext::getContext()->getDevice(), &samplerInfo, nullptr, &m_handle) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create a sample");
+    VX_VK_CHECK(vkCreateSampler(core::VulkanContext::getContext()->getDevice(), &samplerInfo, nullptr, &m_handle));
+
+    ELIX_VK_CREATE_GUARD_DONE()
 }
 
 void Sampler::destroyVkImpl()

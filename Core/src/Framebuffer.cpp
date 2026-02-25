@@ -1,5 +1,5 @@
 #include "Core/Framebuffer.hpp"
-#include <stdexcept>
+#include "Core/VulkanAssert.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -30,8 +30,7 @@ void Framebuffer::createVk(VkDevice device, const std::vector<VkImageView> &atta
     framebufferCI.width = extent.width;
     framebufferCI.layers = layers;
 
-    if (vkCreateFramebuffer(device, &framebufferCI, nullptr, &m_handle) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create framebuffer");
+    VX_VK_CHECK(vkCreateFramebuffer(device, &framebufferCI, nullptr, &m_handle));
 
     ELIX_VK_CREATE_GUARD_DONE()
 }

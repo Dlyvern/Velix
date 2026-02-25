@@ -20,11 +20,16 @@ layout(set = 0, binding = 1) uniform LightSpaceMatrixUniformObject
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec2 inTextures;
 layout(location = 2) in vec3 inNormal;
+layout(location = 3) in vec3 inBitangent;
+layout(location = 4) in vec3 inTangent;
 
 layout(location = 0) out vec2 fragTextureCoordinates;
 layout(location = 1) out vec3 fragNormalView;
 layout(location = 2) out vec3 fragPositionView;
 layout(location = 3) out vec4 fragPositionLightSpace;
+layout(location = 4) out vec3 fragTangentView;
+layout(location = 5) out vec3 fragBitangentView;
+
 
 void main() 
 {
@@ -39,6 +44,9 @@ void main()
     fragNormalView = mat3(cameraUniformObject.view) * worldNormal;
 
     fragPositionLightSpace = lightSpaceMatrixUniformObject.lightSpaceMatrix * worldPos;
+
+    fragTangentView = inTangent;
+    fragBitangentView = inBitangent;
 
     gl_Position = cameraUniformObject.projection * viewPos;
 }

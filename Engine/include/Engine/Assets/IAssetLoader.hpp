@@ -11,6 +11,7 @@
 #include "Engine/Mesh.hpp"
 #include "Engine/Skeleton.hpp"
 #include "Engine/Material.hpp"
+#include "Engine/Components/AnimatorComponent.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -36,9 +37,12 @@ public:
     std::vector<CPUMesh> meshes;
     std::vector<std::string> materialPaths;
     std::optional<Skeleton> skeleton{std::nullopt};
+    std::vector<Animation> animations;
 
-    ModelAsset(const std::vector<CPUMesh> &meshes, const std::optional<Skeleton> skeleton = std::nullopt) : meshes(meshes),
-                                                                                                            skeleton(skeleton)
+    ModelAsset(const std::vector<CPUMesh> &meshes, const std::optional<Skeleton> skeleton = std::nullopt, const std::vector<Animation> &animations = {})
+        : meshes(meshes),
+          skeleton(skeleton),
+          animations(animations)
     {
     }
 };

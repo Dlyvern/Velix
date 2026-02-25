@@ -10,6 +10,8 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
 {
     mat4 view;
     mat4 projection;
+    mat4 invView;
+    mat4 invProjection;
 } cameraUniformObject;
 
 layout(location = 0) in vec3 inPosition;

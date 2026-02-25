@@ -13,11 +13,14 @@
 #include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesCompiler.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
+#include "Engine/Render/RenderGraph/RenderGraphProfilingData.hpp"
 
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
 #include <queue>
+#include <string>
+#include <cstdint>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -73,7 +76,7 @@ public:
         return nullptr;
     }
 
-    void prepareFrame(Camera::SharedPtr camera, Scene *scene);
+    void prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime);
     void addAdditionalFrameData(const std::vector<AdditionalPerFrameData> &data)
     {
         if (data.empty())
@@ -84,6 +87,11 @@ public:
     void draw();
     void setup();
 
+    const RenderGraphFrameProfilingData &getLastFrameProfilingData() const
+    {
+        return m_lastFrameProfilingData;
+    }
+
     static constexpr uint16_t MAX_FRAMES_IN_FLIGHT = 2;
 
     VkDescriptorPool getDescriptorPool() const
@@ -92,14 +100,28 @@ public:
     }
 
     void createRenderGraphResources();
-    void createDescriptorSetPool();
-    void createCameraDescriptorSets(VkSampler sampler, VkImageView imageView);
-    void createPerObjectDescriptorSets();
-    void createPreviewCameraDescriptorSets();
 
     void cleanResources();
 
 private:
+    struct PassExecutionProfilingData
+    {
+        std::string passName;
+        uint32_t drawCalls{0};
+        double cpuTimeMs{0.0};
+        uint32_t startQueryIndex{UINT32_MAX};
+        uint32_t endQueryIndex{UINT32_MAX};
+    };
+
+    void initTimestampQueryPool();
+    void destroyTimestampQueryPool();
+    void resolveFrameProfilingData();
+
+    void createDescriptorSetPool();
+    void createCameraDescriptorSets();
+    void createPerObjectDescriptorSets();
+    void createPreviewCameraDescriptorSets();
+
     static constexpr uint32_t MAX_RENDER_JOBS = 255;
 
     void sortRenderGraphPasses();
@@ -155,6 +177,17 @@ private:
     std::vector<VkSemaphore> m_renderFinishedSemaphores;
 
     std::unordered_map<std::size_t, GPUMesh::SharedPtr> m_meshes;
+    std::unordered_map<std::string, Material::SharedPtr> m_materialsByAlbedoPath;
+
+    VkQueryPool m_timestampQueryPool{VK_NULL_HANDLE};
+    uint32_t m_timestampQueryCapacity{0};
+    uint32_t m_usedTimestampQueries{0};
+    float m_timestampPeriodNs{0.0f};
+    bool m_isGpuTimingAvailable{false};
+    uint64_t m_profiledFrameIndex{0};
+
+    std::vector<PassExecutionProfilingData> m_passExecutionProfilingData;
+    RenderGraphFrameProfilingData m_lastFrameProfilingData;
 };
 
 ELIX_CUSTOM_NAMESPACE_END

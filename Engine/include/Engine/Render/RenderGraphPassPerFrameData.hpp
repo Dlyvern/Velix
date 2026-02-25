@@ -19,13 +19,23 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
+// TODO maybe later -> one DrawItem = one mesh draw
+// struct DrawItem
+// {
+//     GPUMesh::SharedPtr mesh;
+//     glm::mat4 transform;
+//     std::vector<glm::mat4> finalBones;
+
+//     Material::SharedPtr material;
+//     GraphicsPipelineKey graphicsPipelineKey;
+// };
+
 struct DrawItem
 {
     std::vector<GPUMesh::SharedPtr> meshes;
     glm::mat4 transform;
     std::vector<glm::mat4> finalBones;
-
-    MaterialRenderState materialState;
+    uint32_t bonesOffset{0};
 
     GraphicsPipelineKey graphicsPipelineKey;
 };
@@ -50,6 +60,9 @@ public:
 
     std::vector<AdditionalPerFrameData> additionalData;
 
+    glm::vec3 directionalLightDirection;
+    float directionalLightStrength;
+
     glm::mat4 lightSpaceMatrix;
     VkViewport swapChainViewport;
     VkRect2D swapChainScissor;
@@ -57,6 +70,8 @@ public:
     VkDescriptorSet cameraDescriptorSet;
     VkDescriptorSet previewCameraDescriptorSet;
     VkDescriptorSet perObjectDescriptorSet;
+
+    float deltaTime;
 
     glm::mat4 view;
     glm::mat4 projection;

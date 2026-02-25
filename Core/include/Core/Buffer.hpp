@@ -32,6 +32,11 @@ public:
 
     void unmap();
 
+    [[nodiscard]] VkDeviceSize getSize() const
+    {
+        return m_size;
+    }
+
     void createVk(VkDeviceSize size, VkBufferUsageFlags usage, memory::MemoryUsage memFlags, VkBufferCreateFlags flags = 0);
 
     ~Buffer();

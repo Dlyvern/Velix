@@ -1,7 +1,7 @@
 #include "Core/DescriptorSetLayout.hpp"
 #include "Core/VulkanContext.hpp"
+#include "Core/VulkanAssert.hpp"
 #include <cstdint>
-#include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -18,8 +18,7 @@ void DescriptorSetLayout::createVk(const std::vector<VkDescriptorSetLayoutBindin
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
-    if (vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_handle) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create descriptor set layout");
+    VX_VK_CHECK(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_handle));
 
     ELIX_VK_CREATE_GUARD_DONE()
 }

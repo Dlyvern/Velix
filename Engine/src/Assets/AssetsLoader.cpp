@@ -24,7 +24,7 @@ std::optional<MaterialAsset> AssetsLoader::loadMaterial(const std::string &path)
                 return *material;
         }
 
-    std::cerr << "Failed to load a material\n";
+    VX_ENGINE_ERROR_STREAM("Failed to load a material\n");
 
     return std::nullopt;
 }
@@ -45,7 +45,7 @@ std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
             //! Do not break here, try to load a model with the different loaders
         }
 
-    std::cerr << "Failed to load a model" << std::endl;
+    VX_ENGINE_ERROR_STREAM("Failed to load a model" << std::endl);
 
     return std::nullopt;
 }

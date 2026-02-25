@@ -7,8 +7,7 @@
 #include "Editor/ImGuiRenderGraphPass.hpp"
 
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
-#include "Engine/Render/GraphPasses/OffscreenRenderGraphPass.hpp"
-#include "Engine/Render/GraphPasses/SceneRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/TonemapRenderGraphPass.hpp"
 #include "Engine/Render/RenderGraph/RenderGraph.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
@@ -23,8 +22,14 @@
 #include "Engine/Components/CameraComponent.hpp"
 #include "Engine/Caches/GraphicsPipelineCache.hpp"
 #include "Editor/RenderGraphPasses/PreviewAssetsRenderGraphPass.hpp"
+#include "Editor/RenderGraphPasses/SelectionOverlayRenderGraphPass.hpp"
 
+#include "Engine/Render/GraphPasses/GBufferRenderGraphPass.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
+#include "Engine/Shaders/ShaderHotReloader.hpp"
+
+#include "Engine/Render/GraphPasses/LightingRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/SkyLightRenderGraphPass.hpp"
 
 #include "Editor/FileHelper.hpp"
 
@@ -42,15 +47,23 @@ int main(int argc, char **argv)
 {
     if (argc < 2)
     {
-        std::cerr << "No arguments provided\n";
+        VX_DEV_ERROR_STREAM("Usage: Velix <project-path>\n");
         return 1;
     }
+
+    const auto projectPath = std::filesystem::absolute(argv[1]).string();
+    const auto executableDir = elix::editor::FileHelper::getExecutablePath();
+
+    // Make terminal launches behave like the VSCode launch configuration by resolving resources from the repo root.
+    const auto repoRootFromBuild = executableDir.parent_path();
+    if (!repoRootFromBuild.empty() && std::filesystem::exists(repoRootFromBuild / "resources"))
+        std::filesystem::current_path(repoRootFromBuild);
 
     auto start = std::chrono::high_resolution_clock::now();
 
     if (!glfwInit())
     {
-        std::cerr << "Failed to initialize GLFW\n";
+        VX_DEV_ERROR_STREAM("Failed to initialize GLFW\n");
         return 1;
     }
 
@@ -71,13 +84,11 @@ int main(int argc, char **argv)
 
     elix::engine::cache::GraphicsPipelineCache::loadCacheFromFile(vulkanContext->getDevice(), graphicsPipelineCache);
 
-    const std::string projectPath = argv[1];
-
     auto project = elix::editor::ProjectLoader::loadProject(projectPath);
 
     if (!project)
     {
-        std::cerr << "Failed to load project\n";
+        VX_DEV_ERROR_STREAM("Failed to load project\n");
         return 1;
     }
 
@@ -86,59 +97,62 @@ int main(int argc, char **argv)
     if (!scene->loadSceneFromFile(project->entryScene))
         throw std::runtime_error("Failed to load scene");
 
-    // TODO: Change order to see if RenderGraph compile works
-
     elix::engine::GraphicsPipelineManager::init();
+    elix::engine::shaders::ShaderHotReloader shaderHotReloader("./resources/shaders");
+    shaderHotReloader.setPollIntervalSeconds(0.35);
+    shaderHotReloader.prime();
 
     auto renderGraph = new elix::engine::renderGraph::RenderGraph(vulkanContext->getDevice(), vulkanContext->getSwapchain());
-    renderGraph->createDescriptorSetPool();
     auto editor = std::make_shared<elix::editor::Editor>();
 
     auto shadowRenderPass = renderGraph->addPass<elix::engine::renderGraph::ShadowRenderGraphPass>();
     auto shadowId = renderGraph->getRenderGraphPassId(shadowRenderPass);
 
-    auto offscreenRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::OffscreenRenderGraphPass>(renderGraph->getDescriptorPool(), shadowId,
-                                                                                                              shadowRenderPass->getShadowHandler());
-    auto offscreenId = renderGraph->getRenderGraphPassId(offscreenRenderGraphPass);
+    auto gBufferRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::GBufferRenderGraphPass>();
 
-    auto imguiRenderGraphPass = renderGraph->addPass<elix::editor::ImGuiRenderGraphPass>(editor, offscreenId, offscreenRenderGraphPass->getColorTextureHandlers(),
-                                                                                         offscreenRenderGraphPass->getObjectTextureHandler());
+    auto gbufferId = renderGraph->getRenderGraphPassId(gBufferRenderGraphPass);
+
+    auto lightingRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::LightingRenderGraphPass>(shadowId, gbufferId, shadowRenderPass->getShadowHandler(),
+                                                                                                            gBufferRenderGraphPass->getDepthTextureHandler(), gBufferRenderGraphPass->getAlbedoTextureHandlers(), gBufferRenderGraphPass->getNormalTextureHandlers(),
+                                                                                                            gBufferRenderGraphPass->getMaterialTextureHandlers());
+
+    auto lightingId = renderGraph->getRenderGraphPassId(lightingRenderGraphPass);
+
+    auto skyLightRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::SkyLightRenderGraphPass>(
+        lightingId, gbufferId, lightingRenderGraphPass->getOutput(), gBufferRenderGraphPass->getDepthTextureHandler());
+
+    auto skyLightId = renderGraph->getRenderGraphPassId(skyLightRenderGraphPass);
+
+    auto toneMapRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::TonemapRenderGraphPass>(skyLightId, skyLightRenderGraphPass->getOutput());
+
+    auto toneMapId = renderGraph->getRenderGraphPassId(toneMapRenderGraphPass);
+
+    auto selectionOverlayRenderGraphPass = renderGraph->addPass<elix::editor::SelectionOverlayRenderGraphPass>(
+        editor, toneMapId, gbufferId, toneMapRenderGraphPass->getHandlers(), gBufferRenderGraphPass->getObjectTextureHandler());
+
+    auto selectionOverlayId = renderGraph->getRenderGraphPassId(selectionOverlayRenderGraphPass);
+
+    auto imguiRenderGraphPass = renderGraph->addPass<elix::editor::ImGuiRenderGraphPass>(editor, selectionOverlayId, selectionOverlayRenderGraphPass->getHandlers(),
+                                                                                         gBufferRenderGraphPass->getObjectTextureHandler());
 
     VkExtent2D extent{.width = 50, .height = 30};
 
     auto previewRenderGraphPass = renderGraph->addPass<elix::editor::PreviewAssetsRenderGraphPass>(extent);
 
-    // auto sceneRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::SceneRenderGraphPass>(shadowRenderPass->getShadowHandler());
     renderGraph->setup();
-
-    renderGraph->createCameraDescriptorSets(shadowRenderPass->getSampler(), shadowRenderPass->getImageView());
-
     renderGraph->createRenderGraphResources();
 
-    if (auto entityModel = elix::engine::AssetsLoader::loadModel("./resources/models/Shadow.fbx"); entityModel.has_value())
-    {
-        auto model = entityModel.value();
-
-        auto entity = scene->addEntity("texture test");
-
-        auto skeletonComponent = entity->addComponent<elix::engine::SkeletalMeshComponent>(model.meshes, model.skeleton.value());
-        // skeletonComponent->getSkeleton().printBonesHierarchy();
-        // std::cout << "Added skeleton mesh component\n";
-
-        entity->getComponent<elix::engine::Transform3DComponent>()->setScale({0.003f, 0.003f, 0.003f});
-    }
-    else
-        std::cerr << "Failed to load model\n";
-
-    elix::engine::Texture::SharedPtr dummyTexture = std::make_shared<elix::engine::Texture>();
-    dummyTexture->createFromPixels(0xFFFFFFFF);
-
-    elix::engine::Material::createDefaultMaterial(dummyTexture);
+    elix::engine::Texture::createDefaults();
+    elix::engine::Material::createDefaultMaterial(elix::engine::Texture::getDefaultWhiteTexture());
 
     editor->addOnViewportChangedCallback([&](uint32_t w, uint32_t h)
                                          {
         VkExtent2D extent{.width = w, .height = h};
-        offscreenRenderGraphPass->setExtent(extent); });
+        gBufferRenderGraphPass->setExtent(extent); 
+        lightingRenderGraphPass->setExtent(extent);
+        skyLightRenderGraphPass->setExtent(extent);
+        toneMapRenderGraphPass->setExtent(extent);
+        selectionOverlayRenderGraphPass->setExtent(extent); });
 
     float lastFrame = 0.0f;
     float deltaTime = 0.0f;
@@ -151,9 +165,9 @@ int main(int argc, char **argv)
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    std::cout << "Engine load took: " << duration.count() << " microseconds\n";
-    std::cout << "Engine load took: " << duration.count() / 1000.0 << " milliseconds\n";
-    std::cout << "Engine load took: " << duration.count() / 1000000.0 << " seconds\n";
+    VX_DEV_INFO_STREAM("Engine load took: " << duration.count() << " microseconds\n");
+    VX_DEV_INFO_STREAM("Engine load took: " << duration.count() / 1000.0 << " milliseconds\n");
+    VX_DEV_INFO_STREAM("Engine load took: " << duration.count() / 1000000.0 << " seconds\n");
 
     elix::engine::Camera::SharedPtr currentRenderCamera = editor->getCurrentCamera();
 
@@ -202,37 +216,59 @@ int main(int argc, char **argv)
 
         window->pollEvents();
 
+        shaderHotReloader.update(deltaTime);
+
+        bool shouldReloadShaders = shaderHotReloader.consumeReloadRequest();
+        if (editor->consumeShaderReloadRequest())
+            shouldReloadShaders = true;
+
+        if (shouldReloadShaders)
+        {
+            vkDeviceWaitIdle(vulkanContext->getDevice());
+            elix::engine::GraphicsPipelineManager::reloadShaders();
+        }
+
         if (shouldUpdate)
             scene->update(deltaTime);
+        else
+            editor->updateAnimationPreview(deltaTime);
 
         previewRenderGraphPass->clearJobs();
 
-        for (const auto &m : editor->getRequestedMaterialPreviewJobs())
+        for (const auto &previewJob : editor->getRequestedPreviewJobs())
         {
             elix::editor::PreviewAssetsRenderGraphPass::PreviewJob job;
-            job.material = m;
-            previewRenderGraphPass->addMaterialPreviewJob(job);
+            job.material = previewJob.material;
+            job.mesh = previewJob.mesh;
+            job.modelTransform = previewJob.modelTransform;
+            previewRenderGraphPass->addPreviewJob(job);
         }
 
-        renderGraph->addAdditionalFrameData(editor->getRenderData());
-        renderGraph->prepareFrame(currentRenderCamera, scene.get());
-        renderGraph->draw();
+        const uint32_t viewportWidth = editor->getViewportX();
+        const uint32_t viewportHeight = editor->getViewportY();
+        if (currentRenderCamera && viewportWidth > 0 && viewportHeight > 0)
+            currentRenderCamera->setAspect(static_cast<float>(viewportWidth) / static_cast<float>(viewportHeight));
 
-        editor->setDoneMaterialJobs(previewRenderGraphPass->getRenderedImages());
-        editor->clearMaterialPreviewJobs();
+        renderGraph->prepareFrame(currentRenderCamera, scene.get(), deltaTime);
+        editor->setRenderGraphProfilingData(renderGraph->getLastFrameProfilingData());
+        renderGraph->draw();
+        editor->processPendingObjectSelection();
+
+        editor->setDonePreviewJobs(previewRenderGraphPass->getRenderedImages());
     }
 
     elix::engine::cache::GraphicsPipelineCache::saveCacheToFile(vulkanContext->getDevice(), graphicsPipelineCache);
     elix::engine::GraphicsPipelineManager::destroy();
     elix::engine::cache::GraphicsPipelineCache::deleteCache(vulkanContext->getDevice());
 
+    project->clearCache();
     // To clean all needed Vulkan resources before VulkanContex is cleared
     renderGraph->cleanResources();
     delete renderGraph;
     editor.reset();
     scene.reset();
     elix::engine::Material::deleteDefaultMaterial();
-    dummyTexture.reset();
+    elix::engine::Texture::destroyDefaults();
     //
 
     vulkanContext->cleanup();

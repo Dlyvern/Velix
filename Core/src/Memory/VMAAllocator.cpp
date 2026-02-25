@@ -1,8 +1,9 @@
 #include "Core/Memory/VMAAllocator.hpp"
 
-#include <stdexcept>
 #include "Core/VulkanHelpers.hpp"
+#include "Core/VulkanAssert.hpp"
 #include <iomanip>
+#include <sstream>
 #include <volk.h>
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
@@ -28,6 +29,30 @@ namespace
             return VMA_MEMORY_USAGE_AUTO;
         }
     }
+
+    std::string describeImageCreateInfo(const VkImageCreateInfo &createInfo)
+    {
+        std::ostringstream stream;
+        stream << "format=" << static_cast<int>(createInfo.format)
+               << ", extent=" << createInfo.extent.width << "x" << createInfo.extent.height << "x" << createInfo.extent.depth
+               << ", usage=0x" << std::hex << createInfo.usage << std::dec
+               << ", tiling=" << static_cast<int>(createInfo.tiling)
+               << ", arrayLayers=" << createInfo.arrayLayers
+               << ", mipLevels=" << createInfo.mipLevels
+               << ", samples=" << static_cast<int>(createInfo.samples)
+               << ", flags=0x" << std::hex << createInfo.flags << std::dec;
+        return stream.str();
+    }
+
+    std::string describeBufferCreateInfo(const VkBufferCreateInfo &createInfo)
+    {
+        std::ostringstream stream;
+        stream << "size=" << static_cast<unsigned long long>(createInfo.size)
+               << ", usage=0x" << std::hex << createInfo.usage << std::dec
+               << ", sharingMode=" << static_cast<int>(createInfo.sharingMode)
+               << ", flags=0x" << std::hex << createInfo.flags << std::dec;
+        return stream.str();
+    }
 }
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
@@ -48,13 +73,12 @@ VMAAllocator::VMAAllocator(VkInstance instance, VkPhysicalDevice physicalDevice,
 
     info.pVulkanFunctions = &volkFunctions;
 
-    vmaCreateAllocator(&info, &m_allocator);
+    VX_VK_CHECK(vmaCreateAllocator(&info, &m_allocator));
 }
 
 void VMAAllocator::mapMemory(VkDevice device, void *allocation, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void *&data)
 {
-    if (VkResult result = vmaMapMemory(m_allocator, reinterpret_cast<VmaAllocation>(allocation), &data); result != VK_SUCCESS)
-        std::cerr << "Failed to map memory " << helpers::vulkanResultToString(result) << '\n';
+    VX_VK_CHECK(vmaMapMemory(m_allocator, reinterpret_cast<VmaAllocation>(allocation), &data));
 }
 
 void VMAAllocator::unmapMemory(VkDevice device, void *allocation)
@@ -79,10 +103,9 @@ AllocatedImage VMAAllocator::createImage(VkDevice device, VkPhysicalDevice physi
 
     AllocatedImage allocatedImage{};
 
-    if (VkResult result = vmaCreateImage(m_allocator, &createInfo, &allocInfo, &allocatedImage.image,
-                                         reinterpret_cast<VmaAllocation *>(&allocatedImage.allocation), nullptr);
-        result != VK_SUCCESS)
-        throw std::runtime_error("Failed to create image " + helpers::vulkanResultToString(result));
+    VX_VK_CHECK_MSG(vmaCreateImage(m_allocator, &createInfo, &allocInfo, &allocatedImage.image,
+                                   reinterpret_cast<VmaAllocation *>(&allocatedImage.allocation), nullptr),
+                    describeImageCreateInfo(createInfo));
 
     return allocatedImage;
 }
@@ -96,8 +119,7 @@ void VMAAllocator::destroyImage(VkDevice device, AllocatedImage &image)
 
 void VMAAllocator::bindImageMemory(VkDevice device, const AllocatedImage &image, VkDeviceSize memoryOffset)
 {
-    if (VkResult result = vmaBindImageMemory(m_allocator, reinterpret_cast<VmaAllocation>(image.allocation), image.image); result != VK_SUCCESS)
-        std::cerr << "Failed to bind image memory " << helpers::vulkanResultToString(result) << '\n';
+    VX_VK_CHECK(vmaBindImageMemory(m_allocator, reinterpret_cast<VmaAllocation>(image.allocation), image.image));
 }
 
 AllocatedBuffer VMAAllocator::createBuffer(VkDevice device, VkPhysicalDevice physicalDevice, const VkBufferCreateInfo &createInfo, memory::MemoryUsage memFlags)
@@ -109,10 +131,9 @@ AllocatedBuffer VMAAllocator::createBuffer(VkDevice device, VkPhysicalDevice phy
 
     AllocatedBuffer buffer{};
 
-    if (VkResult result = vmaCreateBuffer(m_allocator, &createInfo, &allocInfo, &buffer.buffer,
-                                          reinterpret_cast<VmaAllocation *>(&buffer.allocation), nullptr);
-        result != VK_SUCCESS)
-        throw std::runtime_error("Failed to create buffer " + helpers::vulkanResultToString(result));
+    VX_VK_CHECK_MSG(vmaCreateBuffer(m_allocator, &createInfo, &allocInfo, &buffer.buffer,
+                                    reinterpret_cast<VmaAllocation *>(&buffer.allocation), nullptr),
+                    describeBufferCreateInfo(createInfo));
 
     return buffer;
 }
@@ -140,7 +161,7 @@ void VMAAllocator::destroyBuffer(VkDevice device, AllocatedBuffer &buffer)
 
 void VMAAllocator::bindBufferMemory(VkDevice device, const AllocatedBuffer &buffer, VkDeviceSize memoryOffset)
 {
-    vmaBindBufferMemory(m_allocator, reinterpret_cast<VmaAllocation>(buffer.allocation), buffer.buffer);
+    VX_VK_CHECK(vmaBindBufferMemory(m_allocator, reinterpret_cast<VmaAllocation>(buffer.allocation), buffer.buffer));
 }
 
 VkMemoryPropertyFlags VMAAllocator::toVkMemoryFlags(core::memory::MemoryUsage usage)

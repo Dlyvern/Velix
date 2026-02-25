@@ -97,7 +97,7 @@ void Window::getMaxMonitorResolution(int *width, int *height)
 
     if (!m_monitor)
     {
-        std::cerr << "Failed to get primary monitor" << std::endl;
+        VX_CORE_ERROR_STREAM("Failed to get primary monitor" << std::endl);
         return;
     }
 
