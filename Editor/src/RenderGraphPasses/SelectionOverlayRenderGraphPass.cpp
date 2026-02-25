@@ -25,8 +25,6 @@ struct SelectionOverlayPC
 } // namespace
 
 SelectionOverlayRenderGraphPass::SelectionOverlayRenderGraphPass(std::shared_ptr<Editor> editor,
-                                                                 uint32_t scenePassId,
-                                                                 uint32_t objectIdPassId,
                                                                  std::vector<engine::renderGraph::RGPResourceHandler> &sceneColorHandlers,
                                                                  engine::renderGraph::RGPResourceHandler &objectIdHandler)
     : m_editor(std::move(editor)),
@@ -34,8 +32,6 @@ SelectionOverlayRenderGraphPass::SelectionOverlayRenderGraphPass(std::shared_ptr
       m_objectIdHandler(objectIdHandler)
 {
     setDebugName("Selection overlay render graph pass");
-    addDependOnRenderGraphPass(scenePassId);
-    addDependOnRenderGraphPass(objectIdPassId);
 
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
 

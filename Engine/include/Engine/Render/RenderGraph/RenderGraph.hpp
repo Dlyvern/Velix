@@ -21,6 +21,7 @@
 #include <queue>
 #include <string>
 #include <cstdint>
+#include <array>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -58,24 +59,6 @@ public:
         return ptr;
     }
 
-    int getRenderGraphPassId(IRenderGraphPass *pass)
-    {
-        for (auto &[_, renderGraphPass] : m_renderGraphPasses)
-            if (renderGraphPass.renderGraphPass.get() == pass)
-                return renderGraphPass.id;
-
-        return -1;
-    }
-
-    RenderGraphPassData *findRenderGraphPassById(uint32_t id)
-    {
-        for (auto &[_, renderGraphPass] : m_renderGraphPasses)
-            if (renderGraphPass.id == id)
-                return &renderGraphPass;
-
-        return nullptr;
-    }
-
     void prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime);
     void addAdditionalFrameData(const std::vector<AdditionalPerFrameData> &data)
     {
@@ -104,6 +87,15 @@ public:
     void cleanResources();
 
 private:
+    RenderGraphPassData *findRenderGraphPassById(uint32_t id)
+    {
+        for (auto &[_, renderGraphPass] : m_renderGraphPasses)
+            if (renderGraphPass.id == id)
+                return &renderGraphPass;
+
+        return nullptr;
+    }
+
     struct PassExecutionProfilingData
     {
         std::string passName;
@@ -115,7 +107,7 @@ private:
 
     void initTimestampQueryPool();
     void destroyTimestampQueryPool();
-    void resolveFrameProfilingData();
+    void resolveFrameProfilingData(uint32_t frameIndex);
 
     void createDescriptorSetPool();
     void createCameraDescriptorSets();
@@ -181,12 +173,16 @@ private:
 
     VkQueryPool m_timestampQueryPool{VK_NULL_HANDLE};
     uint32_t m_timestampQueryCapacity{0};
+    uint32_t m_timestampQueriesPerFrame{0};
+    uint32_t m_timestampQueryBase{0};
     uint32_t m_usedTimestampQueries{0};
+    std::array<uint32_t, MAX_FRAMES_IN_FLIGHT> m_usedTimestampQueriesByFrame{};
     float m_timestampPeriodNs{0.0f};
     bool m_isGpuTimingAvailable{false};
     uint64_t m_profiledFrameIndex{0};
 
-    std::vector<PassExecutionProfilingData> m_passExecutionProfilingData;
+    std::array<std::vector<PassExecutionProfilingData>, MAX_FRAMES_IN_FLIGHT> m_passExecutionProfilingDataByFrame;
+    std::array<bool, MAX_FRAMES_IN_FLIGHT> m_hasPendingProfilingResolve{};
     RenderGraphFrameProfilingData m_lastFrameProfilingData;
 };
 

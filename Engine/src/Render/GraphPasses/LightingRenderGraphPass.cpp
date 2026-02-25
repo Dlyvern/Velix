@@ -8,7 +8,7 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-LightingRenderGraphPass::LightingRenderGraphPass(uint32_t shadowId, uint32_t gbufferId, RGPResourceHandler &shadowTextureHandler,
+LightingRenderGraphPass::LightingRenderGraphPass(RGPResourceHandler &shadowTextureHandler,
                                                  RGPResourceHandler &depthTextureHandler,
                                                  std::vector<RGPResourceHandler> &albedoTextureHandlers,
                                                  std::vector<RGPResourceHandler> &normalTextureHandlers,
@@ -24,9 +24,6 @@ LightingRenderGraphPass::LightingRenderGraphPass(uint32_t shadowId, uint32_t gbu
     this->setDebugName("Lighting render graph pass");
 
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
-
-    addDependOnRenderGraphPass(shadowId);
-    addDependOnRenderGraphPass(gbufferId);
 }
 
 void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,

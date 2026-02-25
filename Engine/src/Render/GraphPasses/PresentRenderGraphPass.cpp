@@ -8,10 +8,9 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-PresentRenderGraphPass::PresentRenderGraphPass(uint32_t tonemapId, std::vector<RGPResourceHandler> &inputHandlers) : m_colorInputHandlers(inputHandlers)
+PresentRenderGraphPass::PresentRenderGraphPass(std::vector<RGPResourceHandler> &inputHandlers) : m_colorInputHandlers(inputHandlers)
 {
     setDebugName("Present render graph pass");
-    addDependOnRenderGraphPass(tonemapId);
 
     m_clearValues[0].color = {0.f, 0.f, 0.f, 1.f};
 

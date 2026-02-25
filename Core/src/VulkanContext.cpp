@@ -85,17 +85,15 @@ void VulkanContext::initVulkan(std::shared_ptr<platform::Window> window)
 void VulkanContext::createLogicalDevice()
 {
     m_queueFamilyIndices = findQueueFamilies(m_physicalDevice, m_surface);
-    VX_CORE_INFO_STREAM("[Vulkan] Queue families found:\n");
-    VX_CORE_INFO_STREAM("  graphics: " << m_queueFamilyIndices.graphicsFamily.value() << "\n");
-    VX_CORE_INFO_STREAM("  present:  " << m_queueFamilyIndices.presentFamily.value() << "\n");
+    VX_CORE_INFO_STREAM("[Vulkan] Queue families found:");
+    VX_CORE_INFO_STREAM("  graphics: " << m_queueFamilyIndices.graphicsFamily.value());
+    VX_CORE_INFO_STREAM("  present:  " << m_queueFamilyIndices.presentFamily.value());
     VX_CORE_INFO_STREAM("  compute:  " << m_queueFamilyIndices.computeFamily.value());
     if (m_queueFamilyIndices.computeFamily == m_queueFamilyIndices.graphicsFamily)
         VX_CORE_INFO_STREAM(" (fallback to graphics)");
-    VX_CORE_INFO_STREAM("\n");
     VX_CORE_INFO_STREAM("  transfer: " << m_queueFamilyIndices.transferFamily.value());
     if (m_queueFamilyIndices.transferFamily == m_queueFamilyIndices.graphicsFamily)
         VX_CORE_INFO_STREAM(" (fallback to graphics)");
-    VX_CORE_INFO_STREAM("\n");
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos{};
 
@@ -431,10 +429,10 @@ void VulkanContext::pickPhysicalDevice()
         VX_CORE_INFO_STREAM("Score: " << candidate.score << std::endl);
 
         VX_CORE_INFO_STREAM("[Vulkan] Selected GPU: " << candidate.props.deviceName
-                  << " ("
-                  << (candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete" : candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated"
-                                                                                                                                                                             : "Other")
-                  << ")\n");
+                                                      << " ("
+                                                      << (candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete" : candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated"
+                                                                                                                                                                                                                 : "Other")
+                                                      << ")\n");
     }
 
     // m_physicalDevice = candidates.front().device;
@@ -476,14 +474,14 @@ void VulkanContext::createInstance()
         std::string glfwExtension{glfwExtensions[index]};
         presentedExtensions[glfwExtension] = false;
 #ifdef DEBUG_BUILD
-        VX_CORE_INFO_STREAM(("GLFW extension: ") << glfwExtensions[index] << std::endl);
+        VX_CORE_INFO_STREAM(("GLFW extension: ") << glfwExtensions[index]);
 #endif
     }
 
     for (const auto &extension : extensions)
     {
 #ifdef DEBUG_BUILD
-        VX_CORE_INFO_STREAM(("Vulkan extension: ") << extension.extensionName << std::endl);
+        VX_CORE_INFO_STREAM(("Vulkan extension: ") << extension.extensionName);
 #endif
         auto it = presentedExtensions.find(extension.extensionName);
 

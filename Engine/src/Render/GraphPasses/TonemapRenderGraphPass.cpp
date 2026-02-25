@@ -14,10 +14,9 @@ struct TonemapPC
     float gamma;
 };
 
-TonemapRenderGraphPass::TonemapRenderGraphPass(uint32_t scenePassId, std::vector<RGPResourceHandler> &hdrInputHandlers) : m_hdrInputHandlers(hdrInputHandlers)
+TonemapRenderGraphPass::TonemapRenderGraphPass(std::vector<RGPResourceHandler> &hdrInputHandlers) : m_hdrInputHandlers(hdrInputHandlers)
 {
     setDebugName("Tonemap render graph pass");
-    addDependOnRenderGraphPass(scenePassId);
 
     m_clearValues[0].color = {0.f, 0.f, 0.f, 1.f};
 

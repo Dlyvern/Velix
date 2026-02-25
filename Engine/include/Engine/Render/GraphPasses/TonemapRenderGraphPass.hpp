@@ -18,7 +18,7 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 class TonemapRenderGraphPass : public IRenderGraphPass
 {
 public:
-    TonemapRenderGraphPass(uint32_t scenePassId, std::vector<RGPResourceHandler> &hdrInputHandlers);
+    TonemapRenderGraphPass(std::vector<RGPResourceHandler> &hdrInputHandlers);
 
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;

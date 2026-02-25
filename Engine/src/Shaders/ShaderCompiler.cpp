@@ -15,6 +15,7 @@ std::vector<uint32_t> ShaderCompiler::compileGLSL(const std::string &source, sha
     shaderc::CompileOptions options;
 
     options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
+    options.SetTargetSpirv(shaderc_spirv_version_1_5);
     options.SetOptimizationLevel(shaderc_optimization_level_performance);
 
     if (flags & ShaderCompilerFlagBits::ESHADER_COMPILER_FLAG_NO_WARNING)

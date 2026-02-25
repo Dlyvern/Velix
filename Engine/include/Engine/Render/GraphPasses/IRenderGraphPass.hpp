@@ -30,6 +30,11 @@ public:
         bool useDepth{true};
 
         std::unordered_map<RGPResourceHandler, const RenderTarget *> targets;
+
+        RenderPassExecution()
+        {
+            renderArea.offset = {0, 0};
+        }
     };
 
     using SharedPtr = std::shared_ptr<IRenderGraphPass>;
@@ -76,19 +81,8 @@ public:
         return m_needsRecompilation;
     }
 
-    void addDependOnRenderGraphPass(uint32_t id)
-    {
-        m_dependOnRenderGraphPasses.push_back(id);
-    }
-
-    const std::vector<uint32_t> &getDependOnRenderGraphPassesIds() const
-    {
-        return m_dependOnRenderGraphPasses;
-    }
-
 private:
     std::string m_debugName;
-    std::vector<uint32_t> m_dependOnRenderGraphPasses;
     bool m_needsRecompilation{false};
 };
 

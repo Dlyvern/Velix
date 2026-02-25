@@ -5,9 +5,6 @@
 #include "Engine/Render/RenderTarget.hpp"
 #include "Engine/SkyLightSystem.hpp"
 
-#include "Core/PipelineLayout.hpp"
-#include "Core/Sampler.hpp"
-
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -19,8 +16,7 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 class SkyLightRenderGraphPass : public IRenderGraphPass
 {
 public:
-    SkyLightRenderGraphPass(uint32_t lightingId, uint32_t gbufferId,
-                            std::vector<RGPResourceHandler> &lightingInputHandlers,
+    SkyLightRenderGraphPass(std::vector<RGPResourceHandler> &lightingInputHandlers,
                             RGPResourceHandler &depthTextureHandler);
 
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
@@ -39,8 +35,6 @@ public:
     }
 
 private:
-    std::array<VkClearValue, 1> m_clearValues;
-
     std::vector<const RenderTarget *> m_colorRenderTargets;
     const RenderTarget *m_depthRenderTarget{nullptr};
 
@@ -51,15 +45,9 @@ private:
     RGPResourceHandler &m_depthTextureHandler;
     std::vector<RGPResourceHandler> m_colorTextureHandler;
 
-    core::PipelineLayout::SharedPtr m_copyPipelineLayout{nullptr};
-    core::DescriptorSetLayout::SharedPtr m_copyDescriptorSetLayout{nullptr};
-    std::vector<VkDescriptorSet> m_copyDescriptorSets{VK_NULL_HANDLE};
-
     VkExtent2D m_extent{};
     VkViewport m_viewport{};
     VkRect2D m_scissor{};
-
-    core::Sampler::SharedPtr m_defaultSampler{nullptr};
 
     std::unique_ptr<SkyLightSystem> m_skyLightSystem{nullptr};
 };

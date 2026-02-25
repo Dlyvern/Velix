@@ -109,7 +109,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
 
         if (extension == ".png" || extension == ".jpg")
         {
-            VX_EDITOR_INFO_STREAM("Found texture: " << entry.path().string() << '\n');
+            VX_EDITOR_INFO_STREAM("Found texture: " << entry.path().string());
 
             TextureAssetRecord texture;
             texture.path = entry.path().string();

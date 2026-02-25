@@ -7,18 +7,20 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <stdexcept>
+#include <cstdlib>
+#include <string>
+#include <algorithm>
+#include <cctype>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, uint32_t offscreenId, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
+ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
                                            engine::renderGraph::RGPResourceHandler &objectIdTextureHandler)
     : m_editor(editor), m_device(core::VulkanContext::getContext()->getDevice()), m_offscreenTextureHandler(offscreenTexture),
       m_objectIdTextureHandler(objectIdTextureHandler)
 {
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     this->setDebugName("ImGui render graph pass");
-
-    addDependOnRenderGraphPass(offscreenId);
 }
 
 void ImGuiRenderGraphPass::setViewportImages(const std::vector<VkImageView> &imageViews)

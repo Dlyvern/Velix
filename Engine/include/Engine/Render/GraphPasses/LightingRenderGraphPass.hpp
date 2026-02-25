@@ -11,7 +11,7 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 class LightingRenderGraphPass : public IRenderGraphPass
 {
 public:
-    LightingRenderGraphPass(uint32_t shadowId, uint32_t gbufferId, RGPResourceHandler &shadowTextureHandler,
+    LightingRenderGraphPass(RGPResourceHandler &shadowTextureHandler,
                             RGPResourceHandler &depthTextureHandler,
                             std::vector<RGPResourceHandler> &albedoTextureHandlers,
                             std::vector<RGPResourceHandler> &normalTextureHandlers,

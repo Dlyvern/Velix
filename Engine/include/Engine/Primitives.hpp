@@ -1,10 +1,7 @@
 #ifndef ELIX_PRIMITIVES_HPP
 #define ELIX_PRIMITIVES_HPP
 
-#ifdef _WIN32
-#define _USE_MATH_DEFINES
-#endif
-
+#include <numbers>
 #include <vector>
 #include "Engine/Vertex.hpp"
 #include <cstdint>
@@ -96,12 +93,12 @@ namespace circle
     {
         int sectorCount = 32;
         int stackCount = 16;
-        float sectorStep = 2 * M_PI / sectorCount;
-        float stackStep = M_PI / stackCount;
+        float sectorStep = 2 * std::numbers::pi / sectorCount;
+        float stackStep = std::numbers::pi / stackCount;
 
         for (int i = 0; i <= stackCount; ++i)
         {
-            float stackAngle = M_PI / 2 - i * stackStep;
+            float stackAngle = std::numbers::pi / 2 - i * stackStep;
             float xy = radius * cosf(stackAngle);
             float z = radius * sinf(stackAngle);
 

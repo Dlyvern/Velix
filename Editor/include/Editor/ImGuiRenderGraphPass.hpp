@@ -20,7 +20,7 @@ public:
     using SharedPtr = std::shared_ptr<ImGuiRenderGraphPass>;
 
     //! Maybe this is not a good idea
-    ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, uint32_t offscreenId, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
+    ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
                          engine::renderGraph::RGPResourceHandler &objectIdTextureHandler);
 
     void setup(engine::renderGraph::RGPResourcesBuilder &builder) override;

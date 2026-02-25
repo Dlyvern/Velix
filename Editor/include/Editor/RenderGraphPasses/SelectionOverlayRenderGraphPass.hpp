@@ -18,8 +18,6 @@ class SelectionOverlayRenderGraphPass : public engine::renderGraph::IRenderGraph
 {
 public:
     SelectionOverlayRenderGraphPass(std::shared_ptr<Editor> editor,
-                                    uint32_t scenePassId,
-                                    uint32_t objectIdPassId,
                                     std::vector<engine::renderGraph::RGPResourceHandler> &sceneColorHandlers,
                                     engine::renderGraph::RGPResourceHandler &objectIdHandler);
 

@@ -105,35 +105,31 @@ int main(int argc, char **argv)
     auto renderGraph = new elix::engine::renderGraph::RenderGraph(vulkanContext->getDevice(), vulkanContext->getSwapchain());
     auto editor = std::make_shared<elix::editor::Editor>();
 
-    auto shadowRenderPass = renderGraph->addPass<elix::engine::renderGraph::ShadowRenderGraphPass>();
-    auto shadowId = renderGraph->getRenderGraphPassId(shadowRenderPass);
-
     auto gBufferRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::GBufferRenderGraphPass>();
-
-    auto gbufferId = renderGraph->getRenderGraphPassId(gBufferRenderGraphPass);
-
-    auto lightingRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::LightingRenderGraphPass>(shadowId, gbufferId, shadowRenderPass->getShadowHandler(),
-                                                                                                            gBufferRenderGraphPass->getDepthTextureHandler(), gBufferRenderGraphPass->getAlbedoTextureHandlers(), gBufferRenderGraphPass->getNormalTextureHandlers(),
-                                                                                                            gBufferRenderGraphPass->getMaterialTextureHandlers());
-
-    auto lightingId = renderGraph->getRenderGraphPassId(lightingRenderGraphPass);
+    auto shadowRenderPass = renderGraph->addPass<elix::engine::renderGraph::ShadowRenderGraphPass>();
+    auto lightingRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::LightingRenderGraphPass>(
+        shadowRenderPass->getShadowHandler(),
+        gBufferRenderGraphPass->getDepthTextureHandler(),
+        gBufferRenderGraphPass->getAlbedoTextureHandlers(),
+        gBufferRenderGraphPass->getNormalTextureHandlers(),
+        gBufferRenderGraphPass->getMaterialTextureHandlers());
 
     auto skyLightRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::SkyLightRenderGraphPass>(
-        lightingId, gbufferId, lightingRenderGraphPass->getOutput(), gBufferRenderGraphPass->getDepthTextureHandler());
+        lightingRenderGraphPass->getOutput(),
+        gBufferRenderGraphPass->getDepthTextureHandler());
 
-    auto skyLightId = renderGraph->getRenderGraphPassId(skyLightRenderGraphPass);
-
-    auto toneMapRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::TonemapRenderGraphPass>(skyLightId, skyLightRenderGraphPass->getOutput());
-
-    auto toneMapId = renderGraph->getRenderGraphPassId(toneMapRenderGraphPass);
+    auto toneMapRenderGraphPass = renderGraph->addPass<elix::engine::renderGraph::TonemapRenderGraphPass>(
+        skyLightRenderGraphPass->getOutput());
 
     auto selectionOverlayRenderGraphPass = renderGraph->addPass<elix::editor::SelectionOverlayRenderGraphPass>(
-        editor, toneMapId, gbufferId, toneMapRenderGraphPass->getHandlers(), gBufferRenderGraphPass->getObjectTextureHandler());
+        editor,
+        toneMapRenderGraphPass->getHandlers(),
+        gBufferRenderGraphPass->getObjectTextureHandler());
 
-    auto selectionOverlayId = renderGraph->getRenderGraphPassId(selectionOverlayRenderGraphPass);
-
-    auto imguiRenderGraphPass = renderGraph->addPass<elix::editor::ImGuiRenderGraphPass>(editor, selectionOverlayId, selectionOverlayRenderGraphPass->getHandlers(),
-                                                                                         gBufferRenderGraphPass->getObjectTextureHandler());
+    auto imguiRenderGraphPass = renderGraph->addPass<elix::editor::ImGuiRenderGraphPass>(
+        editor,
+        selectionOverlayRenderGraphPass->getHandlers(),
+        gBufferRenderGraphPass->getObjectTextureHandler());
 
     VkExtent2D extent{.width = 50, .height = 30};
 
@@ -147,12 +143,12 @@ int main(int argc, char **argv)
 
     editor->addOnViewportChangedCallback([&](uint32_t w, uint32_t h)
                                          {
-        VkExtent2D extent{.width = w, .height = h};
-        gBufferRenderGraphPass->setExtent(extent); 
-        lightingRenderGraphPass->setExtent(extent);
-        skyLightRenderGraphPass->setExtent(extent);
-        toneMapRenderGraphPass->setExtent(extent);
-        selectionOverlayRenderGraphPass->setExtent(extent); });
+                                             VkExtent2D extent{.width = w, .height = h};
+                                             gBufferRenderGraphPass->setExtent(extent);
+                                              lightingRenderGraphPass->setExtent(extent);
+                                              skyLightRenderGraphPass->setExtent(extent);
+                                              toneMapRenderGraphPass->setExtent(extent);
+                                              selectionOverlayRenderGraphPass->setExtent(extent); });
 
     float lastFrame = 0.0f;
     float deltaTime = 0.0f;
@@ -257,13 +253,14 @@ int main(int argc, char **argv)
         editor->setDonePreviewJobs(previewRenderGraphPass->getRenderedImages());
     }
 
+    renderGraph->cleanResources();
+
     elix::engine::cache::GraphicsPipelineCache::saveCacheToFile(vulkanContext->getDevice(), graphicsPipelineCache);
     elix::engine::GraphicsPipelineManager::destroy();
     elix::engine::cache::GraphicsPipelineCache::deleteCache(vulkanContext->getDevice());
 
     project->clearCache();
     // To clean all needed Vulkan resources before VulkanContex is cleared
-    renderGraph->cleanResources();
     delete renderGraph;
     editor.reset();
     scene.reset();

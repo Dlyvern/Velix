@@ -17,7 +17,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(GraphicsP
     if (it != m_pipelines.end())
         return it->second;
 
-    VX_ENGINE_INFO_STREAM("Created a new key\n");
+    VX_ENGINE_INFO_STREAM("Created a new key");
 
     auto created = createPipeline(key);
 

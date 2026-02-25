@@ -44,19 +44,20 @@ bool isSelectedObject(uint objectId)
 
 bool hasSelectedNeighbor(ivec2 pixelCoord, ivec2 texSize)
 {
-    for (int y = -1; y <= 1; ++y)
+    const ivec2 offsets[4] = ivec2[4](
+        ivec2(-1, 0),
+        ivec2(1, 0),
+        ivec2(0, -1),
+        ivec2(0, 1)
+    );
+
+    for (int i = 0; i < 4; ++i)
     {
-        for (int x = -1; x <= 1; ++x)
-        {
-            if (x == 0 && y == 0)
-                continue;
+        ivec2 p = clamp(pixelCoord + offsets[i], ivec2(0), texSize - ivec2(1));
+        uint id = texelFetch(uObjectId, p, 0).r;
 
-            ivec2 p = clamp(pixelCoord + ivec2(x, y), ivec2(0), texSize - ivec2(1));
-            uint id = texelFetch(uObjectId, p, 0).r;
-
-            if (isSelectedObject(id))
-                return true;
-        }
+        if (isSelectedObject(id))
+            return true;
     }
 
     return false;

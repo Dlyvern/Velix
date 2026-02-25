@@ -50,7 +50,7 @@ float fbm(vec2 p)
     float amplitude = 0.5;
     float frequency = 1.0;
 
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 3; ++i)
     {
         value += amplitude * noise(p * frequency);
         frequency *= 2.0;
@@ -218,50 +218,55 @@ vec3 stars(vec3 dir, float nightFactor)
 
     vec3 starAccum = vec3(0.0);
 
-    // Check neighboring cells so stars near edges don't pop/cut off
-    for (int y = -1; y <= 1; ++y)
+    const ivec2 sampleOffsets[5] = ivec2[5](
+        ivec2(0, 0),
+        ivec2(-1, 0),
+        ivec2(1, 0),
+        ivec2(0, -1),
+        ivec2(0, 1)
+    );
+
+    // Sample a cross neighborhood instead of a full 3x3 kernel for lower cost.
+    for (int i = 0; i < 5; ++i)
     {
-        for (int x = -1; x <= 1; ++x)
-        {
-            vec2 c = cell + vec2(x, y);
+        vec2 c = cell + vec2(sampleOffsets[i]);
 
-            // Sparse star placement
-            float seed = hash21(c);
-            if (seed < 0.965) continue;
+        // Sparse star placement
+        float seed = hash21(c);
+        if (seed < 0.965) continue;
 
-            // Random star center in this cell
-            vec2 starPos = hash22(c);
+        // Random star center in this cell
+        vec2 starPos = hash22(c);
 
-            // Distance from current fragment to star center (cell-local)
-            vec2 d = (vec2(x, y) + starPos) - f;
-            float dist = length(d);
+        // Distance from current fragment to star center (cell-local)
+        vec2 d = (vec2(sampleOffsets[i]) + starPos) - f;
+        float dist = length(d);
 
-            // Tiny point radius
-            float sizeSeed = hash21(c + 17.31);
-            float radius = mix(0.010, 0.028, sizeSeed * sizeSeed);
+        // Tiny point radius
+        float sizeSeed = hash21(c + 17.31);
+        float radius = mix(0.010, 0.028, sizeSeed * sizeSeed);
 
-            // Sharp point core
-            float core = smoothstep(radius, 0.0, dist);
-            core = pow(core, 8.0);
+        // Sharp point core
+        float core = smoothstep(radius, 0.0, dist);
+        core = pow(core, 8.0);
 
-            // Very small halo
-            float halo = smoothstep(radius * 3.0, 0.0, dist);
-            halo = pow(halo, 2.0) * 0.08;
+        // Very small halo
+        float halo = smoothstep(radius * 3.0, 0.0, dist);
+        halo = pow(halo, 2.0) * 0.08;
 
-            // Per-star twinkle (subtle)
-            float twSeed = hash21(c + 93.7);
-            float twinkle = 0.9 + 0.1 * sin(TIME_SECONDS * (0.5 + twSeed * 1.5) + twSeed * 20.0);
+        // Per-star twinkle (subtle)
+        float twSeed = hash21(c + 93.7);
+        float twinkle = 0.9 + 0.1 * sin(TIME_SECONDS * (0.5 + twSeed * 1.5) + twSeed * 20.0);
 
-            // Slight warm/cool variation
-            float colorSeed = hash21(c + 51.2);
-            vec3 starColor = mix(
-                vec3(1.00, 0.96, 0.92), // warm white
-                vec3(0.78, 0.86, 1.00), // cool white
-                colorSeed
-            );
+        // Slight warm/cool variation
+        float colorSeed = hash21(c + 51.2);
+        vec3 starColor = mix(
+            vec3(1.00, 0.96, 0.92), // warm white
+            vec3(0.78, 0.86, 1.00), // cool white
+            colorSeed
+        );
 
-            starAccum += starColor * (core + halo) * twinkle;
-        }
+        starAccum += starColor * (core + halo) * twinkle;
     }
 
     // Fade by horizon and global night amount
