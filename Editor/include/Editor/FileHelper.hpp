@@ -1,20 +1,19 @@
 #ifndef ELIX_FILE_HELPER_EDITOR_HPP
-#define ELIX_FILE_HELPER_EDITOR_HPP 
+#define ELIX_FILE_HELPER_EDITOR_HPP
 
 #include "Core/Macros.hpp"
+#include "Core/Logger.hpp"
 
 #include <string>
 #include <filesystem>
 #include <utility>
 
 #if defined(_WIN32)
-    #define SHARED_LIB_EXTENSION ".dll"
+#define SHARED_LIB_EXTENSION ".dll"
 #elif defined(__linux__)
-    #define SHARED_LIB_EXTENSION ".so"
-#elif defined(__APPLE__)
-    #define SHARED_LIB_EXTENSION ".dylib"
+#define SHARED_LIB_EXTENSION ".so"
 #else
-    #define SHARED_LIB_EXTENSION ""
+#define SHARED_LIB_EXTENSION ""
 #endif
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
@@ -22,7 +21,8 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 class FileHelper
 {
 public:
-    static std::pair<int, std::string> executeCommand(const std::string& command);
+    static std::pair<int, std::string> executeCommand(const std::string &command);
+    static bool launchDetachedCommand(const std::string &command);
 
     static std::filesystem::path getExecutablePath();
 
@@ -40,8 +40,8 @@ public:
     //         }
     //     #else
     //         if (const char* homeEnv = getenv("HOME"))
-    //             homeDir = homeEnv; 
-    //         else 
+    //             homeDir = homeEnv;
+    //         else
     //         {
     //             struct passwd* pw = getpwuid(getuid());
 
@@ -50,7 +50,7 @@ public:
     //         }
     //     #endif
 
-    //     if (!homeDir.empty() && homeDir.back() != '/' && homeDir.back() != '\\') 
+    //     if (!homeDir.empty() && homeDir.back() != '/' && homeDir.back() != '\\')
     //     {
     //         #ifdef _WIN32
     //             homeDir += '\\';
@@ -72,14 +72,6 @@ public:
     //         else
     //             return {};
 
-    //     #elif defined(__APPLE__)
-    //         // macOS: Use HOME/Documents
-    //         const char* home = std::getenv("HOME");
-    //         if (home)
-    //             return std::string(home) + "/Documents";
-    //         else
-    //             return {};
-
     //     #elif defined(__linux__)
     //         // Linux: Use XDG_DOCUMENTS_DIR or ~/Documents
     //         const char* xdgDocs = std::getenv("XDG_DOCUMENTS_DIR");
@@ -96,9 +88,8 @@ public:
     //         return {};
     //     #endif
     // }
-
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_FILE_HELPER_EDITOR_HPP 
+#endif // ELIX_FILE_HELPER_EDITOR_HPP

@@ -13,7 +13,6 @@ void Image::createVk(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryU
                      VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags)
 {
     ELIX_VK_CREATE_GUARD()
-
     VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
     imageInfo.extent.width = extent.width;
@@ -25,9 +24,26 @@ void Image::createVk(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryU
     imageInfo.tiling = tiling;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = usage;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.flags = flags;
+
+    auto context = VulkanContext::getContext();
+    const uint32_t graphicsFamily = context->getGraphicsFamily();
+    const uint32_t transferFamily = context->getTransferFamily();
+    uint32_t queueFamilies[] = {graphicsFamily, transferFamily};
+
+    if (graphicsFamily != transferFamily)
+    {
+        imageInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        imageInfo.queueFamilyIndexCount = 2;
+        imageInfo.pQueueFamilyIndices = queueFamilies;
+    }
+    else
+    {
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        imageInfo.queueFamilyIndexCount = 0;
+        imageInfo.pQueueFamilyIndices = nullptr;
+    }
 
     m_allocatedImage = VulkanContext::getContext()->getDevice()->createImage(imageInfo, memFlags);
     m_handle = m_allocatedImage.image;

@@ -17,10 +17,10 @@ class CommandBuffer
     DECLARE_VK_SMART_PTRS(CommandBuffer, VkCommandBuffer)
     ELIX_DECLARE_VK_LIFECYCLE()
 public:
-    CommandBuffer(CommandPool::SharedPtr commandPool, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+    CommandBuffer(CommandPool &commandPool, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
     ~CommandBuffer();
 
-    void createVk(CommandPool::SharedPtr commandPool, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+    void createVk(CommandPool &commandPool, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
 
     bool begin(VkCommandBufferUsageFlags flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, VkCommandBufferInheritanceInfo* inheritance = nullptr);
     bool end();
@@ -28,7 +28,7 @@ public:
     bool submit(VkQueue queue, const std::vector<VkSemaphore>& waitSemaphores = {}, const std::vector<VkPipelineStageFlags>& waitStages = {},
     const std::vector<VkSemaphore>& signalSemaphores = {}, VkFence fence = VK_NULL_HANDLE);
 private:
-    std::weak_ptr<CommandPool> m_commandPool;
+    CommandPool *m_commandPool{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

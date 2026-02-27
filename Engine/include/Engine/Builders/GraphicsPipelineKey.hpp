@@ -22,6 +22,10 @@ enum class ShaderId : uint8_t
     GBufferStatic,
     GBufferSkinned,
     Lighting,
+    FXAA,
+    BloomExtract,
+    BloomComposite,
+    SSR,
     None
 };
 

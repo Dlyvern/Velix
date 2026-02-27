@@ -1,14 +1,14 @@
 #ifndef {{ClassName}}_HPP
 #define {{ClassName}}_HPP
 
-class {{ClassName}}
+#include "VelixSDK/VelixSDK.hpp"
+
+class {{ClassName}} : public elix::sdk::VXObject
 {
 public:
-    {{ClassName}}();
-    ~{{ClassName}}();
-
-    void onStart();
-    void onUpdate(float deltaTime);
+    void onStart() override;
+    void onUpdate(float deltaTime) override;
+    void onStop() override;
 };
 
-#endif //{{ClassName}}_HPP
+#endif // {{ClassName}}_HPP

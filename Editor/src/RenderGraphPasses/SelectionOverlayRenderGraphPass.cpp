@@ -14,14 +14,14 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 namespace
 {
-struct SelectionOverlayPC
-{
-    uint32_t selectedEntityId;
-    uint32_t selectedMeshSlot;
-    float outlineMix;
-    float padding0;
-    glm::vec4 outlineColor;
-};
+    struct SelectionOverlayPC
+    {
+        uint32_t selectedEntityId;
+        uint32_t selectedMeshSlot;
+        float outlineMix;
+        float padding0;
+        glm::vec4 outlineColor;
+    };
 } // namespace
 
 SelectionOverlayRenderGraphPass::SelectionOverlayRenderGraphPass(std::shared_ptr<Editor> editor,
@@ -82,7 +82,8 @@ void SelectionOverlayRenderGraphPass::setup(engine::renderGraph::RGPResourcesBui
     objectIdBinding.pImmutableSamplers = nullptr;
 
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{sceneBinding, objectIdBinding});
-    m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{m_descriptorSetLayout},
+    m_pipelineLayout = core::PipelineLayout::createShared(device,
+                                                          std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{*m_descriptorSetLayout},
                                                           std::vector<VkPushConstantRange>{engine::PushConstant<SelectionOverlayPC>::getRange(VK_SHADER_STAGE_FRAGMENT_BIT)});
 
     m_colorSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);

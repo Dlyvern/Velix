@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <spirv_cross.hpp>
+#include "Core/Logger.hpp"
 
 #include <spirv_glsl.hpp>
 
@@ -30,7 +31,7 @@ std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandl
         auto size = compiler.get_declared_struct_size(type);
 
         VX_ENGINE_INFO_STREAM("UBO: " << name << " set=" << set << " binding=" << binding
-                  << " size=" << size << std::endl);
+                                      << " size=" << size << std::endl);
     }
 
     for (auto &sampler : resources.sampled_images)
@@ -47,7 +48,7 @@ std::vector<ShaderReflection> ShaderDataExtractor::parse(const core::ShaderHandl
         auto &type = compiler.get_type(pushConstant.base_type_id);
         size_t size = compiler.get_declared_struct_size(type);
         VX_ENGINE_INFO_STREAM("PushConstant: " << compiler.get_name(pushConstant.id)
-                  << " size=" << size << std::endl);
+                                               << " size=" << size << std::endl);
     }
 
     for (auto &input : resources.stage_inputs)

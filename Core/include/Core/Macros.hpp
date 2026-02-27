@@ -124,8 +124,4 @@ public:                                                          \
         return UPtr(new ClassName(std::forward<Args>(args)...)); \
     }
 
-#ifndef ELIX_LOGGER_HPP
-#include "Core/Logger.hpp"
-#endif
-
 #endif // ELIX_MACROS_HPP

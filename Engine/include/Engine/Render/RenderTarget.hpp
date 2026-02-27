@@ -17,9 +17,11 @@ public:
 
     RenderTarget(VkDevice device,
                  VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
-                 core::memory::MemoryUsage memFlags = core::memory::MemoryUsage::GPU_ONLY, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL) : m_device(device), m_aspect(aspect), m_format(format)
+                 core::memory::MemoryUsage memFlags = core::memory::MemoryUsage::GPU_ONLY, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1,
+                 VkImageCreateFlags flags = 0)
+        : m_device(device), m_aspect(aspect), m_format(format), m_arrayLayers(arrayLayers)
     {
-        m_image = core::Image::createShared(extent, usage, memFlags, format, tiling);
+        m_image = core::Image::createShared(extent, usage, memFlags, format, tiling, arrayLayers, flags);
         m_extent = extent;
     }
 
@@ -33,10 +35,12 @@ public:
         m_image = image;
     }
 
-    void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, core::memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling)
+    void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, core::memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling,
+                       uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0)
     {
         m_extent = extent;
-        m_image->createVk(extent, usage, memFlags, format, tiling);
+        m_arrayLayers = arrayLayers;
+        m_image->createVk(extent, usage, memFlags, format, tiling, m_arrayLayers, flags);
     }
 
     void destroyVkImage()
@@ -44,11 +48,11 @@ public:
         m_image->destroyVk();
     }
 
-    void createVkImageView()
+    void createVkImageView(VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D)
     {
         VkImageViewCreateInfo imageViewCI{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         imageViewCI.image = m_image->vk();
-        imageViewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        imageViewCI.viewType = viewType;
         imageViewCI.format = m_format;
         imageViewCI.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
         imageViewCI.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -58,7 +62,7 @@ public:
         imageViewCI.subresourceRange.baseMipLevel = 0;
         imageViewCI.subresourceRange.levelCount = 1;
         imageViewCI.subresourceRange.baseArrayLayer = 0;
-        imageViewCI.subresourceRange.layerCount = 1;
+        imageViewCI.subresourceRange.layerCount = m_arrayLayers;
 
         if (vkCreateImageView(m_device, &imageViewCI, nullptr, &m_imageView) != VK_SUCCESS)
             throw std::runtime_error("Failed to create image views");
@@ -85,8 +89,8 @@ public:
 
     ~RenderTarget()
     {
-        destroyVkImage();
         destroyVkImageView();
+        destroyVkImage();
     }
 
 private:
@@ -96,6 +100,7 @@ private:
     VkImageView m_imageView{VK_NULL_HANDLE};
     VkFormat m_format{VK_FORMAT_UNDEFINED};
     VkImageAspectFlags m_aspect;
+    uint32_t m_arrayLayers{1};
 };
 
 ELIX_NESTED_NAMESPACE_END

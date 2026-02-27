@@ -10,17 +10,12 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <pwd.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <sys/wait.h>
-#include <pwd.h>
 #endif
 
 #include <cstdint>
 #include <cstdlib>
 #include <array>
+#include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -61,6 +56,63 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string &comman
     return {exitCode, result};
 }
 
+bool FileHelper::launchDetachedCommand(const std::string &command)
+{
+    if (command.empty())
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to launch command: empty command\n");
+        return false;
+    }
+
+#ifdef _WIN32
+    STARTUPINFOA startupInfo{};
+    PROCESS_INFORMATION processInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+
+    std::string launchCommand = "cmd /C start \"\" " + command;
+    std::vector<char> mutableCommand(launchCommand.begin(), launchCommand.end());
+    mutableCommand.push_back('\0');
+
+    const BOOL created = CreateProcessA(
+        nullptr,
+        mutableCommand.data(),
+        nullptr,
+        nullptr,
+        FALSE,
+        CREATE_NO_WINDOW,
+        nullptr,
+        nullptr,
+        &startupInfo,
+        &processInfo);
+
+    if (!created)
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to launch detached command: " << command);
+        return false;
+    }
+
+    CloseHandle(processInfo.hThread);
+    CloseHandle(processInfo.hProcess);
+    return true;
+#else
+    const pid_t processId = fork();
+    if (processId < 0)
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to fork for detached command: " << command);
+        return false;
+    }
+
+    if (processId == 0)
+    {
+        setsid();
+        execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char *>(nullptr));
+        _exit(127);
+    }
+
+    return true;
+#endif
+}
+
 std::filesystem::path FileHelper::getExecutablePath()
 {
 #if defined(_WIN32)
@@ -76,13 +128,6 @@ std::filesystem::path FileHelper::getExecutablePath()
     if (size <= 0 || size >= static_cast<ssize_t>(sizeof(buffer)))
         return {};
     return std::filesystem::path(std::string(buffer, size)).parent_path();
-
-#elif defined(__APPLE__)
-    char buffer[1024];
-    uint32_t size = sizeof(buffer);
-    if (_NSGetExecutablePath(buffer, &size) != 0)
-        return {};
-    return std::filesystem::path(buffer).parent_path();
 #else
     return {};
 #endif

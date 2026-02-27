@@ -1,4 +1,5 @@
 #include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
+#include "Core/Logger.hpp"
 
 #include <iostream>
 

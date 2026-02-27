@@ -3,8 +3,12 @@
 #include <filesystem>
 #include <iostream>
 #include <fstream>
+#include <vector>
+#include <algorithm>
+#include <cctype>
 
 #include "Engine/Assets/AssetsLoader.hpp"
+#include "Engine/Assets/AssetsSerializer.hpp"
 
 #include "nlohmann/json.hpp"
 
@@ -25,26 +29,41 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
     }
 
     std::string projectConfigPath;
+    const std::filesystem::path projectDirectory = std::filesystem::path(projectPath);
+    const std::vector<std::string> knownProjectConfigNames = {
+        "project.elixproject",
+        "Project.elixproject",
+        "project.elixirproject",
+        "Project.elixirproject"};
 
-    const std::string defaultProjectConfigFile = projectPath.back() == '/' ? projectPath + "/project.elixproject" : projectPath + "project.elixproject";
+    for (const auto &projectConfigName : knownProjectConfigNames)
+    {
+        const auto candidatePath = projectDirectory / projectConfigName;
+        if (!std::filesystem::exists(candidatePath))
+            continue;
 
-    if (!std::filesystem::exists(defaultProjectConfigFile))
+        projectConfigPath = candidatePath.string();
+        break;
+    }
+
+    if (projectConfigPath.empty())
     {
         for (const auto &entry : std::filesystem::recursive_directory_iterator(projectPath))
         {
-            if (entry.path().extension() == ".elixproject")
-            {
-                projectConfigPath = entry.path().string();
-                break;
-            }
+            const auto extension = entry.path().extension().string();
+            if (extension != ".elixproject" && extension != ".elixirproject")
+                continue;
+
+            projectConfigPath = entry.path().string();
+            break;
         }
+    }
 
+    if (projectConfigPath.empty())
+    {
         VX_EDITOR_ERROR_STREAM("Failed to find config file in project\n");
-
         return nullptr;
     }
-    else
-        projectConfigPath = defaultProjectConfigFile;
 
     std::ifstream configFile(projectConfigPath);
 
@@ -76,24 +95,59 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
     // std::string sourceDir;
     // std::string exportDir;
 
-    if (!json.contains("path")) //*Very important
-    {
-        VX_EDITOR_ERROR_STREAM("Failed to find 'path' key in config. Aborting...\n");
-        return nullptr;
-    }
-
-    if (!json.contains("scene"))
-    {
-        VX_EDITOR_INFO_STREAM("No scene. Creating default scene\n");
-    }
-
     auto project = std::make_shared<Project>();
+    const std::filesystem::path configDirectory = std::filesystem::path(projectConfigPath).parent_path();
 
-    project->name = json["name"];
-    project->entryScene = json["scene"];
-    project->fullPath = json["path"];
-    project->resourcesDir = json["resources_path"];
-    project->sourcesDir = json["sources_path"];
+    auto getConfigString = [&](std::initializer_list<const char *> keys, const std::string &fallback = std::string{}) -> std::string
+    {
+        for (const auto *key : keys)
+        {
+            if (!json.contains(key))
+                continue;
+
+            if (!json[key].is_string())
+                continue;
+
+            return json[key].get<std::string>();
+        }
+
+        return fallback;
+    };
+
+    auto makeAbsolute = [](const std::string &rawPath, const std::filesystem::path &basePath) -> std::string
+    {
+        if (rawPath.empty())
+            return {};
+
+        std::filesystem::path path(rawPath);
+        if (path.is_relative())
+            path = basePath / path;
+
+        return path.lexically_normal().string();
+    };
+
+    project->name = getConfigString({"name"}, configDirectory.filename().string());
+
+    const auto rawFullPath = getConfigString({"path", "project_path"}, projectPath);
+    project->fullPath = makeAbsolute(rawFullPath, configDirectory);
+
+    const auto rawEntryScene = getConfigString({"scene", "entry_scene"});
+    if (rawEntryScene.empty())
+        VX_EDITOR_INFO_STREAM("No scene configured in project file\n");
+    project->entryScene = makeAbsolute(rawEntryScene, project->fullPath);
+
+    project->resourcesDir = makeAbsolute(getConfigString({"resources_path", "resources_dir", "assets_dir"}), project->fullPath);
+    project->sourcesDir = makeAbsolute(getConfigString({"sources_path", "source_dir", "src_dir"}), project->fullPath);
+    project->buildDir = makeAbsolute(getConfigString({"build_dir"}, (std::filesystem::path(project->fullPath) / "build").string()), configDirectory);
+    project->scenesDir = makeAbsolute(getConfigString({"scenes_dir", "scene_dir"}), project->fullPath);
+    project->exportDir = makeAbsolute(getConfigString({"export_dir"}), project->fullPath);
+
+    if (project->resourcesDir.empty())
+        project->resourcesDir = (std::filesystem::path(project->fullPath) / "resources").string();
+    if (project->sourcesDir.empty())
+        project->sourcesDir = (std::filesystem::path(project->fullPath) / "Sources").string();
+    if (project->buildDir.empty())
+        project->buildDir = (std::filesystem::path(project->fullPath) / "build").string();
 
     auto &assetsCache = project->cache;
 
@@ -103,19 +157,24 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
         return nullptr;
     }
 
+    engine::AssetsSerializer serializer;
     for (auto &entry : std::filesystem::recursive_directory_iterator(project->fullPath))
     {
-        const auto &extension = entry.path().extension();
+        std::error_code fileError;
+        if (!entry.is_regular_file(fileError) || fileError)
+            continue;
 
-        if (extension == ".png" || extension == ".jpg")
-        {
-            VX_EDITOR_INFO_STREAM("Found texture: " << entry.path().string());
+        const auto header = serializer.readHeader(entry.path().string());
+        if (!header.has_value() ||
+            static_cast<engine::Asset::AssetType>(header->type) != engine::Asset::AssetType::TEXTURE)
+            continue;
 
-            TextureAssetRecord texture;
-            texture.path = entry.path().string();
+        const std::string relativeTexturePath = std::filesystem::relative(entry.path(), project->fullPath).lexically_normal().string();
+        // VX_EDITOR_INFO_STREAM("Found texture asset: " << relativeTexturePath);
 
-            assetsCache.texturesByPath[texture.path] = texture;
-        }
+        TextureAssetRecord texture;
+        texture.path = relativeTexturePath;
+        assetsCache.texturesByPath[texture.path] = texture;
     }
 
     return project;

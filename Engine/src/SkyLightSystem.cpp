@@ -3,6 +3,7 @@
 #include "Core/VulkanContext.hpp"
 
 #include "Engine/Utilities/BufferUtilities.hpp"
+#include "Engine/Utilities/AsyncGpuUpload.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 #include "Engine/Shaders/PushConstant.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
@@ -77,19 +78,19 @@ SkyLightSystem::SkyLightSystem()
     VkDeviceSize skyboxSize = sizeof(skyboxVertices[0]) * skyboxVertices.size();
     m_vertexCount = static_cast<uint32_t>(skyboxVertices.size()) / 3;
 
-    auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
-    commandBuffer.begin();
+    auto commandBuffer = core::CommandBuffer::createShared(*core::VulkanContext::getContext()->getTransferCommandPool());
+    commandBuffer->begin();
 
-    auto vertexStaging = core::Buffer::create(skyboxSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
-    vertexStaging.upload(skyboxVertices.data(), skyboxSize);
+    auto vertexStaging = core::Buffer::createShared(skyboxSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
+    vertexStaging->upload(skyboxVertices.data(), skyboxSize);
 
     m_vertexBuffer = core::Buffer::createShared(skyboxSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
 
-    utilities::BufferUtilities::copyBuffer(vertexStaging, *m_vertexBuffer, commandBuffer, skyboxSize);
-    commandBuffer.end();
+    utilities::BufferUtilities::copyBuffer(*vertexStaging, *m_vertexBuffer, *commandBuffer, skyboxSize);
+    commandBuffer->end();
 
-    commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
-    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    if (!utilities::AsyncGpuUpload::submit(commandBuffer, core::VulkanContext::getContext()->getTransferQueue(), {vertexStaging}))
+        VX_ENGINE_ERROR_STREAM("Failed to submit sky light vertex upload\n");
     ///
 
     VkDescriptorSetLayoutBinding uboBinding{};
@@ -105,7 +106,9 @@ SkyLightSystem::SkyLightSystem()
 
     auto pushConstant = PushConstant<PushConstantView>::getRange(VK_SHADER_STAGE_VERTEX_BIT);
 
-    m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{m_descriptorSetLayout}, std::vector<VkPushConstantRange>{pushConstant});
+    m_pipelineLayout = core::PipelineLayout::createShared(device,
+                                                          std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{*m_descriptorSetLayout},
+                                                          std::vector<VkPushConstantRange>{pushConstant});
 
     m_descriptorSet = DescriptorSetBuilder::begin()
                           .addBuffer(m_uboBuffer, sizeof(UBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)

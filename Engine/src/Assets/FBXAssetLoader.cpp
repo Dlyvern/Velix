@@ -2,6 +2,9 @@
 
 #include <iostream>
 #include <algorithm>
+#include <cmath>
+#include <cctype>
+#include <filesystem>
 
 #include "Engine/Skeleton.hpp"
 
@@ -19,7 +22,7 @@ struct VertexKey
     }
 };
 
-struct Influence
+struct Influences
 {
     int boneId;
     float weight;
@@ -47,69 +50,120 @@ struct VertexKeyHash
 
 namespace
 {
-bool hasAnyTransformCurve(FbxNode *node, FbxAnimLayer *layer)
-{
-    if (!node || !layer)
-        return false;
-
-    const bool hasTranslation = node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X) ||
-                                node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y) ||
-                                node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z);
-    const bool hasRotation = node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X) ||
-                             node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y) ||
-                             node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z);
-    const bool hasScale = node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X) ||
-                          node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y) ||
-                          node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z);
-
-    return hasTranslation || hasRotation || hasScale;
-}
-
-std::vector<FbxTime> collectTrackKeyTimes(FbxNode *node, FbxAnimLayer *layer, const FbxTime &clipStart, const FbxTime &clipEnd)
-{
-    std::vector<FbxTime> keyTimes;
-
-    auto collectCurveTimes = [&keyTimes](FbxAnimCurve *curve)
+    bool looksLikeWindowsAbsolutePath(const std::string &path)
     {
-        if (!curve)
-            return;
+        return path.size() >= 3u &&
+               std::isalpha(static_cast<unsigned char>(path[0])) &&
+               path[1] == ':' &&
+               (path[2] == '\\' || path[2] == '/');
+    }
 
-        const int keyCount = curve->KeyGetCount();
-        keyTimes.reserve(keyTimes.size() + static_cast<size_t>(keyCount));
+    bool hasAnyTransformCurve(FbxNode *node, FbxAnimLayer *layer)
+    {
+        if (!node || !layer)
+            return false;
 
-        for (int keyIndex = 0; keyIndex < keyCount; ++keyIndex)
-            keyTimes.push_back(curve->KeyGetTime(keyIndex));
-    };
+        const bool hasTranslation = node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X) ||
+                                    node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y) ||
+                                    node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z);
+        const bool hasRotation = node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X) ||
+                                 node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y) ||
+                                 node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z);
+        const bool hasScale = node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X) ||
+                              node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y) ||
+                              node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z);
 
-    collectCurveTimes(node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X));
-    collectCurveTimes(node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y));
-    collectCurveTimes(node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z));
+        return hasTranslation || hasRotation || hasScale;
+    }
 
-    collectCurveTimes(node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X));
-    collectCurveTimes(node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y));
-    collectCurveTimes(node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z));
+    std::vector<FbxTime> collectTrackKeyTimes(FbxNode *node, FbxAnimLayer *layer, const FbxTime &clipStart, const FbxTime &clipEnd)
+    {
+        std::vector<FbxTime> keyTimes;
 
-    collectCurveTimes(node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X));
-    collectCurveTimes(node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y));
-    collectCurveTimes(node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z));
+        auto collectCurveTimes = [&keyTimes](FbxAnimCurve *curve)
+        {
+            if (!curve)
+                return;
 
-    if (keyTimes.empty())
+            const int keyCount = curve->KeyGetCount();
+            keyTimes.reserve(keyTimes.size() + static_cast<size_t>(keyCount));
+
+            for (int keyIndex = 0; keyIndex < keyCount; ++keyIndex)
+                keyTimes.push_back(curve->KeyGetTime(keyIndex));
+        };
+
+        collectCurveTimes(node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X));
+        collectCurveTimes(node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y));
+        collectCurveTimes(node->LclTranslation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z));
+
+        collectCurveTimes(node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X));
+        collectCurveTimes(node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y));
+        collectCurveTimes(node->LclRotation.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z));
+
+        collectCurveTimes(node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_X));
+        collectCurveTimes(node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Y));
+        collectCurveTimes(node->LclScaling.GetCurve(layer, FBXSDK_CURVENODE_COMPONENT_Z));
+
+        if (keyTimes.empty())
+            return keyTimes;
+
+        std::sort(keyTimes.begin(), keyTimes.end(), [](const FbxTime &lhs, const FbxTime &rhs)
+                  { return lhs.Get() < rhs.Get(); });
+
+        keyTimes.erase(std::unique(keyTimes.begin(), keyTimes.end(), [](const FbxTime &lhs, const FbxTime &rhs)
+                                   { return lhs.Get() == rhs.Get(); }),
+                       keyTimes.end());
+
+        if (keyTimes.front().Get() > clipStart.Get())
+            keyTimes.insert(keyTimes.begin(), clipStart);
+        if (keyTimes.back().Get() < clipEnd.Get())
+            keyTimes.push_back(clipEnd);
+
         return keyTimes;
+    }
 
-    std::sort(keyTimes.begin(), keyTimes.end(), [](const FbxTime &lhs, const FbxTime &rhs)
-              { return lhs.Get() < rhs.Get(); });
+    std::string normalizeFbxTexturePath(const std::string &rawPath, const std::filesystem::path &assetDirectory)
+    {
+        if (rawPath.empty())
+            return {};
 
-    keyTimes.erase(std::unique(keyTimes.begin(), keyTimes.end(), [](const FbxTime &lhs, const FbxTime &rhs)
-                               { return lhs.Get() == rhs.Get(); }),
-                   keyTimes.end());
+        std::string portablePath = rawPath;
+        std::replace(portablePath.begin(), portablePath.end(), '\\', '/');
+        std::filesystem::path texturePath(portablePath);
 
-    if (keyTimes.front().Get() > clipStart.Get())
-        keyTimes.insert(keyTimes.begin(), clipStart);
-    if (keyTimes.back().Get() < clipEnd.Get())
-        keyTimes.push_back(clipEnd);
+        std::error_code errorCode;
+        if (texturePath.is_absolute() && std::filesystem::exists(texturePath, errorCode) && !errorCode)
+            return texturePath.lexically_normal().string();
 
-    return keyTimes;
-}
+        // FBX can contain authoring-machine absolute paths (Windows drive path).
+        // Try local alternatives before keeping original unresolved path.
+        if (looksLikeWindowsAbsolutePath(portablePath))
+        {
+            const std::filesystem::path fileName = texturePath.filename();
+            if (!fileName.empty())
+            {
+                std::filesystem::path candidate = (assetDirectory / fileName).lexically_normal();
+                errorCode.clear();
+                if (std::filesystem::exists(candidate, errorCode) && !errorCode)
+                    return candidate.string();
+
+                const std::filesystem::path parentDirectoryName = texturePath.parent_path().filename();
+                if (!parentDirectoryName.empty())
+                {
+                    candidate = (assetDirectory / parentDirectoryName / fileName).lexically_normal();
+                    errorCode.clear();
+                    if (std::filesystem::exists(candidate, errorCode) && !errorCode)
+                        return candidate.string();
+                }
+            }
+        }
+
+        const std::filesystem::path candidate = (assetDirectory / texturePath).lexically_normal();
+        if (std::filesystem::exists(candidate, errorCode) && !errorCode)
+            return candidate.string();
+
+        return texturePath.lexically_normal().string();
+    }
 } // namespace
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -142,8 +196,16 @@ FBXAssetLoader::FBXAssetLoader()
     m_fbxManager = FbxManager::Create();
     m_fbxIOSettings = FbxIOSettings::Create(m_fbxManager, IOSROOT);
     m_fbxManager->SetIOSettings(m_fbxIOSettings);
+}
 
-    // m_fbxManager->Destroy();
+FBXAssetLoader::~FBXAssetLoader()
+{
+    if (m_fbxManager)
+    {
+        m_fbxManager->Destroy();
+        m_fbxManager = nullptr;
+        m_fbxIOSettings = nullptr;
+    }
 }
 
 const std::vector<std::string> FBXAssetLoader::getSupportedFormats() const
@@ -153,14 +215,37 @@ const std::vector<std::string> FBXAssetLoader::getSupportedFormats() const
 
 std::shared_ptr<IAsset> FBXAssetLoader::load(const std::string &filePath)
 {
+    return loadInternal(filePath);
+}
+
+std::shared_ptr<IAsset> FBXAssetLoader::loadInternal(const std::string &filePath)
+{
+    resetImportCaches();
+
+    if (m_fbxIOSettings)
+    {
+        // Keep material/texture link metadata for path extraction, but skip optional payloads.
+        m_fbxIOSettings->SetBoolProp(IMP_FBX_MATERIAL, true);
+        m_fbxIOSettings->SetBoolProp(IMP_FBX_TEXTURE, true);
+        m_fbxIOSettings->SetBoolProp(IMP_FBX_LINK, true);
+        m_fbxIOSettings->SetBoolProp(IMP_FBX_SHAPE, false);
+        m_fbxIOSettings->SetBoolProp(IMP_FBX_GOBO, false);
+        m_fbxIOSettings->SetBoolProp(IMP_FBX_ANIMATION, true);
+        m_fbxIOSettings->SetBoolProp(IMP_FBX_GLOBAL_SETTINGS, true);
+        m_fbxIOSettings->SetBoolProp(IMP_FBX_EXTRACT_EMBEDDED_DATA, false);
+    }
+
     FbxImporter *importer = FbxImporter::Create(m_fbxManager, "");
 
     ProceedingMeshData meshesData;
+
+    m_currentAssetDirectory = std::filesystem::path(filePath).parent_path().lexically_normal();
 
     if (!importer->Initialize(filePath.c_str(), -1, m_fbxManager->GetIOSettings()))
     {
         VX_ENGINE_ERROR_STREAM("Failed to initialize FBX importer: " << importer->GetStatus().GetErrorString() << std::endl);
         importer->Destroy();
+        resetImportCaches();
         return nullptr;
     }
 
@@ -177,6 +262,7 @@ std::shared_ptr<IAsset> FBXAssetLoader::load(const std::string &filePath)
     {
         VX_ENGINE_ERROR_STREAM("Root node is invalid\n");
         scene->Destroy();
+        resetImportCaches();
         return nullptr;
     }
 
@@ -188,7 +274,7 @@ std::shared_ptr<IAsset> FBXAssetLoader::load(const std::string &filePath)
         buildSkeletonHierarchy(scene->GetRootNode(), skeleton);
     }
 
-    auto animations = processAnimations(scene, meshesData.skeleton);
+    const std::vector<Animation> animations = processAnimations(scene, meshesData.skeleton);
 
     VX_ENGINE_INFO_STREAM("Found " << animations.size() << " animations\n");
 
@@ -196,8 +282,11 @@ std::shared_ptr<IAsset> FBXAssetLoader::load(const std::string &filePath)
 
     VX_ENGINE_INFO_STREAM("Parsed " << meshesData.meshes.size() << " meshes\n");
 
-    auto modelAsset = std::make_shared<ModelAsset>(meshesData.meshes, meshesData.skeleton, animations);
+    auto modelAsset = std::make_shared<ModelAsset>(meshesData.meshes,
+                                                   meshesData.skeleton,
+                                                   animations);
 
+    resetImportCaches();
     return modelAsset;
 }
 
@@ -333,7 +422,7 @@ void FBXAssetLoader::processNodeAttribute(FbxNodeAttribute *nodeAttribute, FbxNo
     }
     default:
     {
-        VX_ENGINE_ERROR_STREAM("Unknow attribute type " << static_cast<int>(attributeType) << std::endl);
+        // Ignore unsupported node attribute types (camera/light/etc.) while importing meshes.
         break;
     }
     }
@@ -365,7 +454,6 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
     std::vector<TmpVertex> vertices;
     std::vector<uint32_t> indices;
 
-    int vertexCount = mesh->GetControlPointsCount();
     fbxsdk::FbxVector4 *controlPoints = mesh->GetControlPoints();
 
     int polygonCount = mesh->GetPolygonCount();
@@ -379,23 +467,35 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
 
     for (int polygonIndex = 0; polygonIndex < polygonCount; ++polygonIndex)
     {
-        int polygonSize = mesh->GetPolygonSize(polygonIndex);
+        const int polygonSize = mesh->GetPolygonSize(polygonIndex);
+        if (polygonSize < 3)
+            continue;
+
+        std::vector<uint32_t> polygonVertexIndices;
+        polygonVertexIndices.reserve(static_cast<size_t>(polygonSize));
 
         for (int vertexIndex = 0; vertexIndex < polygonSize; ++vertexIndex)
         {
-            int controlPointIndex = mesh->GetPolygonVertex(polygonIndex, vertexIndex);
+            const int controlPointIndex = mesh->GetPolygonVertex(polygonIndex, vertexIndex);
+            if (controlPointIndex < 0 || controlPointIndex >= mesh->GetControlPointsCount())
+                continue;
 
             auto position = controlPoints[controlPointIndex];
 
             FbxVector4 normal;
+            normal.Set(0.0, 1.0, 0.0, 0.0);
 
             mesh->GetPolygonVertexNormal(polygonIndex, vertexIndex, normal);
 
-            FbxVector2 uv;
-            bool unmapped;
+            FbxVector2 uv(0.0, 0.0);
+            bool unmapped = false;
 
             if (uvSetName)
-                mesh->GetPolygonVertexUV(polygonIndex, vertexIndex, uvSetName, uv, unmapped);
+            {
+                const bool hasUV = mesh->GetPolygonVertexUV(polygonIndex, vertexIndex, uvSetName, uv, unmapped);
+                if (!hasUV || unmapped)
+                    uv = FbxVector2(0.0, 0.0);
+            }
 
             VertexKey key{controlPointIndex, normal, uv};
 
@@ -411,7 +511,14 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
                 vertices.push_back(v);
             }
 
-            indices.push_back(vertexMap[key]);
+            polygonVertexIndices.push_back(vertexMap[key]);
+        }
+
+        for (size_t i = 1; i + 1 < polygonVertexIndices.size(); ++i)
+        {
+            indices.push_back(polygonVertexIndices[0]);
+            indices.push_back(polygonVertexIndices[i]);
+            indices.push_back(polygonVertexIndices[i + 1]);
         }
     }
 
@@ -423,35 +530,46 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
         (float)localMatrix.Get(2, 0), (float)localMatrix.Get(2, 1), (float)localMatrix.Get(2, 2), (float)localMatrix.Get(2, 3),
         (float)localMatrix.Get(3, 0), (float)localMatrix.Get(3, 1), (float)localMatrix.Get(3, 2), (float)localMatrix.Get(3, 3));
 
-    auto skeletonOptional = processSkeleton(mesh);
+    std::optional<Skeleton> skeletonOptional = processSkeleton(mesh);
 
     CPUMesh cpuMesh;
 
     if (skeletonOptional.has_value())
     {
-        std::vector<std::vector<Influence>> controlPointInfluences;
+        std::vector<std::vector<Influences>> controlPointInfluences;
         controlPointInfluences.resize(mesh->GetControlPointsCount());
 
         auto *skin = static_cast<FbxSkin *>(mesh->GetDeformer(0, FbxDeformer::eSkin));
-        int clusterCount = skin->GetClusterCount();
+        const int clusterCount = skin->GetClusterCount();
         auto &skeleton = skeletonOptional.value();
         meshData.skeleton = skeleton;
 
         for (int i = 0; i < clusterCount; ++i)
         {
             auto *cluster = skin->GetCluster(i);
-            int boneId = skeleton.getBoneId(cluster->GetLink()->GetName());
+            if (!cluster || !cluster->GetLink())
+                continue;
 
-            int indexCount = cluster->GetControlPointIndicesCount();
-            int *indices = cluster->GetControlPointIndices();
+            const int boneId = skeleton.getBoneId(cluster->GetLink()->GetName());
+            if (boneId < 0 || static_cast<size_t>(boneId) >= skeleton.getBonesCount())
+                continue;
+
+            const int indexCount = cluster->GetControlPointIndicesCount();
+            int *controlPointIndices = cluster->GetControlPointIndices();
             double *weights = cluster->GetControlPointWeights();
+
+            if (!controlPointIndices || !weights)
+                continue;
 
             for (int j = 0; j < indexCount; ++j)
             {
-                int cp = indices[j];
-                float w = static_cast<float>(weights[j]);
+                const int cp = controlPointIndices[j];
+                const float w = static_cast<float>(weights[j]);
 
-                if (w > 0.0f)
+                if (cp < 0 || cp >= static_cast<int>(controlPointInfluences.size()))
+                    continue;
+
+                if (std::isfinite(w) && w > 0.0f)
                     controlPointInfluences[cp].push_back({boneId, w});
             }
         }
@@ -468,10 +586,19 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
 
             const auto &influences = controlPointInfluences[vertex.controlPointIndex];
 
-            std::vector<Influence> sorted = influences;
+            std::vector<Influences> sorted;
+            sorted.reserve(influences.size());
+            for (const auto &influence : influences)
+            {
+                if (influence.boneId < 0 || static_cast<size_t>(influence.boneId) >= skeleton.getBonesCount())
+                    continue;
+                if (!std::isfinite(influence.weight) || influence.weight <= 0.0f)
+                    continue;
+                sorted.push_back(influence);
+            }
 
             std::sort(sorted.begin(), sorted.end(),
-                      [](const Influence &a, const Influence &b)
+                      [](const Influences &a, const Influences &b)
                       {
                           return a.weight > b.weight;
                       });
@@ -490,6 +617,19 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
                 v.weights /= totalWeight;
 
             skinnedVertices.push_back(v);
+        }
+
+        std::vector<vertex::Vertex3D> tangentVertices;
+        tangentVertices.reserve(skinnedVertices.size());
+        for (const auto &vertex : skinnedVertices)
+            tangentVertices.emplace_back(vertex.position, vertex.textureCoordinates, vertex.normal, glm::vec3(0.0f), glm::vec3(0.0f));
+
+        vertex::generateTangents(tangentVertices, indices);
+
+        for (size_t index = 0; index < skinnedVertices.size() && index < tangentVertices.size(); ++index)
+        {
+            skinnedVertices[index].tangent = tangentVertices[index].tangent;
+            skinnedVertices[index].bitangent = tangentVertices[index].bitangent;
         }
 
         cpuMesh = CPUMesh::build<vertex::VertexSkinned>(skinnedVertices, indices);
@@ -595,10 +735,112 @@ void FBXAssetLoader::processMaterials(FbxNode *node, CPUMesh &mesh)
         if (!material)
             continue;
 
-        const char *matName = material->GetName();
-        mesh.material.name = std::string(matName);
-        VX_ENGINE_INFO_STREAM(mesh.material.name << std::endl);
+        auto cacheIterator = m_materialImportCache.find(material);
+        if (cacheIterator == m_materialImportCache.end())
+            cacheIterator = m_materialImportCache.emplace(material, parseMaterial(material)).first;
+
+        const ImportedMaterialData &importedMaterial = cacheIterator->second;
+
+        if (mesh.material.name.empty())
+            mesh.material.name = importedMaterial.name;
+
+        if (mesh.material.albedoTexture.empty())
+            mesh.material.albedoTexture = importedMaterial.albedoTexture;
+
+        if (mesh.material.normalTexture.empty())
+            mesh.material.normalTexture = importedMaterial.normalTexture;
+
+        if (mesh.material.emissiveTexture.empty())
+            mesh.material.emissiveTexture = importedMaterial.emissiveTexture;
     }
+}
+
+FBXAssetLoader::ImportedMaterialData FBXAssetLoader::parseMaterial(FbxSurfaceMaterial *material)
+{
+    ImportedMaterialData data{};
+    if (!material)
+        return data;
+
+    const char *materialName = material->GetName();
+    if (materialName)
+        data.name = materialName;
+
+    data.albedoTexture = extractTexturePathFromProperty(material->FindProperty(FbxSurfaceMaterial::sDiffuse));
+    data.normalTexture = extractTexturePathFromProperty(material->FindProperty(FbxSurfaceMaterial::sNormalMap));
+    if (data.normalTexture.empty())
+        data.normalTexture = extractTexturePathFromProperty(material->FindProperty(FbxSurfaceMaterial::sBump));
+    data.emissiveTexture = extractTexturePathFromProperty(material->FindProperty(FbxSurfaceMaterial::sEmissive));
+
+    return data;
+}
+
+std::string FBXAssetLoader::extractTexturePathFromProperty(FbxProperty property)
+{
+    if (!property.IsValid())
+        return {};
+
+    const int fileTextureCount = property.GetSrcObjectCount<FbxFileTexture>();
+    for (int textureIndex = 0; textureIndex < fileTextureCount; ++textureIndex)
+    {
+        auto *fileTexture = property.GetSrcObject<FbxFileTexture>(textureIndex);
+        if (!fileTexture)
+            continue;
+
+        std::string texturePath = fileTexture->GetFileName() ? fileTexture->GetFileName() : "";
+        if (texturePath.empty() && fileTexture->GetRelativeFileName())
+            texturePath = fileTexture->GetRelativeFileName();
+
+        if (!texturePath.empty())
+            return normalizeTexturePath(texturePath);
+    }
+
+    const int layeredTextureCount = property.GetSrcObjectCount<FbxLayeredTexture>();
+    for (int layeredIndex = 0; layeredIndex < layeredTextureCount; ++layeredIndex)
+    {
+        auto *layeredTexture = property.GetSrcObject<FbxLayeredTexture>(layeredIndex);
+        if (!layeredTexture)
+            continue;
+
+        const int layeredFileTextureCount = layeredTexture->GetSrcObjectCount<FbxFileTexture>();
+        for (int textureIndex = 0; textureIndex < layeredFileTextureCount; ++textureIndex)
+        {
+            auto *fileTexture = layeredTexture->GetSrcObject<FbxFileTexture>(textureIndex);
+            if (!fileTexture)
+                continue;
+
+            std::string texturePath = fileTexture->GetFileName() ? fileTexture->GetFileName() : "";
+            if (texturePath.empty() && fileTexture->GetRelativeFileName())
+                texturePath = fileTexture->GetRelativeFileName();
+
+            if (!texturePath.empty())
+                return normalizeTexturePath(texturePath);
+        }
+    }
+
+    return {};
+}
+
+std::string FBXAssetLoader::normalizeTexturePath(const std::string &rawPath)
+{
+    if (rawPath.empty())
+        return {};
+
+    std::string cacheKey = rawPath;
+    std::replace(cacheKey.begin(), cacheKey.end(), '\\', '/');
+
+    const auto cacheIterator = m_texturePathResolveCache.find(cacheKey);
+    if (cacheIterator != m_texturePathResolveCache.end())
+        return cacheIterator->second;
+
+    std::string normalizedPath = normalizeFbxTexturePath(cacheKey, m_currentAssetDirectory);
+    m_texturePathResolveCache.emplace(std::move(cacheKey), normalizedPath);
+    return normalizedPath;
+}
+
+void FBXAssetLoader::resetImportCaches()
+{
+    m_materialImportCache.clear();
+    m_texturePathResolveCache.clear();
 }
 
 ELIX_NESTED_NAMESPACE_END

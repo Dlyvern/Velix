@@ -17,7 +17,7 @@ public:
     PhysXCore(PhysXCore &&) noexcept = default;
     PhysXCore &operator=(PhysXCore &&) noexcept = default;
 
-    static void init();
+    static bool init();
 
     static void shutdown();
 

@@ -8,6 +8,7 @@
 #include "Engine/Caches/Hash.hpp"
 #include "Engine/Material.hpp"
 #include "Engine/Vertex.hpp"
+#include "Engine/Utilities/AsyncGpuUpload.hpp"
 #include "Engine/Utilities/BufferUtilities.hpp"
 
 #include <memory>
@@ -72,29 +73,29 @@ struct GPUMesh
         VkDeviceSize indexSize = sizeof(indices[0]) * indices.size();
         VkDeviceSize vertexSize = sizeof(vertexData[0]) * vertexData.size();
 
-        auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
-        commandBuffer.begin();
+        auto commandBuffer = core::CommandBuffer::createShared(*core::VulkanContext::getContext()->getTransferCommandPool());
+        commandBuffer->begin();
 
         // Vertex
-        auto vertexStaging = core::Buffer::create(vertexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
-        vertexStaging.upload(vertexData.data(), vertexSize);
+        auto vertexStaging = core::Buffer::createShared(vertexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
+        vertexStaging->upload(vertexData.data(), vertexSize);
 
         auto vertexGPUBuffer = core::Buffer::createShared(vertexSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
 
-        utilities::BufferUtilities::copyBuffer(vertexStaging, *vertexGPUBuffer, commandBuffer, vertexSize);
+        utilities::BufferUtilities::copyBuffer(*vertexStaging, *vertexGPUBuffer, *commandBuffer, vertexSize);
 
         // Index
-        auto staging = core::Buffer::create(indexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
-        staging.upload(indices.data(), indexSize);
+        auto staging = core::Buffer::createShared(indexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
+        staging->upload(indices.data(), indexSize);
 
         auto gpuBuffer = core::Buffer::createShared(indexSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
 
-        utilities::BufferUtilities::copyBuffer(staging, *gpuBuffer, commandBuffer, indexSize);
+        utilities::BufferUtilities::copyBuffer(*staging, *gpuBuffer, *commandBuffer, indexSize);
 
-        commandBuffer.end();
+        commandBuffer->end();
 
-        commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
-        vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+        if (!utilities::AsyncGpuUpload::submit(commandBuffer, core::VulkanContext::getContext()->getTransferQueue(), {vertexStaging, staging}))
+            return nullptr;
 
         gpu->vertexBuffer = vertexGPUBuffer;
         gpu->indexBuffer = gpuBuffer;

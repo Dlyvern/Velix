@@ -1,6 +1,7 @@
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 
 #include "Core/VulkanContext.hpp"
+#include "Core/Logger.hpp"
 
 #include "Engine/Builders/GraphicsPipelineBuilder.hpp"
 #include "Engine/Caches/GraphicsPipelineCache.hpp"
@@ -70,6 +71,11 @@ void GraphicsPipelineManager::loadShaderModules()
     gBufferSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_skinned.vert.spv", "./resources/shaders/gbuffer_static.frag.spv");
 
     lightingShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/lighting.frag.spv");
+
+    fxaaShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/fxaa.frag.spv");
+    bloomExtractShader   = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_extract.frag.spv");
+    bloomCompositeShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_composite.frag.spv");
+    ssrShader            = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssr.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -95,6 +101,10 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(gBufferStaticShader);
     destroyShader(gBufferSkinnedShader);
     destroyShader(lightingShader);
+    destroyShader(fxaaShader);
+    destroyShader(bloomExtractShader);
+    destroyShader(bloomCompositeShader);
+    destroyShader(ssrShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -149,6 +159,18 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         break;
     case ShaderId::Lighting:
         stages = lightingShader->getShaderStages();
+        break;
+    case ShaderId::FXAA:
+        stages = fxaaShader->getShaderStages();
+        break;
+    case ShaderId::BloomExtract:
+        stages = bloomExtractShader->getShaderStages();
+        break;
+    case ShaderId::BloomComposite:
+        stages = bloomCompositeShader->getShaderStages();
+        break;
+    case ShaderId::SSR:
+        stages = ssrShader->getShaderStages();
         break;
     default:
         throw std::runtime_error("Unknown ShaderId");
@@ -208,7 +230,10 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         vertexBindingDescriptions = {bindingDescription};
         vertexAttributeDescriptions = {attributeDescription};
     }
-    else if (key.shader == ShaderId::ToneMap || key.shader == ShaderId::SelectionOverlay || key.shader == ShaderId::Present || key.shader == ShaderId::Lighting)
+    else if (key.shader == ShaderId::ToneMap || key.shader == ShaderId::SelectionOverlay ||
+             key.shader == ShaderId::Present  || key.shader == ShaderId::Lighting       ||
+             key.shader == ShaderId::FXAA     || key.shader == ShaderId::BloomExtract   ||
+             key.shader == ShaderId::BloomComposite || key.shader == ShaderId::SSR)
     {
         vertexBindingDescriptions = {};
         vertexAttributeDescriptions = {};

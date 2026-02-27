@@ -11,6 +11,8 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
+class Entity;
+
 class Transform3DComponent : public ECS
 {
 public:
@@ -26,8 +28,17 @@ public:
     const glm::vec3& getScale() const;
     glm::vec3& getScale();
     const glm::quat& getRotation() const;
+
+    glm::vec3 getWorldPosition() const;
+    glm::quat getWorldRotation() const;
+    void setWorldPosition(const glm::vec3 &position);
+    void setWorldRotation(const glm::quat &rotation);
+
+    glm::mat4 getLocalMatrix() const;
     glm::mat4 getMatrix() const;
 private:
+    const Transform3DComponent *getParentTransform() const;
+
     glm::vec3 m_position{0.0f};
     glm::vec3 m_scale{1.0f};
     glm::quat m_rotation{1.0f, 0.0f, 0.0f, 0.0f};

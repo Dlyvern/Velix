@@ -23,8 +23,18 @@ struct RenderGraphFrameProfilingData
 {
     uint64_t frameIndex{0};
     uint32_t totalDrawCalls{0};
+    double cpuFrameTimeMs{0.0};
     double cpuTotalTimeMs{0.0};
+    double cpuWaitForFenceMs{0.0};
+    double cpuAcquireImageMs{0.0};
+    double cpuRecompileMs{0.0};
+    double cpuSubmitMs{0.0};
+    double cpuPresentMs{0.0};
+    double cpuSyncTimeMs{0.0};
+    double cpuWasteTimeMs{0.0};
+    double gpuFrameTimeMs{0.0};
     double gpuTotalTimeMs{0.0};
+    double gpuWasteTimeMs{0.0};
     bool gpuTimingAvailable{false};
     std::vector<RenderGraphPassProfilingData> passes;
 };

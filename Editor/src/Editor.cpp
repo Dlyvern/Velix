@@ -8,10 +8,12 @@
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
+#include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/Components/CameraComponent.hpp"
 #include "Engine/Components/RigidBodyComponent.hpp"
 #include "Engine/Primitives.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
+#include "Engine/Assets/AssetsSerializer.hpp"
 #include "Engine/Render/ObjectIdEncoding.hpp"
 #include "Engine/Shaders/ShaderCompiler.hpp"
 
@@ -19,6 +21,7 @@
 #include "Engine/Components/CollisionComponent.hpp"
 
 #include "Engine/PluginSystem/PluginLoader.hpp"
+#include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Utilities/ImageUtilities.hpp"
 
 #include "Editor/FileHelper.hpp"
@@ -27,7 +30,11 @@
 #include <imgui_internal.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
+#include <glm/common.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <iostream>
 #include <cstring>
 
@@ -35,12 +42,17 @@
 
 #include <fstream>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <iomanip>
 #include <limits>
 #include <cmath>
 #include <sstream>
+#include <system_error>
+#include <unordered_map>
 #include <unordered_set>
+#include <cstdint>
+#include <cstdlib>
 
 #include "ImGuizmo.h"
 #include <nlohmann/json.hpp>
@@ -49,11 +61,182 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 namespace
 {
+    std::string quoteShellArgument(const std::filesystem::path &path)
+    {
+        std::string value = path.string();
+        std::string escaped;
+        escaped.reserve(value.size() + 2);
+
+        for (const char character : value)
+        {
+#if defined(_WIN32)
+            if (character == '"')
+#else
+            if (character == '"' || character == '\\')
+#endif
+                escaped.push_back('\\');
+
+            escaped.push_back(character);
+        }
+
+        return "\"" + escaped + "\"";
+    }
+
+    std::string joinDetectedIdeNames(const std::vector<elix::engine::EngineConfig::IdeInfo> &ides)
+    {
+        if (ides.empty())
+            return "none";
+
+        std::string joinedNames;
+        for (size_t i = 0; i < ides.size(); ++i)
+        {
+            if (i > 0)
+                joinedNames += ", ";
+
+            joinedNames += ides[i].displayName;
+        }
+
+        return joinedNames;
+    }
+
+    bool syncProjectCompileCommands(const elix::editor::Project &project)
+    {
+        const std::filesystem::path projectRoot = project.fullPath;
+        const std::filesystem::path buildDirectory = project.buildDir.empty()
+                                                         ? projectRoot / "build"
+                                                         : std::filesystem::path(project.buildDir);
+
+        const std::filesystem::path sourcePath = buildDirectory / "compile_commands.json";
+        const std::filesystem::path destinationPath = projectRoot / "compile_commands.json";
+
+        if (!std::filesystem::exists(sourcePath))
+            return false;
+
+        std::error_code errorCode;
+        std::filesystem::copy_file(sourcePath, destinationPath, std::filesystem::copy_options::overwrite_existing, errorCode);
+        return !errorCode;
+    }
+
+    std::filesystem::path resolveCMakeExecutablePath()
+    {
+#if defined(_WIN32)
+        constexpr const char *cmakeExecutableName = "cmake.exe";
+#else
+        constexpr const char *cmakeExecutableName = "cmake";
+#endif
+
+        auto isExistingFile = [](const std::filesystem::path &path) -> bool
+        {
+            if (path.empty())
+                return false;
+
+            std::error_code errorCode;
+            return std::filesystem::exists(path, errorCode) && std::filesystem::is_regular_file(path, errorCode);
+        };
+
+        if (const char *envPath = std::getenv("VELIX_CMAKE"); envPath && *envPath)
+        {
+            std::filesystem::path candidate(envPath);
+            if (isExistingFile(candidate))
+                return candidate;
+        }
+
+        std::filesystem::path engineRoot = FileHelper::getExecutablePath();
+        if (engineRoot.filename() == "bin")
+            engineRoot = engineRoot.parent_path();
+
+        const std::vector<std::filesystem::path> bundledCandidates = {
+            engineRoot / "tools" / "cmake" / "bin" / cmakeExecutableName,
+            engineRoot / "cmake" / "bin" / cmakeExecutableName,
+            engineRoot / "third_party" / "cmake" / "bin" / cmakeExecutableName,
+            engineRoot / "bin" / cmakeExecutableName,
+            engineRoot / cmakeExecutableName};
+
+        for (const auto &candidate : bundledCandidates)
+        {
+            if (isExistingFile(candidate))
+                return candidate;
+        }
+
+        return std::filesystem::path(cmakeExecutableName);
+    }
+
+    std::string makeExecutableCommandToken(const std::filesystem::path &executablePath)
+    {
+        const std::string value = executablePath.string();
+        const bool hasDirectorySeparators = value.find('/') != std::string::npos || value.find('\\') != std::string::npos;
+        const bool hasWhitespace = value.find_first_of(" \t") != std::string::npos;
+
+        if (executablePath.is_absolute() || hasDirectorySeparators || hasWhitespace)
+            return quoteShellArgument(executablePath);
+
+        return value;
+    }
+
+    std::filesystem::path findGameModuleLibraryPath(const std::filesystem::path &buildDirectory)
+    {
+        if (buildDirectory.empty() || !std::filesystem::exists(buildDirectory))
+            return {};
+
+        const std::vector<std::filesystem::path> searchRoots = {
+            buildDirectory,
+            buildDirectory / "Release",
+            buildDirectory / "RelWithDebInfo",
+            buildDirectory / "Debug",
+            buildDirectory / "MinSizeRel"};
+
+        const std::vector<std::string> moduleNames = {
+            std::string("GameModule") + SHARED_LIB_EXTENSION,
+            std::string("libGameModule") + SHARED_LIB_EXTENSION};
+
+        for (const auto &searchRoot : searchRoots)
+        {
+            if (!std::filesystem::exists(searchRoot))
+                continue;
+
+            for (const auto &moduleName : moduleNames)
+            {
+                const auto candidatePath = searchRoot / moduleName;
+                if (std::filesystem::exists(candidatePath) && std::filesystem::is_regular_file(candidatePath))
+                    return candidatePath;
+            }
+        }
+
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(buildDirectory))
+        {
+            if (!entry.is_regular_file())
+                continue;
+
+            const auto path = entry.path();
+            if (path.extension() != SHARED_LIB_EXTENSION)
+                continue;
+
+            const std::string stem = path.stem().string();
+            if (stem == "GameModule" || stem == "libGameModule")
+                return path;
+
+            if (path.filename().string().find("GameModule") != std::string::npos)
+                return path;
+        }
+
+        return {};
+    }
+
     std::string toLowerCopy(std::string text)
     {
         std::transform(text.begin(), text.end(), text.begin(), [](unsigned char character)
                        { return static_cast<char>(std::tolower(character)); });
         return text;
+    }
+
+    std::string textureExtensionLower(const std::string &path)
+    {
+        return toLowerCopy(std::filesystem::path(path).extension().string());
+    }
+
+    VkFormat getLdrTextureFormat(TextureUsage usage)
+    {
+        return usage == TextureUsage::Data ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R8G8B8A8_SRGB;
     }
 
     bool isEditableTextPath(const std::filesystem::path &path)
@@ -66,6 +249,436 @@ namespace
 
         const std::string extension = toLowerCopy(path.extension().string());
         return editableExtensions.find(extension) != editableExtensions.end();
+    }
+
+    bool isModelAssetPath(const std::filesystem::path &path)
+    {
+        if (toLowerCopy(path.extension().string()) != ".elixasset")
+            return false;
+
+        engine::AssetsSerializer serializer;
+        const auto header = serializer.readHeader(path.string());
+        if (!header.has_value())
+            return false;
+
+        return static_cast<engine::Asset::AssetType>(header->type) == engine::Asset::AssetType::MODEL;
+    }
+
+    bool isTextureAssetPath(const std::filesystem::path &path)
+    {
+        if (toLowerCopy(path.extension().string()) != ".elixasset")
+            return false;
+
+        engine::AssetsSerializer serializer;
+        const auto header = serializer.readHeader(path.string());
+        if (!header.has_value())
+            return false;
+
+        return static_cast<engine::Asset::AssetType>(header->type) == engine::Asset::AssetType::TEXTURE;
+    }
+
+    bool isScriptAssetPath(const std::filesystem::path &path)
+    {
+        static const std::unordered_set<std::string> scriptExtensions = {
+            ".cpp", ".cxx", ".cc", ".c", ".hpp", ".hh", ".hxx", ".h"};
+
+        const std::string extension = toLowerCopy(path.extension().string());
+        return scriptExtensions.find(extension) != scriptExtensions.end();
+    }
+
+    std::filesystem::path makeUniquePathWithExtension(const std::filesystem::path &directory,
+                                                      const std::string &baseName,
+                                                      const std::string &extension)
+    {
+        std::filesystem::path candidate = directory / (baseName + extension);
+        if (!std::filesystem::exists(candidate))
+            return candidate;
+
+        uint32_t suffix = 1;
+        while (true)
+        {
+            candidate = directory / (baseName + "_" + std::to_string(suffix) + extension);
+            if (!std::filesystem::exists(candidate))
+                return candidate;
+
+            ++suffix;
+        }
+    }
+
+    std::string sanitizeFileStem(std::string value)
+    {
+        for (char &character : value)
+        {
+            const bool isAlphaNumeric = (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9');
+            const bool isAllowedPunctuation = character == '_' || character == '-';
+
+            if (!isAlphaNumeric && !isAllowedPunctuation)
+                character = '_';
+        }
+
+        if (value.empty())
+            return "Material";
+
+        return value;
+    }
+
+    std::string buildMaterialSignature(const elix::engine::CPUMaterial &material)
+    {
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(6);
+        stream << material.name << '\n'
+               << material.albedoTexture << '\n'
+               << material.normalTexture << '\n'
+               << material.ormTexture << '\n'
+               << material.emissiveTexture << '\n'
+               << material.baseColorFactor.r << ',' << material.baseColorFactor.g << ',' << material.baseColorFactor.b << ',' << material.baseColorFactor.a << '\n'
+               << material.emissiveFactor.r << ',' << material.emissiveFactor.g << ',' << material.emissiveFactor.b << '\n'
+               << material.metallicFactor << '\n'
+               << material.roughnessFactor << '\n'
+               << material.aoStrength << '\n'
+               << material.normalScale << '\n'
+               << material.alphaCutoff << '\n'
+               << material.uvScale.x << ',' << material.uvScale.y << '\n'
+               << material.uvOffset.x << ',' << material.uvOffset.y << '\n'
+               << material.flags;
+        return stream.str();
+    }
+
+    std::filesystem::path makeAbsoluteNormalized(const std::filesystem::path &path)
+    {
+        std::error_code errorCode;
+        std::filesystem::path absolutePath = std::filesystem::absolute(path, errorCode);
+        if (errorCode)
+            return path.lexically_normal();
+
+        return absolutePath.lexically_normal();
+    }
+
+    bool isPathWithinRoot(const std::filesystem::path &path, const std::filesystem::path &root)
+    {
+        if (root.empty())
+            return false;
+
+        std::error_code errorCode;
+        const std::filesystem::path normalizedPath = makeAbsoluteNormalized(path);
+        const std::filesystem::path normalizedRoot = makeAbsoluteNormalized(root);
+        const std::filesystem::path relativePath = std::filesystem::relative(normalizedPath, normalizedRoot, errorCode);
+
+        if (errorCode || relativePath.empty())
+            return false;
+
+        const std::string relative = relativePath.lexically_normal().string();
+        if (relative == ".")
+            return true;
+
+        return relative.rfind("..", 0) != 0;
+    }
+
+    std::string toProjectRelativePathIfPossible(const std::filesystem::path &path, const std::filesystem::path &projectRoot)
+    {
+        const std::filesystem::path normalizedPath = makeAbsoluteNormalized(path);
+        if (projectRoot.empty() || !isPathWithinRoot(normalizedPath, projectRoot))
+            return normalizedPath.string();
+
+        std::error_code errorCode;
+        const std::filesystem::path relativePath = std::filesystem::relative(normalizedPath, makeAbsoluteNormalized(projectRoot), errorCode);
+        if (errorCode || relativePath.empty())
+            return normalizedPath.string();
+
+        return relativePath.lexically_normal().string();
+    }
+
+    bool tryResolveCandidateTexturePath(const std::filesystem::path &candidatePath,
+                                        std::string &outResolvedPath)
+    {
+        std::error_code existsError;
+        if (!std::filesystem::exists(candidatePath, existsError) || existsError)
+            return false;
+
+        outResolvedPath = makeAbsoluteNormalized(candidatePath).string();
+        return true;
+    }
+
+    bool looksLikeWindowsAbsolutePath(const std::string &path)
+    {
+        return path.size() >= 3u &&
+               std::isalpha(static_cast<unsigned char>(path[0])) &&
+               path[1] == ':' &&
+               (path[2] == '\\' || path[2] == '/');
+    }
+
+    std::string resolveTexturePathAgainstProjectRoot(const std::string &texturePath, const std::filesystem::path &projectRoot)
+    {
+        if (texturePath.empty())
+            return {};
+
+        if (looksLikeWindowsAbsolutePath(texturePath))
+            return texturePath;
+
+        const std::filesystem::path path(texturePath);
+        if (path.is_absolute())
+            return makeAbsoluteNormalized(path).string();
+
+        if (projectRoot.empty())
+            return texturePath;
+
+        return makeAbsoluteNormalized(projectRoot / path).string();
+    }
+
+    std::optional<engine::Asset::AssetType> readSerializedAssetType(const std::filesystem::path &path)
+    {
+        if (toLowerCopy(path.extension().string()) != ".elixasset")
+            return std::nullopt;
+
+        engine::AssetsSerializer serializer;
+        const auto header = serializer.readHeader(path.string());
+        if (!header.has_value())
+            return std::nullopt;
+
+        return static_cast<engine::Asset::AssetType>(header->type);
+    }
+
+    std::string makeTextureAssetDisplayName(const std::string &texturePath)
+    {
+        if (texturePath.empty())
+            return "<Default>";
+
+        const std::string filename = std::filesystem::path(texturePath).filename().string();
+        const std::string filenameLower = toLowerCopy(filename);
+
+        constexpr const char *textureSuffix = ".tex.elixasset";
+        constexpr const char *genericSuffix = ".elixasset";
+
+        if (filenameLower.size() > std::strlen(textureSuffix) &&
+            filenameLower.rfind(textureSuffix) == filenameLower.size() - std::strlen(textureSuffix))
+            return filename.substr(0, filename.size() - std::strlen(textureSuffix));
+
+        if (filenameLower.size() > std::strlen(genericSuffix) &&
+            filenameLower.rfind(genericSuffix) == filenameLower.size() - std::strlen(genericSuffix))
+            return filename.substr(0, filename.size() - std::strlen(genericSuffix));
+
+        return filename;
+    }
+
+    std::string toMaterialTextureReferencePath(const std::string &texturePath, const std::filesystem::path &projectRoot)
+    {
+        if (texturePath.empty())
+            return {};
+
+        std::filesystem::path resolvedPath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
+        resolvedPath = resolvedPath.lexically_normal();
+
+        std::string extensionLower = toLowerCopy(resolvedPath.extension().string());
+        if (extensionLower != ".elixasset")
+        {
+            std::filesystem::path candidateAssetPath = resolvedPath;
+            candidateAssetPath.replace_extension(".tex.elixasset");
+
+            std::error_code existsError;
+            if (std::filesystem::exists(candidateAssetPath, existsError) && !existsError)
+                resolvedPath = candidateAssetPath.lexically_normal();
+            else
+            {
+                std::error_code sourceExistsError;
+                if (std::filesystem::exists(resolvedPath, sourceExistsError) && !sourceExistsError &&
+                    engine::AssetsLoader::importTextureAsset(resolvedPath.string(), candidateAssetPath.string()))
+                    resolvedPath = candidateAssetPath.lexically_normal();
+            }
+        }
+
+        if (toLowerCopy(resolvedPath.extension().string()) == ".elixasset")
+        {
+            auto type = readSerializedAssetType(resolvedPath);
+            if (type.has_value() && type.value() == engine::Asset::AssetType::TEXTURE)
+                return toProjectRelativePathIfPossible(resolvedPath, projectRoot);
+        }
+
+        return toProjectRelativePathIfPossible(resolvedPath, projectRoot);
+    }
+
+    std::vector<std::string> gatherProjectTextureAssets(Project &project, const std::filesystem::path &projectRoot)
+    {
+        std::vector<std::string> texturePaths;
+        std::unordered_set<std::string> uniquePaths;
+
+        auto addTexturePath = [&](const std::filesystem::path &path)
+        {
+            const std::string normalized = toProjectRelativePathIfPossible(path.lexically_normal(), projectRoot);
+            if (!uniquePaths.insert(normalized).second)
+                return;
+
+            auto &record = project.cache.texturesByPath[normalized];
+            record.path = normalized;
+            texturePaths.push_back(normalized);
+        };
+
+        for (const auto &[cachedPath, _] : project.cache.texturesByPath)
+        {
+            const std::string resolved = resolveTexturePathAgainstProjectRoot(cachedPath, projectRoot);
+            const std::filesystem::path resolvedPath = std::filesystem::path(resolved).lexically_normal();
+            auto type = readSerializedAssetType(resolvedPath);
+            if (type.has_value() && type.value() == engine::Asset::AssetType::TEXTURE)
+                addTexturePath(resolvedPath);
+        }
+
+        std::error_code scanError;
+        for (std::filesystem::recursive_directory_iterator iterator(projectRoot, scanError);
+             !scanError && iterator != std::filesystem::recursive_directory_iterator();
+             iterator.increment(scanError))
+        {
+            std::error_code fileError;
+            if (!iterator->is_regular_file(fileError) || fileError)
+                continue;
+
+            const std::filesystem::path path = iterator->path().lexically_normal();
+            auto type = readSerializedAssetType(path);
+            if (type.has_value() && type.value() == engine::Asset::AssetType::TEXTURE)
+                addTexturePath(path);
+        }
+
+        std::sort(texturePaths.begin(), texturePaths.end(), [](const std::string &left, const std::string &right)
+                  { return toLowerCopy(left) < toLowerCopy(right); });
+
+        return texturePaths;
+    }
+
+    std::string resolveTexturePathForMaterialFile(const std::string &texturePath,
+                                                  const std::filesystem::path &materialFilePath,
+                                                  const std::filesystem::path &projectRoot)
+    {
+        if (texturePath.empty())
+            return {};
+
+        if (looksLikeWindowsAbsolutePath(texturePath))
+            return texturePath;
+
+        const std::filesystem::path path(texturePath);
+        if (path.is_absolute())
+            return makeAbsoluteNormalized(path).string();
+
+        std::error_code errorCode;
+        const std::filesystem::path materialDirectory = materialFilePath.parent_path();
+        if (!materialDirectory.empty())
+        {
+            const std::filesystem::path materialRelativePath = makeAbsoluteNormalized(materialDirectory / path);
+            if (std::filesystem::exists(materialRelativePath, errorCode) && !errorCode)
+                return materialRelativePath.string();
+        }
+
+        const std::string projectRelativeResolved = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
+        if (!projectRelativeResolved.empty())
+        {
+            errorCode.clear();
+            const std::filesystem::path projectRelativePath(projectRelativeResolved);
+            if (std::filesystem::exists(projectRelativePath, errorCode) && !errorCode)
+                return projectRelativeResolved;
+        }
+
+        return texturePath;
+    }
+
+    void normalizeMaterialTexturePaths(engine::CPUMaterial &material,
+                                       const std::filesystem::path &materialFilePath,
+                                       const std::filesystem::path &projectRoot)
+    {
+        material.albedoTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.albedoTexture, materialFilePath, projectRoot), projectRoot);
+        material.normalTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.normalTexture, materialFilePath, projectRoot), projectRoot);
+        material.ormTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.ormTexture, materialFilePath, projectRoot), projectRoot);
+        material.emissiveTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.emissiveTexture, materialFilePath, projectRoot), projectRoot);
+    }
+
+    std::optional<std::filesystem::path> findCaseInsensitiveFileInDirectory(const std::filesystem::path &directory,
+                                                                            const std::string &fileName)
+    {
+        if (directory.empty() || fileName.empty())
+            return std::nullopt;
+
+        std::error_code errorCode;
+        if (!std::filesystem::exists(directory, errorCode) || errorCode)
+            return std::nullopt;
+
+        if (!std::filesystem::is_directory(directory, errorCode) || errorCode)
+            return std::nullopt;
+
+        const std::string loweredTarget = toLowerCopy(fileName);
+
+        for (std::filesystem::directory_iterator iterator(directory, errorCode); !errorCode && iterator != std::filesystem::directory_iterator(); iterator.increment(errorCode))
+        {
+            const auto &entry = *iterator;
+            std::error_code fileStatusError;
+            if (!entry.is_regular_file(fileStatusError) || fileStatusError)
+                continue;
+
+            const std::string candidateName = entry.path().filename().string();
+            if (toLowerCopy(candidateName) == loweredTarget)
+                return entry.path().lexically_normal();
+        }
+
+        return std::nullopt;
+    }
+
+    std::string extractFileNamePortable(std::string path)
+    {
+        if (path.empty())
+            return {};
+
+        std::replace(path.begin(), path.end(), '\\', '/');
+
+        const size_t lastSlashPosition = path.find_last_of('/');
+        if (lastSlashPosition == std::string::npos)
+            return path;
+
+        if (lastSlashPosition + 1u >= path.size())
+            return {};
+
+        return path.substr(lastSlashPosition + 1u);
+    }
+
+    std::string resolveTexturePathForMaterialExport(const std::string &rawTexturePath,
+                                                    const std::filesystem::path &modelDirectory,
+                                                    const std::filesystem::path &projectRoot,
+                                                    const std::filesystem::path &textureSearchDirectory,
+                                                    const std::unordered_map<std::string, std::string> &textureOverrides,
+                                                    bool &resolved)
+    {
+        resolved = true;
+        if (rawTexturePath.empty())
+            return {};
+
+        auto overrideIt = textureOverrides.find(rawTexturePath);
+        const std::string sourcePath = overrideIt != textureOverrides.end() && !overrideIt->second.empty()
+                                           ? overrideIt->second
+                                           : rawTexturePath;
+        const std::filesystem::path texturePath(sourcePath);
+
+        std::string resolvedPath;
+
+        if (texturePath.is_absolute())
+        {
+            if (tryResolveCandidateTexturePath(texturePath, resolvedPath))
+                return resolvedPath;
+
+            resolved = false;
+            return sourcePath;
+        }
+
+        if (!texturePath.empty() && tryResolveCandidateTexturePath(makeAbsoluteNormalized(modelDirectory / texturePath), resolvedPath))
+            return resolvedPath;
+
+        if (!projectRoot.empty() && !texturePath.empty() &&
+            tryResolveCandidateTexturePath(makeAbsoluteNormalized(projectRoot / texturePath), resolvedPath))
+            return resolvedPath;
+
+        if (!textureSearchDirectory.empty())
+        {
+            const std::string textureFileName = extractFileNamePortable(sourcePath);
+            if (!textureFileName.empty() &&
+                tryResolveCandidateTexturePath(makeAbsoluteNormalized(textureSearchDirectory / textureFileName), resolvedPath))
+                return resolvedPath;
+        }
+
+        resolved = false;
+        return sourcePath;
     }
 
     const TextEditor::LanguageDefinition &jsonLanguageDefinition()
@@ -146,6 +759,121 @@ namespace
 
         return hasVertexData;
     }
+
+    struct ColliderHandleProjection
+    {
+        int handleId = 0;
+        ImVec2 screenPos{0.0f, 0.0f};
+        glm::vec2 axisScreenDir{1.0f, 0.0f};
+        float worldPerPixel{0.0f};
+        float screenDistance{0.0f};
+        bool valid{false};
+    };
+
+    glm::mat4 composeTransform(const glm::vec3 &position, const glm::quat &rotation)
+    {
+        return glm::translate(glm::mat4(1.0f), position) * glm::toMat4(rotation);
+    }
+
+    glm::mat4 shapeLocalPoseToMatrix(const physx::PxShape *shape)
+    {
+        if (!shape)
+            return glm::mat4(1.0f);
+
+        const physx::PxTransform pose = shape->getLocalPose();
+        const glm::vec3 position(pose.p.x, pose.p.y, pose.p.z);
+        const glm::quat rotation(pose.q.w, pose.q.x, pose.q.y, pose.q.z);
+        return composeTransform(position, rotation);
+    }
+
+    glm::vec3 transformPoint(const glm::mat4 &matrix, const glm::vec3 &point)
+    {
+        return glm::vec3(matrix * glm::vec4(point, 1.0f));
+    }
+
+    glm::vec3 transformDirection(const glm::mat4 &matrix, const glm::vec3 &direction)
+    {
+        const glm::vec3 transformed = glm::vec3(matrix * glm::vec4(direction, 0.0f));
+        const float lengthSquared = glm::dot(transformed, transformed);
+        if (lengthSquared <= 0.000001f)
+            return direction;
+        return transformed / std::sqrt(lengthSquared);
+    }
+
+    bool worldToScreen(const glm::vec3 &worldPosition,
+                       const glm::mat4 &view,
+                       const glm::mat4 &projection,
+                       const ImVec2 &viewportMin,
+                       const ImVec2 &viewportSize,
+                       ImVec2 &outScreen)
+    {
+        const glm::vec4 clipPosition = projection * view * glm::vec4(worldPosition, 1.0f);
+        if (clipPosition.w <= 0.00001f)
+            return false;
+
+        const glm::vec3 ndc = glm::vec3(clipPosition) / clipPosition.w;
+        outScreen.x = viewportMin.x + (ndc.x * 0.5f + 0.5f) * viewportSize.x;
+        outScreen.y = viewportMin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportSize.y;
+
+        return ndc.z >= -1.0f && ndc.z <= 1.0f;
+    }
+
+    void drawLine3D(ImDrawList *drawList,
+                    const glm::vec3 &from,
+                    const glm::vec3 &to,
+                    const glm::mat4 &view,
+                    const glm::mat4 &projection,
+                    const ImVec2 &viewportMin,
+                    const ImVec2 &viewportSize,
+                    ImU32 color,
+                    float thickness)
+    {
+        if (!drawList)
+            return;
+
+        ImVec2 fromScreen;
+        ImVec2 toScreen;
+        const bool fromVisible = worldToScreen(from, view, projection, viewportMin, viewportSize, fromScreen);
+        const bool toVisible = worldToScreen(to, view, projection, viewportMin, viewportSize, toScreen);
+        if (!fromVisible || !toVisible)
+            return;
+
+        drawList->AddLine(fromScreen, toScreen, color, thickness);
+    }
+
+    ColliderHandleProjection makeHandleProjection(int handleId,
+                                                  const glm::vec3 &originWorld,
+                                                  const glm::vec3 &handleWorld,
+                                                  const glm::mat4 &view,
+                                                  const glm::mat4 &projection,
+                                                  const ImVec2 &viewportMin,
+                                                  const ImVec2 &viewportSize)
+    {
+        ColliderHandleProjection result;
+        result.handleId = handleId;
+
+        ImVec2 originScreen;
+        ImVec2 handleScreen;
+        if (!worldToScreen(originWorld, view, projection, viewportMin, viewportSize, originScreen) ||
+            !worldToScreen(handleWorld, view, projection, viewportMin, viewportSize, handleScreen))
+            return result;
+
+        const glm::vec2 delta(handleScreen.x - originScreen.x, handleScreen.y - originScreen.y);
+        const float screenDistance = glm::length(delta);
+        if (screenDistance <= 0.0001f)
+            return result;
+
+        const float worldDistance = glm::length(handleWorld - originWorld);
+        if (worldDistance <= 0.000001f)
+            return result;
+
+        result.screenPos = handleScreen;
+        result.axisScreenDir = delta / screenDistance;
+        result.worldPerPixel = worldDistance / screenDistance;
+        result.screenDistance = screenDistance;
+        result.valid = true;
+        return result;
+    }
 } // namespace
 
 Editor::Editor()
@@ -155,14 +883,28 @@ Editor::Editor()
 
 void Editor::drawGuizmo()
 {
+    m_isColliderHandleHovered = false;
+
     if (!m_selectedEntity)
+    {
+        m_isColliderHandleActive = false;
+        m_activeColliderHandle = ColliderHandleType::NONE;
         return;
+    }
+
+    auto *tc = m_selectedEntity->getComponent<engine::Transform3DComponent>();
+    if (!tc)
+    {
+        m_isColliderHandleActive = false;
+        m_activeColliderHandle = ColliderHandleType::NONE;
+        return;
+    }
 
     ImGuizmo::BeginFrame();
     ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
 
-    ImVec2 viewportPos = ImGui::GetWindowPos();
-    ImVec2 viewportSize = ImGui::GetWindowSize();
+    const ImVec2 viewportPos = ImGui::GetWindowPos();
+    const ImVec2 viewportSize = ImGui::GetWindowSize();
 
     ImGuizmo::SetRect(
         viewportPos.x,
@@ -170,7 +912,243 @@ void Editor::drawGuizmo()
         viewportSize.x,
         viewportSize.y);
 
-    auto model = m_selectedEntity->getComponent<engine::Transform3DComponent>()->getMatrix();
+    std::vector<ColliderHandleProjection> colliderHandles;
+    auto *collisionComponent = m_selectedEntity->getComponent<engine::CollisionComponent>();
+
+    if (collisionComponent && m_showCollisionBounds && m_editorCamera)
+    {
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        const glm::mat4 view = m_editorCamera->getViewMatrix();
+        const glm::mat4 projection = m_editorCamera->getProjectionMatrix();
+        const glm::vec3 worldPosition = tc->getWorldPosition();
+        const glm::quat worldRotation = tc->getWorldRotation();
+        const glm::mat4 colliderMatrix = composeTransform(worldPosition, worldRotation) * shapeLocalPoseToMatrix(collisionComponent->getShape());
+
+        const glm::vec3 center = transformPoint(colliderMatrix, glm::vec3(0.0f));
+        const glm::vec3 axisX = transformDirection(colliderMatrix, glm::vec3(1.0f, 0.0f, 0.0f));
+        const glm::vec3 axisY = transformDirection(colliderMatrix, glm::vec3(0.0f, 1.0f, 0.0f));
+        const glm::vec3 axisZ = transformDirection(colliderMatrix, glm::vec3(0.0f, 0.0f, 1.0f));
+
+        constexpr ImU32 colliderLineColor = IM_COL32(75, 215, 255, 220);
+        constexpr ImU32 boxAxisXColor = IM_COL32(245, 95, 95, 235);
+        constexpr ImU32 boxAxisYColor = IM_COL32(95, 235, 120, 235);
+        constexpr ImU32 boxAxisZColor = IM_COL32(110, 160, 255, 235);
+
+        if (collisionComponent->getShapeType() == engine::CollisionComponent::ShapeType::BOX)
+        {
+            const glm::vec3 halfExtents = collisionComponent->getBoxHalfExtents();
+            const std::array<glm::vec3, 8> localCorners = {
+                glm::vec3(-halfExtents.x, -halfExtents.y, -halfExtents.z),
+                glm::vec3(halfExtents.x, -halfExtents.y, -halfExtents.z),
+                glm::vec3(halfExtents.x, halfExtents.y, -halfExtents.z),
+                glm::vec3(-halfExtents.x, halfExtents.y, -halfExtents.z),
+                glm::vec3(-halfExtents.x, -halfExtents.y, halfExtents.z),
+                glm::vec3(halfExtents.x, -halfExtents.y, halfExtents.z),
+                glm::vec3(halfExtents.x, halfExtents.y, halfExtents.z),
+                glm::vec3(-halfExtents.x, halfExtents.y, halfExtents.z)};
+
+            std::array<glm::vec3, 8> worldCorners{};
+            for (size_t index = 0; index < localCorners.size(); ++index)
+                worldCorners[index] = transformPoint(colliderMatrix, localCorners[index]);
+
+            constexpr std::array<std::pair<int, int>, 12> edges = {
+                std::pair<int, int>{0, 1}, {1, 2}, {2, 3}, {3, 0},
+                {4, 5}, {5, 6}, {6, 7}, {7, 4},
+                {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+
+            for (const auto &[from, to] : edges)
+                drawLine3D(drawList, worldCorners[from], worldCorners[to], view, projection, viewportPos, viewportSize, colliderLineColor, 1.5f);
+
+            const glm::vec3 handleX = center + axisX * halfExtents.x;
+            const glm::vec3 handleY = center + axisY * halfExtents.y;
+            const glm::vec3 handleZ = center + axisZ * halfExtents.z;
+
+            colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::BOX_X), center, handleX, view, projection, viewportPos, viewportSize));
+            colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::BOX_Y), center, handleY, view, projection, viewportPos, viewportSize));
+            colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::BOX_Z), center, handleZ, view, projection, viewportPos, viewportSize));
+        }
+        else if (collisionComponent->getShapeType() == engine::CollisionComponent::ShapeType::CAPSULE)
+        {
+            const float radius = collisionComponent->getCapsuleRadius();
+            const float halfHeight = collisionComponent->getCapsuleHalfHeight();
+            const glm::vec3 topCenter = center + axisX * halfHeight;
+            const glm::vec3 bottomCenter = center - axisX * halfHeight;
+
+            auto drawCircle = [&](const glm::vec3 &circleCenter,
+                                  const glm::vec3 &basisU,
+                                  const glm::vec3 &basisV,
+                                  float circleRadius)
+            {
+                constexpr int segments = 28;
+                for (int segment = 0; segment < segments; ++segment)
+                {
+                    const float t0 = (static_cast<float>(segment) / static_cast<float>(segments)) * glm::two_pi<float>();
+                    const float t1 = (static_cast<float>(segment + 1) / static_cast<float>(segments)) * glm::two_pi<float>();
+                    const glm::vec3 p0 = circleCenter + (basisU * std::cos(t0) + basisV * std::sin(t0)) * circleRadius;
+                    const glm::vec3 p1 = circleCenter + (basisU * std::cos(t1) + basisV * std::sin(t1)) * circleRadius;
+                    drawLine3D(drawList, p0, p1, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
+                }
+            };
+
+            drawCircle(topCenter, axisY, axisZ, radius);
+            drawCircle(bottomCenter, axisY, axisZ, radius);
+            drawCircle(center, axisY, axisZ, radius);
+
+            drawLine3D(drawList, topCenter + axisY * radius, bottomCenter + axisY * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
+            drawLine3D(drawList, topCenter - axisY * radius, bottomCenter - axisY * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
+            drawLine3D(drawList, topCenter + axisZ * radius, bottomCenter + axisZ * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
+            drawLine3D(drawList, topCenter - axisZ * radius, bottomCenter - axisZ * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
+
+            const glm::vec3 radiusHandleY = center + axisY * radius;
+            const glm::vec3 radiusHandleZ = center + axisZ * radius;
+            const glm::vec3 heightHandle = center + axisX * (halfHeight + radius);
+
+            colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::CAPSULE_RADIUS_Y), center, radiusHandleY, view, projection, viewportPos, viewportSize));
+            colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::CAPSULE_RADIUS_Z), center, radiusHandleZ, view, projection, viewportPos, viewportSize));
+            colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::CAPSULE_HEIGHT), center, heightHandle, view, projection, viewportPos, viewportSize));
+        }
+
+        int hoveredHandleId = static_cast<int>(ColliderHandleType::NONE);
+        float hoveredDistanceSq = std::numeric_limits<float>::max();
+        const ImVec2 mousePosition = ImGui::GetMousePos();
+        const bool canEditCollider = m_enableCollisionBoundsEditing && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+
+        if (canEditCollider && !m_isColliderHandleActive)
+        {
+            for (const auto &handle : colliderHandles)
+            {
+                if (!handle.valid)
+                    continue;
+
+                const float dx = mousePosition.x - handle.screenPos.x;
+                const float dy = mousePosition.y - handle.screenPos.y;
+                const float distanceSq = dx * dx + dy * dy;
+                if (distanceSq < hoveredDistanceSq)
+                {
+                    hoveredDistanceSq = distanceSq;
+                    hoveredHandleId = handle.handleId;
+                }
+            }
+
+            if (hoveredDistanceSq > (12.0f * 12.0f))
+                hoveredHandleId = static_cast<int>(ColliderHandleType::NONE);
+        }
+
+        m_isColliderHandleHovered = hoveredHandleId != static_cast<int>(ColliderHandleType::NONE);
+
+        if (!m_isColliderHandleActive && m_isColliderHandleHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsOver())
+        {
+            for (const auto &handle : colliderHandles)
+            {
+                if (!handle.valid || handle.handleId != hoveredHandleId)
+                    continue;
+
+                m_isColliderHandleActive = true;
+                m_activeColliderHandle = static_cast<ColliderHandleType>(handle.handleId);
+                m_colliderDragStartMouse = glm::vec2(mousePosition.x, mousePosition.y);
+                m_colliderDragAxisScreenDir = handle.axisScreenDir;
+                m_colliderDragWorldPerPixel = handle.worldPerPixel;
+                m_colliderDragStartBoxHalfExtents = collisionComponent->getBoxHalfExtents();
+                m_colliderDragStartCapsuleRadius = collisionComponent->getCapsuleRadius();
+                m_colliderDragStartCapsuleHalfHeight = collisionComponent->getCapsuleHalfHeight();
+                break;
+            }
+        }
+
+        if (m_isColliderHandleActive)
+        {
+            m_isColliderHandleHovered = true;
+
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && m_colliderDragWorldPerPixel > 0.0f)
+            {
+                const glm::vec2 currentMouse(ImGui::GetMousePos().x, ImGui::GetMousePos().y);
+                const float pixelDelta = glm::dot(currentMouse - m_colliderDragStartMouse, m_colliderDragAxisScreenDir);
+                const float worldDelta = pixelDelta * m_colliderDragWorldPerPixel;
+
+                switch (m_activeColliderHandle)
+                {
+                case ColliderHandleType::BOX_X:
+                {
+                    glm::vec3 nextHalfExtents = m_colliderDragStartBoxHalfExtents;
+                    nextHalfExtents.x = std::max(0.01f, nextHalfExtents.x + worldDelta);
+                    collisionComponent->setBoxHalfExtents(nextHalfExtents);
+                    break;
+                }
+                case ColliderHandleType::BOX_Y:
+                {
+                    glm::vec3 nextHalfExtents = m_colliderDragStartBoxHalfExtents;
+                    nextHalfExtents.y = std::max(0.01f, nextHalfExtents.y + worldDelta);
+                    collisionComponent->setBoxHalfExtents(nextHalfExtents);
+                    break;
+                }
+                case ColliderHandleType::BOX_Z:
+                {
+                    glm::vec3 nextHalfExtents = m_colliderDragStartBoxHalfExtents;
+                    nextHalfExtents.z = std::max(0.01f, nextHalfExtents.z + worldDelta);
+                    collisionComponent->setBoxHalfExtents(nextHalfExtents);
+                    break;
+                }
+                case ColliderHandleType::CAPSULE_RADIUS_Y:
+                case ColliderHandleType::CAPSULE_RADIUS_Z:
+                {
+                    const float nextRadius = std::max(0.01f, m_colliderDragStartCapsuleRadius + worldDelta);
+                    collisionComponent->setCapsuleDimensions(nextRadius, m_colliderDragStartCapsuleHalfHeight);
+                    break;
+                }
+                case ColliderHandleType::CAPSULE_HEIGHT:
+                {
+                    const float nextHalfHeight = std::max(0.0f, m_colliderDragStartCapsuleHalfHeight + worldDelta);
+                    collisionComponent->setCapsuleDimensions(m_colliderDragStartCapsuleRadius, nextHalfHeight);
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
+            else
+            {
+                m_isColliderHandleActive = false;
+                m_activeColliderHandle = ColliderHandleType::NONE;
+            }
+        }
+
+        for (const auto &handle : colliderHandles)
+        {
+            if (!handle.valid)
+                continue;
+
+            const bool isActiveHandle = m_isColliderHandleActive && static_cast<int>(m_activeColliderHandle) == handle.handleId;
+            const bool isHoveredHandle = !isActiveHandle && hoveredHandleId == handle.handleId;
+
+            ImU32 handleColor = IM_COL32(90, 220, 255, 235);
+            if (isActiveHandle)
+                handleColor = IM_COL32(255, 175, 60, 245);
+            else if (isHoveredHandle)
+                handleColor = IM_COL32(255, 235, 95, 245);
+
+            float radius = 5.0f;
+            if (handle.handleId == static_cast<int>(ColliderHandleType::BOX_X))
+                handleColor = isActiveHandle ? handleColor : boxAxisXColor;
+            else if (handle.handleId == static_cast<int>(ColliderHandleType::BOX_Y))
+                handleColor = isActiveHandle ? handleColor : boxAxisYColor;
+            else if (handle.handleId == static_cast<int>(ColliderHandleType::BOX_Z))
+                handleColor = isActiveHandle ? handleColor : boxAxisZColor;
+
+            if (isHoveredHandle || isActiveHandle)
+                radius = 6.5f;
+
+            drawList->AddCircleFilled(handle.screenPos, radius, handleColor);
+        }
+    }
+    else
+    {
+        m_isColliderHandleActive = false;
+        m_activeColliderHandle = ColliderHandleType::NONE;
+    }
+
+    const bool blockTransformGuizmo = m_isColliderHandleActive;
+
+    auto model = tc->getMatrix();
 
     ImGuizmo::OPERATION operation = ImGuizmo::OPERATION::TRANSLATE;
 
@@ -187,27 +1165,34 @@ void Editor::drawGuizmo()
         break;
     }
 
-    ImGuizmo::Manipulate(
-        glm::value_ptr(m_editorCamera->getViewMatrix()),
-        glm::value_ptr(m_editorCamera->getProjectionMatrix()),
-        operation,
-        ImGuizmo::LOCAL, // or WORLD
-        glm::value_ptr(model));
-
-    if (ImGuizmo::IsUsing())
+    if (!blockTransformGuizmo)
     {
-        auto tc = m_selectedEntity->getComponent<engine::Transform3DComponent>();
+        ImGuizmo::Manipulate(
+            glm::value_ptr(m_editorCamera->getViewMatrix()),
+            glm::value_ptr(m_editorCamera->getProjectionMatrix()),
+            operation,
+            ImGuizmo::LOCAL,
+            glm::value_ptr(model));
 
-        glm::vec3 translation, rotation, scale;
-        ImGuizmo::DecomposeMatrixToComponents(
-            glm::value_ptr(model),
-            glm::value_ptr(translation),
-            glm::value_ptr(rotation),
-            glm::value_ptr(scale));
+        if (ImGuizmo::IsUsing())
+        {
+            glm::mat4 localMatrix = model;
 
-        tc->setPosition(translation);
-        tc->setRotation(glm::radians(rotation));
-        tc->setScale(scale);
+            if (auto *parent = m_selectedEntity->getParent())
+                if (auto *parentTransform = parent->getComponent<engine::Transform3DComponent>())
+                    localMatrix = glm::inverse(parentTransform->getMatrix()) * model;
+
+            glm::vec3 translation, rotation, scale;
+            ImGuizmo::DecomposeMatrixToComponents(
+                glm::value_ptr(localMatrix),
+                glm::value_ptr(translation),
+                glm::value_ptr(rotation),
+                glm::value_ptr(scale));
+
+            tc->setPosition(translation);
+            tc->setEulerDegrees(rotation);
+            tc->setScale(scale);
+        }
     }
 }
 
@@ -323,12 +1308,20 @@ void Editor::initStyle()
                                              { openMaterialEditor(path); });
     m_assetsWindow->setOnTextAssetOpenRequest([this](const std::filesystem::path &path)
                                               { openTextDocument(path); });
+    m_assetsWindow->setOnAssetSelectionChanged([this](const std::filesystem::path &path)
+                                               {
+                                                   m_selectedAssetPath = path;
+                                                   invalidateModelDetailsCache();
+                                                   if (m_selectedAssetPath.empty())
+                                                       return;
+
+                                                   m_detailsContext = DetailsContext::Asset; });
 
     m_entityIdBuffer = core::Buffer::createShared(sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                   core::memory::MemoryUsage::CPU_TO_GPU);
 
-    auto window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
-    GLFWwindow *windowHandler = window->getRawHandler();
+    auto &window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
+    GLFWwindow *windowHandler = window.getRawHandler();
 
     // glfwSetWindowAttrib(windowHandler, GLFW_DECORATED, !m_isDockingWindowFullscreen);
     if (m_isDockingWindowFullscreen)
@@ -481,7 +1474,7 @@ void Editor::drawCustomTitleBar()
 
     ImGui::SetCursorPos(ImVec2(4, (ImGui::GetWindowHeight() - 30) * 0.5f));
     ImVec2 logoSize = ImVec2(50, 30);
-    ImGui::Image(m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.png"), logoSize);
+    ImGui::Image(m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.tex.elixasset"), logoSize);
 
     ImGui::SameLine(0, 10);
 
@@ -591,86 +1584,220 @@ void Editor::drawCustomTitleBar()
 
         if (ImGui::Button("Build Project"))
         {
-            // if(m_currentProject.directory.empty())
-            // {
-            //     VX_EDITOR_ERROR_STREAM("Project directory is empty" << std::endl);
-            //     ImGui::End();
-            //     return;
-            // }
+            auto project = m_currentProject.lock();
+            if (!project)
+            {
+                VX_EDITOR_ERROR_STREAM("Build aborted: project is not loaded\n");
+                m_notificationManager.showError("Build failed: no project loaded");
+            }
+            else
+            {
+                const std::filesystem::path projectRoot = project->fullPath;
+                if (projectRoot.empty() || !std::filesystem::exists(projectRoot))
+                {
+                    VX_EDITOR_ERROR_STREAM("Build aborted: invalid project path '" << project->fullPath << "'\n");
+                    m_notificationManager.showError("Build failed: invalid project path");
+                }
+                else
+                {
+                    const std::filesystem::path buildDirectory = project->buildDir.empty() ? projectRoot / "build"
+                                                                                           : std::filesystem::path(project->buildDir);
+                    std::filesystem::path cmakePrefixPath = FileHelper::getExecutablePath();
+                    if (cmakePrefixPath.filename() == "bin")
+                        cmakePrefixPath = cmakePrefixPath.parent_path();
 
-            // //!It won't work on machine without cmake, we need to provide a compiler along with the engine
-            // std::string cmakeBuildCommand = "cmake --build " + m_currentProject.directory + "/build" + " --config Release";
+                    const std::filesystem::path cmakeExecutablePath = resolveCMakeExecutablePath();
+                    const std::string cmakeCommandToken = makeExecutableCommandToken(cmakeExecutablePath);
 
-            // std::string cmakeCommand =
-            // "cmake -S " + m_currentProject.directory + "/build" +
-            // " -B " + m_currentProject.directory + "/build" +
-            // " -DCMAKE_PREFIX_PATH=" + FileHelper::getExecutablePath().string();
+                    if (cmakeExecutablePath.is_absolute())
+                        VX_EDITOR_INFO_STREAM("Using bundled CMake executable: " << cmakeExecutablePath << '\n');
+                    else
+                        VX_EDITOR_INFO_STREAM("Using CMake from PATH: " << cmakeExecutablePath.string() << '\n');
 
-            // VX_EDITOR_INFO_STREAM(cmakeCommand << std::endl);
+                    const std::string configureCommand = cmakeCommandToken + " -S " + quoteShellArgument(projectRoot) +
+                                                         " -B " + quoteShellArgument(buildDirectory) +
+                                                         " -DCMAKE_PREFIX_PATH=" + quoteShellArgument(cmakePrefixPath) +
+                                                         " -DCMAKE_BUILD_TYPE=Release" +
+                                                         " -DCMAKE_EXPORT_COMPILE_COMMANDS=ON";
 
-            // auto cmakeResult = FileHelper::executeCommand(cmakeCommand);
+                    const auto [configureResult, configureOutput] = FileHelper::executeCommand(configureCommand);
+                    if (configureResult != 0)
+                    {
+                        VX_EDITOR_ERROR_STREAM("CMake configure failed\n"
+                                               << configureOutput << '\n');
+                        m_notificationManager.showError("Build failed: cmake configure error");
+                    }
+                    else
+                    {
+                        if (!syncProjectCompileCommands(*project))
+                            VX_EDITOR_WARNING_STREAM("Failed to sync compile_commands.json to project root\n");
 
-            // VX_EDITOR_INFO_STREAM(cmakeResult.second << std::endl);
+                        std::string buildCommand = cmakeCommandToken + " --build " + quoteShellArgument(buildDirectory) + " --config Release";
+#if defined(__linux__)
+                        buildCommand += " -j";
+#endif
 
-            // if(cmakeResult.first != 0)
-            // {
-            //     ImGui::End();
-            //     return;
-            // }
+                        const auto [buildResult, buildOutput] = FileHelper::executeCommand(buildCommand);
+                        if (buildResult != 0)
+                        {
+                            VX_EDITOR_ERROR_STREAM("Project build failed\n"
+                                                   << buildOutput << '\n');
+                            m_notificationManager.showError("Build failed");
+                        }
+                        else
+                        {
+                            const auto moduleLibraryPath = findGameModuleLibraryPath(buildDirectory);
+                            if (moduleLibraryPath.empty())
+                            {
+                                VX_EDITOR_ERROR_STREAM("Build succeeded but GameModule library was not found in " << buildDirectory << '\n');
+                                m_notificationManager.showError("Build succeeded, but GameModule was not found");
+                            }
+                            else
+                            {
+                                bool hasAttachedScriptComponents = false;
+                                if (m_scene)
+                                {
+                                    for (const auto &entity : m_scene->getEntities())
+                                    {
+                                        if (entity->getComponents<engine::ScriptComponent>().empty())
+                                            continue;
 
-            // auto cmakeBuildResult = FileHelper::executeCommand(cmakeBuildCommand);
+                                        hasAttachedScriptComponents = true;
+                                        break;
+                                    }
+                                }
 
-            // VX_EDITOR_ERROR_STREAM(cmakeBuildResult.second << std::endl);
+                                if (project->projectLibrary && hasAttachedScriptComponents)
+                                {
+                                    VX_EDITOR_WARNING_STREAM("Skipping module reload because script components are attached in current scene\n");
+                                    m_notificationManager.showWarning("Build done. Stop Play/remove scripts to reload module.");
+                                }
+                                else
+                                {
+                                    if (project->projectLibrary)
+                                    {
+                                        engine::PluginLoader::closeLibrary(project->projectLibrary);
+                                        project->projectLibrary = nullptr;
+                                        m_projectScriptsRegister = nullptr;
+                                        m_loadedGameModulePath.clear();
+                                    }
 
-            // if(cmakeBuildResult.first != 0)
-            // {
-            //     VX_EDITOR_ERROR_STREAM("Failed to build project" << std::endl);
-            //     // VX_EDITOR_ERROR_STREAM(cmakeBuildResult.second << std::endl);
-            //     ImGui::End();
-            //     return;
-            // }
+                                    project->projectLibrary = engine::PluginLoader::loadLibrary(moduleLibraryPath.string());
+                                    if (!project->projectLibrary)
+                                    {
+                                        m_projectScriptsRegister = nullptr;
+                                        m_loadedGameModulePath.clear();
+                                        VX_EDITOR_ERROR_STREAM("Failed to load game module: " << moduleLibraryPath << '\n');
+                                        m_notificationManager.showError("Build done, but failed to load module");
+                                    }
+                                    else
+                                    {
+                                        auto getScriptsRegisterFunction = engine::PluginLoader::getFunction<engine::ScriptsRegister &(*)()>("getScriptsRegister", project->projectLibrary);
+                                        if (!getScriptsRegisterFunction)
+                                        {
+                                            engine::PluginLoader::closeLibrary(project->projectLibrary);
+                                            project->projectLibrary = nullptr;
 
-            // VX_EDITOR_INFO_STREAM("Successfully built project" << std::endl);
+                                            m_projectScriptsRegister = nullptr;
+                                            m_loadedGameModulePath.clear();
 
-            // std::string extension = SHARED_LIB_EXTENSION;
+                                            VX_EDITOR_ERROR_STREAM("Module loaded but getScriptsRegister was not found: " << moduleLibraryPath << '\n');
+                                            m_notificationManager.showError("Module loaded, but script register function is missing");
+                                        }
+                                        else
+                                        {
+                                            m_projectScriptsRegister = &getScriptsRegisterFunction();
+                                            m_loadedGameModulePath = moduleLibraryPath.string();
 
-            // engine::LibraryHandle library = engine::PluginLoader::loadLibrary(m_currentProject.directory + "/build/" + "libGameModule" + extension);
-
-            // if(!library)
-            // {
-            //     VX_EDITOR_ERROR_STREAM("Failed to get a library" << std::endl);
-            //     ImGui::End();
-            //     return;
-            // }
-
-            // auto function = engine::PluginLoader::getFunction<engine::ScriptsRegister&(*)()>("getScriptsRegister", library);
-
-            // if(function)
-            // {
-            //     engine::ScriptsRegister& scriptsRegister = function();
-
-            //     if(scriptsRegister.getScripts().empty())
-            //         VX_EDITOR_ERROR_STREAM("Sripts are empty" << std::endl);
-
-            //     for(const auto& scriptRegister : scriptsRegister.getScripts())
-            //     {
-            //         auto script = scriptsRegister.createScript(scriptRegister.first);
-
-            //         if(!script)
-            //         {
-            //             VX_EDITOR_ERROR_STREAM("Failed to get script" << std::endl);
-            //             continue;
-            //         }
-
-            //         script->onStart();
-            //         script->onUpdate(0.0f);
-            //     }
-            // }
-            // else
-            //     VX_EDITOR_ERROR_STREAM("Failed to get hello function" << std::endl);
-
-            // engine::PluginLoader::closeLibrary(library);
+                                            const std::size_t scriptsCount = m_projectScriptsRegister->getScripts().size();
+                                            VX_EDITOR_INFO_STREAM("Loaded " << scriptsCount << " script(s) from " << m_loadedGameModulePath << '\n');
+                                            m_notificationManager.showSuccess("Build done. Loaded scripts: " + std::to_string(scriptsCount));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
+
+        ImGui::Separator();
+
+        auto &engineConfig = engine::EngineConfig::instance();
+        const auto &detectedIdes = engineConfig.getDetectedIdes();
+
+        if (ImGui::Button("Refresh IDE Detection"))
+        {
+            if (engineConfig.reload())
+                m_notificationManager.showInfo("IDE detection refreshed");
+            else
+                m_notificationManager.showWarning("IDE detection refreshed with errors");
+        }
+
+        ImGui::TextWrapped("Detected IDEs: %s", joinDetectedIdeNames(detectedIdes).c_str());
+
+        if (!detectedIdes.empty())
+        {
+            std::string currentPreferredIdeName = "None";
+            if (auto currentPreferredIde = engineConfig.findIde(engineConfig.getPreferredIdeId()))
+                currentPreferredIdeName = currentPreferredIde->displayName;
+
+            if (ImGui::BeginCombo("Preferred IDE", currentPreferredIdeName.c_str()))
+            {
+                for (const auto &ide : detectedIdes)
+                {
+                    const bool isSelected = ide.id == engineConfig.getPreferredIdeId();
+                    if (ImGui::Selectable(ide.displayName.c_str(), isSelected))
+                    {
+                        engineConfig.setPreferredIdeId(ide.id);
+                        if (!engineConfig.save())
+                            m_notificationManager.showWarning("Failed to persist preferred IDE");
+                    }
+
+                    if (isSelected)
+                        ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+        }
+
+        auto project = m_currentProject.lock();
+        const auto preferredVSCode = engineConfig.findPreferredVSCodeIde();
+        const bool hasProject = project && !project->fullPath.empty() && std::filesystem::exists(project->fullPath);
+        const bool canOpenProjectInVSCode = hasProject && preferredVSCode.has_value();
+
+        if (!preferredVSCode)
+            ImGui::TextDisabled("VSCode was not found in PATH (code/code-insiders/codium).");
+
+        if (!hasProject)
+            ImGui::TextDisabled("No loaded project to open.");
+
+        if (!canOpenProjectInVSCode)
+            ImGui::BeginDisabled();
+
+        if (ImGui::Button("Open Project in VSCode"))
+        {
+            std::filesystem::path projectRoot = project->fullPath;
+            const std::string command = quoteShellArgument(preferredVSCode->command) + " " + quoteShellArgument(projectRoot);
+
+            if (!syncProjectCompileCommands(*project))
+                VX_EDITOR_WARNING_STREAM("compile_commands.json was not found in build directory before opening VSCode\n");
+
+            if (FileHelper::launchDetachedCommand(command))
+            {
+                VX_EDITOR_INFO_STREAM("Opened project in VSCode using '" << preferredVSCode->command << "': " << projectRoot << '\n');
+                m_notificationManager.showSuccess("Opened project in VSCode");
+            }
+            else
+            {
+                VX_EDITOR_ERROR_STREAM("Failed to open project in VSCode\n");
+                m_notificationManager.showError("Failed to open project in VSCode");
+            }
+        }
+
+        if (!canOpenProjectInVSCode)
+            ImGui::EndDisabled();
 
         ImGui::EndPopup();
 
@@ -678,8 +1805,8 @@ void Editor::drawCustomTitleBar()
     }
 
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y + ImGui::GetItemRectSize().y));
-    auto window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
-    GLFWwindow *windowHandler = window->getRawHandler();
+    auto &window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
+    GLFWwindow *windowHandler = window.getRawHandler();
 
     if (ImGui::BeginPopup("FilePopup"))
     {
@@ -728,7 +1855,7 @@ void Editor::drawCustomTitleBar()
 
         ImGui::Separator();
         if (ImGui::Button("Exit"))
-            window->close(); // Ha-ha-ha-ha Kill it slower dumbass
+            window.close(); // Ha-ha-ha-ha Kill it slower dumbass
         ImGui::PopStyleColor(1);
 
         ImGui::EndPopup();
@@ -766,7 +1893,7 @@ void Editor::drawCustomTitleBar()
     ImGui::SameLine(windowWidth - buttonSize * 3 - 30);
 
     if (ImGui::Button("_", ImVec2(buttonSize, buttonSize * 0.9f)))
-        window->iconify();
+        window.iconify();
 
     ImGui::SameLine();
 
@@ -776,7 +1903,7 @@ void Editor::drawCustomTitleBar()
     ImGui::SameLine();
 
     if (ImGui::Button("X", ImVec2(buttonSize, buttonSize * 0.9f)))
-        window->close();
+        window.close();
 
     ImGui::Dummy(ImVec2(0, 10));
     ImGui::End();
@@ -924,10 +2051,22 @@ void Editor::drawToolBar()
             ImGui::Separator();
             ImGui::Text("Render Graph (frame #%llu)", static_cast<unsigned long long>(m_renderGraphProfilingData.frameIndex));
             ImGui::Text("Total draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
+            ImGui::Text("Total CPU frame time: %.3f ms", m_renderGraphProfilingData.cpuFrameTimeMs);
             ImGui::Text("Total CPU pass time: %.3f ms", m_renderGraphProfilingData.cpuTotalTimeMs);
+            ImGui::Text("CPU wait (fence): %.3f ms", m_renderGraphProfilingData.cpuWaitForFenceMs);
+            ImGui::Text("CPU wait (acquire): %.3f ms", m_renderGraphProfilingData.cpuAcquireImageMs);
+            ImGui::Text("CPU submit: %.3f ms", m_renderGraphProfilingData.cpuSubmitMs);
+            ImGui::Text("CPU wait (present): %.3f ms", m_renderGraphProfilingData.cpuPresentMs);
+            ImGui::Text("CPU sync total: %.3f ms", m_renderGraphProfilingData.cpuSyncTimeMs);
+            ImGui::Text("CPU recompile: %.3f ms", m_renderGraphProfilingData.cpuRecompileMs);
+            ImGui::Text("CPU unaccounted: %.3f ms", m_renderGraphProfilingData.cpuWasteTimeMs);
 
             if (m_renderGraphProfilingData.gpuTimingAvailable)
+            {
+                ImGui::Text("Total GPU frame time: %.3f ms", m_renderGraphProfilingData.gpuFrameTimeMs);
                 ImGui::Text("Total GPU pass time: %.3f ms", m_renderGraphProfilingData.gpuTotalTimeMs);
+                ImGui::Text("GPU waste (non-pass): %.3f ms", m_renderGraphProfilingData.gpuWasteTimeMs);
+            }
             else
                 ImGui::TextDisabled("GPU timing unavailable on this GPU/queue");
 
@@ -1102,6 +2241,8 @@ void Editor::drawMaterialEditors()
     if (!project)
         return;
 
+    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+
     for (auto it = m_openMaterialEditors.begin(); it != m_openMaterialEditors.end();)
     {
         auto &matEditor = *it;
@@ -1114,7 +2255,7 @@ void Editor::drawMaterialEditors()
         std::string windowName = title + "###MaterialEditor_" + matPath;
 
         if (m_centerDockId != 0)
-            ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Always);
+            ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_FirstUseEver);
 
         bool keepOpen = matEditor.open;
 
@@ -1138,8 +2279,10 @@ void Editor::drawMaterialEditors()
             auto &cpuMat = materialAsset.cpuData;
 
             auto &ui = m_materialEditorUiState[matPath];
+            const bool isMaterialEditorFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+            const bool isCtrlDown = ImGui::GetIO().KeyCtrl;
 
-            if (ImGui::Button("Save"))
+            auto saveCurrentMaterial = [&]()
             {
                 if (saveMaterialToDisk(matEditor.path, cpuMat))
                 {
@@ -1152,6 +2295,11 @@ void Editor::drawMaterialEditors()
                     m_notificationManager.showError("Failed to save material");
                     VX_EDITOR_ERROR_STREAM("Failed to save material: " << matPath);
                 }
+            };
+
+            if (ImGui::Button("Save"))
+            {
+                saveCurrentMaterial();
             }
             ImGui::SameLine();
 
@@ -1172,6 +2320,9 @@ void Editor::drawMaterialEditors()
             ImGui::SameLine();
 
             ImGui::TextDisabled("%s", matPath.c_str());
+
+            if (isMaterialEditorFocused && isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_S, false))
+                saveCurrentMaterial();
 
             ImGui::Separator();
 
@@ -1320,39 +2471,40 @@ void Editor::drawMaterialEditors()
                 struct TextureSlotRow
                 {
                     const char *label;
+                    TextureUsage usage;
                     std::string *cpuPath;
                     std::function<void(const std::string &)> assignToGpu;
                 };
 
                 TextureSlotRow rows[] =
                     {
-                        {"Albedo", &cpuMat.albedoTexture, [&](const std::string &p)
+                        {"Albedo", TextureUsage::Color, &cpuMat.albedoTexture, [&](const std::string &p)
                          {
                              if (p.empty())
                                  gpuMat->setAlbedoTexture(nullptr);
-                             else if (auto itTex = project->cache.texturesByPath.find(p); itTex != project->cache.texturesByPath.end())
-                                 gpuMat->setAlbedoTexture(itTex->second.gpu);
+                             else
+                                 gpuMat->setAlbedoTexture(ensureProjectTextureLoaded(p, TextureUsage::Color));
                          }},
-                        {"Normal", &cpuMat.normalTexture, [&](const std::string &p)
+                        {"Normal", TextureUsage::Data, &cpuMat.normalTexture, [&](const std::string &p)
                          {
                              if (p.empty())
                                  gpuMat->setNormalTexture(nullptr);
-                             else if (auto itTex = project->cache.texturesByPath.find(p); itTex != project->cache.texturesByPath.end())
-                                 gpuMat->setNormalTexture(itTex->second.gpu);
+                             else
+                                 gpuMat->setNormalTexture(ensureProjectTextureLoaded(p, TextureUsage::Data));
                          }},
-                        {"ORM", &cpuMat.ormTexture, [&](const std::string &p)
+                        {"ORM", TextureUsage::Data, &cpuMat.ormTexture, [&](const std::string &p)
                          {
                              if (p.empty())
                                  gpuMat->setOrmTexture(nullptr);
-                             else if (auto itTex = project->cache.texturesByPath.find(p); itTex != project->cache.texturesByPath.end())
-                                 gpuMat->setOrmTexture(itTex->second.gpu);
+                             else
+                                 gpuMat->setOrmTexture(ensureProjectTextureLoaded(p, TextureUsage::Data));
                          }},
-                        {"Emissive", &cpuMat.emissiveTexture, [&](const std::string &p)
+                        {"Emissive", TextureUsage::Color, &cpuMat.emissiveTexture, [&](const std::string &p)
                          {
                              if (p.empty())
                                  gpuMat->setEmissiveTexture(nullptr);
-                             else if (auto itTex = project->cache.texturesByPath.find(p); itTex != project->cache.texturesByPath.end())
-                                 gpuMat->setEmissiveTexture(itTex->second.gpu);
+                             else
+                                 gpuMat->setEmissiveTexture(ensureProjectTextureLoaded(p, TextureUsage::Color));
                          }},
                     };
 
@@ -1362,7 +2514,8 @@ void Editor::drawMaterialEditors()
 
                     ImGui::BeginGroup();
 
-                    auto ds = m_assetsPreviewSystem.getOrRequestTexturePreview(*row.cpuPath, nullptr);
+                    auto slotTexture = ensureProjectTextureLoaded(*row.cpuPath, row.usage);
+                    auto ds = m_assetsPreviewSystem.getOrRequestTexturePreview(*row.cpuPath, slotTexture);
                     ImTextureID texId = (ImTextureID)(uintptr_t)ds;
 
                     if (ImGui::ImageButton("##thumb", texId, ImVec2(56, 56)))
@@ -1376,11 +2529,13 @@ void Editor::drawMaterialEditors()
                         if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
                         {
                             std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
+                            const std::string normalizedDroppedPath = resolveTexturePathAgainstProjectRoot(droppedPath, projectRoot);
 
-                            if (project->cache.texturesByPath.find(droppedPath) != project->cache.texturesByPath.end())
+                            if (isTextureAssetPath(std::filesystem::path(normalizedDroppedPath)))
                             {
-                                *row.cpuPath = droppedPath;
-                                row.assignToGpu(droppedPath);
+                                const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedDroppedPath, projectRoot);
+                                *row.cpuPath = textureReferencePath;
+                                row.assignToGpu(textureReferencePath);
                                 matEditor.dirty = true;
                             }
                         }
@@ -1394,11 +2549,8 @@ void Editor::drawMaterialEditors()
                     ImGui::BeginGroup();
                     ImGui::TextUnformatted(row.label);
 
-                    std::string fileName = row.cpuPath->empty()
-                                               ? std::string("<Default>")
-                                               : std::filesystem::path(*row.cpuPath).filename().string();
-
-                    ImGui::TextWrapped("%s", fileName.c_str());
+                    const std::string displayedTextureName = makeTextureAssetDisplayName(*row.cpuPath);
+                    ImGui::TextWrapped("%s", displayedTextureName.c_str());
 
                     if (ImGui::Button("Use Default"))
                     {
@@ -1438,34 +2590,41 @@ void Editor::drawMaterialEditors()
                         }
 
                         ImGui::BeginChild("TextureScroll", ImVec2(360, 260), true);
+                        const std::string currentTextureReference = toMaterialTextureReferencePath(*row.cpuPath, projectRoot);
+                        const auto textureAssetPaths = gatherProjectTextureAssets(*project, projectRoot);
 
-                        for (const auto &[texturePath, textureAsset] : project->cache.texturesByPath)
+                        for (const auto &texturePath : textureAssetPaths)
                         {
+                            const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
+                            const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedTexturePath, projectRoot);
+                            const std::string textureDisplayName = makeTextureAssetDisplayName(textureReferencePath);
+
                             if (ui.textureFilter[0] != '\0')
                             {
-                                std::string pathLower = texturePath;
+                                std::string pathLower = toLowerCopy(textureReferencePath);
                                 std::string filterLower = ui.textureFilter;
-                                std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::tolower);
                                 std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
 
-                                if (pathLower.find(filterLower) == std::string::npos)
+                                if (pathLower.find(filterLower) == std::string::npos &&
+                                    toLowerCopy(textureDisplayName).find(filterLower) == std::string::npos)
                                     continue;
                             }
 
-                            ImGui::PushID(texturePath.c_str());
+                            ImGui::PushID(textureReferencePath.c_str());
 
-                            auto texDS = m_assetsPreviewSystem.getOrRequestTexturePreview(texturePath);
+                            auto slotTexture = ensureProjectTextureLoaded(normalizedTexturePath, row.usage);
+                            auto texDS = m_assetsPreviewSystem.getOrRequestTexturePreview(normalizedTexturePath, slotTexture);
                             ImTextureID imguiTexId = (ImTextureID)(uintptr_t)texDS;
 
-                            bool selected = (*row.cpuPath == texturePath);
+                            bool selected = currentTextureReference == textureReferencePath;
 
                             if (selected)
                                 ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 200, 255, 255));
 
                             if (ImGui::ImageButton("##pick", imguiTexId, ImVec2(48, 48)))
                             {
-                                *row.cpuPath = texturePath;
-                                row.assignToGpu(texturePath);
+                                *row.cpuPath = textureReferencePath;
+                                row.assignToGpu(textureReferencePath);
                                 matEditor.dirty = true;
                                 ImGui::CloseCurrentPopup();
                             }
@@ -1476,15 +2635,14 @@ void Editor::drawMaterialEditors()
                             if (ImGui::IsItemHovered())
                             {
                                 ImGui::BeginTooltip();
-                                ImGui::Text("%s", texturePath.c_str());
+                                ImGui::Text("%s", textureReferencePath.c_str());
                                 ImGui::EndTooltip();
                             }
 
                             ImGui::SameLine();
 
                             ImGui::BeginGroup();
-                            ImGui::TextWrapped("%s", std::filesystem::path(texturePath).filename().string().c_str());
-                            ImGui::TextDisabled("%s", texturePath.c_str());
+                            ImGui::TextWrapped("%s", textureDisplayName.c_str());
                             ImGui::EndGroup();
 
                             ImGui::Separator();
@@ -1540,7 +2698,7 @@ void Editor::drawDocument()
     std::string windowName = m_openDocumentPath.filename().string() + "###Document";
 
     if (m_centerDockId != 0)
-        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Always);
+        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_FirstUseEver);
 
     bool keepOpen = m_showDocumentWindow;
     if (!ImGui::Begin(windowName.c_str(), &keepOpen))
@@ -1551,6 +2709,7 @@ void Editor::drawDocument()
     }
 
     const bool isShaderDocument = engine::shaders::ShaderCompiler::isCompilableShaderSource(m_openDocumentPath);
+    const bool isDocumentFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     const bool isDirty = !m_openDocumentPath.empty() && (m_textEditor.GetText() != m_openDocumentSavedText);
 
     if (ImGui::Button("Save"))
@@ -1580,7 +2739,7 @@ void Editor::drawDocument()
     const bool isCtrlDown = io.KeyCtrl;
     const bool isShiftDown = io.KeyShift;
 
-    if (isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_S, false))
+    if (isDocumentFocused && isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_S, false))
         saveOpenDocument();
 
     if (isShaderDocument && isCtrlDown && isShiftDown && ImGui::IsKeyPressed(ImGuiKey_B, false))
@@ -1759,9 +2918,17 @@ void Editor::setDocumentLanguageFromPath(const std::filesystem::path &path)
 void Editor::setSelectedEntity(engine::Entity *entity)
 {
     if (m_selectedEntity != entity)
+    {
         m_selectedMeshSlot.reset();
+        m_isColliderHandleActive = false;
+        m_isColliderHandleHovered = false;
+        m_activeColliderHandle = ColliderHandleType::NONE;
+    }
 
     m_selectedEntity = entity;
+
+    if (m_selectedEntity)
+        m_detailsContext = DetailsContext::Entity;
 
     if (m_selectedEntity)
         VX_EDITOR_DEBUG_STREAM("Selected entity: " << m_selectedEntity->getName() << " (id: " << m_selectedEntity->getId() << ")");
@@ -1852,17 +3019,6 @@ void Editor::handleInput()
     if (ImGui::IsKeyPressed(ImGuiKey_Escape) && m_currentMode != EditorMode::EDIT)
         changeMode(EditorMode::EDIT);
 
-    if (isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_S, false))
-    {
-        auto project = m_currentProject.lock();
-        if (m_scene && project)
-        {
-            m_notificationManager.showInfo("Scene saved");
-            m_scene->saveSceneToFile(project->entryScene);
-            VX_EDITOR_INFO_STREAM("Scene saved to: " << project->entryScene);
-        }
-    }
-
     if (ImGui::IsKeyPressed(ImGuiKey_W))
     {
         m_currentGuizmoOperation = GuizmoOperation::TRANSLATE;
@@ -1897,7 +3053,7 @@ void Editor::openMaterialEditor(const std::filesystem::path &path)
     m_openMaterialEditors.push_back(std::move(editor));
 }
 
-engine::Texture::SharedPtr Editor::ensureProjectTextureLoaded(const std::string &texturePath)
+engine::Texture::SharedPtr Editor::ensureProjectTextureLoaded(const std::string &texturePath, TextureUsage usage)
 {
     if (texturePath.empty())
         return nullptr;
@@ -1906,20 +3062,23 @@ engine::Texture::SharedPtr Editor::ensureProjectTextureLoaded(const std::string 
     if (!project)
         return nullptr;
 
-    auto it = project->cache.texturesByPath.find(texturePath);
-    if (it != project->cache.texturesByPath.end() && it->second.gpu)
-        return it->second.gpu;
+    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
 
-    auto texture = std::make_shared<engine::Texture>();
-    if (!texture->load(texturePath))
+    auto &record = project->cache.texturesByPath[normalizedTexturePath];
+    record.path = normalizedTexturePath;
+
+    if (auto cached = record.getGpuVariant(usage))
+        return cached;
+
+    auto texture = engine::AssetsLoader::loadTextureGPU(normalizedTexturePath, getLdrTextureFormat(usage));
+    if (!texture)
     {
-        VX_EDITOR_ERROR_STREAM("Failed to load texture for material: " << texturePath << '\n');
+        VX_EDITOR_ERROR_STREAM("Failed to load texture for material: " << normalizedTexturePath << '\n');
         return nullptr;
     }
 
-    auto &record = project->cache.texturesByPath[texturePath];
-    record.path = texturePath;
-    record.gpu = texture;
+    record.setGpuVariant(usage, texture);
     record.loaded = true;
 
     return texture;
@@ -1928,12 +3087,20 @@ engine::Texture::SharedPtr Editor::ensureProjectTextureLoaded(const std::string 
 bool Editor::saveMaterialToDisk(const std::filesystem::path &path, const engine::CPUMaterial &cpuMaterial)
 {
     nlohmann::json json;
+    std::filesystem::path projectRoot;
+    if (auto project = m_currentProject.lock(); project)
+        projectRoot = std::filesystem::path(project->fullPath);
+
+    const std::string albedoTexturePath = toMaterialTextureReferencePath(cpuMaterial.albedoTexture, projectRoot);
+    const std::string normalTexturePath = toMaterialTextureReferencePath(cpuMaterial.normalTexture, projectRoot);
+    const std::string ormTexturePath = toMaterialTextureReferencePath(cpuMaterial.ormTexture, projectRoot);
+    const std::string emissiveTexturePath = toMaterialTextureReferencePath(cpuMaterial.emissiveTexture, projectRoot);
 
     json["name"] = cpuMaterial.name.empty() ? path.stem().string() : cpuMaterial.name;
-    json["texture_path"] = cpuMaterial.albedoTexture;
-    json["normal_texture"] = cpuMaterial.normalTexture;
-    json["orm_texture"] = cpuMaterial.ormTexture;
-    json["emissive_texture"] = cpuMaterial.emissiveTexture;
+    json["texture_path"] = albedoTexturePath;
+    json["normal_texture"] = normalTexturePath;
+    json["orm_texture"] = ormTexturePath;
+    json["emissive_texture"] = emissiveTexturePath;
     json["color"] = {cpuMaterial.baseColorFactor.r, cpuMaterial.baseColorFactor.g, cpuMaterial.baseColorFactor.b, cpuMaterial.baseColorFactor.a};
     json["emissive"] = {cpuMaterial.emissiveFactor.r, cpuMaterial.emissiveFactor.g, cpuMaterial.emissiveFactor.b};
     json["metallic"] = cpuMaterial.metallicFactor;
@@ -1980,20 +3147,23 @@ bool Editor::reloadMaterialFromDisk(const std::filesystem::path &path)
     if (cpuMaterial.name.empty())
         cpuMaterial.name = path.stem().string();
 
+    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    normalizeMaterialTexturePaths(cpuMaterial, path, projectRoot);
+
     auto &record = project->cache.materialsByPath[path.string()];
     record.path = path.string();
     record.cpuData = cpuMaterial;
 
     if (!record.gpu)
-        record.gpu = engine::Material::create(ensureProjectTextureLoaded(cpuMaterial.albedoTexture));
+        record.gpu = engine::Material::create(ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color));
 
     if (!record.gpu)
         return false;
 
-    record.gpu->setAlbedoTexture(ensureProjectTextureLoaded(cpuMaterial.albedoTexture));
-    record.gpu->setNormalTexture(ensureProjectTextureLoaded(cpuMaterial.normalTexture));
-    record.gpu->setOrmTexture(ensureProjectTextureLoaded(cpuMaterial.ormTexture));
-    record.gpu->setEmissiveTexture(ensureProjectTextureLoaded(cpuMaterial.emissiveTexture));
+    record.gpu->setAlbedoTexture(ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color));
+    record.gpu->setNormalTexture(ensureProjectTextureLoaded(cpuMaterial.normalTexture, TextureUsage::Data));
+    record.gpu->setOrmTexture(ensureProjectTextureLoaded(cpuMaterial.ormTexture, TextureUsage::Data));
+    record.gpu->setEmissiveTexture(ensureProjectTextureLoaded(cpuMaterial.emissiveTexture, TextureUsage::Color));
     record.gpu->setBaseColorFactor(cpuMaterial.baseColorFactor);
     record.gpu->setEmissiveFactor(cpuMaterial.emissiveFactor);
     record.gpu->setMetallic(cpuMaterial.metallicFactor);
@@ -2005,7 +3175,7 @@ bool Editor::reloadMaterialFromDisk(const std::filesystem::path &path)
     record.gpu->setUVScale(cpuMaterial.uvScale);
     record.gpu->setUVOffset(cpuMaterial.uvOffset);
 
-    record.texture = ensureProjectTextureLoaded(cpuMaterial.albedoTexture);
+    record.texture = ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color);
 
     return true;
 }
@@ -2032,7 +3202,979 @@ engine::Material::SharedPtr Editor::ensureMaterialLoaded(const std::string &mate
     return nullptr;
 }
 
-bool Editor::applyMaterialToSelectedEntity(const std::string &materialPath, std::optional<size_t> slot)
+const engine::ModelAsset *Editor::ensureModelAssetLoaded(const std::string &modelPath)
+{
+    if (modelPath.empty())
+        return nullptr;
+
+    auto project = m_currentProject.lock();
+    if (!project)
+        return nullptr;
+
+    auto it = project->cache.modelsByPath.find(modelPath);
+    if (it != project->cache.modelsByPath.end() && it->second.cpuData.has_value())
+        return &it->second.cpuData.value();
+
+    auto modelAsset = engine::AssetsLoader::loadModel(modelPath);
+    if (!modelAsset.has_value())
+        return nullptr;
+
+    auto &record = project->cache.modelsByPath[modelPath];
+    record.path = modelPath;
+    record.cpuData = modelAsset.value();
+    return &record.cpuData.value();
+}
+
+void Editor::invalidateModelDetailsCache()
+{
+    m_modelDetailsCache = ModelDetailsCache{};
+    m_modelDetailsCacheAssetPath.clear();
+    m_modelDetailsCacheSearchDirectory.clear();
+    m_modelDetailsCacheDirty = true;
+}
+
+void Editor::rebuildModelDetailsCache(const engine::ModelAsset &modelAsset,
+                                      const std::filesystem::path &modelDirectory,
+                                      const std::filesystem::path &projectRoot,
+                                      const std::filesystem::path &textureSearchDirectory)
+{
+    m_modelDetailsCache = ModelDetailsCache{};
+
+    m_modelDetailsCache.materials.reserve(modelAsset.meshes.size());
+    std::unordered_map<std::string, size_t> materialIndexBySignature;
+    materialIndexBySignature.reserve(modelAsset.meshes.size());
+
+    std::unordered_set<std::string> unresolvedTexturePaths;
+    unresolvedTexturePaths.reserve(modelAsset.meshes.size() * 2);
+
+    auto resolveTextureForDisplay = [&](const std::string &rawTexturePath) -> std::string
+    {
+        bool resolved = true;
+        return resolveTexturePathForMaterialExport(rawTexturePath,
+                                                   modelDirectory,
+                                                   projectRoot,
+                                                   textureSearchDirectory,
+                                                   m_modelTextureManualOverrides,
+                                                   resolved);
+    };
+
+    auto collectUnresolvedPath = [&](const std::string &texturePath)
+    {
+        bool resolved = true;
+        resolveTexturePathForMaterialExport(texturePath,
+                                            modelDirectory,
+                                            projectRoot,
+                                            textureSearchDirectory,
+                                            m_modelTextureManualOverrides,
+                                            resolved);
+
+        if (!resolved && !texturePath.empty())
+            unresolvedTexturePaths.insert(texturePath);
+    };
+
+    for (size_t meshIndex = 0; meshIndex < modelAsset.meshes.size(); ++meshIndex)
+    {
+        const auto &mesh = modelAsset.meshes[meshIndex];
+        m_modelDetailsCache.totalIndexCount += mesh.indices.size();
+
+        if (mesh.vertexStride > 0)
+            m_modelDetailsCache.totalVertexCount += mesh.vertexData.size() / mesh.vertexStride;
+
+        auto material = mesh.material;
+        if (material.name.empty())
+            material.name = mesh.name.empty() ? ("Material_" + std::to_string(meshIndex)) : mesh.name;
+
+        collectUnresolvedPath(material.albedoTexture);
+        collectUnresolvedPath(material.normalTexture);
+        collectUnresolvedPath(material.ormTexture);
+        collectUnresolvedPath(material.emissiveTexture);
+
+        const std::string signature = buildMaterialSignature(material);
+        const auto [iterator, inserted] = materialIndexBySignature.emplace(signature, m_modelDetailsCache.materials.size());
+
+        if (inserted)
+        {
+            ModelMaterialOverviewEntry overviewEntry{};
+            overviewEntry.material = material;
+            overviewEntry.albedoDisplayPath = material.albedoTexture.empty() ? std::string("-") : resolveTextureForDisplay(material.albedoTexture);
+            overviewEntry.normalDisplayPath = material.normalTexture.empty() ? std::string("-") : resolveTextureForDisplay(material.normalTexture);
+            overviewEntry.ormDisplayPath = material.ormTexture.empty() ? std::string("-") : resolveTextureForDisplay(material.ormTexture);
+            overviewEntry.emissiveDisplayPath = material.emissiveTexture.empty() ? std::string("-") : resolveTextureForDisplay(material.emissiveTexture);
+            m_modelDetailsCache.materials.push_back(std::move(overviewEntry));
+        }
+
+        m_modelDetailsCache.materials[iterator->second].meshUsageCount += 1;
+    }
+
+    m_modelDetailsCache.hasSkeleton = modelAsset.skeleton.has_value();
+    m_modelDetailsCache.animationCount = modelAsset.animations.size();
+    m_modelDetailsCache.unresolvedTexturePaths.assign(unresolvedTexturePaths.begin(), unresolvedTexturePaths.end());
+    std::sort(m_modelDetailsCache.unresolvedTexturePaths.begin(), m_modelDetailsCache.unresolvedTexturePaths.end());
+    m_modelDetailsCacheSearchDirectory = textureSearchDirectory;
+    m_modelDetailsCacheDirty = false;
+}
+
+bool Editor::buildPerMeshMaterialPathsFromDirectory(const engine::ModelAsset &modelAsset,
+                                                    const std::filesystem::path &materialsDirectory,
+                                                    std::vector<std::string> &outPerMeshMaterialPaths,
+                                                    size_t &outMatchedSlots) const
+{
+    outPerMeshMaterialPaths.assign(modelAsset.meshes.size(), {});
+    outMatchedSlots = 0;
+
+    std::error_code directoryError;
+    if (materialsDirectory.empty() ||
+        !std::filesystem::exists(materialsDirectory, directoryError) ||
+        directoryError ||
+        !std::filesystem::is_directory(materialsDirectory, directoryError) ||
+        directoryError)
+        return false;
+
+    std::unordered_map<std::string, std::string> materialPathBySignature;
+    std::unordered_map<std::string, std::string> materialPathByName;
+    std::vector<std::filesystem::path> discoveredMaterialPaths;
+    discoveredMaterialPaths.reserve(128);
+
+    std::error_code iteratorError;
+    for (std::filesystem::directory_iterator iterator(materialsDirectory, iteratorError);
+         !iteratorError && iterator != std::filesystem::directory_iterator();
+         iterator.increment(iteratorError))
+    {
+        const auto &entry = *iterator;
+        std::error_code fileStatusError;
+        if (!entry.is_regular_file(fileStatusError) || fileStatusError)
+            continue;
+
+        const std::filesystem::path materialPath = entry.path().lexically_normal();
+        if (toLowerCopy(materialPath.extension().string()) != ".elixmat")
+            continue;
+
+        discoveredMaterialPaths.push_back(materialPath);
+
+        auto materialAsset = engine::AssetsLoader::loadMaterial(materialPath.string());
+        if (!materialAsset.has_value())
+            continue;
+
+        const auto &material = materialAsset.value().material;
+        const std::string signature = buildMaterialSignature(material);
+
+        if (!signature.empty() && materialPathBySignature.find(signature) == materialPathBySignature.end())
+            materialPathBySignature.emplace(signature, materialPath.string());
+
+        if (!material.name.empty() && materialPathByName.find(material.name) == materialPathByName.end())
+            materialPathByName.emplace(material.name, materialPath.string());
+    }
+
+    if (iteratorError)
+        return false;
+
+    if (discoveredMaterialPaths.empty())
+        return false;
+
+    for (size_t meshIndex = 0; meshIndex < modelAsset.meshes.size(); ++meshIndex)
+    {
+        const auto &mesh = modelAsset.meshes[meshIndex];
+        engine::CPUMaterial candidate = mesh.material;
+        if (candidate.name.empty())
+            candidate.name = mesh.name.empty() ? ("Material_" + std::to_string(meshIndex)) : mesh.name;
+
+        std::string resolvedMaterialPath;
+
+        const std::string signature = buildMaterialSignature(candidate);
+        if (auto signatureIt = materialPathBySignature.find(signature); signatureIt != materialPathBySignature.end())
+            resolvedMaterialPath = signatureIt->second;
+
+        if (resolvedMaterialPath.empty())
+        {
+            if (auto nameIt = materialPathByName.find(candidate.name); nameIt != materialPathByName.end())
+                resolvedMaterialPath = nameIt->second;
+        }
+
+        if (resolvedMaterialPath.empty())
+        {
+            const std::string expectedStem = sanitizeFileStem(candidate.name);
+            for (const auto &materialPath : discoveredMaterialPaths)
+            {
+                const std::string stem = materialPath.stem().string();
+                if (stem == expectedStem || stem.rfind(expectedStem + "_", 0) == 0)
+                {
+                    resolvedMaterialPath = materialPath.string();
+                    break;
+                }
+            }
+        }
+
+        if (resolvedMaterialPath.empty())
+            continue;
+
+        outPerMeshMaterialPaths[meshIndex] = resolvedMaterialPath;
+        ++outMatchedSlots;
+    }
+
+    return outMatchedSlots > 0;
+}
+
+bool Editor::applyPerMeshMaterialPathsToSelectedEntity(const std::vector<std::string> &perMeshMaterialPaths)
+{
+    if (!m_selectedEntity)
+    {
+        VX_EDITOR_WARNING_STREAM("Material auto-apply failed. No selected entity.");
+        return false;
+    }
+
+    auto staticMeshComponent = m_selectedEntity->getComponent<engine::StaticMeshComponent>();
+    auto skeletalMeshComponent = m_selectedEntity->getComponent<engine::SkeletalMeshComponent>();
+
+    if (!staticMeshComponent && !skeletalMeshComponent)
+    {
+        VX_EDITOR_WARNING_STREAM("Material auto-apply failed for entity '" << m_selectedEntity->getName() << "'. Entity has no mesh component.");
+        return false;
+    }
+
+    const size_t slotCount = staticMeshComponent ? staticMeshComponent->getMaterialSlotCount() : skeletalMeshComponent->getMaterialSlotCount();
+    const size_t slotLimit = std::min(slotCount, perMeshMaterialPaths.size());
+
+    if (slotLimit == 0)
+        return false;
+
+    size_t appliedCount = 0;
+    size_t failedLoads = 0;
+
+    for (size_t slot = 0; slot < slotLimit; ++slot)
+    {
+        const std::string &materialPath = perMeshMaterialPaths[slot];
+        if (materialPath.empty())
+            continue;
+
+        auto material = ensureMaterialLoaded(materialPath);
+        if (!material)
+        {
+            ++failedLoads;
+            continue;
+        }
+
+        if (staticMeshComponent)
+        {
+            staticMeshComponent->setMaterialOverride(slot, material);
+            staticMeshComponent->setMaterialOverridePath(slot, materialPath);
+        }
+        else
+        {
+            skeletalMeshComponent->setMaterialOverride(slot, material);
+            skeletalMeshComponent->setMaterialOverridePath(slot, materialPath);
+        }
+
+        ++appliedCount;
+    }
+
+    if (appliedCount == 0)
+    {
+        VX_EDITOR_WARNING_STREAM("Material auto-apply failed for entity '" << m_selectedEntity->getName() << "'. No materials were assigned.");
+        return false;
+    }
+
+    VX_EDITOR_INFO_STREAM("Auto-applied " << appliedCount << " material slot(s) to entity '" << m_selectedEntity->getName()
+                                          << "' (requested " << perMeshMaterialPaths.size() << ", entity slots " << slotCount
+                                          << ", failed loads " << failedLoads << ").");
+
+    if (slotCount != perMeshMaterialPaths.size())
+    {
+        VX_EDITOR_WARNING_STREAM("Material auto-apply slot mismatch. Entity slots: " << slotCount
+                                                                                     << ", exported slots: " << perMeshMaterialPaths.size());
+    }
+
+    return true;
+}
+
+bool Editor::exportModelMaterials(const std::filesystem::path &modelPath,
+                                  const std::filesystem::path &outputDirectory,
+                                  const std::filesystem::path &textureSearchDirectory,
+                                  const std::unordered_map<std::string, std::string> &textureOverrides,
+                                  std::vector<std::string> *outPerMeshMaterialPaths)
+{
+    auto project = m_currentProject.lock();
+    if (!project)
+        return false;
+
+    const engine::ModelAsset *model = ensureModelAssetLoaded(modelPath.string());
+    if (!model)
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to export materials. Could not load model: " << modelPath);
+        return false;
+    }
+
+    if (model->meshes.empty())
+    {
+        VX_EDITOR_WARNING_STREAM("Model has no meshes. Material export skipped for: " << modelPath);
+        return false;
+    }
+
+    std::filesystem::path exportDirectory = outputDirectory;
+    if (exportDirectory.empty())
+        return false;
+
+    if (exportDirectory.is_relative())
+        exportDirectory = std::filesystem::path(project->fullPath) / exportDirectory;
+
+    exportDirectory = makeAbsoluteNormalized(exportDirectory);
+
+    std::error_code errorCode;
+    std::filesystem::create_directories(exportDirectory, errorCode);
+    if (errorCode)
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to create material export directory '" << exportDirectory << "': " << errorCode.message());
+        return false;
+    }
+
+    struct ExportMaterialEntry
+    {
+        engine::CPUMaterial material;
+        size_t usageCount{0};
+    };
+
+    std::vector<ExportMaterialEntry> materialEntries;
+    materialEntries.reserve(model->meshes.size());
+
+    std::unordered_map<std::string, size_t> entryIndexBySignature;
+    entryIndexBySignature.reserve(model->meshes.size());
+
+    std::vector<std::string> materialSignatureByMeshSlot;
+    materialSignatureByMeshSlot.reserve(model->meshes.size());
+
+    for (size_t meshIndex = 0; meshIndex < model->meshes.size(); ++meshIndex)
+    {
+        const auto &mesh = model->meshes[meshIndex];
+        engine::CPUMaterial candidate = mesh.material;
+
+        if (candidate.name.empty())
+            candidate.name = mesh.name.empty() ? ("Material_" + std::to_string(meshIndex)) : mesh.name;
+
+        const std::string signature = buildMaterialSignature(candidate);
+        materialSignatureByMeshSlot.push_back(signature);
+        const auto [iterator, inserted] = entryIndexBySignature.emplace(signature, materialEntries.size());
+
+        if (inserted)
+            materialEntries.push_back({candidate, 0});
+
+        materialEntries[iterator->second].usageCount += 1;
+    }
+
+    if (materialEntries.empty())
+        return false;
+
+    std::unordered_set<std::string> unresolvedTexturePaths;
+    unresolvedTexturePaths.reserve(materialEntries.size() * 2);
+
+    size_t exportedMaterials = 0;
+
+    const std::filesystem::path modelDirectory = modelPath.parent_path();
+    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    std::unordered_map<std::string, std::string> exportedPathBySignature;
+    exportedPathBySignature.reserve(materialEntries.size());
+
+    for (size_t materialIndex = 0; materialIndex < materialEntries.size(); ++materialIndex)
+    {
+        auto material = materialEntries[materialIndex].material;
+
+        auto resolveTextureField = [&](std::string &texturePath)
+        {
+            const std::string originalPath = texturePath;
+            bool resolved = true;
+            texturePath = toMaterialTextureReferencePath(resolveTexturePathForMaterialExport(texturePath,
+                                                                                            modelDirectory,
+                                                                                            projectRoot,
+                                                                                            textureSearchDirectory,
+                                                                                            textureOverrides,
+                                                                                            resolved),
+                                                         projectRoot);
+
+            const std::filesystem::path resolvedTexturePath = std::filesystem::path(resolveTexturePathAgainstProjectRoot(texturePath, projectRoot)).lexically_normal();
+            auto textureType = readSerializedAssetType(resolvedTexturePath);
+            const bool isSerializedTexture = textureType.has_value() && textureType.value() == engine::Asset::AssetType::TEXTURE;
+
+            if ((!resolved || !isSerializedTexture) && !originalPath.empty())
+                unresolvedTexturePaths.insert(originalPath);
+        };
+
+        resolveTextureField(material.albedoTexture);
+        resolveTextureField(material.normalTexture);
+        resolveTextureField(material.ormTexture);
+        resolveTextureField(material.emissiveTexture);
+
+        if (material.name.empty())
+            material.name = "Material_" + std::to_string(materialIndex);
+
+        const std::string baseName = sanitizeFileStem(material.name);
+        const std::filesystem::path materialPath = makeUniquePathWithExtension(exportDirectory, baseName, ".elixmat");
+
+        if (!saveMaterialToDisk(materialPath, material))
+        {
+            VX_EDITOR_ERROR_STREAM("Failed to export material '" << material.name << "' to: " << materialPath);
+            continue;
+        }
+
+        const std::string signature = buildMaterialSignature(materialEntries[materialIndex].material);
+        exportedPathBySignature[signature] = materialPath.string();
+
+        ++exportedMaterials;
+    }
+
+    if (exportedMaterials == 0)
+    {
+        VX_EDITOR_ERROR_STREAM("Material export failed for model: " << modelPath);
+        return false;
+    }
+
+    VX_EDITOR_INFO_STREAM("Exported " << exportedMaterials << " material(s) from model '" << modelPath
+                                      << "' to '" << exportDirectory << "'. Unresolved texture paths: " << unresolvedTexturePaths.size());
+
+    if (!unresolvedTexturePaths.empty())
+    {
+        size_t logged = 0;
+        for (const auto &path : unresolvedTexturePaths)
+        {
+            VX_EDITOR_WARNING_STREAM("Unresolved material texture path: " << path);
+            if (++logged >= 24)
+                break;
+        }
+    }
+
+    m_notificationManager.showSuccess("Exported " + std::to_string(exportedMaterials) + " material(s)");
+    if (!unresolvedTexturePaths.empty())
+        m_notificationManager.showWarning(std::to_string(unresolvedTexturePaths.size()) + " texture path(s) unresolved");
+
+    if (outPerMeshMaterialPaths)
+    {
+        outPerMeshMaterialPaths->assign(materialSignatureByMeshSlot.size(), {});
+
+        for (size_t meshIndex = 0; meshIndex < materialSignatureByMeshSlot.size(); ++meshIndex)
+        {
+            auto exportedPathIt = exportedPathBySignature.find(materialSignatureByMeshSlot[meshIndex]);
+            if (exportedPathIt == exportedPathBySignature.end())
+                continue;
+
+            (*outPerMeshMaterialPaths)[meshIndex] = exportedPathIt->second;
+        }
+    }
+
+    return true;
+}
+
+void Editor::drawAssetDetails()
+{
+    if (m_selectedAssetPath.empty())
+    {
+        ImGui::TextUnformatted("Select an object or asset to view details");
+        return;
+    }
+
+    if (!std::filesystem::exists(m_selectedAssetPath))
+    {
+        ImGui::TextDisabled("Selected asset no longer exists");
+        if (ImGui::Button("Clear Asset Selection"))
+        {
+            m_selectedAssetPath.clear();
+            invalidateModelDetailsCache();
+        }
+        return;
+    }
+
+    auto project = m_currentProject.lock();
+    const std::filesystem::path projectRoot = project ? std::filesystem::path(project->fullPath) : std::filesystem::path{};
+    const std::filesystem::path assetPath = m_selectedAssetPath;
+    const bool isDirectory = std::filesystem::is_directory(assetPath);
+    const std::string extensionLower = toLowerCopy(assetPath.extension().string());
+
+    ImGui::Text("Name: %s", assetPath.filename().string().c_str());
+    ImGui::Text("Type: %s", isDirectory ? "Folder" : extensionLower.c_str());
+    ImGui::TextWrapped("Path: %s", assetPath.string().c_str());
+
+    if (!projectRoot.empty() && isPathWithinRoot(assetPath, projectRoot))
+    {
+        const std::string relativePath = toProjectRelativePathIfPossible(assetPath, projectRoot);
+        ImGui::TextWrapped("Project path: %s", relativePath.c_str());
+    }
+
+    if (!isDirectory)
+    {
+        std::error_code fileSizeError;
+        const auto fileSize = std::filesystem::file_size(assetPath, fileSizeError);
+        if (!fileSizeError)
+            ImGui::Text("File size: %.2f MB", static_cast<double>(fileSize) / (1024.0 * 1024.0));
+    }
+
+    if (isDirectory)
+    {
+        size_t entriesCount = 0;
+        std::error_code iteratorError;
+        for (std::filesystem::directory_iterator iterator(assetPath, iteratorError); !iteratorError && iterator != std::filesystem::directory_iterator(); iterator.increment(iteratorError))
+            ++entriesCount;
+
+        ImGui::Text("Entries: %zu", entriesCount);
+        return;
+    }
+
+    if (extensionLower == ".elixmat")
+    {
+        if (ImGui::Button("Open Material Editor"))
+            openMaterialEditor(assetPath);
+
+        auto materialAsset = engine::AssetsLoader::loadMaterial(assetPath.string());
+        if (!materialAsset.has_value())
+        {
+            ImGui::Separator();
+            ImGui::TextDisabled("Failed to parse material file");
+            return;
+        }
+
+        const auto &material = materialAsset.value().material;
+        ImGui::Separator();
+        const std::string materialName = material.name.empty() ? assetPath.stem().string() : material.name;
+        ImGui::Text("Material: %s", materialName.c_str());
+        ImGui::TextWrapped("Albedo: %s", makeTextureAssetDisplayName(material.albedoTexture).c_str());
+        ImGui::TextWrapped("Normal: %s", makeTextureAssetDisplayName(material.normalTexture).c_str());
+        ImGui::TextWrapped("ORM: %s", makeTextureAssetDisplayName(material.ormTexture).c_str());
+        ImGui::TextWrapped("Emissive: %s", makeTextureAssetDisplayName(material.emissiveTexture).c_str());
+        return;
+    }
+
+    if (isTextureAssetPath(assetPath))
+    {
+        ImGui::Separator();
+        ImGui::Text("Texture format: %s", extensionLower.c_str());
+        ImGui::TextWrapped("Use drag-and-drop into material slots to assign this texture.");
+        return;
+    }
+
+    if (isScriptAssetPath(assetPath) || isEditableTextPath(assetPath))
+    {
+        ImGui::Separator();
+        ImGui::TextUnformatted("Script / text asset");
+        if (ImGui::Button("Open In Text Editor"))
+            openTextDocument(assetPath);
+        return;
+    }
+
+    if (!isModelAssetPath(assetPath))
+        return;
+
+    const engine::ModelAsset *modelAsset = ensureModelAssetLoaded(assetPath.string());
+    ImGui::Separator();
+    ImGui::TextUnformatted("Model Import");
+
+    if (!modelAsset)
+    {
+        ImGui::TextDisabled("Failed to load model metadata");
+        if (ImGui::Button("Retry"))
+        {
+            ensureModelAssetLoaded(assetPath.string());
+            invalidateModelDetailsCache();
+        }
+        return;
+    }
+
+    const std::filesystem::path modelDirectory = assetPath.parent_path();
+
+    if (m_lastModelDetailsAssetPath != assetPath)
+    {
+        m_lastModelDetailsAssetPath = assetPath;
+        invalidateModelDetailsCache();
+
+        const std::filesystem::path defaultExportPath = assetPath.parent_path() / (assetPath.stem().string() + "_Materials");
+        std::memset(m_modelMaterialsExportDirectory, 0, sizeof(m_modelMaterialsExportDirectory));
+        std::strncpy(m_modelMaterialsExportDirectory, defaultExportPath.string().c_str(), sizeof(m_modelMaterialsExportDirectory) - 1);
+
+        std::memset(m_modelMaterialsTextureSearchDirectory, 0, sizeof(m_modelMaterialsTextureSearchDirectory));
+        std::strncpy(m_modelMaterialsTextureSearchDirectory, assetPath.parent_path().string().c_str(), sizeof(m_modelMaterialsTextureSearchDirectory) - 1);
+
+        m_modelTextureManualOverrides.clear();
+        m_selectedUnresolvedTexturePath.clear();
+        std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
+    }
+
+    std::filesystem::path textureSearchDirectory = std::filesystem::path(m_modelMaterialsTextureSearchDirectory);
+    if (!textureSearchDirectory.empty())
+    {
+        if (textureSearchDirectory.is_relative() && !projectRoot.empty())
+            textureSearchDirectory = projectRoot / textureSearchDirectory;
+
+        textureSearchDirectory = makeAbsoluteNormalized(textureSearchDirectory);
+    }
+
+    if (m_modelDetailsCacheDirty ||
+        m_modelDetailsCacheAssetPath != assetPath ||
+        m_modelDetailsCacheSearchDirectory != textureSearchDirectory)
+    {
+        rebuildModelDetailsCache(*modelAsset, modelDirectory, projectRoot, textureSearchDirectory);
+        m_modelDetailsCacheAssetPath = assetPath;
+    }
+
+    auto &materials = m_modelDetailsCache.materials;
+    auto &unresolvedTexturePathList = m_modelDetailsCache.unresolvedTexturePaths;
+
+    if (!m_selectedUnresolvedTexturePath.empty() &&
+        std::find(unresolvedTexturePathList.begin(), unresolvedTexturePathList.end(), m_selectedUnresolvedTexturePath) == unresolvedTexturePathList.end())
+    {
+        m_selectedUnresolvedTexturePath.clear();
+        std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
+    }
+
+    ImGui::Text("Meshes: %zu", modelAsset->meshes.size());
+    ImGui::Text("Vertices: %zu", m_modelDetailsCache.totalVertexCount);
+    ImGui::Text("Indices: %zu", m_modelDetailsCache.totalIndexCount);
+    ImGui::Text("Unique materials: %zu", materials.size());
+    ImGui::Text("Unresolved texture paths: %zu", unresolvedTexturePathList.size());
+    ImGui::Text("Has skeleton: %s", m_modelDetailsCache.hasSkeleton ? "Yes" : "No");
+    ImGui::Text("Animations: %zu", m_modelDetailsCache.animationCount);
+
+    if (ImGui::CollapsingHeader("Texture Resolver", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::TextWrapped("Search folder remaps unresolved texture paths by filename (directory is replaced, filename stays unless you set manual override).");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputText("Search folder", m_modelMaterialsTextureSearchDirectory, sizeof(m_modelMaterialsTextureSearchDirectory)))
+        {
+            textureSearchDirectory = std::filesystem::path(m_modelMaterialsTextureSearchDirectory);
+            if (!textureSearchDirectory.empty())
+            {
+                if (textureSearchDirectory.is_relative() && !projectRoot.empty())
+                    textureSearchDirectory = projectRoot / textureSearchDirectory;
+
+                textureSearchDirectory = makeAbsoluteNormalized(textureSearchDirectory);
+            }
+
+            m_modelDetailsCacheDirty = true;
+        }
+
+        if (ImGui::Button("Use Model Directory"))
+        {
+            std::memset(m_modelMaterialsTextureSearchDirectory, 0, sizeof(m_modelMaterialsTextureSearchDirectory));
+            std::strncpy(m_modelMaterialsTextureSearchDirectory, assetPath.parent_path().string().c_str(), sizeof(m_modelMaterialsTextureSearchDirectory) - 1);
+            textureSearchDirectory = makeAbsoluteNormalized(std::filesystem::path(m_modelMaterialsTextureSearchDirectory));
+            m_modelDetailsCacheDirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Apply Folder To All Unresolved"))
+        {
+            if (textureSearchDirectory.empty() || !std::filesystem::exists(textureSearchDirectory) || !std::filesystem::is_directory(textureSearchDirectory))
+            {
+                m_notificationManager.showError("Search folder is invalid");
+            }
+            else if (unresolvedTexturePathList.empty())
+            {
+                m_notificationManager.showInfo("No unresolved texture paths");
+            }
+            else
+            {
+                size_t mappedCount = 0;
+                size_t missingCount = 0;
+                bool overridesChanged = false;
+
+                for (const auto &unresolvedPath : unresolvedTexturePathList)
+                {
+                    const std::string fileName = extractFileNamePortable(unresolvedPath);
+
+                    if (fileName.empty())
+                    {
+                        ++missingCount;
+                        continue;
+                    }
+
+                    std::filesystem::path remappedPath = textureSearchDirectory / fileName;
+                    if (auto caseInsensitiveMatch = findCaseInsensitiveFileInDirectory(textureSearchDirectory, fileName);
+                        caseInsensitiveMatch.has_value())
+                        remappedPath = caseInsensitiveMatch.value();
+
+                    remappedPath = remappedPath.lexically_normal();
+                    const std::string remappedPathString = remappedPath.string();
+                    auto overrideIt = m_modelTextureManualOverrides.find(unresolvedPath);
+                    if (overrideIt == m_modelTextureManualOverrides.end() || overrideIt->second != remappedPathString)
+                    {
+                        m_modelTextureManualOverrides[unresolvedPath] = remappedPathString;
+                        overridesChanged = true;
+                    }
+
+                    if (std::filesystem::exists(remappedPath))
+                        ++mappedCount;
+                    else
+                        ++missingCount;
+                }
+
+                if (overridesChanged)
+                    m_modelDetailsCacheDirty = true;
+
+                if (mappedCount > 0)
+                    m_notificationManager.showSuccess("Mapped " + std::to_string(mappedCount) + " texture path(s)");
+
+                if (missingCount > 0)
+                    m_notificationManager.showWarning(std::to_string(missingCount) + " path(s) still missing after remap");
+            }
+        }
+
+        if (unresolvedTexturePathList.empty())
+            ImGui::TextUnformatted("All discovered texture paths are resolved with current rules.");
+        else
+        {
+            ImGui::TextUnformatted("Unresolved texture paths");
+            if (ImGui::BeginListBox("##UnresolvedTextureList", ImVec2(0.0f, 140.0f)))
+            {
+                for (const auto &texturePath : unresolvedTexturePathList)
+                {
+                    const bool selected = texturePath == m_selectedUnresolvedTexturePath;
+                    if (ImGui::Selectable(texturePath.c_str(), selected))
+                    {
+                        m_selectedUnresolvedTexturePath = texturePath;
+                        std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
+
+                        auto overrideIt = m_modelTextureManualOverrides.find(texturePath);
+                        const std::string &overrideValue = overrideIt != m_modelTextureManualOverrides.end() ? overrideIt->second : "";
+                        std::strncpy(m_selectedTextureOverrideBuffer, overrideValue.c_str(), sizeof(m_selectedTextureOverrideBuffer) - 1);
+                    }
+                }
+
+                ImGui::EndListBox();
+            }
+
+            if (!m_selectedUnresolvedTexturePath.empty())
+            {
+                ImGui::TextWrapped("Selected: %s", m_selectedUnresolvedTexturePath.c_str());
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::InputText("Override path", m_selectedTextureOverrideBuffer, sizeof(m_selectedTextureOverrideBuffer));
+
+                if (ImGui::Button("Apply Override"))
+                {
+                    const std::string overridePath = m_selectedTextureOverrideBuffer;
+                    auto overrideIt = m_modelTextureManualOverrides.find(m_selectedUnresolvedTexturePath);
+                    if (overrideIt == m_modelTextureManualOverrides.end() || overrideIt->second != overridePath)
+                    {
+                        m_modelTextureManualOverrides[m_selectedUnresolvedTexturePath] = overridePath;
+                        m_modelDetailsCacheDirty = true;
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear Override"))
+                {
+                    const size_t erasedCount = m_modelTextureManualOverrides.erase(m_selectedUnresolvedTexturePath);
+                    std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
+                    if (erasedCount > 0)
+                        m_modelDetailsCacheDirty = true;
+                }
+
+                bool previewResolved = true;
+                const std::string previewPath = resolveTexturePathForMaterialExport(m_selectedUnresolvedTexturePath,
+                                                                                    modelDirectory,
+                                                                                    projectRoot,
+                                                                                    textureSearchDirectory,
+                                                                                    m_modelTextureManualOverrides,
+                                                                                    previewResolved);
+                ImGui::TextWrapped("Preview: %s", previewPath.empty() ? "<None>" : previewPath.c_str());
+                ImGui::TextDisabled("%s", previewResolved ? "Status: Resolved" : "Status: Unresolved");
+            }
+        }
+
+        if (!m_modelTextureManualOverrides.empty() && ImGui::TreeNode("Manual overrides"))
+        {
+            for (auto overrideIterator = m_modelTextureManualOverrides.begin(); overrideIterator != m_modelTextureManualOverrides.end();)
+            {
+                const std::string originalPath = overrideIterator->first;
+                const std::string overridePath = overrideIterator->second;
+
+                ImGui::PushID(originalPath.c_str());
+                ImGui::TextWrapped("%s", originalPath.c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove"))
+                {
+                    if (m_selectedUnresolvedTexturePath == originalPath)
+                    {
+                        m_selectedUnresolvedTexturePath.clear();
+                        std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
+                    }
+
+                    overrideIterator = m_modelTextureManualOverrides.erase(overrideIterator);
+                    m_modelDetailsCacheDirty = true;
+                    ImGui::PopID();
+                    continue;
+                }
+                ImGui::TextWrapped(" -> %s", overridePath.c_str());
+                ImGui::PopID();
+
+                ++overrideIterator;
+            }
+
+            ImGui::TreePop();
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Imported materials", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        if (ImGui::BeginTable("ModelMaterialTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable))
+        {
+            ImGui::TableSetupColumn("Material");
+            ImGui::TableSetupColumn("Meshes");
+            ImGui::TableSetupColumn("Albedo");
+            ImGui::TableSetupColumn("Normal");
+            ImGui::TableSetupColumn("ORM");
+            ImGui::TableSetupColumn("Emissive");
+            ImGui::TableHeadersRow();
+
+            const size_t maxRowsToShow = std::min<size_t>(materials.size(), 128);
+            for (size_t materialIndex = 0; materialIndex < maxRowsToShow; ++materialIndex)
+            {
+                const auto &entry = materials[materialIndex];
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(entry.material.name.empty() ? "<Unnamed>" : entry.material.name.c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%zu", entry.meshUsageCount);
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextUnformatted(entry.albedoDisplayPath.c_str());
+                ImGui::TableSetColumnIndex(3);
+                ImGui::TextUnformatted(entry.normalDisplayPath.c_str());
+                ImGui::TableSetColumnIndex(4);
+                ImGui::TextUnformatted(entry.ormDisplayPath.c_str());
+                ImGui::TableSetColumnIndex(5);
+                ImGui::TextUnformatted(entry.emissiveDisplayPath.c_str());
+            }
+
+            ImGui::EndTable();
+
+            if (materials.size() > maxRowsToShow)
+                ImGui::TextDisabled("Showing first %zu of %zu materials", maxRowsToShow, materials.size());
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Material Export");
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputText("Output folder", m_modelMaterialsExportDirectory, sizeof(m_modelMaterialsExportDirectory));
+
+    if (ImGui::Button("Use Model Folder"))
+    {
+        std::memset(m_modelMaterialsExportDirectory, 0, sizeof(m_modelMaterialsExportDirectory));
+        std::strncpy(m_modelMaterialsExportDirectory, assetPath.parent_path().string().c_str(), sizeof(m_modelMaterialsExportDirectory) - 1);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Use Default Export Folder"))
+    {
+        const std::filesystem::path defaultExportPath = assetPath.parent_path() / (assetPath.stem().string() + "_Materials");
+        std::memset(m_modelMaterialsExportDirectory, 0, sizeof(m_modelMaterialsExportDirectory));
+        std::strncpy(m_modelMaterialsExportDirectory, defaultExportPath.string().c_str(), sizeof(m_modelMaterialsExportDirectory) - 1);
+    }
+
+    const auto *selectedStaticMeshComponent = m_selectedEntity ? m_selectedEntity->getComponent<engine::StaticMeshComponent>() : nullptr;
+    const auto *selectedSkeletalMeshComponent = m_selectedEntity ? m_selectedEntity->getComponent<engine::SkeletalMeshComponent>() : nullptr;
+    const bool selectedEntityCanReceiveMaterials = selectedStaticMeshComponent || selectedSkeletalMeshComponent;
+    const size_t selectedEntitySlotCount = selectedStaticMeshComponent     ? selectedStaticMeshComponent->getMaterialSlotCount()
+                                           : selectedSkeletalMeshComponent ? selectedSkeletalMeshComponent->getMaterialSlotCount()
+                                                                           : 0;
+    const bool selectedEntitySlotCountMatchesModel = selectedEntitySlotCount == modelAsset->meshes.size();
+
+    auto runMaterialExport = [&](bool applyToSelectedEntity)
+    {
+        const std::filesystem::path exportPath = std::filesystem::path(m_modelMaterialsExportDirectory);
+        if (exportPath.empty())
+        {
+            m_notificationManager.showError("Output folder is empty");
+            return;
+        }
+
+        std::vector<std::string> perMeshMaterialPaths;
+        std::vector<std::string> *outputBindings = applyToSelectedEntity ? &perMeshMaterialPaths : nullptr;
+
+        if (!exportModelMaterials(assetPath,
+                                  exportPath,
+                                  textureSearchDirectory,
+                                  m_modelTextureManualOverrides,
+                                  outputBindings))
+        {
+            m_notificationManager.showError("Material export failed");
+            return;
+        }
+
+        if (!applyToSelectedEntity)
+            return;
+
+        if (!applyPerMeshMaterialPathsToSelectedEntity(perMeshMaterialPaths))
+        {
+            m_notificationManager.showWarning("Materials exported, but auto-apply to selected entity failed");
+            return;
+        }
+
+        m_notificationManager.showSuccess("Exported and applied materials to selected entity");
+    };
+
+    auto runApplyMaterialsOnly = [&]()
+    {
+        auto project = m_currentProject.lock();
+        const std::filesystem::path projectRoot = project ? std::filesystem::path(project->fullPath) : std::filesystem::path{};
+
+        std::filesystem::path materialsDirectory = std::filesystem::path(m_modelMaterialsExportDirectory);
+        if (materialsDirectory.empty())
+        {
+            m_notificationManager.showError("Output folder is empty");
+            return;
+        }
+
+        if (materialsDirectory.is_relative() && !projectRoot.empty())
+            materialsDirectory = projectRoot / materialsDirectory;
+
+        materialsDirectory = makeAbsoluteNormalized(materialsDirectory);
+
+        std::vector<std::string> perMeshMaterialPaths;
+        size_t matchedSlots = 0;
+        if (!buildPerMeshMaterialPathsFromDirectory(*modelAsset, materialsDirectory, perMeshMaterialPaths, matchedSlots))
+        {
+            m_notificationManager.showError("Failed to resolve materials from output folder");
+            return;
+        }
+
+        if (!applyPerMeshMaterialPathsToSelectedEntity(perMeshMaterialPaths))
+        {
+            m_notificationManager.showWarning("Resolved materials, but failed to apply to selected entity");
+            return;
+        }
+
+        m_notificationManager.showSuccess("Applied " + std::to_string(matchedSlots) + " material slot(s) from output folder");
+    };
+
+    if (ImGui::Button("Export Materials"))
+    {
+        runMaterialExport(false);
+    }
+
+    ImGui::SameLine();
+    if (!selectedEntityCanReceiveMaterials)
+        ImGui::BeginDisabled();
+
+    if (ImGui::Button("Export + Apply To Selected"))
+        runMaterialExport(true);
+
+    if (!selectedEntityCanReceiveMaterials)
+        ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (!selectedEntityCanReceiveMaterials)
+        ImGui::BeginDisabled();
+
+    if (ImGui::Button("Apply Materials To Selected"))
+        runApplyMaterialsOnly();
+
+    if (!selectedEntityCanReceiveMaterials)
+        ImGui::EndDisabled();
+
+    if (!m_selectedEntity)
+        ImGui::TextDisabled("Select a scene entity with mesh component to enable auto-apply.");
+    else if (!selectedEntityCanReceiveMaterials)
+        ImGui::TextDisabled("Selected entity has no mesh component.");
+    else if (!selectedEntitySlotCountMatchesModel)
+        ImGui::TextDisabled("Slot mismatch: selected entity has %zu slot(s), model has %zu mesh slot(s).", selectedEntitySlotCount, modelAsset->meshes.size());
+    else
+        ImGui::TextDisabled("Auto-apply target: '%s' (%zu slot(s)).", m_selectedEntity->getName().c_str(), selectedEntitySlotCount);
+
+    ImGui::TextWrapped("Set a texture search folder, optionally add manual overrides for unresolved paths, then export or apply materials.");
+}
+
+bool Editor::applyMaterialToSelectedEntity(const std::string &materialPath, std::optional<size_t> slot, bool forceAllSlots)
 {
     if (!m_selectedEntity)
     {
@@ -2059,7 +4201,9 @@ bool Editor::applyMaterialToSelectedEntity(const std::string &materialPath, std:
     const size_t slotCount = staticMeshComponent ? staticMeshComponent->getMaterialSlotCount() : skeletalMeshComponent->getMaterialSlotCount();
     std::optional<size_t> resolvedSlot = slot;
 
-    if (!resolvedSlot.has_value() && m_selectedMeshSlot.has_value() && m_selectedMeshSlot.value() < slotCount)
+    if (forceAllSlots)
+        resolvedSlot.reset();
+    else if (!resolvedSlot.has_value() && m_selectedMeshSlot.has_value() && m_selectedMeshSlot.value() < slotCount)
         resolvedSlot = static_cast<size_t>(m_selectedMeshSlot.value());
 
     if (resolvedSlot.has_value())
@@ -2111,8 +4255,8 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
         return false;
     }
 
-    auto modelAsset = engine::AssetsLoader::loadModel(assetPath);
-    if (!modelAsset.has_value())
+    const auto *model = ensureModelAssetLoaded(assetPath);
+    if (!model)
     {
         VX_EDITOR_ERROR_STREAM("Failed to load model asset: " << assetPath);
         return false;
@@ -2122,21 +4266,20 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
     const std::string entityName = path.stem().empty() ? "Model" : path.stem().string();
 
     auto entity = m_scene->addEntity(entityName);
-    const auto &model = modelAsset.value();
 
-    if (model.skeleton.has_value())
+    if (model->skeleton.has_value())
     {
-        auto *skeletalMeshComponent = entity->addComponent<engine::SkeletalMeshComponent>(model.meshes, model.skeleton.value());
+        auto *skeletalMeshComponent = entity->addComponent<engine::SkeletalMeshComponent>(model->meshes, model->skeleton.value());
 
-        if (!model.animations.empty())
+        if (!model->animations.empty())
         {
             auto *animatorComponent = entity->addComponent<engine::AnimatorComponent>();
-            animatorComponent->setAnimations(model.animations, &skeletalMeshComponent->getSkeleton());
+            animatorComponent->setAnimations(model->animations, &skeletalMeshComponent->getSkeleton());
             animatorComponent->setSelectedAnimationIndex(0);
         }
     }
     else
-        entity->addComponent<engine::StaticMeshComponent>(model.meshes);
+        entity->addComponent<engine::StaticMeshComponent>(model->meshes);
 
     if (auto transform = entity->getComponent<engine::Transform3DComponent>())
     {
@@ -2204,555 +4347,33 @@ void Editor::addPrimitiveEntity(const std::string &primitiveName)
     m_notificationManager.showSuccess("Added primitive: " + primitiveName);
 }
 
-void Editor::drawDetails()
+void Editor::addEmptyEntity(const std::string &name)
 {
-    ImGui::Begin("Details");
-
-    if (!m_selectedEntity)
+    if (!m_scene)
     {
-        ImGui::Text("Select an object to view details");
-        return ImGui::End();
+        VX_EDITOR_ERROR_STREAM("Add empty entity failed. Scene is null.");
+        return;
     }
 
-    char buffer[128];
-    std::strncpy(buffer, m_selectedEntity->getName().c_str(), sizeof(buffer));
-    if (ImGui::InputText("##Name", buffer, sizeof(buffer)))
-        m_selectedEntity->setName(std::string(buffer));
-
-    ImGui::SameLine();
-
-    if (ImGui::Button("Add component"))
+    auto entity = m_scene->addEntity(name.empty() ? "Empty" : name);
+    if (!entity)
     {
-        if (ImGui::IsPopupOpen("AddComponentPopup"))
-            ImGui::CloseCurrentPopup();
-        else
-            ImGui::OpenPopup("AddComponentPopup");
+        VX_EDITOR_ERROR_STREAM("Failed to create empty entity.");
+        return;
     }
 
-    if (ImGui::BeginPopup("AddComponentPopup"))
+    if (auto transform = entity->getComponent<engine::Transform3DComponent>())
     {
-        ImGui::Text("Scripting");
+        glm::vec3 spawnPosition(0.0f);
+        if (m_editorCamera)
+            spawnPosition = m_editorCamera->getPosition() + m_editorCamera->getForward() * 3.0f;
 
-        ImGui::Button("New C++ class");
-
-        ImGui::Separator();
-
-        ImGui::Text("Common");
-
-        if (ImGui::Button("Camera"))
-        {
-            m_selectedEntity->addComponent<engine::CameraComponent>();
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (ImGui::Button("RigidBody"))
-        {
-            auto transformation = m_selectedEntity->getComponent<engine::Transform3DComponent>();
-            auto position = transformation->getPosition();
-            physx::PxTransform transform(physx::PxVec3(position.x, position.y, position.z));
-            auto rigid = m_scene->getPhysicsScene().createDynamic(transform);
-            auto rigidComponent = m_selectedEntity->addComponent<engine::RigidBodyComponent>(rigid);
-
-            if (auto collisionComponent = m_selectedEntity->getComponent<engine::CollisionComponent>())
-            {
-                if (collisionComponent->getActor())
-                {
-                    m_scene->getPhysicsScene().removeActor(*collisionComponent->getActor(), true, true);
-                    collisionComponent->removeActor();
-                }
-
-                rigidComponent->getRigidActor()->attachShape(*collisionComponent->getShape());
-
-                physx::PxRigidBodyExt::updateMassAndInertia(*rigid, 10.0f);
-            }
-        }
-
-        if (ImGui::Button("Collision"))
-        {
-            auto transformation = m_selectedEntity->getComponent<engine::Transform3DComponent>();
-            auto position = transformation->getPosition();
-            auto shape = m_scene->getPhysicsScene().createShape(physx::PxBoxGeometry(transformation->getScale().x * 0.5f,
-                                                                                     transformation->getScale().y * 0.5f, transformation->getScale().z * 0.5f));
-
-            physx::PxTransform transform(physx::PxVec3(position.x, position.y, position.z));
-
-            if (auto rigidComponent = m_selectedEntity->getComponent<engine::RigidBodyComponent>())
-            {
-                rigidComponent->getRigidActor()->attachShape(*shape);
-                auto collisionComponent = m_selectedEntity->addComponent<engine::CollisionComponent>(shape);
-            }
-            else
-            {
-                auto staticActor = m_scene->getPhysicsScene().createStatic(transform);
-                staticActor->attachShape(*shape);
-                auto collisionComponent = m_selectedEntity->addComponent<engine::CollisionComponent>(shape, staticActor);
-            }
-        }
-
-        ImGui::Button("Audio");
-
-        ImGui::Button("Light");
-
-        ImGui::Separator();
-
-        ImGui::EndPopup();
+        transform->setPosition(spawnPosition);
     }
 
-    for (const auto &[_, component] : m_selectedEntity->getSingleComponents())
-    {
-        if (auto transformComponent = dynamic_cast<engine::Transform3DComponent *>(component.get()))
-        {
-            if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                if (ImGui::BeginTable("TransformTable", 2, ImGuiTableFlags_SizingStretchProp))
-                {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::Text("Position");
-
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::PushID("Position");
-                    auto position = transformComponent->getPosition();
-
-                    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(100, 100, 100, 255));
-                    if (ImGui::Button("R"))
-                        position = glm::vec3(0.0f);
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine();
-
-                    ImGui::DragFloat3("##Position", &position.x, 0.01f);
-
-                    transformComponent->setPosition(position);
-
-                    // X/Y/Z colored drag
-                    // float* values[3] = { &pos.x, &pos.y, &pos.z };
-                    // ImVec4 colors[3] = { ImVec4(0.8f,0.2f,0.2f,1.0f), ImVec4(0.2f,0.8f,0.2f,1.0f), ImVec4(0.2f,0.2f,0.8f,1.0f) };
-                    // ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4,2));
-                    // for (int i = 0; i < 3; i++)
-                    // {
-                    //     ImGui::PushStyleColor(ImGuiCol_Text, colors[i]);
-                    //     ImGui::DragFloat(i==0 ? "##X" : (i==1?"##Y":"##Z"), values[i], 0.1f);
-                    //     ImGui::PopStyleColor();
-                    //     if(i<2) ImGui::SameLine();
-                    // }
-                    // ImGui::PopStyleVar();
-                    // transformComponent->setPosition(pos);
-                    ImGui::PopID();
-
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::Text("Rotation");
-                    ImGui::TableSetColumnIndex(1);
-                    auto euler = transformComponent->getEulerDegrees();
-                    if (ImGui::DragFloat3("##Rotation", &euler.x, 0.1f))
-                        transformComponent->setEulerDegrees(euler);
-
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::Text("Scale");
-                    ImGui::TableSetColumnIndex(1);
-                    auto scale = transformComponent->getScale();
-                    if (ImGui::DragFloat3("##Scale", &scale.x, 0.01f, 0.0f, 100.0f))
-                        transformComponent->setScale(scale);
-
-                    ImGui::EndTable();
-                }
-            }
-        }
-        else if (auto lightComponent = dynamic_cast<engine::LightComponent *>(component.get()))
-        {
-            if (ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                auto lightType = lightComponent->getLightType();
-                auto light = lightComponent->getLight();
-
-                static const std::vector<const char *> lightTypes{
-                    "Directional",
-                    "Spot",
-                    "Point"};
-
-                static int currentLighType = 0;
-
-                switch (lightType)
-                {
-                case engine::LightComponent::LightType::DIRECTIONAL:
-                    currentLighType = 0;
-                    break;
-                case engine::LightComponent::LightType::SPOT:
-                    currentLighType = 1;
-                    break;
-                case engine::LightComponent::LightType::POINT:
-                    currentLighType = 2;
-                    break;
-                };
-
-                if (ImGui::Combo("Light type", &currentLighType, lightTypes.data(), lightTypes.size()))
-                {
-                    if (currentLighType == 0)
-                        lightComponent->changeLightType(engine::LightComponent::LightType::DIRECTIONAL);
-                    else if (currentLighType == 1)
-                        lightComponent->changeLightType(engine::LightComponent::LightType::SPOT);
-                    else if (currentLighType == 2)
-                        lightComponent->changeLightType(engine::LightComponent::LightType::POINT);
-
-                    lightType = lightComponent->getLightType();
-                    light = lightComponent->getLight();
-                }
-
-                ImGui::DragFloat3("Light position", &light->position.x, 0.1f, 0.0f);
-                ImGui::ColorEdit3("Light color", &light->color.x);
-                ImGui::DragFloat("Light strength", &light->strength, 0.1f, 0.0f, 150.0f);
-
-                if (lightType == engine::LightComponent::LightType::POINT)
-                {
-                    auto pointLight = dynamic_cast<engine::PointLight *>(light.get());
-                    ImGui::DragFloat("Light radius", &pointLight->radius, 0.1, 0.0f, 360.0f);
-                }
-                else if (lightType == engine::LightComponent::LightType::DIRECTIONAL)
-                {
-                    auto directionalLight = dynamic_cast<engine::DirectionalLight *>(light.get());
-                    ImGui::DragFloat3("Light direction", &directionalLight->direction.x, 0.01);
-                }
-                else if (lightType == engine::LightComponent::LightType::SPOT)
-                {
-                    auto spotLight = dynamic_cast<engine::SpotLight *>(light.get());
-                    ImGui::DragFloat3("Light direction", &spotLight->direction.x);
-                    ImGui::DragFloat("Inner", &spotLight->innerAngle);
-                    ImGui::DragFloat("Outer", &spotLight->outerAngle);
-                }
-            }
-        }
-        else if (auto staticComponent = dynamic_cast<engine::StaticMeshComponent *>(component.get()))
-        {
-            if (ImGui::CollapsingHeader("Static mesh", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                const auto &meshes = staticComponent->getMeshes();
-
-                for (size_t meshIndex = 0; meshIndex < meshes.size(); ++meshIndex)
-                {
-                    const auto &mesh = meshes[meshIndex];
-                    const bool isPickedMeshSlot = m_selectedMeshSlot.has_value() && m_selectedMeshSlot.value() == meshIndex;
-                    std::string overridePath = staticComponent->getMaterialOverridePath(meshIndex);
-                    const bool hasOverride = !overridePath.empty();
-
-                    std::string materialLabel = hasOverride
-                                                    ? std::filesystem::path(overridePath).filename().string()
-                                                    : std::string("<Default>");
-                    const std::string meshName = mesh.name.empty() ? ("Mesh_" + std::to_string(meshIndex)) : mesh.name;
-
-                    ImGui::PushID(static_cast<int>(meshIndex));
-                    ImGui::Text("Slot %zu (%s)", meshIndex, meshName.c_str());
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", materialLabel.c_str());
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", isPickedMeshSlot ? "[picked]" : "");
-
-                    VkDescriptorSet previewDescriptorSet = m_assetsPreviewSystem.getPlaceholder();
-                    if (hasOverride)
-                        previewDescriptorSet = m_assetsPreviewSystem.getOrRequestMaterialPreview(overridePath);
-
-                    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, isPickedMeshSlot ? 2.0f : 1.0f);
-                    if (isPickedMeshSlot)
-                        ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 170, 40, 255));
-                    ImGui::ImageButton("##MaterialPreview", previewDescriptorSet, ImVec2(52.0f, 52.0f));
-                    if (isPickedMeshSlot)
-                        ImGui::PopStyleColor();
-                    ImGui::PopStyleVar();
-
-                    if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
-                        m_selectedMeshSlot = static_cast<uint32_t>(meshIndex);
-
-                    if (!hasOverride && ImGui::IsItemHovered())
-                    {
-                        ImGui::BeginTooltip();
-                        if (mesh.material.albedoTexture.empty())
-                            ImGui::TextUnformatted("No override material");
-                        else
-                            ImGui::Text("Mesh Albedo: %s", mesh.material.albedoTexture.c_str());
-                        ImGui::EndTooltip();
-                    }
-
-                    if (hasOverride && ImGui::IsItemHovered())
-                    {
-                        ImGui::BeginTooltip();
-                        ImGui::Text("Material: %s", overridePath.c_str());
-                        ImGui::TextUnformatted("Double-click to open material editor");
-                        ImGui::EndTooltip();
-                    }
-
-                    if (hasOverride && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                        openMaterialEditor(overridePath);
-
-                    if (ImGui::BeginDragDropTarget())
-                    {
-                        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
-                        {
-                            std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
-                            const std::string extension = std::filesystem::path(droppedPath).extension().string();
-
-                            if (extension == ".elixmat")
-                            {
-                                if (applyMaterialToSelectedEntity(droppedPath, meshIndex))
-                                    m_notificationManager.showSuccess("Material applied to slot");
-                                else
-                                    m_notificationManager.showError("Failed to apply material");
-                            }
-                        }
-                        ImGui::EndDragDropTarget();
-                    }
-
-                    ImGui::SameLine();
-
-                    ImGui::BeginGroup();
-                    ImGui::TextUnformatted("Override Material");
-
-                    if (hasOverride)
-                        ImGui::TextWrapped("%s", overridePath.c_str());
-                    else
-                        ImGui::TextDisabled("<None>");
-
-                    if (hasOverride && ImGui::Button("Open Material Editor"))
-                        openMaterialEditor(overridePath);
-
-                    if (hasOverride && ImGui::Button("Clear Override"))
-                    {
-                        staticComponent->clearMaterialOverride(meshIndex);
-                    }
-
-                    ImGui::EndGroup();
-                    ImGui::Separator();
-                    ImGui::PopID();
-                }
-            }
-        }
-        else if (auto skeletalMeshComponent = dynamic_cast<engine::SkeletalMeshComponent *>(component.get()))
-        {
-            if (ImGui::CollapsingHeader("Skeletal mesh", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                const auto &meshes = skeletalMeshComponent->getMeshes();
-
-                for (size_t meshIndex = 0; meshIndex < meshes.size(); ++meshIndex)
-                {
-                    const auto &mesh = meshes[meshIndex];
-                    const bool isPickedMeshSlot = m_selectedMeshSlot.has_value() && m_selectedMeshSlot.value() == meshIndex;
-                    std::string overridePath = skeletalMeshComponent->getMaterialOverridePath(meshIndex);
-                    const bool hasOverride = !overridePath.empty();
-
-                    std::string materialLabel = hasOverride
-                                                    ? std::filesystem::path(overridePath).filename().string()
-                                                    : std::string("<Default>");
-                    const std::string meshName = mesh.name.empty() ? ("Mesh_" + std::to_string(meshIndex)) : mesh.name;
-
-                    ImGui::PushID(static_cast<int>(meshIndex));
-                    ImGui::Text("Slot %zu (%s)", meshIndex, meshName.c_str());
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", materialLabel.c_str());
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", isPickedMeshSlot ? "[picked]" : "");
-
-                    VkDescriptorSet previewDescriptorSet = m_assetsPreviewSystem.getPlaceholder();
-                    if (hasOverride)
-                        previewDescriptorSet = m_assetsPreviewSystem.getOrRequestMaterialPreview(overridePath);
-
-                    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, isPickedMeshSlot ? 2.0f : 1.0f);
-                    if (isPickedMeshSlot)
-                        ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 170, 40, 255));
-                    ImGui::ImageButton("##MaterialPreview", previewDescriptorSet, ImVec2(52.0f, 52.0f));
-                    if (isPickedMeshSlot)
-                        ImGui::PopStyleColor();
-                    ImGui::PopStyleVar();
-
-                    if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
-                        m_selectedMeshSlot = static_cast<uint32_t>(meshIndex);
-
-                    if (!hasOverride && ImGui::IsItemHovered())
-                    {
-                        ImGui::BeginTooltip();
-                        if (mesh.material.albedoTexture.empty())
-                            ImGui::TextUnformatted("No override material");
-                        else
-                            ImGui::Text("Mesh Albedo: %s", mesh.material.albedoTexture.c_str());
-                        ImGui::EndTooltip();
-                    }
-
-                    if (hasOverride && ImGui::IsItemHovered())
-                    {
-                        ImGui::BeginTooltip();
-                        ImGui::Text("Material: %s", overridePath.c_str());
-                        ImGui::TextUnformatted("Double-click to open material editor");
-                        ImGui::EndTooltip();
-                    }
-
-                    if (hasOverride && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                        openMaterialEditor(overridePath);
-
-                    if (ImGui::BeginDragDropTarget())
-                    {
-                        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
-                        {
-                            std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
-                            const std::string extension = std::filesystem::path(droppedPath).extension().string();
-
-                            if (extension == ".elixmat")
-                            {
-                                if (applyMaterialToSelectedEntity(droppedPath, meshIndex))
-                                    m_notificationManager.showSuccess("Material applied to slot");
-                                else
-                                    m_notificationManager.showError("Failed to apply material");
-                            }
-                        }
-                        ImGui::EndDragDropTarget();
-                    }
-
-                    ImGui::SameLine();
-
-                    ImGui::BeginGroup();
-                    ImGui::TextUnformatted("Override Material");
-
-                    if (hasOverride)
-                        ImGui::TextWrapped("%s", overridePath.c_str());
-                    else
-                        ImGui::TextDisabled("<None>");
-
-                    if (hasOverride && ImGui::Button("Open Material Editor"))
-                        openMaterialEditor(overridePath);
-
-                    if (hasOverride && ImGui::Button("Clear Override"))
-                    {
-                        skeletalMeshComponent->clearMaterialOverride(meshIndex);
-                    }
-
-                    ImGui::EndGroup();
-                    ImGui::Separator();
-                    ImGui::PopID();
-                }
-            }
-        }
-        else if (auto animatorComponent = dynamic_cast<engine::AnimatorComponent *>(component.get()))
-        {
-            if (ImGui::CollapsingHeader("Animator", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                const auto &animations = animatorComponent->getAnimations();
-
-                if (animations.empty())
-                {
-                    ImGui::TextDisabled("No animation clips imported for this model");
-                }
-                else
-                {
-                    int selectedAnimationIndex = animatorComponent->getSelectedAnimationIndex();
-                    if (selectedAnimationIndex < 0 || selectedAnimationIndex >= static_cast<int>(animations.size()))
-                    {
-                        selectedAnimationIndex = 0;
-                        animatorComponent->setSelectedAnimationIndex(selectedAnimationIndex);
-                    }
-
-                    const std::string fallbackName = "<Unnamed>";
-                    const std::string &selectedName = animations[selectedAnimationIndex].name.empty() ? fallbackName : animations[selectedAnimationIndex].name;
-
-                    if (ImGui::BeginCombo("Clip", selectedName.c_str()))
-                    {
-                        for (int animationIndex = 0; animationIndex < static_cast<int>(animations.size()); ++animationIndex)
-                        {
-                            const std::string &animationName = animations[animationIndex].name.empty() ? fallbackName : animations[animationIndex].name;
-                            const bool isSelected = animationIndex == selectedAnimationIndex;
-
-                            if (ImGui::Selectable(animationName.c_str(), isSelected))
-                            {
-                                selectedAnimationIndex = animationIndex;
-                                animatorComponent->setSelectedAnimationIndex(selectedAnimationIndex);
-                            }
-
-                            if (isSelected)
-                                ImGui::SetItemDefaultFocus();
-                        }
-
-                        ImGui::EndCombo();
-                    }
-
-                    bool isLooped = animatorComponent->isAnimationLooped();
-                    if (ImGui::Checkbox("Loop", &isLooped))
-                        animatorComponent->setAnimationLooped(isLooped);
-
-                    bool isPaused = animatorComponent->isAnimationPaused();
-                    if (ImGui::Checkbox("Paused", &isPaused))
-                        animatorComponent->setAnimationPaused(isPaused);
-
-                    float animationSpeed = animatorComponent->getAnimationSpeed();
-                    if (ImGui::DragFloat("Speed", &animationSpeed, 0.01f, 0.01f, 4.0f, "%.2f"))
-                        animatorComponent->setAnimationSpeed(animationSpeed);
-
-                    if (animatorComponent->isAnimationPlaying())
-                    {
-                        const float duration = animatorComponent->getCurrentAnimationDuration();
-                        float currentTime = animatorComponent->getCurrentTime();
-
-                        if (duration > 0.0f)
-                        {
-                            if (ImGui::SliderFloat("Time", &currentTime, 0.0f, duration))
-                                animatorComponent->setCurrentTime(currentTime);
-
-                            ImGui::Text("Time: %.2f / %.2f", currentTime, duration);
-                        }
-                    }
-
-                    if (ImGui::Button("Play Selected"))
-                        animatorComponent->playAnimationByIndex(static_cast<size_t>(selectedAnimationIndex), animatorComponent->isAnimationLooped());
-
-                    ImGui::SameLine();
-
-                    if (ImGui::Button("Stop"))
-                        animatorComponent->stopAnimation();
-
-                    if (m_currentMode != EditorMode::EDIT)
-                        ImGui::TextDisabled("Animation preview updates in Edit mode");
-                }
-            }
-        }
-        else if (auto cameraComponent = dynamic_cast<engine::CameraComponent *>(component.get()))
-        {
-            if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                auto camera = cameraComponent->getCamera();
-                float yaw = camera->getYaw();
-                float pitch = camera->getPitch();
-                glm::vec3 position = camera->getPosition();
-                float fov = camera->getFOV();
-
-                if (ImGui::DragFloat("Yaw", &yaw))
-                    camera->setYaw(yaw);
-
-                if (ImGui::DragFloat("Pitch", &pitch))
-                    camera->setPitch(pitch);
-
-                if (ImGui::DragFloat("FOV", &fov))
-                    camera->setFOV(fov);
-
-                if (ImGui::DragFloat3("Camera position", &position.x, 0.1f, 0.0f))
-                    camera->setPosition(position);
-            }
-        }
-        else if (auto rigidBodyComponent = dynamic_cast<engine::RigidBodyComponent *>(component.get()))
-        {
-            if (ImGui::CollapsingHeader("RigidBody", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                bool isKinematic = true;
-
-                if (ImGui::Checkbox("Kinematic", &isKinematic))
-                {
-                    rigidBodyComponent->setKinematic(isKinematic);
-                }
-            }
-        }
-        else if (auto collisionComponent = dynamic_cast<engine::CollisionComponent *>(component.get()))
-        {
-            if (ImGui::CollapsingHeader("Collision", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-            }
-        }
-    }
-
-    ImGui::End();
+    setSelectedEntity(entity.get());
+    VX_EDITOR_INFO_STREAM("Added empty entity: " << entity->getName());
+    m_notificationManager.showSuccess("Added empty entity");
 }
 
 engine::Camera::SharedPtr Editor::getCurrentCamera()
@@ -2782,6 +4403,7 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
             std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
             std::string extension = std::filesystem::path(droppedPath).extension().string();
             std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+            const std::filesystem::path droppedAssetPath = std::filesystem::path(droppedPath);
 
             if (extension == ".elixmat")
             {
@@ -2790,12 +4412,21 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
                 else
                     m_notificationManager.showWarning("Select a mesh entity to apply this material");
             }
-            else if (extension == ".fbx" || extension == ".obj")
+            else if (isModelAssetPath(droppedAssetPath))
             {
                 if (spawnEntityFromModelAsset(droppedPath))
                     m_notificationManager.showSuccess("Model spawned in scene");
                 else
                     m_notificationManager.showError("Failed to spawn model");
+            }
+            else if (isTextureAssetPath(droppedAssetPath) || extension == ".hdr" || extension == ".exr")
+            {
+                if (m_scene)
+                {
+                    m_scene->setSkyboxHDRPath(droppedPath);
+                    m_notificationManager.showSuccess("Skybox applied to scene");
+                    VX_EDITOR_INFO_STREAM("Set scene skybox path: " << droppedPath << '\n');
+                }
             }
         }
         ImGui::EndDragDropTarget();
@@ -2860,6 +4491,23 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
             ImGui::CloseCurrentPopup();
         }
 
+        ImGui::Separator();
+        ImGui::TextUnformatted("Environment");
+
+        if (m_scene && m_scene->hasSkyboxHDR())
+        {
+            ImGui::TextWrapped("Skybox: %s", m_scene->getSkyboxHDRPath().c_str());
+            if (ImGui::MenuItem("Clear Skybox HDR"))
+            {
+                m_scene->clearSkyboxHDR();
+                m_notificationManager.showInfo("Cleared scene skybox HDR");
+                VX_EDITOR_INFO_STREAM("Cleared scene skybox HDR\n");
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        else
+            ImGui::TextDisabled("Skybox: <None>");
+
         ImGui::EndPopup();
     }
 
@@ -2881,12 +4529,26 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
     }
 
     const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    const bool viewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     ImGuiIO &io = ImGui::GetIO();
 
-    auto window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
-    GLFWwindow *windowHandler = window->getRawHandler();
+    if (viewportFocused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
+    {
+        auto project = m_currentProject.lock();
+        if (m_scene && project)
+        {
+            m_scene->saveSceneToFile(project->entryScene);
+            m_notificationManager.showInfo("Scene saved");
+            VX_EDITOR_INFO_STREAM("Scene saved to: " << project->entryScene);
+        }
+    }
 
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsOver() && m_viewportSizeX > 0 && m_viewportSizeY > 0)
+    auto &window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
+    GLFWwindow *windowHandler = window.getRawHandler();
+
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsOver() &&
+        !m_isColliderHandleHovered && !m_isColliderHandleActive &&
+        m_viewportSizeX > 0 && m_viewportSizeY > 0)
     {
         const ImVec2 mouse = ImGui::GetMousePos();
         const float imageWidth = imageMax.x - imageMin.x;
@@ -2987,7 +4649,7 @@ void Editor::processPendingObjectSelection()
 
     auto image = m_objectIdColorImage->getImage();
 
-    auto commandBuffer = core::CommandBuffer::createShared(core::VulkanContext::getContext()->getGraphicsCommandPool());
+    auto commandBuffer = core::CommandBuffer::createShared(*core::VulkanContext::getContext()->getGraphicsCommandPool());
     commandBuffer->begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
     const VkImageSubresourceRange subresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -3021,8 +4683,30 @@ void Editor::processPendingObjectSelection()
         subresourceRange);
 
     commandBuffer->end();
-    commandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue());
-    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+
+    VkFenceCreateInfo fenceCreateInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    VkFence readbackFence = VK_NULL_HANDLE;
+    if (vkCreateFence(core::VulkanContext::getContext()->getDevice(), &fenceCreateInfo, nullptr, &readbackFence) != VK_SUCCESS)
+    {
+        m_hasPendingObjectPick = false;
+        return;
+    }
+
+    if (!commandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue(), {}, {}, {}, readbackFence))
+    {
+        vkDestroyFence(core::VulkanContext::getContext()->getDevice(), readbackFence, nullptr);
+        m_hasPendingObjectPick = false;
+        return;
+    }
+
+    if (vkWaitForFences(core::VulkanContext::getContext()->getDevice(), 1, &readbackFence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+    {
+        vkDestroyFence(core::VulkanContext::getContext()->getDevice(), readbackFence, nullptr);
+        m_hasPendingObjectPick = false;
+        return;
+    }
+
+    vkDestroyFence(core::VulkanContext::getContext()->getDevice(), readbackFence, nullptr);
 
     uint32_t *data = nullptr;
     m_entityIdBuffer->map(reinterpret_cast<void *&>(data));
@@ -3076,220 +4760,6 @@ void Editor::processPendingObjectSelection()
     m_hasPendingObjectPick = false;
 }
 
-void Editor::drawTerminal()
-{
-    if (!m_showTerminal)
-        return;
-
-    ImGui::Begin("Terminal with logs", &m_showTerminal);
-
-    auto *logger = core::Logger::getDefaultLogger();
-    if (!logger)
-    {
-        ImGui::TextDisabled("Logger is not initialized");
-        ImGui::End();
-        return;
-    }
-
-    if (ImGui::Button("Clear Logs"))
-    {
-        logger->clearHistory();
-        m_terminalLastLogCount = 0;
-        m_forceTerminalScrollToBottom = true;
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Auto-scroll", &m_terminalAutoScroll) && m_terminalAutoScroll)
-        m_forceTerminalScrollToBottom = true;
-
-    ImGui::SameLine();
-    ImGui::Checkbox("Clear input on run", &m_terminalClearInputOnSubmit);
-
-    auto drawLayerToggle = [this](const char *label, int bit)
-    {
-        bool enabled = (m_terminalSelectedLayerMask & (1 << bit)) != 0;
-        if (ImGui::Checkbox(label, &enabled))
-        {
-            if (enabled)
-                m_terminalSelectedLayerMask |= (1 << bit);
-            else
-                m_terminalSelectedLayerMask &= ~(1 << bit);
-        }
-    };
-
-    drawLayerToggle("Core", 0);
-    ImGui::SameLine();
-    drawLayerToggle("Engine", 1);
-    ImGui::SameLine();
-    drawLayerToggle("Editor", 2);
-    ImGui::SameLine();
-    drawLayerToggle("Developer", 3);
-    ImGui::SameLine();
-    drawLayerToggle("User", 4);
-
-    const float commandLineHeight = ImGui::GetFrameHeightWithSpacing() * 2.2f;
-    if (ImGui::BeginChild("TerminalLogRegion", ImVec2(0, -commandLineHeight), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar))
-    {
-        const auto logs = logger->getHistorySnapshot();
-        const size_t currentLogCount = logs.size();
-        const bool hasNewLogs = currentLogCount > m_terminalLastLogCount;
-        const bool historyShrank = currentLogCount < m_terminalLastLogCount;
-
-        const float scrollYBeforeRender = ImGui::GetScrollY();
-        const float scrollMaxBeforeRender = ImGui::GetScrollMaxY();
-        const bool wasAtBottom = (scrollMaxBeforeRender <= 0.0f) || (scrollYBeforeRender >= scrollMaxBeforeRender - 1.0f);
-
-        for (const auto &logMessage : logs)
-        {
-            int layerBit = 3;
-            switch (logMessage.layer)
-            {
-            case core::Logger::LogLayer::Core:
-                layerBit = 0;
-                break;
-            case core::Logger::LogLayer::Engine:
-                layerBit = 1;
-                break;
-            case core::Logger::LogLayer::Editor:
-                layerBit = 2;
-                break;
-            case core::Logger::LogLayer::Developer:
-                layerBit = 3;
-                break;
-            case core::Logger::LogLayer::User:
-                layerBit = 4;
-                break;
-            }
-
-            if ((m_terminalSelectedLayerMask & (1 << layerBit)) == 0)
-                continue;
-
-            ImVec4 color = ImVec4(0.85f, 0.88f, 0.93f, 1.0f);
-            switch (logMessage.level)
-            {
-            case core::Logger::LogLevel::DEBUG:
-                color = ImVec4(0.45f, 0.70f, 1.0f, 1.0f);
-                break;
-            case core::Logger::LogLevel::INFO:
-                color = ImVec4(0.74f, 0.90f, 0.78f, 1.0f);
-                break;
-            case core::Logger::LogLevel::WARNING:
-                color = ImVec4(1.0f, 0.86f, 0.52f, 1.0f);
-                break;
-            case core::Logger::LogLevel::LOG_LEVEL_ERROR:
-                color = ImVec4(1.0f, 0.46f, 0.46f, 1.0f);
-                break;
-            }
-
-            ImGui::PushStyleColor(ImGuiCol_Text, color);
-            ImGui::TextUnformatted(logMessage.formattedMessage.c_str());
-            ImGui::PopStyleColor();
-        }
-
-        const bool shouldAutoScroll = m_terminalAutoScroll &&
-                                      (m_forceTerminalScrollToBottom || historyShrank || (hasNewLogs && wasAtBottom));
-
-        if (shouldAutoScroll)
-            ImGui::SetScrollHereY(1.0f);
-
-        m_terminalLastLogCount = currentLogCount;
-        m_forceTerminalScrollToBottom = false;
-    }
-    ImGui::EndChild();
-
-    ImGui::PushItemWidth(-70.0f);
-    const bool submitWithEnter = ImGui::InputText("##TerminalCommand", m_terminalCommandBuffer, sizeof(m_terminalCommandBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::PopItemWidth();
-
-    ImGui::SameLine();
-    const bool submitWithButton = ImGui::Button("Run");
-
-    if (submitWithEnter || submitWithButton)
-    {
-        std::string command = m_terminalCommandBuffer;
-
-        if (!command.empty())
-        {
-            command.erase(command.begin(), std::find_if(command.begin(), command.end(), [](unsigned char character)
-                                                        { return !std::isspace(character); }));
-            command.erase(std::find_if(command.rbegin(), command.rend(), [](unsigned char character)
-                                       { return !std::isspace(character); })
-                              .base(),
-                          command.end());
-        }
-
-        if (!command.empty())
-        {
-            m_forceTerminalScrollToBottom = true;
-
-            if (command == "reload_shaders")
-            {
-                m_pendingShaderReloadRequest = true;
-                VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal", "Queued shader reload request");
-                m_notificationManager.showInfo("Shader reload queued");
-            }
-            else if (command == "compile_shaders")
-            {
-                std::vector<std::string> compileErrors;
-                const size_t compiledShaders = engine::shaders::ShaderCompiler::compileDirectoryToSpv("./resources/shaders", &compileErrors);
-
-                for (const auto &error : compileErrors)
-                    VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::LOG_LEVEL_ERROR, "Terminal", error);
-
-                if (compiledShaders > 0)
-                {
-                    m_pendingShaderReloadRequest = true;
-                    VX_LOG_STREAM(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal",
-                                  "Compiled " << compiledShaders << " shader source files. Reload queued.");
-                    m_notificationManager.showSuccess("Shaders compiled");
-                }
-                else if (compileErrors.empty())
-                {
-                    VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal", "No shader source files were compiled.");
-                    m_notificationManager.showInfo("No shader changes to compile");
-                }
-                else
-                    m_notificationManager.showError("Shader compilation failed. Check terminal output.");
-            }
-            else
-            {
-                VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal", "$ " + command);
-
-                const auto [executionResult, output] = FileHelper::executeCommand(command);
-
-                if (!output.empty())
-                {
-                    std::stringstream outputStream(output);
-                    std::string line;
-                    while (std::getline(outputStream, line))
-                    {
-                        if (!line.empty())
-                            VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal", line);
-                    }
-                }
-
-                if (executionResult == 0)
-                {
-                    VX_LOG_STREAM(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal",
-                                  "Command finished successfully. Exit code: " << executionResult);
-                    m_notificationManager.showSuccess("Command executed successfully");
-                }
-                else
-                {
-                    VX_LOG_STREAM(core::Logger::LogLayer::Developer, core::Logger::LogLevel::LOG_LEVEL_ERROR, "Terminal",
-                                  "Command failed. Exit code: " << executionResult);
-                    m_notificationManager.showError("Command failed. Check terminal output.");
-                }
-            }
-        }
-
-        if (m_terminalClearInputOnSubmit)
-            std::memset(m_terminalCommandBuffer, 0, sizeof(m_terminalCommandBuffer));
-    }
-
-    ImGui::End();
-}
-
 void Editor::drawAssets()
 {
     if (!m_showAssetsWindow || !m_assetsWindow)
@@ -3308,76 +4778,4 @@ void Editor::drawAssets()
     ImGui::End();
 }
 
-void Editor::drawHierarchy()
-{
-    ImGui::Begin("Hierarchy");
-
-    if (!m_scene)
-        return ImGui::End();
-
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
-
-    for (auto &entity : m_scene->getEntities())
-    {
-        // ImGui::PushID(entity->getID());
-
-        auto entityName = entity->getName().c_str();
-
-        bool selected = (entity.get() == m_selectedEntity);
-
-        ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth;
-
-        if (selected)
-            nodeFlags |= ImGuiTreeNodeFlags_Selected;
-
-        bool nodeOpen = ImGui::TreeNodeEx(entityName, nodeFlags);
-
-        if (ImGui::IsItemClicked())
-            setSelectedEntity(entity.get());
-
-        if (nodeOpen)
-            ImGui::TreePop();
-
-        // ImGui::PopID();
-    }
-
-    ImGui::PopStyleVar(2);
-
-    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-    ImGuiIO &io = ImGui::GetIO();
-
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
-    {
-        ImGui::OpenPopup("HierarchyPopup");
-    }
-
-    if (ImGui::BeginPopup("HierarchyPopup"))
-    {
-        if (ImGui::Button("Add entity"))
-        {
-            ImGui::OpenPopup("EntityAddingPopup");
-        }
-
-        if (ImGui::BeginPopup("EntityAddingPopup"))
-        {
-            if (ImGui::Button("Cube"))
-            {
-                addPrimitiveEntity("Cube");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::Button("Sphere"))
-            {
-                addPrimitiveEntity("Sphere");
-                ImGui::CloseCurrentPopup();
-            }
-
-            ImGui::EndPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    ImGui::End();
-}
 ELIX_NESTED_NAMESPACE_END

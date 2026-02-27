@@ -1,4 +1,7 @@
 #include "Editor/AssetsWindow.hpp"
+#include "Engine/Assets/AssetsLoader.hpp"
+#include "Engine/Assets/AssetsSerializer.hpp"
+
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
@@ -8,11 +11,182 @@
 #include <iomanip>
 #include <cctype>
 #include <cstring>
+#include <optional>
 #include <glm/gtc/type_ptr.hpp>
 #include <nlohmann/json.hpp>
 
 namespace
 {
+    std::string toLowerCopy(std::string text)
+    {
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char character)
+                       { return static_cast<char>(std::tolower(character)); });
+        return text;
+    }
+
+    std::string trimCopy(std::string value)
+    {
+        value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char character)
+                                                { return !std::isspace(character); }));
+        value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char character)
+                                 { return !std::isspace(character); })
+                        .base(),
+                    value.end());
+        return value;
+    }
+
+    std::optional<elix::engine::Asset::AssetType> readSerializedAssetType(const std::filesystem::path &path)
+    {
+        if (toLowerCopy(path.extension().string()) != ".elixasset")
+            return std::nullopt;
+
+        elix::engine::AssetsSerializer serializer;
+        const auto header = serializer.readHeader(path.string());
+        if (!header.has_value())
+            return std::nullopt;
+
+        return static_cast<elix::engine::Asset::AssetType>(header->type);
+    }
+
+    bool isPathWithinRoot(const std::filesystem::path &path, const std::filesystem::path &root)
+    {
+        if (root.empty())
+            return false;
+
+        std::error_code errorCode;
+        const auto normalizedPath = std::filesystem::absolute(path, errorCode).lexically_normal();
+        if (errorCode)
+            return false;
+
+        errorCode.clear();
+        const auto normalizedRoot = std::filesystem::absolute(root, errorCode).lexically_normal();
+        if (errorCode)
+            return false;
+
+        errorCode.clear();
+        const auto relativePath = std::filesystem::relative(normalizedPath, normalizedRoot, errorCode);
+        if (errorCode)
+            return false;
+
+        const std::string relative = relativePath.lexically_normal().string();
+        return relative == "." || relative.rfind("..", 0) != 0;
+    }
+
+    std::string makeDisplayName(const std::filesystem::path &path)
+    {
+        const std::string filename = path.filename().string();
+        const std::string lowerFilename = toLowerCopy(filename);
+
+        constexpr const char *modelSuffix = ".model.elixasset";
+        constexpr const char *textureSuffix = ".tex.elixasset";
+        constexpr const char *genericSuffix = ".elixasset";
+
+        if (lowerFilename.size() > std::strlen(modelSuffix) &&
+            lowerFilename.rfind(modelSuffix) == lowerFilename.size() - std::strlen(modelSuffix))
+            return filename.substr(0, filename.size() - std::strlen(modelSuffix));
+
+        if (lowerFilename.size() > std::strlen(textureSuffix) &&
+            lowerFilename.rfind(textureSuffix) == lowerFilename.size() - std::strlen(textureSuffix))
+            return filename.substr(0, filename.size() - std::strlen(textureSuffix));
+
+        if (lowerFilename.size() > std::strlen(genericSuffix) &&
+            lowerFilename.rfind(genericSuffix) == lowerFilename.size() - std::strlen(genericSuffix))
+            return filename.substr(0, filename.size() - std::strlen(genericSuffix));
+
+        return filename;
+    }
+
+    std::string toProjectRelativePathIfPossible(const std::filesystem::path &path, const std::filesystem::path &projectRoot)
+    {
+        if (projectRoot.empty())
+            return path.lexically_normal().string();
+
+        if (!isPathWithinRoot(path, projectRoot))
+            return path.lexically_normal().string();
+
+        std::error_code errorCode;
+        const std::filesystem::path relativePath = std::filesystem::relative(path.lexically_normal(), projectRoot.lexically_normal(), errorCode);
+        if (errorCode || relativePath.empty())
+            return path.lexically_normal().string();
+
+        return relativePath.lexically_normal().string();
+    }
+
+    bool isSupportedModelSourceExtension(const std::string &extensionLower)
+    {
+        static const std::unordered_set<std::string> modelExtensions = {".fbx", ".obj"};
+        return modelExtensions.find(extensionLower) != modelExtensions.end();
+    }
+
+    bool isSupportedTextureSourceExtension(const std::string &extensionLower)
+    {
+        static const std::unordered_set<std::string> textureExtensions = {
+            ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff", ".psd", ".gif", ".hdr", ".exr", ".dds"};
+        return textureExtensions.find(extensionLower) != textureExtensions.end();
+    }
+
+    bool isSupportedImportSourceExtension(const std::string &extensionLower)
+    {
+        return isSupportedModelSourceExtension(extensionLower) || isSupportedTextureSourceExtension(extensionLower);
+    }
+
+    std::vector<std::filesystem::path> gatherImportableFiles(const std::filesystem::path &directory,
+                                                             bool recursive,
+                                                             const std::string &filterLower)
+    {
+        std::vector<std::filesystem::path> files;
+        std::error_code errorCode;
+
+        if (!std::filesystem::exists(directory, errorCode) || errorCode || !std::filesystem::is_directory(directory, errorCode))
+            return files;
+
+        auto maybeAddFile = [&](const std::filesystem::path &path)
+        {
+            const std::string extensionLower = toLowerCopy(path.extension().string());
+            if (!isSupportedImportSourceExtension(extensionLower))
+                return;
+
+            const std::string pathLower = toLowerCopy(path.string());
+            if (!filterLower.empty() && pathLower.find(filterLower) == std::string::npos)
+                return;
+
+            files.push_back(path.lexically_normal());
+        };
+
+        if (recursive)
+        {
+            for (std::filesystem::recursive_directory_iterator iterator(directory, errorCode);
+                 !errorCode && iterator != std::filesystem::recursive_directory_iterator();
+                 iterator.increment(errorCode))
+            {
+                const auto &entry = *iterator;
+                std::error_code fileError;
+                if (!entry.is_regular_file(fileError) || fileError)
+                    continue;
+
+                maybeAddFile(entry.path());
+            }
+        }
+        else
+        {
+            for (std::filesystem::directory_iterator iterator(directory, errorCode);
+                 !errorCode && iterator != std::filesystem::directory_iterator();
+                 iterator.increment(errorCode))
+            {
+                const auto &entry = *iterator;
+                std::error_code fileError;
+                if (!entry.is_regular_file(fileError) || fileError)
+                    continue;
+
+                maybeAddFile(entry.path());
+            }
+        }
+
+        std::sort(files.begin(), files.end(), [](const std::filesystem::path &left, const std::filesystem::path &right)
+                  { return left.string() < right.string(); });
+        return files;
+    }
+
     std::filesystem::path makeUniquePathWithExtension(const std::filesystem::path &directory,
                                                       const std::string &baseName,
                                                       const std::string &extension)
@@ -102,8 +276,29 @@ AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage, AssetsPrevi
 void AssetsWindow::setProject(Project *project)
 {
     m_currentProject = project;
+    setSelectedAssetPath({});
+
+    if (!m_currentProject)
+    {
+        m_currentDirectory.clear();
+        m_treeRoot.reset();
+        return;
+    }
+
     m_currentDirectory = m_currentProject->fullPath;
     buildDirectoryTree();
+}
+
+void AssetsWindow::setSelectedAssetPath(const std::filesystem::path &path)
+{
+    std::filesystem::path normalizedPath;
+    if (!path.empty())
+        normalizedPath = std::filesystem::absolute(path).lexically_normal();
+
+    m_selectedAssetPath = normalizedPath;
+
+    if (m_onAssetSelectionChangedFunction)
+        m_onAssetSelectionChangedFunction(m_selectedAssetPath);
 }
 
 void AssetsWindow::draw()
@@ -225,7 +420,39 @@ void AssetsWindow::drawSearchBar()
 
     ImGui::SameLine();
 
-    float searchWidth = ImGui::GetContentRegionAvail().x - 100.0f;
+    if (ImGui::Button("Import"))
+    {
+        m_openImportPopupRequested = true;
+        m_importTypeIndex = 0;
+        m_importRecursive = false;
+        m_importStatusMessage.clear();
+        m_importStatusIsError = false;
+        std::memset(m_importSourceBuffer, 0, sizeof(m_importSourceBuffer));
+        std::memset(m_importDestinationBuffer, 0, sizeof(m_importDestinationBuffer));
+        std::memset(m_importNameBuffer, 0, sizeof(m_importNameBuffer));
+        std::memset(m_importFilterBuffer, 0, sizeof(m_importFilterBuffer));
+        m_importSelectedSourcePaths.clear();
+        m_importBrowserCurrentDirectory.clear();
+
+        const std::string defaultSourcePath = m_currentDirectory.empty() ? std::filesystem::current_path().string() : m_currentDirectory.string();
+        std::strncpy(m_importSourceBuffer, defaultSourcePath.c_str(), sizeof(m_importSourceBuffer) - 1);
+
+        std::filesystem::path destinationPath;
+        if (m_currentProject)
+        {
+            const std::filesystem::path projectRoot = std::filesystem::path(m_currentProject->fullPath).lexically_normal();
+            const std::filesystem::path resourcesDirectory = projectRoot / "resources";
+            destinationPath = isPathWithinRoot(m_currentDirectory, projectRoot) ? m_currentDirectory : resourcesDirectory;
+        }
+        else
+            destinationPath = m_currentDirectory;
+
+        std::strncpy(m_importDestinationBuffer, destinationPath.lexically_normal().string().c_str(), sizeof(m_importDestinationBuffer) - 1);
+    }
+
+    ImGui::SameLine();
+
+    const float searchWidth = std::max(ImGui::GetContentRegionAvail().x - 100.0f, 120.0f);
 
     ImGui::SetNextItemWidth(searchWidth);
 
@@ -302,7 +529,7 @@ void AssetsWindow::drawAssetGrid()
     auto entries = getFilteredEntries();
 
     if (!m_selectedAssetPath.empty() && !std::filesystem::exists(m_selectedAssetPath))
-        m_selectedAssetPath.clear();
+        setSelectedAssetPath({});
 
     const bool assetGridFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     if (assetGridFocused && !m_selectedAssetPath.empty() && ImGui::IsKeyPressed(ImGuiKey_F2, false))
@@ -335,35 +562,28 @@ void AssetsWindow::drawAssetGrid()
 
             ImGui::BeginGroup();
 
-            VkDescriptorSet icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/file.png");
+            VkDescriptorSet icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/file.tex.elixasset");
             std::string filename = assetPath.filename().string();
             std::string extension = assetPath.extension().string();
-            std::string extensionLower = extension;
-            std::transform(extensionLower.begin(), extensionLower.end(), extensionLower.begin(), [](unsigned char character)
-                           { return static_cast<char>(std::tolower(character)); });
+            std::string extensionLower = toLowerCopy(extension);
+            const auto serializedAssetType = entry.is_directory()
+                                                 ? engine::Asset::AssetType::NONE
+                                                 : readSerializedAssetType(assetPath).value_or(engine::Asset::AssetType::NONE);
 
             if (entry.is_directory())
             {
-                icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/folder.png");
+                icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/folder.tex.elixasset");
             }
             else
             {
                 if (extensionLower == ".elixmat")
-                {
                     icon = m_assetsPreviewSystem.getOrRequestMaterialPreview(assetPath.string());
-                }
-                else if (m_velixExtensions.find(extensionLower) != m_velixExtensions.end())
-                {
-                    icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.png");
-                }
-                else if (m_textureExtensions.find(extensionLower) != m_textureExtensions.end())
-                {
+                else if (serializedAssetType == engine::Asset::AssetType::TEXTURE)
                     icon = m_assetsPreviewSystem.getOrRequestTexturePreview(assetPath.string());
-                }
-                else if (m_modelExtensions.find(extensionLower) != m_modelExtensions.end())
-                {
+                else if (serializedAssetType == engine::Asset::AssetType::MODEL)
                     icon = m_assetsPreviewSystem.getOrRequestModelPreview(assetPath.string());
-                }
+                else if (m_velixExtensions.find(extensionLower) != m_velixExtensions.end())
+                    icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.tex.elixasset");
             }
 
             const bool isSelected = !m_selectedAssetPath.empty() && m_selectedAssetPath == assetPath;
@@ -403,16 +623,17 @@ void AssetsWindow::drawAssetGrid()
                 }
             }
 
-            ImGui::TextWrapped("%s", filename.c_str());
+            const std::string displayName = entry.is_directory() ? filename : makeDisplayName(assetPath);
+            ImGui::TextWrapped("%s", displayName.c_str());
 
             ImGui::EndGroup();
 
             if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
-                m_selectedAssetPath = assetPath;
+                setSelectedAssetPath(assetPath);
 
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
             {
-                m_selectedAssetPath = assetPath;
+                setSelectedAssetPath(assetPath);
                 m_contextAssetPath = assetPath;
                 ImGui::OpenPopup("AssetItemContextMenu");
             }
@@ -430,7 +651,16 @@ void AssetsWindow::drawAssetGrid()
                 {
                     ImGui::Text("File: %s", filename.c_str());
                     ImGui::Text("Size: %s", formatFileSize(entry.file_size()).c_str());
-                    ImGui::Text("Type: %s", extension.c_str());
+
+                    std::string typeLabel = extension;
+                    if (serializedAssetType == engine::Asset::AssetType::TEXTURE)
+                        typeLabel = "Texture Asset";
+                    else if (serializedAssetType == engine::Asset::AssetType::MODEL)
+                        typeLabel = "Model Asset";
+                    else if (serializedAssetType == engine::Asset::AssetType::MATERIAL)
+                        typeLabel = "Material Asset";
+
+                    ImGui::Text("Type: %s", typeLabel.c_str());
                 }
 
                 ImGui::EndTooltip();
@@ -465,9 +695,10 @@ void AssetsWindow::drawAssetGrid()
         {
             const bool isDirectory = std::filesystem::is_directory(m_contextAssetPath);
             std::string extension = m_contextAssetPath.extension().string();
-            std::string extensionLower = extension;
-            std::transform(extensionLower.begin(), extensionLower.end(), extensionLower.begin(), [](unsigned char character)
-                           { return static_cast<char>(std::tolower(character)); });
+            std::string extensionLower = toLowerCopy(extension);
+            const auto serializedAssetType = isDirectory
+                                                 ? engine::Asset::AssetType::NONE
+                                                 : readSerializedAssetType(m_contextAssetPath).value_or(engine::Asset::AssetType::NONE);
 
             if (isDirectory)
             {
@@ -493,7 +724,7 @@ void AssetsWindow::drawAssetGrid()
                 if (isTextEditable && m_onTextAssetOpenRequestFunction && ImGui::MenuItem("Open in Editor"))
                     m_onTextAssetOpenRequestFunction(m_contextAssetPath);
 
-                if (m_textureExtensions.find(extensionLower) != m_textureExtensions.end())
+                if (serializedAssetType == engine::Asset::AssetType::TEXTURE)
                 {
                     if (ImGui::MenuItem("Create Material From Texture"))
                         createMaterialFromTexture(m_contextAssetPath);
@@ -585,6 +816,360 @@ void AssetsWindow::drawAssetGrid()
 
         ImGui::EndPopup();
     }
+
+    if (m_openImportPopupRequested)
+    {
+        ImGui::OpenPopup("Import Asset");
+        m_openImportPopupRequested = false;
+    }
+
+    if (ImGui::BeginPopupModal("Import Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        const char *importTypes[] = {"Auto Detect", "Model", "Texture"};
+        const std::filesystem::path projectRoot = m_currentProject ? std::filesystem::path(m_currentProject->fullPath).lexically_normal() : std::filesystem::path{};
+
+        ImGui::SetNextItemWidth(640.0f);
+        ImGui::InputTextWithHint("Source Root", "/path/to/source/assets", m_importSourceBuffer, sizeof(m_importSourceBuffer));
+
+        ImGui::SetNextItemWidth(640.0f);
+        ImGui::InputTextWithHint("Destination Folder", "Project/resources/Textures", m_importDestinationBuffer, sizeof(m_importDestinationBuffer));
+
+        ImGui::SameLine();
+        if (ImGui::Button("Current Folder"))
+        {
+            const std::string currentPath = m_currentDirectory.lexically_normal().string();
+            std::memset(m_importDestinationBuffer, 0, sizeof(m_importDestinationBuffer));
+            std::strncpy(m_importDestinationBuffer, currentPath.c_str(), sizeof(m_importDestinationBuffer) - 1);
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Resources") && !projectRoot.empty())
+        {
+            const std::string resourcesPath = (projectRoot / "resources").lexically_normal().string();
+            std::memset(m_importDestinationBuffer, 0, sizeof(m_importDestinationBuffer));
+            std::strncpy(m_importDestinationBuffer, resourcesPath.c_str(), sizeof(m_importDestinationBuffer) - 1);
+        }
+
+        std::filesystem::path sourceRootPath = trimCopy(m_importSourceBuffer);
+        if (sourceRootPath.is_relative())
+            sourceRootPath = m_currentDirectory / sourceRootPath;
+
+        sourceRootPath = sourceRootPath.lexically_normal();
+
+        std::filesystem::path destinationDirectory = trimCopy(m_importDestinationBuffer);
+        if (destinationDirectory.empty())
+            destinationDirectory = !projectRoot.empty() ? (projectRoot / "resources") : m_currentDirectory;
+        else if (destinationDirectory.is_relative())
+            destinationDirectory = !projectRoot.empty() ? (projectRoot / destinationDirectory) : (m_currentDirectory / destinationDirectory);
+
+        destinationDirectory = destinationDirectory.lexically_normal();
+        const bool destinationInsideProject = projectRoot.empty() || isPathWithinRoot(destinationDirectory, projectRoot);
+
+        std::error_code sourceRootError;
+        const bool sourceRootValid = std::filesystem::exists(sourceRootPath, sourceRootError) &&
+                                     !sourceRootError &&
+                                     std::filesystem::is_directory(sourceRootPath, sourceRootError) &&
+                                     !sourceRootError;
+
+        if (sourceRootValid &&
+            (m_importBrowserCurrentDirectory.empty() || !isPathWithinRoot(m_importBrowserCurrentDirectory, sourceRootPath)))
+            m_importBrowserCurrentDirectory = sourceRootPath;
+
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::Combo("Asset Type", &m_importTypeIndex, importTypes, IM_ARRAYSIZE(importTypes));
+
+        ImGui::SameLine();
+        ImGui::Checkbox("Recursive", &m_importRecursive);
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::InputTextWithHint("Filter", "Search source files...", m_importFilterBuffer, sizeof(m_importFilterBuffer));
+
+        ImGui::Separator();
+
+        if (!sourceRootValid)
+        {
+            ImGui::TextDisabled("Set a valid source directory.");
+        }
+        else
+        {
+            const float paneHeight = 320.0f;
+
+            ImGui::BeginChild("ImportDirectoryTree", ImVec2(300.0f, paneHeight), true);
+            {
+                std::function<void(const std::filesystem::path &)> drawDirectoryNode = [&](const std::filesystem::path &directory)
+                {
+                    std::string nodeName = directory.filename().string();
+                    if (nodeName.empty())
+                        nodeName = directory.string();
+
+                    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                                               ImGuiTreeNodeFlags_SpanFullWidth;
+
+                    if (m_importBrowserCurrentDirectory == directory)
+                        flags |= ImGuiTreeNodeFlags_Selected;
+
+                    std::vector<std::filesystem::path> childDirectories;
+                    std::error_code iterateError;
+                    for (std::filesystem::directory_iterator iterator(directory, iterateError);
+                         !iterateError && iterator != std::filesystem::directory_iterator();
+                         iterator.increment(iterateError))
+                    {
+                        std::error_code isDirectoryError;
+                        if (iterator->is_directory(isDirectoryError) && !isDirectoryError)
+                            childDirectories.push_back(iterator->path().lexically_normal());
+                    }
+
+                    std::sort(childDirectories.begin(), childDirectories.end(), [](const std::filesystem::path &left, const std::filesystem::path &right)
+                              { return left.filename().string() < right.filename().string(); });
+
+                    if (childDirectories.empty())
+                        flags |= ImGuiTreeNodeFlags_Leaf;
+
+                    const bool opened = ImGui::TreeNodeEx(nodeName.c_str(), flags);
+                    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+                        m_importBrowserCurrentDirectory = directory;
+
+                    if (opened)
+                    {
+                        for (const auto &childDirectory : childDirectories)
+                            drawDirectoryNode(childDirectory);
+
+                        ImGui::TreePop();
+                    }
+                };
+
+                drawDirectoryNode(sourceRootPath);
+            }
+            ImGui::EndChild();
+
+            ImGui::SameLine();
+
+            ImGui::BeginChild("ImportFileList", ImVec2(520.0f, paneHeight), true);
+            {
+                const std::string filterLower = toLowerCopy(trimCopy(m_importFilterBuffer));
+                const auto importFiles = gatherImportableFiles(m_importBrowserCurrentDirectory, m_importRecursive, filterLower);
+
+                if (ImGui::Button("Select All Visible"))
+                {
+                    for (const auto &file : importFiles)
+                        m_importSelectedSourcePaths.insert(file.string());
+                }
+
+                ImGui::SameLine();
+
+                if (ImGui::Button("Clear Selection"))
+                    m_importSelectedSourcePaths.clear();
+
+                ImGui::Separator();
+
+                if (importFiles.empty())
+                {
+                    ImGui::TextDisabled("No importable model/texture files in this folder.");
+                }
+                else
+                {
+                    for (const auto &file : importFiles)
+                    {
+                        const std::string key = file.string();
+                        bool selected = m_importSelectedSourcePaths.find(key) != m_importSelectedSourcePaths.end();
+
+                        ImGui::PushID(key.c_str());
+                        if (ImGui::Checkbox("##SelectImportFile", &selected))
+                        {
+                            if (selected)
+                                m_importSelectedSourcePaths.insert(key);
+                            else
+                                m_importSelectedSourcePaths.erase(key);
+                        }
+
+                        ImGui::SameLine();
+
+                        const std::string displayPath = toProjectRelativePathIfPossible(file, sourceRootPath);
+                        ImGui::TextUnformatted(displayPath.c_str());
+                        ImGui::PopID();
+                    }
+                }
+            }
+            ImGui::EndChild();
+        }
+
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(240.0f);
+        ImGui::InputTextWithHint("Asset Name", "Used only for single import", m_importNameBuffer, sizeof(m_importNameBuffer));
+
+        ImGui::SameLine();
+        ImGui::Text("Selected: %zu", m_importSelectedSourcePaths.size());
+
+        ImGui::TextWrapped("Destination: %s", destinationDirectory.string().c_str());
+        if (!destinationInsideProject)
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "Destination must be inside project root.");
+
+        if (!m_importStatusMessage.empty())
+        {
+            const ImVec4 color = m_importStatusIsError ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f) : ImVec4(0.55f, 0.9f, 0.55f, 1.0f);
+            ImGui::TextColored(color, "%s", m_importStatusMessage.c_str());
+        }
+
+        if (ImGui::Button("Import Selected"))
+        {
+            m_importStatusMessage.clear();
+            m_importStatusIsError = false;
+
+            if (!sourceRootValid)
+            {
+                m_importStatusMessage = "Source root must be a valid directory.";
+                m_importStatusIsError = true;
+            }
+            else if (!destinationInsideProject)
+            {
+                m_importStatusMessage = "Destination must be inside project root.";
+                m_importStatusIsError = true;
+            }
+            else if (m_importSelectedSourcePaths.empty())
+            {
+                m_importStatusMessage = "Select at least one source file.";
+                m_importStatusIsError = true;
+            }
+            else
+            {
+                std::error_code createDirectoryError;
+                std::filesystem::create_directories(destinationDirectory, createDirectoryError);
+                if (createDirectoryError)
+                {
+                    m_importStatusMessage = "Failed to create destination folder.";
+                    m_importStatusIsError = true;
+                }
+                else
+                {
+                    std::vector<std::filesystem::path> selectedFiles;
+                    selectedFiles.reserve(m_importSelectedSourcePaths.size());
+
+                    for (const auto &selectedPath : m_importSelectedSourcePaths)
+                    {
+                        std::filesystem::path sourcePath = std::filesystem::path(selectedPath).lexically_normal();
+                        std::error_code fileError;
+                        if (!std::filesystem::exists(sourcePath, fileError) || fileError || !std::filesystem::is_regular_file(sourcePath, fileError))
+                            continue;
+
+                        selectedFiles.push_back(sourcePath);
+                    }
+
+                    std::sort(selectedFiles.begin(), selectedFiles.end(), [](const std::filesystem::path &left, const std::filesystem::path &right)
+                              { return left.string() < right.string(); });
+
+                    uint32_t importedCount = 0u;
+                    uint32_t failedCount = 0u;
+                    std::filesystem::path lastImportedOutputPath;
+
+                    const bool singleSelection = selectedFiles.size() == 1u;
+                    const std::string customAssetName = trimCopy(m_importNameBuffer);
+                    const bool hasCustomSingleAssetName = singleSelection && !customAssetName.empty();
+
+                    for (const auto &sourcePath : selectedFiles)
+                    {
+                        const std::string extensionLower = toLowerCopy(sourcePath.extension().string());
+                        const bool isModelSource = isSupportedModelSourceExtension(extensionLower);
+                        const bool isTextureSource = isSupportedTextureSourceExtension(extensionLower);
+
+                        bool importModel = false;
+                        bool importTexture = false;
+
+                        if (m_importTypeIndex == 1)
+                            importModel = true;
+                        else if (m_importTypeIndex == 2)
+                            importTexture = true;
+                        else
+                        {
+                            importModel = isModelSource;
+                            importTexture = isTextureSource;
+                        }
+
+                        if ((!importModel && !importTexture) ||
+                            (importModel && !isModelSource) ||
+                            (importTexture && !isTextureSource))
+                        {
+                            ++failedCount;
+                            continue;
+                        }
+
+                        std::string assetName = hasCustomSingleAssetName ? customAssetName : sourcePath.stem().string();
+                        if (assetName.empty())
+                            assetName = importModel ? "ModelAsset" : "TextureAsset";
+
+                        if (assetName.find('/') != std::string::npos || assetName.find('\\') != std::string::npos)
+                        {
+                            ++failedCount;
+                            continue;
+                        }
+
+                        const std::string outputExtension = importModel ? ".model.elixasset" : ".tex.elixasset";
+                        const auto outputPath = makeUniquePathWithExtension(destinationDirectory, assetName, outputExtension);
+
+                        const bool importSuccess = importModel
+                                                       ? engine::AssetsLoader::importModelAsset(sourcePath.string(), outputPath.string())
+                                                       : engine::AssetsLoader::importTextureAsset(sourcePath.string(), outputPath.string());
+
+                        if (!importSuccess)
+                        {
+                            ++failedCount;
+                            continue;
+                        }
+
+                        ++importedCount;
+                        lastImportedOutputPath = outputPath;
+
+                        std::error_code absoluteError;
+                        const auto absoluteSourcePath = std::filesystem::absolute(sourcePath, absoluteError).lexically_normal();
+                        absoluteError.clear();
+                        const auto absoluteOutputPath = std::filesystem::absolute(outputPath, absoluteError).lexically_normal();
+
+                        if (!absoluteError &&
+                            absoluteSourcePath != absoluteOutputPath &&
+                            m_currentProject &&
+                            isPathWithinRoot(absoluteSourcePath, std::filesystem::path(m_currentProject->fullPath)))
+                        {
+                            std::error_code removeError;
+                            std::filesystem::remove(absoluteSourcePath, removeError);
+                            if (removeError)
+                                VX_EDITOR_WARNING_STREAM("Imported asset but failed to delete source file: " << absoluteSourcePath << '\n');
+                        }
+                    }
+
+                    if (importedCount > 0u)
+                    {
+                        navigateToDirectory(destinationDirectory);
+                        setSelectedAssetPath(lastImportedOutputPath);
+                        refreshTree();
+                    }
+
+                    if (failedCount == 0u)
+                    {
+                        m_importStatusMessage = "Imported " + std::to_string(importedCount) + " asset(s).";
+                        m_importStatusIsError = false;
+                        m_importSelectedSourcePaths.clear();
+                    }
+                    else
+                    {
+                        m_importStatusMessage = "Imported " + std::to_string(importedCount) + ", failed " + std::to_string(failedCount) + ".";
+                        m_importStatusIsError = importedCount == 0u;
+                    }
+                }
+            }
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel"))
+        {
+            m_importStatusMessage.clear();
+            m_importStatusIsError = false;
+            m_importSelectedSourcePaths.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
 }
 
 void AssetsWindow::startRenamingAsset(const std::filesystem::path &path)
@@ -648,7 +1233,7 @@ bool AssetsWindow::renameAsset(const std::filesystem::path &path, const std::str
     }
 
     if (m_selectedAssetPath == path)
-        m_selectedAssetPath = newPath;
+        setSelectedAssetPath(newPath);
 
     if (m_contextAssetPath == path)
         m_contextAssetPath = newPath;
@@ -694,7 +1279,7 @@ bool AssetsWindow::deleteAsset(const std::filesystem::path &path)
     }
 
     if (!m_selectedAssetPath.empty() && pathContains(path, m_selectedAssetPath))
-        m_selectedAssetPath.clear();
+        setSelectedAssetPath({});
 
     if (!m_contextAssetPath.empty() && pathContains(path, m_contextAssetPath))
         m_contextAssetPath.clear();
@@ -722,7 +1307,7 @@ bool AssetsWindow::duplicateAsset(const std::filesystem::path &path)
         return false;
     }
 
-    m_selectedAssetPath = duplicatePath;
+    setSelectedAssetPath(duplicatePath);
     refreshTree();
     return true;
 }
@@ -732,12 +1317,15 @@ bool AssetsWindow::createMaterialFromTexture(const std::filesystem::path &textur
     if (texturePath.empty() || !std::filesystem::exists(texturePath) || std::filesystem::is_directory(texturePath))
         return false;
 
-    const auto materialPath = makeUniqueMaterialPath(texturePath.parent_path(), texturePath.stem().string() + "_Material");
+    const auto materialPath = makeUniqueMaterialPath(texturePath.parent_path(), makeDisplayName(texturePath) + "_Material");
+    std::string textureReference = texturePath.lexically_normal().string();
+    if (m_currentProject)
+        textureReference = toProjectRelativePathIfPossible(texturePath.lexically_normal(), std::filesystem::path(m_currentProject->fullPath));
 
-    if (!writeDefaultMaterialAsset(materialPath, texturePath.string()))
+    if (!writeDefaultMaterialAsset(materialPath, textureReference))
         return false;
 
-    m_selectedAssetPath = materialPath;
+    setSelectedAssetPath(materialPath);
     refreshTree();
 
     if (m_onMaterialOpenRequestFunction)
@@ -765,8 +1353,18 @@ std::vector<std::filesystem::directory_entry> AssetsWindow::getFilteredEntries()
                 m_excludedDirectories.find(filename) != m_excludedDirectories.end())
                 continue;
 
+            if (entry.is_regular_file())
+            {
+                const std::string extensionLower = toLowerCopy(entry.path().extension().string());
+                if (m_textureExtensions.find(extensionLower) != m_textureExtensions.end() ||
+                    m_modelExtensions.find(extensionLower) != m_modelExtensions.end())
+                    continue;
+            }
+
+            const std::string searchableName = entry.is_directory() ? filename : makeDisplayName(entry.path());
+
             // Apply search filter if query exists
-            if (!m_searchQuery.empty() && !matchesSearch(filename))
+            if (!m_searchQuery.empty() && !matchesSearch(searchableName))
                 continue;
 
             entries.push_back(entry);

@@ -10,13 +10,17 @@
 #include <chrono>
 #include <functional>
 #include <unordered_set>
+#include <limits>
+#include <cmath>
 
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
+#include "Engine/Assets/AssetsLoader.hpp"
 
+#include "Engine/Utilities/AsyncGpuUpload.hpp"
 #include "Engine/Utilities/ImageUtilities.hpp"
 #include "Engine/Shaders/ShaderFamily.hpp"
 
@@ -37,6 +41,7 @@ struct LightData
     glm::vec4 direction;
     glm::vec4 colorStrength;
     glm::vec4 parameters;
+    glm::vec4 shadowInfo; // x = casts shadow, y = shadow index, z = far/range, w = near
 };
 
 struct LightSSBO
@@ -49,14 +54,19 @@ struct LightSSBO
 struct LightSpaceMatrixUBO
 {
     glm::mat4 lightSpaceMatrix;
+    std::array<glm::mat4, elix::engine::ShadowConstants::MAX_DIRECTIONAL_CASCADES> directionalLightSpaceMatrices;
+    glm::vec4 directionalCascadeSplits;
+    std::array<glm::mat4, elix::engine::ShadowConstants::MAX_SPOT_SHADOWS> spotLightSpaceMatrices;
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain) : m_device(device),
-                                                                                  m_swapchain(swapchain)
+RenderGraph::RenderGraph()
 {
+    m_device = core::VulkanContext::getContext()->getDevice();
+    m_swapchain = core::VulkanContext::getContext()->getSwapchain();
+
     m_commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
     m_secondaryCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
     m_commandPools.reserve(MAX_FRAMES_IN_FLIGHT);
@@ -85,8 +95,6 @@ RenderGraph::RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain) 
         if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS)
             throw std::runtime_error("Failed to create renderFinished semaphore for image!");
     }
-
-    EngineShaderFamilies::initEngineShaderFamilies();
 }
 
 void RenderGraph::prepareFrameDataFromScene(Scene *scene)
@@ -183,14 +191,26 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
         if (materialIt != m_materialsByAlbedoPath.end())
             return materialIt->second;
 
-        auto textureImage = std::make_shared<Texture>();
-        if (!textureImage->load(mesh.material.albedoTexture))
-        {
-            VX_ENGINE_ERROR_STREAM("Failed to load mesh albedo texture: " << mesh.material.albedoTexture << '\n');
+        if (m_failedAlbedoTexturePaths.find(mesh.material.albedoTexture) != m_failedAlbedoTexturePaths.end())
             return Material::getDefaultMaterial();
+
+        auto textureImage = AssetsLoader::loadTextureGPU(mesh.material.albedoTexture, VK_FORMAT_R8G8B8A8_SRGB);
+        if (!textureImage)
+        {
+            const auto [_, inserted] = m_failedAlbedoTexturePaths.insert(mesh.material.albedoTexture);
+            if (inserted)
+            {
+                VX_ENGINE_ERROR_STREAM("Failed to load mesh albedo texture: " << mesh.material.albedoTexture << '\n');
+                VX_ENGINE_WARNING_STREAM("Using default material for unresolved texture path (cached to avoid per-frame reload attempts)\n");
+            }
+
+            auto fallbackMaterial = Material::getDefaultMaterial();
+            m_materialsByAlbedoPath[mesh.material.albedoTexture] = fallbackMaterial;
+            return fallbackMaterial;
         }
 
         auto material = Material::create(textureImage);
+        m_failedAlbedoTexturePaths.erase(mesh.material.albedoTexture);
         m_materialsByAlbedoPath[mesh.material.albedoTexture] = material;
         return material;
     };
@@ -211,6 +231,14 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
 
     for (const auto &entity : sceneEntities)
     {
+        if (!entity || !entity->isEnabled())
+        {
+            auto drawItemIt = m_perFrameData.drawItems.find(entity);
+            if (drawItemIt != m_perFrameData.drawItems.end())
+                m_perFrameData.drawItems.erase(drawItemIt);
+            continue;
+        }
+
         auto staticMeshComponent = entity->getComponent<StaticMeshComponent>();
         auto skeletalMeshComponent = entity->getComponent<SkeletalMeshComponent>();
 
@@ -313,6 +341,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
 
     m_perFrameData.previewProjection = previewCameraUBO.projection;
     m_perFrameData.previewView = previewCameraUBO.view;
+    m_perFrameData.skyboxHDRPath = scene ? scene->getSkyboxHDRPath() : std::string{};
 
     std::memcpy(m_previewCameraMapped[m_currentFrame], &previewCameraUBO, sizeof(CameraUBO));
 
@@ -358,6 +387,44 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     const glm::mat4 view = cameraUBO.view;
     const glm::mat3 view3 = glm::mat3(view);
 
+    m_perFrameData.lightSpaceMatrix = glm::mat4(1.0f);
+    m_perFrameData.directionalLightSpaceMatrices.fill(glm::mat4(1.0f));
+    m_perFrameData.directionalCascadeSplits.fill(std::numeric_limits<float>::max());
+    m_perFrameData.spotLightSpaceMatrices.fill(glm::mat4(1.0f));
+    m_perFrameData.pointLightSpaceMatrices.fill(glm::mat4(1.0f));
+    m_perFrameData.activeDirectionalCascadeCount = 0;
+    m_perFrameData.activeSpotShadowCount = 0;
+    m_perFrameData.activePointShadowCount = 0;
+    m_perFrameData.directionalLightDirection = glm::vec3(0.0f, -1.0f, 0.0f);
+    m_perFrameData.directionalLightStrength = 0.0f;
+
+    LightSpaceMatrixUBO lightSpaceMatrixUBO{};
+    lightSpaceMatrixUBO.lightSpaceMatrix = glm::mat4(1.0f);
+    for (auto &matrix : lightSpaceMatrixUBO.directionalLightSpaceMatrices)
+        matrix = glm::mat4(1.0f);
+    lightSpaceMatrixUBO.directionalCascadeSplits = glm::vec4(std::numeric_limits<float>::max());
+    for (auto &matrix : lightSpaceMatrixUBO.spotLightSpaceMatrices)
+        matrix = glm::mat4(1.0f);
+
+    const std::array<glm::vec3, ShadowConstants::POINT_SHADOW_FACES> pointFaceDirections{
+        glm::vec3(1.0f, 0.0f, 0.0f),
+        glm::vec3(-1.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f),
+        glm::vec3(0.0f, -1.0f, 0.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f),
+        glm::vec3(0.0f, 0.0f, -1.0f)};
+
+    const std::array<glm::vec3, ShadowConstants::POINT_SHADOW_FACES> pointFaceUps{
+        glm::vec3(0.0f, -1.0f, 0.0f),
+        glm::vec3(0.0f, -1.0f, 0.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f),
+        glm::vec3(0.0f, 0.0f, -1.0f),
+        glm::vec3(0.0f, -1.0f, 0.0f),
+        glm::vec3(0.0f, -1.0f, 0.0f)};
+
+    bool directionalShadowAssigned = false;
+    bool directionalDataAssigned = false;
+
     for (size_t i = 0; i < lights.size(); ++i)
     {
         const auto &lightComponent = lights[i];
@@ -366,6 +433,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
         ssboData->lights[i].direction = glm::vec4(0.0f, 0.0f, -1.0f, 0.0f);
         ssboData->lights[i].parameters = glm::vec4(1.0f);
         ssboData->lights[i].colorStrength = glm::vec4(lightComponent->color, lightComponent->strength);
+        ssboData->lights[i].shadowInfo = glm::vec4(0.0f);
 
         if (auto directionalLight = dynamic_cast<DirectionalLight *>(lightComponent.get()))
         {
@@ -374,6 +442,109 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
 
             ssboData->lights[i].direction = glm::vec4(dirView, 0.0f);
             ssboData->lights[i].parameters.w = 0.0f;
+
+            if (!directionalDataAssigned)
+            {
+                m_perFrameData.directionalLightDirection = dirWorld;
+                m_perFrameData.directionalLightStrength = directionalLight->skyLightEnabled ? directionalLight->strength : 0.0f;
+                directionalDataAssigned = true;
+            }
+
+            if (directionalLight->castsShadows && !directionalShadowAssigned)
+            {
+                const float cameraNear = camera ? std::max(camera->getNear(), 0.01f) : 0.1f;
+                const float cameraFar = camera ? std::max(camera->getFar(), cameraNear + 0.1f) : 1000.0f;
+                const float cameraFov = camera ? camera->getFOV() : 60.0f;
+                const float cameraAspect = camera ? std::max(camera->getAspect(), 0.001f)
+                                                  : static_cast<float>(m_swapchain->getExtent().width) / std::max(1.0f, static_cast<float>(m_swapchain->getExtent().height));
+
+                glm::mat4 invView = glm::inverse(cameraUBO.view);
+                glm::vec3 camPos = glm::vec3(invView[3]);
+                glm::vec3 camForward = glm::normalize(glm::vec3(invView * glm::vec4(0, 0, -1, 0)));
+                glm::vec3 camUp = glm::normalize(glm::vec3(invView * glm::vec4(0, 1, 0, 0)));
+                glm::vec3 camRight = glm::normalize(glm::cross(camForward, camUp));
+                if (glm::length(camRight) < 0.001f)
+                    camRight = glm::vec3(1.0f, 0.0f, 0.0f);
+
+                const float cascadeLambda = 0.85f;
+                std::array<float, ShadowConstants::MAX_DIRECTIONAL_CASCADES + 1> cascadeDepths{};
+                cascadeDepths[0] = cameraNear;
+
+                for (uint32_t cascadeIndex = 0; cascadeIndex < ShadowConstants::MAX_DIRECTIONAL_CASCADES; ++cascadeIndex)
+                {
+                    const float p = static_cast<float>(cascadeIndex + 1) / static_cast<float>(ShadowConstants::MAX_DIRECTIONAL_CASCADES);
+                    const float logSplit = cameraNear * std::pow(cameraFar / cameraNear, p);
+                    const float uniformSplit = cameraNear + (cameraFar - cameraNear) * p;
+                    cascadeDepths[cascadeIndex + 1] = glm::mix(uniformSplit, logSplit, cascadeLambda);
+                }
+
+                for (uint32_t cascadeIndex = 0; cascadeIndex < ShadowConstants::MAX_DIRECTIONAL_CASCADES; ++cascadeIndex)
+                {
+                    const float splitNear = cascadeDepths[cascadeIndex];
+                    const float splitFar = cascadeDepths[cascadeIndex + 1];
+
+                    const float tanHalfFov = std::tan(glm::radians(cameraFov * 0.5f));
+                    const float nearHeight = splitNear * tanHalfFov;
+                    const float nearWidth = nearHeight * cameraAspect;
+                    const float farHeight = splitFar * tanHalfFov;
+                    const float farWidth = farHeight * cameraAspect;
+
+                    const glm::vec3 nearCenter = camPos + camForward * splitNear;
+                    const glm::vec3 farCenter = camPos + camForward * splitFar;
+
+                    std::array<glm::vec3, 8> corners{
+                        nearCenter + camUp * nearHeight - camRight * nearWidth,
+                        nearCenter + camUp * nearHeight + camRight * nearWidth,
+                        nearCenter - camUp * nearHeight - camRight * nearWidth,
+                        nearCenter - camUp * nearHeight + camRight * nearWidth,
+                        farCenter + camUp * farHeight - camRight * farWidth,
+                        farCenter + camUp * farHeight + camRight * farWidth,
+                        farCenter - camUp * farHeight - camRight * farWidth,
+                        farCenter - camUp * farHeight + camRight * farWidth};
+
+                    glm::vec3 cascadeCenter{0.0f};
+                    for (const auto &corner : corners)
+                        cascadeCenter += corner;
+                    cascadeCenter /= static_cast<float>(corners.size());
+
+                    glm::vec3 lightUp = (std::abs(glm::dot(dirWorld, glm::vec3(0, 1, 0))) > 0.95f)
+                                            ? glm::vec3(0, 0, 1)
+                                            : glm::vec3(0, 1, 0);
+                    const float lightDistance = splitFar + 50.0f;
+                    glm::mat4 lightView = glm::lookAt(cascadeCenter - dirWorld * lightDistance, cascadeCenter, lightUp);
+
+                    glm::vec3 minBounds(std::numeric_limits<float>::max());
+                    glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
+
+                    for (const auto &corner : corners)
+                    {
+                        glm::vec3 cornerLight = glm::vec3(lightView * glm::vec4(corner, 1.0f));
+                        minBounds = glm::min(minBounds, cornerLight);
+                        maxBounds = glm::max(maxBounds, cornerLight);
+                    }
+
+                    constexpr float zPadding = 25.0f;
+                    const float cascadeNear = std::max(0.1f, -maxBounds.z - zPadding);
+                    const float cascadeFar = std::max(cascadeNear + 0.1f, -minBounds.z + zPadding);
+                    glm::mat4 lightProj = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, cascadeNear, cascadeFar);
+                    glm::mat4 lightMatrix = lightProj * lightView;
+
+                    m_perFrameData.directionalLightSpaceMatrices[cascadeIndex] = lightMatrix;
+                    m_perFrameData.directionalCascadeSplits[cascadeIndex] = splitFar;
+                    lightSpaceMatrixUBO.directionalLightSpaceMatrices[cascadeIndex] = lightMatrix;
+                    lightSpaceMatrixUBO.directionalCascadeSplits[cascadeIndex] = splitFar;
+
+                    if (cascadeIndex == 0)
+                    {
+                        m_perFrameData.lightSpaceMatrix = lightMatrix;
+                        lightSpaceMatrixUBO.lightSpaceMatrix = lightMatrix;
+                    }
+                }
+
+                m_perFrameData.activeDirectionalCascadeCount = ShadowConstants::MAX_DIRECTIONAL_CASCADES;
+                ssboData->lights[i].shadowInfo.x = 1.0f;
+                directionalShadowAssigned = true;
+            }
         }
         else if (auto pointLight = dynamic_cast<PointLight *>(lightComponent.get()))
         {
@@ -383,6 +554,23 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
             ssboData->lights[i].position = glm::vec4(posView, 1.0f);
             ssboData->lights[i].parameters.z = pointLight->radius;
             ssboData->lights[i].parameters.w = 2.0f;
+
+            if (pointLight->castsShadows && m_perFrameData.activePointShadowCount < ShadowConstants::MAX_POINT_SHADOWS)
+            {
+                const uint32_t pointShadowIndex = m_perFrameData.activePointShadowCount++;
+                const float nearPlane = 0.1f;
+                const float farPlane = std::max(pointLight->radius, nearPlane + 0.1f);
+                const glm::mat4 projection = glm::perspective(glm::radians(90.0f), 1.0f, nearPlane, farPlane);
+
+                for (uint32_t face = 0; face < ShadowConstants::POINT_SHADOW_FACES; ++face)
+                {
+                    const glm::mat4 faceView = glm::lookAt(posWorld, posWorld + pointFaceDirections[face], pointFaceUps[face]);
+                    const uint32_t matrixIndex = pointShadowIndex * ShadowConstants::POINT_SHADOW_FACES + face;
+                    m_perFrameData.pointLightSpaceMatrices[matrixIndex] = projection * faceView;
+                }
+
+                ssboData->lights[i].shadowInfo = glm::vec4(1.0f, static_cast<float>(pointShadowIndex), farPlane, nearPlane);
+            }
         }
         else if (auto spotLight = dynamic_cast<SpotLight *>(lightComponent.get()))
         {
@@ -395,50 +583,33 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
             ssboData->lights[i].parameters.w = 1.0f;
             ssboData->lights[i].parameters.x = glm::cos(glm::radians(spotLight->innerAngle));
             ssboData->lights[i].parameters.y = glm::cos(glm::radians(spotLight->outerAngle));
-            // ssboData->lights[i].parameters.z = spotLight->radius;
+            ssboData->lights[i].parameters.z = std::max(spotLight->range, 0.1f);
+
+            if (spotLight->castsShadows && m_perFrameData.activeSpotShadowCount < ShadowConstants::MAX_SPOT_SHADOWS)
+            {
+                const uint32_t spotShadowIndex = m_perFrameData.activeSpotShadowCount++;
+                const glm::vec3 positionWorld = lightComponent->position;
+                const glm::vec3 directionWorld = glm::normalize(spotLight->direction);
+                const glm::vec3 up = (std::abs(glm::dot(directionWorld, glm::vec3(0, 1, 0))) > 0.95f)
+                                         ? glm::vec3(0, 0, 1)
+                                         : glm::vec3(0, 1, 0);
+
+                const float nearPlane = 0.1f;
+                const float farPlane = std::max(spotLight->range, nearPlane + 0.1f);
+                const float fullConeAngle = std::max(spotLight->outerAngle * 2.0f, 1.0f);
+                const glm::mat4 lightView = glm::lookAt(positionWorld, positionWorld + directionWorld, up);
+                const glm::mat4 lightProjection = glm::perspective(glm::radians(fullConeAngle), 1.0f, nearPlane, farPlane);
+                const glm::mat4 lightMatrix = lightProjection * lightView;
+
+                m_perFrameData.spotLightSpaceMatrices[spotShadowIndex] = lightMatrix;
+                lightSpaceMatrixUBO.spotLightSpaceMatrices[spotShadowIndex] = lightMatrix;
+                ssboData->lights[i].shadowInfo = glm::vec4(1.0f, static_cast<float>(spotShadowIndex), farPlane, 0.0f);
+            }
         }
     }
 
     m_lightSSBOs[m_currentFrame]->unmap();
-
-    m_perFrameData.lightSpaceMatrix = glm::mat4(1.0f);
-    m_perFrameData.directionalLightDirection = glm::vec3(0.0f, -1.0f, 0.0f);
-    m_perFrameData.directionalLightStrength = 0.0f;
-
-    for (size_t i = 0; i < lights.size(); ++i)
-    {
-        auto directionalLight = dynamic_cast<DirectionalLight *>(lights[i].get());
-        if (!directionalLight)
-            continue;
-
-        LightSpaceMatrixUBO lightSpaceMatrixUBO{};
-
-        glm::vec3 lightDirection = glm::normalize(directionalLight->direction);
-        m_perFrameData.directionalLightDirection = lightDirection;
-        m_perFrameData.directionalLightStrength = directionalLight->strength;
-
-        glm::mat4 invView = glm::inverse(cameraUBO.view);
-        glm::vec3 camPos = glm::vec3(invView[3]);
-        glm::vec3 camForward = glm::normalize(glm::vec3(invView * glm::vec4(0, 0, -1, 0)));
-
-        glm::vec3 lightTarget = camPos + camForward * 20.0f; // center shadow area in front of camera
-        glm::vec3 lightPos = lightTarget - lightDirection * 30.0f;
-
-        glm::vec3 up = (std::abs(glm::dot(lightDirection, glm::vec3(0, 1, 0))) > 0.95f)
-                           ? glm::vec3(0, 0, 1)
-                           : glm::vec3(0, 1, 0);
-
-        glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, up);
-        glm::mat4 lightProj = glm::ortho(-25.0f, 25.0f, -25.0f, 25.0f, 1.0f, 80.0f);
-        glm::mat4 lightMatrix = lightProj * lightView;
-        lightSpaceMatrixUBO.lightSpaceMatrix = lightMatrix;
-
-        std::memcpy(m_lightMapped[m_currentFrame], &lightSpaceMatrixUBO, sizeof(LightSpaceMatrixUBO));
-        m_perFrameData.lightSpaceMatrix = lightMatrix;
-
-        // Only one directional light for now
-        break;
-    }
+    std::memcpy(m_lightMapped[m_currentFrame], &lightSpaceMatrixUBO, sizeof(LightSpaceMatrixUBO));
 }
 
 void RenderGraph::createDescriptorSetPool()
@@ -452,8 +623,12 @@ void RenderGraph::createDescriptorSetPool()
         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 100},
         {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 100}};
 
+    // Camera + preview camera + per-object descriptor sets per frame.
+    static constexpr uint32_t kRenderGraphSetGroupsPerFrame = 3;
+    const uint32_t maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * kRenderGraphSetGroupsPerFrame;
+
     m_descriptorPool = core::DescriptorPool::createShared(m_device, poolSizes, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-                                                          static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT));
+                                                          maxSets);
 }
 
 void RenderGraph::recreateSwapChain()
@@ -462,7 +637,7 @@ void RenderGraph::recreateSwapChain()
 
     auto barriers = m_renderGraphPassesCompiler.onSwapChainResized(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
 
-    auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
+    auto commandBuffer = core::CommandBuffer::create(*core::VulkanContext::getContext()->getGraphicsCommandPool());
     commandBuffer.begin();
 
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
@@ -480,165 +655,28 @@ void RenderGraph::recreateSwapChain()
         renderPass.renderGraphPass->compile(m_renderGraphPassesStorage);
 }
 
-void RenderGraph::initTimestampQueryPool()
-{
-    destroyTimestampQueryPool();
-
-    auto context = core::VulkanContext::getContext();
-    if (!context)
-        return;
-
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(context->getPhysicalDevice(), &properties);
-    m_timestampPeriodNs = properties.limits.timestampPeriod;
-
-    uint32_t queueFamiliesCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(context->getPhysicalDevice(), &queueFamiliesCount, nullptr);
-
-    if (queueFamiliesCount == 0)
-        return;
-
-    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamiliesCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(context->getPhysicalDevice(), &queueFamiliesCount, queueFamilies.data());
-
-    const uint32_t graphicsFamily = context->getGraphicsFamily();
-
-    if (graphicsFamily >= queueFamiliesCount || queueFamilies[graphicsFamily].timestampValidBits == 0)
-        return;
-
-    const uint32_t passCount = std::max<uint32_t>(1u, static_cast<uint32_t>(m_renderGraphPasses.size()));
-    const uint32_t maxExecutions = MAX_RENDER_JOBS + passCount + 16u;
-    m_timestampQueriesPerFrame = maxExecutions * 2u;
-    m_timestampQueryCapacity = m_timestampQueriesPerFrame * MAX_FRAMES_IN_FLIGHT;
-
-    VkQueryPoolCreateInfo queryPoolCI{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
-    queryPoolCI.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    queryPoolCI.queryCount = m_timestampQueryCapacity;
-
-    if (vkCreateQueryPool(m_device, &queryPoolCI, nullptr, &m_timestampQueryPool) == VK_SUCCESS)
-    {
-        m_isGpuTimingAvailable = true;
-    }
-    else
-    {
-        m_timestampQueryPool = VK_NULL_HANDLE;
-        m_timestampQueryCapacity = 0;
-        m_timestampQueriesPerFrame = 0;
-        m_isGpuTimingAvailable = false;
-        VX_ENGINE_ERROR_STREAM("Failed to create render graph timestamp query pool\n");
-    }
-}
-
-void RenderGraph::destroyTimestampQueryPool()
-{
-    if (m_timestampQueryPool != VK_NULL_HANDLE)
-    {
-        vkDestroyQueryPool(m_device, m_timestampQueryPool, nullptr);
-        m_timestampQueryPool = VK_NULL_HANDLE;
-    }
-
-    m_timestampQueryCapacity = 0;
-    m_timestampQueriesPerFrame = 0;
-    m_timestampQueryBase = 0;
-    m_usedTimestampQueries = 0;
-    m_usedTimestampQueriesByFrame.fill(0);
-    m_hasPendingProfilingResolve.fill(false);
-    m_isGpuTimingAvailable = false;
-}
-
-void RenderGraph::resolveFrameProfilingData(uint32_t frameIndex)
-{
-    const auto &passExecutionProfilingData = m_passExecutionProfilingDataByFrame[frameIndex];
-    const uint32_t usedTimestampQueries = m_usedTimestampQueriesByFrame[frameIndex];
-    const uint32_t frameQueryBase = frameIndex * m_timestampQueriesPerFrame;
-
-    RenderGraphFrameProfilingData frameProfilingData{};
-    frameProfilingData.frameIndex = ++m_profiledFrameIndex;
-    frameProfilingData.totalDrawCalls = 0;
-    frameProfilingData.cpuTotalTimeMs = 0.0;
-    frameProfilingData.gpuTotalTimeMs = 0.0;
-    frameProfilingData.gpuTimingAvailable = false;
-    frameProfilingData.passes.reserve(passExecutionProfilingData.size());
-
-    std::vector<uint64_t> timestampData;
-    bool hasGpuData = false;
-
-    if (m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && usedTimestampQueries > 0)
-    {
-        timestampData.resize(usedTimestampQueries);
-
-        const VkResult result = vkGetQueryPoolResults(
-            m_device,
-            m_timestampQueryPool,
-            frameQueryBase,
-            usedTimestampQueries,
-            timestampData.size() * sizeof(uint64_t),
-            timestampData.data(),
-            sizeof(uint64_t),
-            VK_QUERY_RESULT_64_BIT);
-
-        hasGpuData = result == VK_SUCCESS;
-
-        if (!hasGpuData)
-            VX_ENGINE_ERROR_STREAM("Failed to collect timestamp query results for render graph profiling\n");
-    }
-
-    frameProfilingData.gpuTimingAvailable = hasGpuData;
-
-    std::unordered_map<std::string, size_t> passIndexByName;
-    passIndexByName.reserve(passExecutionProfilingData.size());
-
-    for (const auto &executionData : passExecutionProfilingData)
-    {
-        const std::string passName = executionData.passName.empty() ? "Unnamed pass" : executionData.passName;
-
-        size_t passIndex = 0;
-        auto passIt = passIndexByName.find(passName);
-
-        if (passIt == passIndexByName.end())
-        {
-            passIndex = frameProfilingData.passes.size();
-            passIndexByName.emplace(passName, passIndex);
-            frameProfilingData.passes.push_back(RenderGraphPassProfilingData{.passName = passName});
-        }
-        else
-            passIndex = passIt->second;
-
-        auto &passProfilingData = frameProfilingData.passes[passIndex];
-        passProfilingData.executions++;
-        passProfilingData.drawCalls += executionData.drawCalls;
-        passProfilingData.cpuTimeMs += executionData.cpuTimeMs;
-
-        frameProfilingData.totalDrawCalls += executionData.drawCalls;
-        frameProfilingData.cpuTotalTimeMs += executionData.cpuTimeMs;
-
-        if (hasGpuData &&
-            executionData.startQueryIndex >= frameQueryBase &&
-            executionData.endQueryIndex >= frameQueryBase &&
-            executionData.startQueryIndex < frameQueryBase + usedTimestampQueries &&
-            executionData.endQueryIndex < frameQueryBase + usedTimestampQueries)
-        {
-            const uint64_t start = timestampData[executionData.startQueryIndex - frameQueryBase];
-            const uint64_t end = timestampData[executionData.endQueryIndex - frameQueryBase];
-
-            if (end >= start)
-            {
-                const double gpuTimeMs = static_cast<double>(end - start) * static_cast<double>(m_timestampPeriodNs) * 1e-6;
-                passProfilingData.gpuTimeMs += gpuTimeMs;
-                frameProfilingData.gpuTotalTimeMs += gpuTimeMs;
-            }
-        }
-    }
-
-    m_lastFrameProfilingData = std::move(frameProfilingData);
-}
-
 bool RenderGraph::begin()
 {
+    utilities::AsyncGpuUpload::collectFinished(m_device);
+
+    auto &cpuStageProfilingData = m_cpuStageProfilingByFrame[m_currentFrame];
+    cpuStageProfilingData = FrameCpuStageProfilingData{};
+
+    const auto waitForFenceStart = std::chrono::high_resolution_clock::now();
     if (VkResult result = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX); result != VK_SUCCESS)
     {
+        const auto waitForFenceEnd = std::chrono::high_resolution_clock::now();
+        cpuStageProfilingData.waitForFenceMs = std::chrono::duration<double, std::milli>(waitForFenceEnd - waitForFenceStart).count();
         VX_ENGINE_ERROR_STREAM("Failed to wait for fences: " << core::helpers::vulkanResultToString(result) << '\n');
         return false;
+    }
+    const auto waitForFenceEnd = std::chrono::high_resolution_clock::now();
+    cpuStageProfilingData.waitForFenceMs = std::chrono::duration<double, std::milli>(waitForFenceEnd - waitForFenceStart).count();
+
+    if (!m_uploadWaitSemaphoresByFrame[m_currentFrame].empty())
+    {
+        utilities::AsyncGpuUpload::releaseSemaphores(m_device, m_uploadWaitSemaphoresByFrame[m_currentFrame]);
+        m_uploadWaitSemaphoresByFrame[m_currentFrame].clear();
     }
 
     if (VkResult result = vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]); result != VK_SUCCESS)
@@ -655,7 +693,10 @@ bool RenderGraph::begin()
 
     m_commandPools[m_currentFrame]->reset(0);
 
+    const auto acquireImageStart = std::chrono::high_resolution_clock::now();
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
+    const auto acquireImageEnd = std::chrono::high_resolution_clock::now();
+    cpuStageProfilingData.acquireImageMs = std::chrono::duration<double, std::milli>(acquireImageEnd - acquireImageStart).count();
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -680,6 +721,8 @@ bool RenderGraph::begin()
 
     if (!dirtyPassIds.empty())
     {
+        const auto recompileStart = std::chrono::high_resolution_clock::now();
+
         vkDeviceWaitIdle(m_device);
 
         std::unordered_set<uint32_t> dirtyPassIdsSet(dirtyPassIds.begin(), dirtyPassIds.end());
@@ -729,7 +772,7 @@ bool RenderGraph::begin()
 
         if (!barriers.empty())
         {
-            auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
+            auto commandBuffer = core::CommandBuffer::create(*core::VulkanContext::getContext()->getGraphicsCommandPool());
             commandBuffer.begin();
 
             VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
@@ -788,6 +831,9 @@ bool RenderGraph::begin()
             if (passData)
                 passData->renderGraphPass->recompilationIsDone();
         }
+
+        const auto recompileEnd = std::chrono::high_resolution_clock::now();
+        cpuStageProfilingData.recompileMs = std::chrono::duration<double, std::milli>(recompileEnd - recompileStart).count();
     }
 
     const auto &primaryCommandBuffer = m_commandBuffers.at(m_currentFrame);
@@ -798,9 +844,16 @@ bool RenderGraph::begin()
     currentFramePassProfilingData.clear();
     m_usedTimestampQueries = 0;
     m_timestampQueryBase = m_currentFrame * m_timestampQueriesPerFrame;
+    m_frameQueryRangesByFrame[m_currentFrame] = FrameQueryRange{};
 
     if (m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && m_timestampQueriesPerFrame > 0)
+    {
         vkCmdResetQueryPool(primaryCommandBuffer->vk(), m_timestampQueryPool, m_timestampQueryBase, m_timestampQueriesPerFrame);
+
+        auto &frameRange = m_frameQueryRangesByFrame[m_currentFrame];
+        frameRange.startQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
+        vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_timestampQueryPool, frameRange.startQueryIndex);
+    }
 
     size_t passIndex = 0;
 
@@ -871,7 +924,7 @@ bool RenderGraph::begin()
                     textureDescription->getInitialLayout(), // new
                     srcInfoFinal.stageMask,
                     dstInfoInitial.stageMask,
-                    {aspect, 0, 1, 0, 1});
+                    {aspect, 0, 1, 0, textureDescription->getArrayLayers()});
 
                 auto postBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
                     *target->getImage(),
@@ -881,13 +934,14 @@ bool RenderGraph::begin()
                     textureDescription->getFinalLayout(),   // new
                     srcInfoInitial.stageMask,
                     dstInfoFinal.stageMask,
-                    {aspect, 0, 1, 0, 1});
+                    {aspect, 0, 1, 0, textureDescription->getArrayLayers()});
 
                 firstBarriers.push_back(preBarrier);
                 secondBarriers.push_back(postBarrier);
             }
 
-            if (m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && (m_usedTimestampQueries + 1) < m_timestampQueriesPerFrame)
+            // Keep one query slot for the frame end timestamp.
+            if (m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && (m_usedTimestampQueries + 2) < m_timestampQueriesPerFrame)
             {
                 executionProfilingData.startQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
                 executionProfilingData.endQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
@@ -938,6 +992,16 @@ bool RenderGraph::begin()
         ++passIndex;
     }
 
+    auto &frameRange = m_frameQueryRangesByFrame[m_currentFrame];
+    if (m_isGpuTimingAvailable &&
+        m_timestampQueryPool != VK_NULL_HANDLE &&
+        frameRange.startQueryIndex != UINT32_MAX &&
+        m_usedTimestampQueries < m_timestampQueriesPerFrame)
+    {
+        frameRange.endQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
+        vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_timestampQueryPool, frameRange.endQueryIndex);
+    }
+
     primaryCommandBuffer->end();
 
     return true;
@@ -946,13 +1010,34 @@ bool RenderGraph::begin()
 void RenderGraph::end()
 {
     const auto &currentCommandBuffer = m_commandBuffers.at(m_currentFrame);
-    const std::vector<VkSemaphore> waitSemaphores = {m_imageAvailableSemaphores[m_currentFrame]};
-    const std::vector<VkPipelineStageFlags> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    std::vector<VkSemaphore> waitSemaphores = {m_imageAvailableSemaphores[m_currentFrame]};
+    std::vector<VkPipelineStageFlags> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     const std::vector<VkSemaphore> signalSemaphores = {m_renderFinishedSemaphores[m_currentFrame]};
     const std::vector<VkSwapchainKHR> swapChains = {m_swapchain->vk()};
 
-    currentCommandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue(), waitSemaphores, waitStages, signalSemaphores,
-                                 m_inFlightFences[m_currentFrame]);
+    auto &cpuStageProfilingData = m_cpuStageProfilingByFrame[m_currentFrame];
+
+    utilities::AsyncGpuUpload::collectFinished(m_device);
+    auto uploadWaitSemaphores = utilities::AsyncGpuUpload::acquireReadySemaphores();
+    for (VkSemaphore uploadSemaphore : uploadWaitSemaphores)
+    {
+        waitSemaphores.push_back(uploadSemaphore);
+        waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    }
+
+    const auto submitStart = std::chrono::high_resolution_clock::now();
+    const bool submitOk = currentCommandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue(), waitSemaphores, waitStages, signalSemaphores,
+                                                       m_inFlightFences[m_currentFrame]);
+    const auto submitEnd = std::chrono::high_resolution_clock::now();
+    cpuStageProfilingData.submitMs = std::chrono::duration<double, std::milli>(submitEnd - submitStart).count();
+
+    if (!submitOk)
+    {
+        utilities::AsyncGpuUpload::releaseSemaphores(m_device, uploadWaitSemaphores);
+        throw std::runtime_error("Failed to submit render graph command buffer");
+    }
+
+    m_uploadWaitSemaphoresByFrame[m_currentFrame] = std::move(uploadWaitSemaphores);
 
     m_usedTimestampQueriesByFrame[m_currentFrame] = m_usedTimestampQueries;
     m_hasPendingProfilingResolve[m_currentFrame] = true;
@@ -965,7 +1050,10 @@ void RenderGraph::end()
     presentInfo.pImageIndices = &m_imageIndex;
     presentInfo.pResults = nullptr;
 
+    const auto presentStart = std::chrono::high_resolution_clock::now();
     VkResult result = vkQueuePresentKHR(core::VulkanContext::getContext()->getPresentQueue(), &presentInfo);
+    const auto presentEnd = std::chrono::high_resolution_clock::now();
+    cpuStageProfilingData.presentMs = std::chrono::duration<double, std::milli>(presentEnd - presentStart).count();
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
         recreateSwapChain();
@@ -977,8 +1065,13 @@ void RenderGraph::end()
 
 void RenderGraph::draw()
 {
+    const auto frameCpuStartTime = std::chrono::high_resolution_clock::now();
+
     if (begin())
         end();
+
+    const auto frameCpuEndTime = std::chrono::high_resolution_clock::now();
+    m_cpuFrameTimesByFrameMs[m_currentFrame] = std::chrono::duration<double, std::milli>(frameCpuEndTime - frameCpuStartTime).count();
 
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -1118,7 +1211,7 @@ void RenderGraph::sortRenderGraphPasses()
     }
 
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
-        VX_ENGINE_INFO_STREAM("Node: " << renderGraphPass->getDebugName() << '\n');
+        VX_ENGINE_INFO_STREAM("Node: " << renderGraphPass->getDebugName());
 }
 
 void RenderGraph::compile()
@@ -1127,7 +1220,7 @@ void RenderGraph::compile()
 
     // VX_ENGINE_INFO_STREAM("Memory before render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n');
 
-    auto commandBuffer = core::CommandBuffer::create(core::VulkanContext::getContext()->getGraphicsCommandPool());
+    auto commandBuffer = core::CommandBuffer::create(*core::VulkanContext::getContext()->getGraphicsCommandPool());
     commandBuffer.begin();
 
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
@@ -1144,8 +1237,8 @@ void RenderGraph::compile()
     for (const auto &[id, pass] : m_renderGraphPasses)
         pass.renderGraphPass->compile(m_renderGraphPassesStorage);
 
-    core::VulkanContext::getContext()->getSwapchain()->getWindow()->addResizeCallback([this](platform::Window *, int, int)
-                                                                                      { recreateSwapChain(); });
+    core::VulkanContext::getContext()->getSwapchain()->getWindow().addResizeCallback([this](platform::Window *, int, int)
+                                                                                     { recreateSwapChain(); });
 
     // VX_ENGINE_INFO_STREAM("Memory after render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n');
 }
@@ -1238,12 +1331,12 @@ void RenderGraph::createRenderGraphResources()
         auto commandPool = m_commandPools.emplace_back(core::CommandPool::createShared(core::VulkanContext::getContext()->getDevice(),
                                                                                        core::VulkanContext::getContext()->getGraphicsFamily()));
 
-        m_commandBuffers.emplace_back(core::CommandBuffer::createShared(commandPool));
+        m_commandBuffers.emplace_back(core::CommandBuffer::createShared(*commandPool));
 
         m_secondaryCommandBuffers[frame].resize(MAX_RENDER_JOBS);
 
         for (size_t job = 0; job < MAX_RENDER_JOBS; ++job)
-            m_secondaryCommandBuffers[frame][job] = core::CommandBuffer::createShared(commandPool, VK_COMMAND_BUFFER_LEVEL_SECONDARY);
+            m_secondaryCommandBuffers[frame][job] = core::CommandBuffer::createShared(*commandPool, VK_COMMAND_BUFFER_LEVEL_SECONDARY);
     }
 
     sortRenderGraphPasses();
@@ -1252,8 +1345,16 @@ void RenderGraph::createRenderGraphResources()
 
 void RenderGraph::cleanResources()
 {
+    utilities::AsyncGpuUpload::flush(m_device);
+
     vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
     vkDeviceWaitIdle(m_device);
+
+    for (auto &uploadSemaphores : m_uploadWaitSemaphoresByFrame)
+    {
+        utilities::AsyncGpuUpload::releaseSemaphores(m_device, uploadSemaphores);
+        uploadSemaphores.clear();
+    }
 
     for (const auto &primary : m_commandBuffers)
         primary->destroyVk();
@@ -1300,13 +1401,19 @@ void RenderGraph::cleanResources()
         framePassProfilingData.clear();
     m_hasPendingProfilingResolve.fill(false);
     m_usedTimestampQueriesByFrame.fill(0);
+    m_frameQueryRangesByFrame.fill(FrameQueryRange{});
+    m_cpuFrameTimesByFrameMs.fill(0.0);
+    m_cpuStageProfilingByFrame.fill(FrameCpuStageProfilingData{});
     m_lastFrameProfilingData = {};
 
     m_perFrameData.drawItems.clear();
+    m_meshes.clear();
+    m_materialsByAlbedoPath.clear();
+    m_failedAlbedoTexturePaths.clear();
     m_renderGraphPassesStorage.cleanup();
 
     EngineShaderFamilies::cleanEngineShaderFamilies();
 }
-ELIX_CUSTOM_NAMESPACE_END
 
+ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END

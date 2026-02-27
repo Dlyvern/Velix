@@ -42,6 +42,6 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
 if (WIN32)
     target_compile_definitions(${PROJECT_NAME} PRIVATE VK_USE_PLATFORM_WIN32_KHR)
 endif()
-if (UNIX AND NOT APPLE)
+if (UNIX)
     target_compile_definitions(${PROJECT_NAME} PRIVATE VK_USE_PLATFORM_XLIB_KHR)
 endif()

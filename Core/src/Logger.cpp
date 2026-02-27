@@ -12,30 +12,30 @@
 namespace terminalColors
 {
 #ifdef _WIN32
-const elix::core::Logger::TerminalColorType RED = FOREGROUND_RED | FOREGROUND_INTENSITY;
-const elix::core::Logger::TerminalColorType GREEN = FOREGROUND_GREEN | FOREGROUND_INTENSITY;
-const elix::core::Logger::TerminalColorType YELLOW = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
-const elix::core::Logger::TerminalColorType WHITE = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
-const elix::core::Logger::TerminalColorType BLUE = FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+    const elix::core::Logger::TerminalColorType RED = FOREGROUND_RED | FOREGROUND_INTENSITY;
+    const elix::core::Logger::TerminalColorType GREEN = FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+    const elix::core::Logger::TerminalColorType YELLOW = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+    const elix::core::Logger::TerminalColorType WHITE = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+    const elix::core::Logger::TerminalColorType BLUE = FOREGROUND_BLUE | FOREGROUND_INTENSITY;
 
-inline void logColoredMessageToTerminal(elix::core::Logger::TerminalColorType color, const std::string &message)
-{
-    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-    SetConsoleTextAttribute(hConsole, color);
-    std::cout << message << '\n';
-    SetConsoleTextAttribute(hConsole, WHITE);
-}
+    inline void logColoredMessageToTerminal(elix::core::Logger::TerminalColorType color, const std::string &message)
+    {
+        HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+        SetConsoleTextAttribute(hConsole, color);
+        std::cout << message << '\n';
+        SetConsoleTextAttribute(hConsole, WHITE);
+    }
 #else
-const elix::core::Logger::TerminalColorType RED = "\033[31m";
-const elix::core::Logger::TerminalColorType GREEN = "\033[32m";
-const elix::core::Logger::TerminalColorType YELLOW = "\033[33m";
-const elix::core::Logger::TerminalColorType WHITE = "\033[37m";
-const elix::core::Logger::TerminalColorType BLUE = "\033[34m";
+    const elix::core::Logger::TerminalColorType RED = "\033[31m";
+    const elix::core::Logger::TerminalColorType GREEN = "\033[32m";
+    const elix::core::Logger::TerminalColorType YELLOW = "\033[33m";
+    const elix::core::Logger::TerminalColorType WHITE = "\033[37m";
+    const elix::core::Logger::TerminalColorType BLUE = "\033[34m";
 
-inline void logColoredMessageToTerminal(const elix::core::Logger::TerminalColorType &color, const std::string &message)
-{
-    std::cout << color << message << "\033[0m" << '\n';
-}
+    inline void logColoredMessageToTerminal(const elix::core::Logger::TerminalColorType &color, const std::string &message)
+    {
+        std::cout << color << message << "\033[0m" << '\n';
+    }
 #endif
 } // namespace terminalColors
 

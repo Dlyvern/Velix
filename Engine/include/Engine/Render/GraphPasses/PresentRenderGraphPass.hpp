@@ -44,6 +44,7 @@ private:
     core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
 
     std::vector<VkDescriptorSet> m_descriptorSets{VK_NULL_HANDLE};
+    bool m_descriptorSetsInitialized{false};
 
     VkExtent2D m_extent;
     VkViewport m_viewport;

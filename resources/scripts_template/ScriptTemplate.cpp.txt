@@ -1,22 +1,17 @@
 #include "{{ClassName}}.hpp"
-
-{{ClassName}}::{{ClassName}}()
-{
-
-}
-
-{{ClassName}}::~{{ClassName}}
-{
-
-}
+#include "VelixSDK/Register.hpp"
 
 void {{ClassName}}::onStart()
 {
-
-
 }
 
 void {{ClassName}}::onUpdate(float deltaTime)
 {
-    
+    (void)deltaTime;
 }
+
+void {{ClassName}}::onStop()
+{
+}
+
+VELIX_REGISTER_SCRIPT({{ClassName}})

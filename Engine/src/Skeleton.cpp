@@ -1,6 +1,7 @@
 #include "Engine/Skeleton.hpp"
 
 #include <iostream>
+#include "Core/Logger.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -35,8 +36,8 @@ void Skeleton::printBonesHierarchy()
     for (const auto &bone : m_bonesInfo)
     {
         VX_ENGINE_INFO_STREAM("Bone: " << bone.name << " (ID: " << bone.id << "), Parent: "
-                  << (bone.parentId == -1 ? "None" : m_bonesInfo[bone.parentId].name)
-                  << ", Children: ");
+                                       << (bone.parentId == -1 ? "None" : m_bonesInfo[bone.parentId].name)
+                                       << ", Children: ");
         for (int child : bone.children)
         {
             VX_ENGINE_INFO_STREAM(m_bonesInfo[child].name << " ");

@@ -23,7 +23,7 @@ public:
     VulkanContext(const VulkanContext &) = delete;
     VulkanContext &operator=(const VulkanContext &) = delete;
 
-    static std::shared_ptr<VulkanContext> create(std::shared_ptr<platform::Window> window);
+    static std::shared_ptr<VulkanContext> create(platform::Window &window);
     static std::shared_ptr<VulkanContext> getContext();
 
     VkInstance getInstance() const;
@@ -34,6 +34,8 @@ public:
     VkPhysicalDeviceProperties getPhysicalDevicePoperties();
     VkPhysicalDeviceFeatures getPhysicalDeviceFeatures();
     uint32_t getGraphicsFamily() const;
+    uint32_t getTransferFamily() const;
+    uint32_t getComputeFamily() const;
 
     VkQueue getGraphicsQueue() const;
     VkQueue getPresentQueue() const;
@@ -47,7 +49,7 @@ public:
 
     void cleanup();
 
-    explicit VulkanContext(platform::Window::SharedPtr window);
+    explicit VulkanContext(platform::Window &window);
 
     ~VulkanContext();
 
@@ -88,7 +90,7 @@ private:
 
     bool m_isCleanedUp{false};
 
-    platform::Window::SharedPtr m_window{nullptr};
+    platform::Window *m_window{nullptr};
 
     bool m_isValidationLayersEnabled{true};
 
@@ -96,10 +98,7 @@ private:
 
     const std::vector<const char *> m_validationLayers{"VK_LAYER_KHRONOS_validation"};
     const std::vector<const char *> m_deviceExtensions{
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-#ifdef __APPLE__
-        "VK_KHR_portability_subset",
-#endif
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
 
     VkInstance m_instance{VK_NULL_HANDLE};
@@ -130,10 +129,10 @@ private:
     void pickPhysicalDevice();
     bool isDeviceSuitable(VkPhysicalDevice device);
 
-    void initVulkan(std::shared_ptr<platform::Window> window);
+    void initVulkan(platform::Window &window);
     void createInstance();
     void createDebugger();
-    void createSurface(std::shared_ptr<platform::Window> window);
+    void createSurface(platform::Window &window);
     void createLogicalDevice();
 };
 

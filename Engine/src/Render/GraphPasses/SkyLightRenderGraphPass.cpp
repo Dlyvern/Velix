@@ -1,8 +1,11 @@
 #include "Engine/Render/GraphPasses/SkyLightRenderGraphPass.hpp"
 
 #include "Core/VulkanHelpers.hpp"
+#include "Core/VulkanContext.hpp"
 
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
+
+#include <filesystem>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -22,6 +25,38 @@ void SkyLightRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
 {
     vkCmdSetViewport(commandBuffer, 0, 1, &m_viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &m_scissor);
+
+    if (m_loadedSkyboxHDRPath != data.skyboxHDRPath)
+    {
+        m_skybox.reset();
+        m_loadedSkyboxHDRPath.clear();
+
+        if (!data.skyboxHDRPath.empty())
+        {
+            if (!std::filesystem::exists(data.skyboxHDRPath))
+            {
+                VX_ENGINE_WARNING_STREAM("Skybox HDR file was not found: " << data.skyboxHDRPath << '\n');
+                m_loadedSkyboxHDRPath = data.skyboxHDRPath;
+            }
+            else
+            {
+                m_skybox = std::make_unique<Skybox>(data.skyboxHDRPath, core::VulkanContext::getContext()->getPersistentDescriptorPool()->vk());
+                m_loadedSkyboxHDRPath = data.skyboxHDRPath;
+                VX_ENGINE_INFO_STREAM("Loaded skybox HDR: " << m_loadedSkyboxHDRPath << '\n');
+            }
+        }
+    }
+
+    if (m_skybox)
+    {
+        auto skyKey = m_skybox->getGraphicsPipelineKey();
+        skyKey.colorFormats = {m_colorFormat};
+        skyKey.depthFormat = m_depthFormat;
+
+        auto skyPipeline = GraphicsPipelineManager::getOrCreate(skyKey);
+        m_skybox->render(commandBuffer, data.view, data.projection, skyPipeline);
+        return;
+    }
 
     auto skyKey = m_skyLightSystem->getGraphicsPipelineKey();
     skyKey.colorFormats = {m_colorFormat};

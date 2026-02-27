@@ -9,7 +9,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 LightingRenderGraphPass::LightingRenderGraphPass(RGPResourceHandler &shadowTextureHandler,
-                                                 RGPResourceHandler &depthTextureHandler,
+                                                 RGPResourceHandler &depthTextureHandler, RGPResourceHandler &cubeTextureHandler, RGPResourceHandler &arrayTextureHandler,
                                                  std::vector<RGPResourceHandler> &albedoTextureHandlers,
                                                  std::vector<RGPResourceHandler> &normalTextureHandlers,
                                                  std::vector<RGPResourceHandler> &materialTextureHandlers)
@@ -17,7 +17,9 @@ LightingRenderGraphPass::LightingRenderGraphPass(RGPResourceHandler &shadowTextu
       m_normalTextureHandlers(normalTextureHandlers),
       m_materialTextureHandlers(materialTextureHandlers),
       m_depthTextureHandler(depthTextureHandler),
-      m_shadowTextureHandler(shadowTextureHandler)
+      m_shadowTextureHandler(shadowTextureHandler),
+      m_cubeTextureHandler(cubeTextureHandler),
+      m_arrayTextureHandler(arrayTextureHandler)
 {
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
 
@@ -96,8 +98,6 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
     m_colorRenderTargets.resize(imageCount);
     m_descriptorSets.resize(imageCount);
 
-    static bool wasBuilt{false};
-
     for (uint32_t i = 0; i < imageCount; ++i)
     {
         m_colorRenderTargets[i] = storage.getTexture(m_colorTextureHandler[i]);
@@ -107,8 +107,10 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
         auto materialTexture = storage.getTexture(m_materialTextureHandlers[i]);
         auto depthTexture = storage.getTexture(m_depthTextureHandler);
         auto shadowTexture = storage.getTexture(m_shadowTextureHandler);
+        auto cubeTexture = storage.getTexture(m_cubeTextureHandler);
+        auto arrayTexture = storage.getTexture(m_arrayTextureHandler);
 
-        if (!wasBuilt)
+        if (!m_descriptorSetsInitialized)
         {
             m_descriptorSets[i] = DescriptorSetBuilder::begin()
                                       .addImage(normalTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
@@ -116,7 +118,8 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                                       .addImage(materialTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
                                       .addImage(depthTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 3)
                                       .addImage(shadowTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 4)
-
+                                      .addImage(arrayTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 5)
+                                      .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 6)
                                       .build(core::VulkanContext::getContext()->getDevice(), core::VulkanContext::getContext()->getPersistentDescriptorPool(), m_descriptorSetLayout);
         }
         else
@@ -127,12 +130,14 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                 .addImage(materialTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
                 .addImage(depthTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 3)
                 .addImage(shadowTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 4)
+                .addImage(arrayTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 5)
+                .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 6)
                 .update(core::VulkanContext::getContext()->getDevice(), m_descriptorSets[i]);
         }
     }
 
-    if (!wasBuilt)
-        wasBuilt = true;
+    if (!m_descriptorSetsInitialized)
+        m_descriptorSetsInitialized = true;
 }
 
 void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
@@ -160,6 +165,8 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
     builder.read(m_depthTextureHandler, RGPTextureUsage::SAMPLED);
     builder.read(m_shadowTextureHandler, RGPTextureUsage::SAMPLED);
+    builder.read(m_arrayTextureHandler, RGPTextureUsage::SAMPLED);
+    builder.read(m_cubeTextureHandler, RGPTextureUsage::SAMPLED);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
@@ -198,10 +205,26 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
     lightMapBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     lightMapBinding.pImmutableSamplers = nullptr;
 
-    m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{bindingNormal,
-                                                                                                                      bindingAlbedo, bindingMaterial, bindingDepth, lightMapBinding});
+    VkDescriptorSetLayoutBinding spotMapBinding{};
+    spotMapBinding.binding = 5;
+    spotMapBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    spotMapBinding.descriptorCount = 1;
+    spotMapBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    spotMapBinding.pImmutableSamplers = nullptr;
 
-    m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{EngineShaderFamilies::cameraDescriptorSetLayout, m_descriptorSetLayout},
+    VkDescriptorSetLayoutBinding pointMapBinding{};
+    pointMapBinding.binding = 6;
+    pointMapBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    pointMapBinding.descriptorCount = 1;
+    pointMapBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pointMapBinding.pImmutableSamplers = nullptr;
+
+    m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{bindingNormal,
+                                                                                                                      bindingAlbedo, bindingMaterial, bindingDepth, lightMapBinding,
+                                                                                                                      spotMapBinding, pointMapBinding});
+
+    m_pipelineLayout = core::PipelineLayout::createShared(device,
+                                                          std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{*EngineShaderFamilies::cameraDescriptorSetLayout, *m_descriptorSetLayout},
                                                           std::vector<VkPushConstantRange>{});
 
     m_defaultSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);

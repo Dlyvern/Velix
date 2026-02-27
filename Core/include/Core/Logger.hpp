@@ -59,7 +59,7 @@ public:
 
     Logger();
 
-    explicit Logger(const std::string& logFilePath);
+    explicit Logger(const std::string &logFilePath);
 
     void debug(const std::string &message, LogLayer layer = LogLayer::Developer, const std::string &category = "General");
     void info(const std::string &message, LogLayer layer = LogLayer::Developer, const std::string &category = "General");
@@ -80,12 +80,13 @@ public:
 
     static void setDefaultLogger(std::unique_ptr<Logger> logger);
     static void createDefaultLogger();
-    static Logger* getDefaultLogger();
+    static Logger *getDefaultLogger();
 
     static std::string logLevelToString(LogLevel level);
     static std::string logLayerToString(LogLayer layer);
 
     ~Logger();
+
 private:
     static std::string getCurrentTime();
     static Logger::TerminalColorType logLevelToColor(LogLevel level);
@@ -107,20 +108,20 @@ private:
     static inline std::unique_ptr<Logger> s_defaultLogger{nullptr};
 };
 
-#define VX_LOG(layer, level, category, message)                                                                        \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        auto *__vx_logger = elix::core::Logger::getDefaultLogger();                                                   \
-        if (__vx_logger)                                                                                                \
-            __vx_logger->log(level, layer, category, message);                                                         \
+#define VX_LOG(layer, level, category, message)                     \
+    do                                                              \
+    {                                                               \
+        auto *__vx_logger = elix::core::Logger::getDefaultLogger(); \
+        if (__vx_logger)                                            \
+            __vx_logger->log(level, layer, category, message);      \
     } while (0)
 
-#define VX_LOG_STREAM(layer, level, category, expr)                                                                    \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        std::ostringstream __vx_stream;                                                                                \
-        __vx_stream << expr;                                                                                            \
-        VX_LOG(layer, level, category, __vx_stream.str());                                                             \
+#define VX_LOG_STREAM(layer, level, category, expr)        \
+    do                                                     \
+    {                                                      \
+        std::ostringstream __vx_stream;                    \
+        __vx_stream << expr;                               \
+        VX_LOG(layer, level, category, __vx_stream.str()); \
     } while (0)
 
 #define VX_CORE_INFO_STREAM(expr) VX_LOG_STREAM(elix::core::Logger::LogLayer::Core, elix::core::Logger::LogLevel::INFO, "Core", expr)
@@ -158,12 +159,13 @@ private:
 #define VX_WARNING(message) VX_LOG(elix::core::Logger::LogLayer::Developer, elix::core::Logger::LogLevel::WARNING, "General", message)
 #define VX_ERROR(message) VX_LOG(elix::core::Logger::LogLayer::Developer, elix::core::Logger::LogLevel::LOG_LEVEL_ERROR, "General", message)
 
-#define VX_FATAL(msg) \
-    do { \
+#define VX_FATAL(msg)  \
+    do                 \
+    {                  \
         VX_ERROR(msg); \
-        std::abort(); \
+        std::abort();  \
     } while (0)
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_LOGGER_HPP
+#endif // ELIX_LOGGER_HPP

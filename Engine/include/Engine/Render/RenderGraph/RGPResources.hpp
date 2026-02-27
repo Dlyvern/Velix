@@ -76,6 +76,9 @@ public:
     PROPERTY_FULL_DEFAULT(bool, IsDepenedOnSwapChainSize, false);                      // On swap chain resize this resource will be re-created with swap chain extent
     PROPERTY_FULL_DEFAULT(VkImageLayout, InitialLayout, VK_IMAGE_LAYOUT_UNDEFINED);
     PROPERTY_FULL_DEFAULT(VkImageLayout, FinalLayout, VK_IMAGE_LAYOUT_UNDEFINED);
+    PROPERTY_FULL_DEFAULT(uint32_t, ArrayLayers, 1);
+    PROPERTY_FULL_DEFAULT(VkImageCreateFlags, Flags, 0);
+    PROPERTY_FULL_DEFAULT(VkImageViewType, ImageViewtype, VK_IMAGE_VIEW_TYPE_2D);
 };
 
 ELIX_CUSTOM_NAMESPACE_END

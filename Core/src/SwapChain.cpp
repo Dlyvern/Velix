@@ -11,7 +11,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-SwapChain::SwapChain(platform::Window::SharedPtr window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily) : m_device(device), m_physicalDevice(physicalDevice), m_window(window), m_surface(surface), m_graphicsFamily(graphicsFamily), m_presentFamily(presentFamily)
+SwapChain::SwapChain(platform::Window &window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily) : m_device(device), m_physicalDevice(physicalDevice), m_window(&window), m_surface(surface), m_graphicsFamily(graphicsFamily), m_presentFamily(presentFamily)
 {
     createSwapChain();
 }
@@ -21,7 +21,7 @@ void SwapChain::createSwapChain()
     SwapChainSupportDetails swapChainSupport = querySwapChainSupport(m_physicalDevice, m_surface);
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
     VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
-    VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities, m_window);
+    VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities, *m_window);
 
     m_imageCount = swapChainSupport.capabilities.minImageCount + 1;
 
@@ -128,9 +128,9 @@ VkRect2D SwapChain::getScissor(VkOffset2D offset)
     return VkRect2D{offset, m_extent};
 }
 
-std::shared_ptr<platform::Window> SwapChain::getWindow()
+platform::Window &SwapChain::getWindow() const
 {
-    return m_window;
+    return *m_window;
 }
 
 uint32_t SwapChain::getImageCount() const
@@ -138,7 +138,7 @@ uint32_t SwapChain::getImageCount() const
     return m_imageCount;
 }
 
-SwapChain::SharedPtr SwapChain::create(std::shared_ptr<platform::Window> window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily)
+SwapChain::SharedPtr SwapChain::create(platform::Window &window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily)
 {
     return std::make_shared<SwapChain>(window, surface, device, physicalDevice, graphicsFamily, presentFamily);
 }
@@ -161,14 +161,14 @@ VkPresentModeKHR SwapChain::chooseSwapPresentMode(const std::vector<VkPresentMod
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-VkExtent2D SwapChain::chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities, std::shared_ptr<platform::Window> window)
+VkExtent2D SwapChain::chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities, platform::Window &window)
 {
     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
         return capabilities.currentExtent;
 
     int width, height;
 
-    glfwGetFramebufferSize(window->getRawHandler(), &width, &height);
+    glfwGetFramebufferSize(window.getRawHandler(), &width, &height);
 
     VkExtent2D actualExtent{static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
 

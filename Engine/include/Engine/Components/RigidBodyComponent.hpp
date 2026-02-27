@@ -11,6 +11,8 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
+class Transform3DComponent;
+
 class RigidBodyComponent : public ECS
 {
 public:
@@ -18,13 +20,21 @@ public:
     physx::PxRigidActor *getRigidActor() const;
 
     void update(float deltaTime) override;
+    void syncFromPhysics();
 
     void setKinematic(bool isKinematic);
+    bool isKinematic() const;
     void setGravityEnable(bool enable);
     void setPosition(const physx::PxVec3 &vec);
     void setPosition(const glm::vec3 &vec);
 
+protected:
+    void onOwnerAttached() override;
+
 private:
+    void syncToPhysics();
+
+    Transform3DComponent *m_transformComponent{nullptr};
     physx::PxRigidActor *m_rigidActor{nullptr};
 };
 

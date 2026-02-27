@@ -25,7 +25,7 @@ public:
         std::vector<VkRenderingAttachmentInfo> colorsRenderingItems;
         VkRenderingAttachmentInfo depthRenderingItem;
         std::vector<VkFormat> colorFormats;
-        VkFormat depthFormat;
+        VkFormat depthFormat{VK_FORMAT_UNDEFINED};
 
         bool useDepth{true};
 

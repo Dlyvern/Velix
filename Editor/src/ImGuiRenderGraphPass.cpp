@@ -128,7 +128,7 @@ void ImGuiRenderGraphPass::initImGui()
 
     m_imguiDescriptorPool = core::DescriptorPool::createShared(m_device, descriptorPoolSizes, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT);
 
-    ImGui_ImplGlfw_InitForVulkan(core::VulkanContext::getContext()->getSwapchain()->getWindow()->getRawHandler(), true);
+    ImGui_ImplGlfw_InitForVulkan(core::VulkanContext::getContext()->getSwapchain()->getWindow().getRawHandler(), true);
 
     ImGui_ImplVulkan_InitInfo imguiInitInfo{};
     imguiInitInfo.Instance = core::VulkanContext::getContext()->getInstance();

@@ -12,7 +12,7 @@ class LightingRenderGraphPass : public IRenderGraphPass
 {
 public:
     LightingRenderGraphPass(RGPResourceHandler &shadowTextureHandler,
-                            RGPResourceHandler &depthTextureHandler,
+                            RGPResourceHandler &depthTextureHandler, RGPResourceHandler &cubeTextureHandler, RGPResourceHandler &arrayTextureHandler,
                             std::vector<RGPResourceHandler> &albedoTextureHandlers,
                             std::vector<RGPResourceHandler> &normalTextureHandlers,
                             std::vector<RGPResourceHandler> &materialTextureHandlers);
@@ -47,6 +47,9 @@ private:
 
     RGPResourceHandler &m_shadowTextureHandler;
     RGPResourceHandler &m_depthTextureHandler;
+    RGPResourceHandler &m_cubeTextureHandler;
+    RGPResourceHandler &m_arrayTextureHandler;
+
     std::vector<RGPResourceHandler> &m_albedoTextureHandlers;
     std::vector<RGPResourceHandler> &m_normalTextureHandlers;
     std::vector<RGPResourceHandler> &m_materialTextureHandlers;
@@ -58,6 +61,7 @@ private:
     core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
 
     std::vector<VkDescriptorSet> m_descriptorSets{VK_NULL_HANDLE};
+    bool m_descriptorSetsInitialized{false};
 };
 
 ELIX_CUSTOM_NAMESPACE_END

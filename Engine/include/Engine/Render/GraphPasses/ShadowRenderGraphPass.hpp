@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -20,29 +21,51 @@ public:
                 const RenderGraphPassContext &renderContext) override;
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
 
-    void setup(renderGraph::RGPResourcesBuilder &builder) override;
-    void compile(renderGraph::RGPResourcesStorage &storage) override;
+    void setup(RGPResourcesBuilder &builder) override;
+    void compile(RGPResourcesStorage &storage) override;
+    void cleanup() override;
 
-    VkSampler getSampler()
-    {
-        return m_sampler;
-    }
-
-    VkImageView getImageView()
-    {
-        return m_renderTarget->vkImageView();
-    }
-
-    RGPResourceHandler &getShadowHandler()
+    RGPResourceHandler &getDirectionalShadowHandler()
     {
         return m_depthTextureHandler;
     }
 
+    RGPResourceHandler &getSpotShadowHandler()
+    {
+        return m_depthArrayTextureHandler;
+    }
+
+    RGPResourceHandler &getCubeShadowHandler()
+    {
+        return m_depthCubeTextureHandler;
+    }
+
 private:
+    enum class ShadowExecutionType : uint8_t
+    {
+        Directional,
+        Spot,
+        Point
+    };
+
+    struct ShadowExecutionInfo
+    {
+        ShadowExecutionType type{ShadowExecutionType::Directional};
+        uint32_t layer{0};
+        uint32_t lightIndex{0};
+        uint32_t faceIndex{0};
+    };
+
+    void destroyLayerViews();
+    void rebuildLayerViews();
+    VkImageView createSingleLayerView(const RenderTarget *target, uint32_t baseArrayLayer) const;
+
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
-    core::Sampler::SharedPtr m_sampler{nullptr};
 
     const RenderTarget *m_renderTarget{nullptr};
+    const RenderTarget *m_cubeRenderTarget{nullptr};
+    const RenderTarget *m_arrayRenderTarget{nullptr};
+
     VkFormat m_depthFormat;
 
     VkViewport m_viewport{};
@@ -53,6 +76,14 @@ private:
     VkClearValue m_clearValue;
 
     RGPResourceHandler m_depthTextureHandler;
+    RGPResourceHandler m_depthCubeTextureHandler;
+    RGPResourceHandler m_depthArrayTextureHandler;
+
+    std::vector<VkImageView> m_spotLayerViews;
+    std::vector<VkImageView> m_pointLayerViews;
+    std::vector<VkImageView> m_directionalLayerViews;
+    std::vector<ShadowExecutionInfo> m_executionInfos;
+    mutable size_t m_currentExecutionIndex{0};
 };
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END

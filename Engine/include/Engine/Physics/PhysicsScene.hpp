@@ -3,7 +3,17 @@
 
 #include "Engine/Physics/PhysXCore.hpp"
 
+#include <glm/vec3.hpp>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+
+struct PhysicsRaycastHit
+{
+    void *actorUserData{nullptr};
+    glm::vec3 position{0.0f};
+    glm::vec3 normal{0.0f};
+    float distance{0.0f};
+};
 
 class PhysicsScene
 {
@@ -12,7 +22,7 @@ public:
 
     void update(float deltaTime);
 
-    void raycast();
+    bool raycast(const glm::vec3 &origin, const glm::vec3 &direction, float maxDistance, PhysicsRaycastHit *outHit = nullptr) const;
 
     physx::PxRigidDynamic *createDynamic(const physx::PxTransform &transform);
 

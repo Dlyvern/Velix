@@ -4,6 +4,7 @@
 #include "Engine/Shaders/PushConstant.hpp"
 #include <glm/glm.hpp>
 #include <cstdint>
+#include <functional>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -105,7 +106,14 @@ void EngineShaderFamilies::initEngineShaderFamilies()
         PushConstant<PushConstants>::getRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)};
 
     meshShaderFamily.pushConstantRange = PushConstant<PushConstants>::getRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-    meshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(device, meshShaderFamily.layouts, pushConstantsStatic);
+
+    std::vector<std::reference_wrapper<const core::DescriptorSetLayout>> layoutRefs;
+    layoutRefs.reserve(meshShaderFamily.layouts.size());
+
+    for (const auto &layout : meshShaderFamily.layouts)
+        layoutRefs.emplace_back(*layout);
+
+    meshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(device, layoutRefs, pushConstantsStatic);
 }
 
 void EngineShaderFamilies::cleanEngineShaderFamilies()

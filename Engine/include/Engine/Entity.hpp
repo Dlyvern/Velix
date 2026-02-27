@@ -25,6 +25,16 @@ struct IsMultiComponent<class AudioComponent>
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+class ScriptComponent;
+ELIX_NESTED_NAMESPACE_END
+
+template <>
+struct IsMultiComponent<elix::engine::ScriptComponent>
+{
+    static constexpr bool value = true;
+};
+
+ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class Entity
 {
@@ -37,8 +47,15 @@ public:
 
     virtual void update(float deltaTime)
     {
+        if (!m_enabled)
+            return;
+
         for (auto &component : m_components)
             component.second->update(deltaTime);
+
+        for (auto &[_, components] : m_multiComponents)
+            for (auto &component : components)
+                component->update(deltaTime);
     }
 
     virtual void fixedUpdate(float fixedDelta) {}
@@ -76,7 +93,15 @@ public:
 
         if constexpr (IsMultiComponent<T>::value)
         {
-            m_multiComponents.erase(type);
+            auto it = m_multiComponents.find(type);
+
+            if (it == m_multiComponents.end())
+                return;
+
+            for (const auto &component : it->second)
+                component->onDetach();
+
+            m_multiComponents.erase(it);
         }
         else
         {
@@ -144,16 +169,26 @@ public:
     void setLayer(int layerID);
     int getLayer() const;
 
+    void setEnabled(bool enabled);
+    bool isEnabled() const;
+
+    bool setParent(Entity *parent);
+    void clearParent();
+    Entity *getParent() const;
+    const std::vector<Entity *> &getChildren() const;
+    bool isDescendantOf(const Entity *possibleAncestor) const;
+
     virtual ~Entity();
 
 private:
     std::unordered_map<std::type_index, std::shared_ptr<ECS>> m_components;
     std::unordered_map<std::type_index, std::vector<std::shared_ptr<ECS>>> m_multiComponents;
 
-    SharedPtr m_parent{nullptr};
-    std::vector<SharedPtr> m_children;
+    Entity *m_parent{nullptr};
+    std::vector<Entity *> m_children;
 
     int m_layer{0};
+    bool m_enabled{true};
     std::unordered_set<std::string> m_tags;
 
     uint32_t m_id;

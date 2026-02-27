@@ -14,6 +14,8 @@
 
 #include "Core/Memory/VMAAllocator.hpp"
 
+#include "Core/Logger.hpp"
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                                                     VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData)
 {
@@ -31,7 +33,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityF
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-std::shared_ptr<VulkanContext> VulkanContext::create(std::shared_ptr<platform::Window> window)
+std::shared_ptr<VulkanContext> VulkanContext::create(platform::Window &window)
 {
     if (s_vulkanContext)
         return s_vulkanContext;
@@ -49,7 +51,7 @@ std::shared_ptr<VulkanContext> VulkanContext::getContext()
     return s_vulkanContext;
 }
 
-VulkanContext::VulkanContext(platform::Window::SharedPtr window)
+VulkanContext::VulkanContext(platform::Window &window)
 {
 #ifdef DEBUG_BUILD
     m_isValidationLayersEnabled = true;
@@ -69,8 +71,9 @@ VulkanContext::~VulkanContext()
     }
 }
 
-void VulkanContext::initVulkan(std::shared_ptr<platform::Window> window)
+void VulkanContext::initVulkan(platform::Window &window)
 {
+    m_window = &window;
     VX_VK_CHECK(volkInitialize());
 
     createInstance();
@@ -120,6 +123,7 @@ void VulkanContext::createLogicalDevice()
     deviceFeatures.samplerAnisotropy = VK_TRUE;
     deviceFeatures.fillModeNonSolid = VK_TRUE;
     deviceFeatures.independentBlend = VK_TRUE;
+    deviceFeatures.imageCubeArray = VK_TRUE;
 
     VkPhysicalDeviceVulkan13Features v13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     v13.dynamicRendering = VK_TRUE;
@@ -170,7 +174,10 @@ void VulkanContext::createLogicalDevice()
 
     m_descriptorPool = DescriptorPool::createShared(m_vkDevice, descriptorPoolSizes, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT, 1000);
 
-    auto vmaAllocator = std::make_unique<allocators::VMAAllocator>(m_instance, m_physicalDevice, m_vkDevice);
+    VkPhysicalDeviceProperties selectedProperties{};
+    vkGetPhysicalDeviceProperties(m_physicalDevice, &selectedProperties);
+
+    auto vmaAllocator = std::make_unique<allocators::VMAAllocator>(m_instance, m_physicalDevice, m_vkDevice, selectedProperties.apiVersion);
     m_device = Device::createShared(m_vkDevice, m_physicalDevice, std::move(vmaAllocator));
 }
 
@@ -182,6 +189,16 @@ DescriptorPool::SharedPtr VulkanContext::getPersistentDescriptorPool() const
 uint32_t VulkanContext::getGraphicsFamily() const
 {
     return m_queueFamilyIndices.graphicsFamily.value();
+}
+
+uint32_t VulkanContext::getTransferFamily() const
+{
+    return m_queueFamilyIndices.transferFamily.value();
+}
+
+uint32_t VulkanContext::getComputeFamily() const
+{
+    return m_queueFamilyIndices.computeFamily.value();
 }
 
 const VulkanContext::QueueFamilyIndices &VulkanContext::getQueueFamilyIndices() const
@@ -338,7 +355,7 @@ bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device)
     VkPhysicalDeviceFeatures features{};
     vkGetPhysicalDeviceFeatures(device, &features);
 
-    return indices.isComplete() && extensionsSupported && swapChainAdequate && features.samplerAnisotropy;
+    return indices.isComplete() && extensionsSupported && swapChainAdequate && features.samplerAnisotropy && features.imageCubeArray;
 }
 
 void VulkanContext::pickPhysicalDevice()
@@ -363,8 +380,6 @@ void VulkanContext::pickPhysicalDevice()
     };
 
     std::vector<Candidate> candidates;
-
-    VkPhysicalDevice firstPickedDevice{VK_NULL_HANDLE};
 
     for (const auto &device : devices)
     {
@@ -413,8 +428,6 @@ void VulkanContext::pickPhysicalDevice()
 
         candidates.push_back({device, props, score, canPresent});
 
-        if (isDeviceSuitable(device) && !firstPickedDevice)
-            firstPickedDevice = device;
     }
 
     if (candidates.empty())
@@ -427,23 +440,48 @@ void VulkanContext::pickPhysicalDevice()
     {
         VX_CORE_INFO_STREAM("GPU: " << candidate.props.deviceName << std::endl);
         VX_CORE_INFO_STREAM("Score: " << candidate.score << std::endl);
-
-        VX_CORE_INFO_STREAM("[Vulkan] Selected GPU: " << candidate.props.deviceName
-                                                      << " ("
-                                                      << (candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete" : candidate.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated"
-                                                                                                                                                                                                                 : "Other")
-                                                      << ")\n");
     }
 
-    // m_physicalDevice = candidates.front().device;
-    m_physicalDevice = firstPickedDevice;
+    m_physicalDevice = candidates.front().device;
     if (!m_physicalDevice)
         throw std::runtime_error("Failed to find a suitable GPU");
+
+    const auto &selected = candidates.front().props;
+    auto toDeviceTypeName = [](VkPhysicalDeviceType type) -> const char *
+    {
+        switch (type)
+        {
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+            return "Discrete";
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+            return "Integrated";
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+            return "Virtual";
+        case VK_PHYSICAL_DEVICE_TYPE_CPU:
+            return "CPU";
+        default:
+            return "Other";
+        }
+    };
+
+    VX_CORE_INFO_STREAM("[Vulkan] Selected GPU: " << selected.deviceName
+                                                  << " ("
+                                                  << toDeviceTypeName(selected.deviceType)
+                                                  << ")\n");
+
+    const bool selectedHardwareGpu = selected.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ||
+                                     selected.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+    if (!selectedHardwareGpu)
+    {
+        VX_CORE_WARNING_STREAM("[Vulkan] Selected adapter is not a hardware GPU (" << toDeviceTypeName(selected.deviceType)
+                                                                                    << "). Performance may be very poor. "
+                                                                                    << "Please update/reinstall graphics drivers and ensure Vulkan runs on your real GPU.\n");
+    }
 }
 
-void VulkanContext::createSurface(platform::Window::SharedPtr window)
+void VulkanContext::createSurface(platform::Window &window)
 {
-    VX_VK_CHECK(glfwCreateWindowSurface(m_instance, window->getRawHandler(), nullptr, &m_surface));
+    VX_VK_CHECK(glfwCreateWindowSurface(m_instance, window.getRawHandler(), nullptr, &m_surface));
 }
 
 void VulkanContext::createInstance()

@@ -1,6 +1,7 @@
 #include "Engine/Shaders/ShaderHotReloader.hpp"
 
 #include "Engine/Shaders/ShaderCompiler.hpp"
+#include "Core/Logger.hpp"
 
 #include <algorithm>
 #include <unordered_set>

@@ -9,14 +9,17 @@
 #define ELIX_API __attribute__((visibility("default")))
 #endif
 
-#define REGISTER_SCRIPT(Type) \
-    namespace { \
-        struct Type##Registrar { \
-            Type##Registrar() { \
-                elix::engine::ScriptsRegister::instance().registerScript(#Type, []() -> elix::engine::Script* { return new Type(); }); \
-            } \
-        }; \
-        static Type##Registrar global_##Type##Registrar; \
+#define REGISTER_SCRIPT(Type)                                                                                                           \
+    namespace                                                                                                                           \
+    {                                                                                                                                   \
+        struct Type##Registrar                                                                                                          \
+        {                                                                                                                               \
+            Type##Registrar()                                                                                                           \
+            {                                                                                                                           \
+                elix::engine::ScriptsRegister::instance().registerScript(#Type, []() -> elix::engine::Script * { return new Type(); }); \
+            }                                                                                                                           \
+        };                                                                                                                              \
+        static Type##Registrar global_##Type##Registrar;                                                                                \
     }
 
-#endif //ELIX_SCRIPT_MACROSES_HPP
+#endif // ELIX_SCRIPT_MACROSES_HPP

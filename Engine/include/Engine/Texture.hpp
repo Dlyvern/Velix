@@ -9,6 +9,7 @@
 #include <string>
 #include <array>
 #include <memory>
+#include <cstddef>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -22,13 +23,12 @@ public:
     static uint32_t packRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
     void createFromPixels(uint32_t pixels = 0xFFFFFFFF, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB);
+    bool createFromMemory(const void *pixels, size_t byteCount, uint32_t width, uint32_t height, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB, uint32_t channels = 4);
 
-    bool load(const std::string &path, core::CommandPool::SharedPtr commandPool = nullptr, bool freePixelsOnLoad = true);
     void freePixels();
 
-    bool loadCubemap(const std::array<std::string, 6> &cubemaps, core::CommandPool::SharedPtr commandPool = nullptr, bool freePixelsOnLoad = true);
+    bool loadCubemap(const std::array<std::string, 6> &cubemaps);
 
-    bool loadHDR(const std::string &filepath);
     bool createCubemapFromHDR(const std::string &hdrPath, uint32_t cubemapSize = 512);
     bool createCubemapFromEquirectangular(const float *data, int width, int height, uint32_t cubemapSize = 512);
 

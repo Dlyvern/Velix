@@ -4,20 +4,20 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-CommandBuffer::CommandBuffer(CommandPool::SharedPtr commandPool, VkCommandBufferLevel level)
+CommandBuffer::CommandBuffer(CommandPool &commandPool, VkCommandBufferLevel level)
 {
     createVk(commandPool, level);
 }
 
-void CommandBuffer::createVk(CommandPool::SharedPtr commandPool, VkCommandBufferLevel level)
+void CommandBuffer::createVk(CommandPool &commandPool, VkCommandBufferLevel level)
 {
     ELIX_VK_CREATE_GUARD()
-    m_commandPool = commandPool;
+    m_commandPool = &commandPool;
 
     VkCommandBufferAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     allocateInfo.commandBufferCount = 1;
     allocateInfo.pNext = nullptr;
-    allocateInfo.commandPool = m_commandPool.lock()->vk();
+    allocateInfo.commandPool = m_commandPool->vk();
     allocateInfo.level = level;
 
     VX_VK_CHECK(vkAllocateCommandBuffers(VulkanContext::getContext()->getDevice(), &allocateInfo, &m_handle));
@@ -30,7 +30,8 @@ void CommandBuffer::destroyVkImpl()
     if (m_handle)
     {
         reset();
-        vkFreeCommandBuffers(VulkanContext::getContext()->getDevice(), m_commandPool.lock()->vk(), 1, &m_handle);
+        if (m_commandPool)
+            vkFreeCommandBuffers(VulkanContext::getContext()->getDevice(), m_commandPool->vk(), 1, &m_handle);
         m_handle = VK_NULL_HANDLE;
     }
 }

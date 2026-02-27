@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <iostream>
 
+#include "Core/Logger.hpp"
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(cache)
 

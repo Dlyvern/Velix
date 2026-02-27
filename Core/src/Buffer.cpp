@@ -2,6 +2,7 @@
 #include "Core/VulkanContext.hpp"
 #include "Core/CommandBuffer.hpp"
 #include "Core/VulkanHelpers.hpp"
+#include "Core/Logger.hpp"
 #include <iostream>
 #include <cstring>
 #include <stdexcept>
@@ -23,7 +24,24 @@ void Buffer::createVk(VkDeviceSize size, VkBufferUsageFlags usage, memory::Memor
     bufferInfo.flags = flags;
     bufferInfo.size = m_size;
     bufferInfo.usage = usage;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    auto context = core::VulkanContext::getContext();
+    const uint32_t graphicsFamily = context->getGraphicsFamily();
+    const uint32_t transferFamily = context->getTransferFamily();
+
+    uint32_t queueFamilies[] = {graphicsFamily, transferFamily};
+    if (graphicsFamily != transferFamily)
+    {
+        bufferInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        bufferInfo.queueFamilyIndexCount = 2;
+        bufferInfo.pQueueFamilyIndices = queueFamilies;
+    }
+    else
+    {
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        bufferInfo.queueFamilyIndexCount = 0;
+        bufferInfo.pQueueFamilyIndices = nullptr;
+    }
 
     m_bufferAllocation = core::VulkanContext::getContext()->getDevice()->createBuffer(bufferInfo, memFlags);
     m_handle = m_bufferAllocation.buffer;

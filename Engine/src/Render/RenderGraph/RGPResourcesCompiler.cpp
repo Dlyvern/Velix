@@ -1,6 +1,7 @@
 #include "Engine/Render/RenderGraph/RGPResourcesCompiler.hpp"
 
 #include "Core/VulkanContext.hpp"
+#include "Core/Logger.hpp"
 
 #include "Engine/Utilities/ImageUtilities.hpp"
 
@@ -103,13 +104,14 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(const std::vect
             continue;
 
         auto *renderTarget = storage.getTexture(idHandler);
-        renderTarget->destroyVkImage();
         renderTarget->destroyVkImageView();
+        renderTarget->destroyVkImage();
 
         auto extent = textureDescription->getCustomExtentFunction() ? textureDescription->getCustomExtentFunction()() : textureDescription->getExtent();
 
-        renderTarget->createVkImage(extent, toVkUsage(textureDescription->getUsage()), core::memory::MemoryUsage::AUTO, textureDescription->getFormat(), VK_IMAGE_TILING_OPTIMAL);
-        renderTarget->createVkImageView();
+        renderTarget->createVkImage(extent, toVkUsage(textureDescription->getUsage()), core::memory::MemoryUsage::AUTO, textureDescription->getFormat(),
+                                    VK_IMAGE_TILING_OPTIMAL, textureDescription->getArrayLayers(), textureDescription->getFlags());
+        renderTarget->createVkImageView(textureDescription->getImageViewtype());
 
         if (textureDescription->getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription->getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
             continue;
@@ -122,7 +124,7 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(const std::vect
         subresourceRange.baseMipLevel = 0;
         subresourceRange.levelCount = 1;
         subresourceRange.baseArrayLayer = 0;
-        subresourceRange.layerCount = 1;
+        subresourceRange.layerCount = textureDescription->getArrayLayers();
 
         VkPipelineStageFlags2 srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
         VkAccessFlags2 srcAccessMask = 0;
@@ -203,8 +205,9 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
             auto extent = textureDescription.getCustomExtentFunction() ? textureDescription.getCustomExtentFunction()() : textureDescription.getExtent();
 
             auto renderTarget = std::make_shared<RenderTarget>(device, extent, textureDescription.getFormat(), toVkUsage(textureDescription.getUsage()),
-                                                               utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat()), core::memory::MemoryUsage::AUTO);
-            renderTarget->createVkImageView();
+                                                               utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat()), core::memory::MemoryUsage::AUTO,
+                                                               VK_IMAGE_TILING_OPTIMAL, textureDescription.getArrayLayers(), textureDescription.getFlags());
+            renderTarget->createVkImageView(textureDescription.getImageViewtype());
 
             storage.addTexture(id, std::move(renderTarget));
 
@@ -219,7 +222,7 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
             subresourceRange.baseMipLevel = 0;
             subresourceRange.levelCount = 1;
             subresourceRange.baseArrayLayer = 0;
-            subresourceRange.layerCount = 1;
+            subresourceRange.layerCount = textureDescription.getArrayLayers();
 
             VkPipelineStageFlags2 srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
             VkAccessFlags2 srcAccessMask = 0;
@@ -265,8 +268,8 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::onSwapChainResized(RGPR
             auto wrapImage = core::Image::createShared(image);
 
             auto *swapChainRenderTarget = storage.getSwapChainTexture(id, imageIndex);
-            swapChainRenderTarget->destroyVkImage();
             swapChainRenderTarget->destroyVkImageView();
+            swapChainRenderTarget->destroyVkImage();
 
             swapChainRenderTarget->resetVkImage(wrapImage);
             swapChainRenderTarget->createVkImageView();

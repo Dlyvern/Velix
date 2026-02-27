@@ -20,6 +20,7 @@ struct BaseLight
 struct DirectionalLight : BaseLight
 {
     glm::vec3 direction{-0.5f, -1.0f, -0.3f};
+    bool skyLightEnabled{true};
 };
 
 struct PointLight : BaseLight

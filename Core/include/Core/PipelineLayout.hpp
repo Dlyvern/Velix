@@ -6,6 +6,7 @@
 
 #include <vector>
 #include <memory>
+#include <functional>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -15,9 +16,9 @@ class PipelineLayout
     ELIX_DECLARE_VK_LIFECYCLE()
     DECLARE_VK_SMART_PTRS(PipelineLayout, VkPipelineLayout)
 public:
-    PipelineLayout(VkDevice device, const std::vector<DescriptorSetLayout::SharedPtr> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants = {});
+    PipelineLayout(VkDevice device, const std::vector<std::reference_wrapper<const DescriptorSetLayout>> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants = {});
 
-    void createVk(const std::vector<DescriptorSetLayout::SharedPtr> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants = {});
+    void createVk(const std::vector<std::reference_wrapper<const DescriptorSetLayout>> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants = {});
 
     ~PipelineLayout();
 

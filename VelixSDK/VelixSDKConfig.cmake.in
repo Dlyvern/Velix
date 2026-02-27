@@ -1,11 +1,5 @@
-get_filename_component(_VELIXSDK_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+@PACKAGE_INIT@
 
-set(VELIXSDK_INCLUDE_DIR "${_VELIXSDK_ROOT}/include")
-set(VELIXSDK_LIB_DIR "${_VELIXSDK_ROOT}/lib")
+include("${CMAKE_CURRENT_LIST_DIR}/VelixSDKTargets.cmake")
 
-add_library(VelixSDK::Core SHARED IMPORTED)
-
-set_target_properties(VelixSDK::Core PROPERTIES
-    IMPORTED_LOCATION "${VELIXSDK_LIB_DIR}/libVelixSDK.so"
-    INTERFACE_INCLUDE_DIRECTORIES "${VELIXSDK_INCLUDE_DIR}"
-)
+check_required_components(VelixSDK)

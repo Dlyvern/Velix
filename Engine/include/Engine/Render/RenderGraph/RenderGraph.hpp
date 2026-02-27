@@ -17,6 +17,7 @@
 
 #include <typeindex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <queue>
 #include <string>
@@ -38,7 +39,7 @@ class RenderGraph
     };
 
 public:
-    RenderGraph(VkDevice device, core::SwapChain::SharedPtr swapchain);
+    RenderGraph();
 
     template <typename T, typename... Args>
     T *addPass(Args &&...args)
@@ -105,6 +106,21 @@ private:
         uint32_t endQueryIndex{UINT32_MAX};
     };
 
+    struct FrameQueryRange
+    {
+        uint32_t startQueryIndex{UINT32_MAX};
+        uint32_t endQueryIndex{UINT32_MAX};
+    };
+
+    struct FrameCpuStageProfilingData
+    {
+        double waitForFenceMs{0.0};
+        double acquireImageMs{0.0};
+        double recompileMs{0.0};
+        double submitMs{0.0};
+        double presentMs{0.0};
+    };
+
     void initTimestampQueryPool();
     void destroyTimestampQueryPool();
     void resolveFrameProfilingData(uint32_t frameIndex);
@@ -167,9 +183,11 @@ private:
     std::vector<VkFence> m_inFlightFences;
     std::vector<VkSemaphore> m_imageAvailableSemaphores;
     std::vector<VkSemaphore> m_renderFinishedSemaphores;
+    std::array<std::vector<VkSemaphore>, MAX_FRAMES_IN_FLIGHT> m_uploadWaitSemaphoresByFrame;
 
     std::unordered_map<std::size_t, GPUMesh::SharedPtr> m_meshes;
     std::unordered_map<std::string, Material::SharedPtr> m_materialsByAlbedoPath;
+    std::unordered_set<std::string> m_failedAlbedoTexturePaths;
 
     VkQueryPool m_timestampQueryPool{VK_NULL_HANDLE};
     uint32_t m_timestampQueryCapacity{0};
@@ -177,6 +195,9 @@ private:
     uint32_t m_timestampQueryBase{0};
     uint32_t m_usedTimestampQueries{0};
     std::array<uint32_t, MAX_FRAMES_IN_FLIGHT> m_usedTimestampQueriesByFrame{};
+    std::array<FrameQueryRange, MAX_FRAMES_IN_FLIGHT> m_frameQueryRangesByFrame{};
+    std::array<double, MAX_FRAMES_IN_FLIGHT> m_cpuFrameTimesByFrameMs{};
+    std::array<FrameCpuStageProfilingData, MAX_FRAMES_IN_FLIGHT> m_cpuStageProfilingByFrame{};
     float m_timestampPeriodNs{0.0f};
     bool m_isGpuTimingAvailable{false};
     uint64_t m_profiledFrameIndex{0};

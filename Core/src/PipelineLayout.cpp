@@ -4,13 +4,13 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
-PipelineLayout::PipelineLayout(VkDevice device, const std::vector<DescriptorSetLayout::SharedPtr> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants)
+PipelineLayout::PipelineLayout(VkDevice device, const std::vector<std::reference_wrapper<const DescriptorSetLayout>> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants)
     : m_device(device)
 {
     createVk(setLayouts, pushConstants);
 }
 
-void PipelineLayout::createVk(const std::vector<DescriptorSetLayout::SharedPtr> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants)
+void PipelineLayout::createVk(const std::vector<std::reference_wrapper<const DescriptorSetLayout>> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants)
 {
     ELIX_VK_CREATE_GUARD()
 
@@ -18,8 +18,8 @@ void PipelineLayout::createVk(const std::vector<DescriptorSetLayout::SharedPtr> 
 
     std::vector<VkDescriptorSetLayout> vkSetLayouts;
 
-    for (auto &des : setLayouts)
-        vkSetLayouts.push_back(des->vk());
+    for (const auto &des : setLayouts)
+        vkSetLayouts.push_back(des.get().vk());
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(vkSetLayouts.size());

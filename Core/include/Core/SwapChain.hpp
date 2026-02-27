@@ -18,14 +18,14 @@ class SwapChain
 public:
     using SharedPtr = std::shared_ptr<SwapChain>;
 
-    SwapChain(const platform::Window::SharedPtr window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
-    static SharedPtr create(const platform::Window::SharedPtr window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
+    SwapChain(platform::Window &window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
+    static SharedPtr create(platform::Window &window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
 
     VkSwapchainKHR vk() const;
     VkExtent2D getExtent() const;
     VkFormat getImageFormat() const;
     uint32_t getImageCount() const;
-    std::shared_ptr<platform::Window> getWindow();
+    platform::Window &getWindow() const;
     VkViewport getViewport(float x = 0.0f, float y = 0.0f, float minDepth = 0.0f, float maxDepth = 1.0f);
     VkRect2D getScissor(VkOffset2D offset = {0, 0});
     const std::vector<VkImage>& getImages() const;
@@ -38,7 +38,7 @@ public:
 private:
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
     VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
-    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, std::shared_ptr<platform::Window> window);
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, platform::Window &window);
 
     struct SwapChainSupportDetails
     {
@@ -55,7 +55,7 @@ private:
     VkFormat m_imageFormat{};
     VkExtent2D m_extent{};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
-    std::shared_ptr<platform::Window> m_window{nullptr};
+    platform::Window *m_window{nullptr};
 
     VkSurfaceKHR m_surface{VK_NULL_HANDLE};
 

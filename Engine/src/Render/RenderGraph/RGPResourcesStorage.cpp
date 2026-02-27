@@ -48,7 +48,7 @@ RenderTarget *RGPResourcesStorage::getSwapChainTexture(const RGPResourceHandler 
 
     const auto &vec = it->second;
 
-    if (imageIndex < 0 || imageIndex > vec.size())
+    if (imageIndex < 0 || static_cast<size_t>(imageIndex) >= vec.size())
         return nullptr;
 
     // return &vec[imageIndex];
@@ -72,7 +72,7 @@ const RenderTarget *RGPResourcesStorage::getSwapChainTexture(const RGPResourceHa
 
     const auto &vec = it->second;
 
-    if (imageIndex < 0 || imageIndex > vec.size())
+    if (imageIndex < 0 || static_cast<size_t>(imageIndex) >= vec.size())
         return nullptr;
 
     // return &vec[imageIndex];

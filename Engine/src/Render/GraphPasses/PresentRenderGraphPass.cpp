@@ -52,7 +52,8 @@ void PresentRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{binding});
 
-    m_pipelineLayout = core::PipelineLayout::createShared(device, std::vector<core::DescriptorSetLayout::SharedPtr>{m_descriptorSetLayout},
+    m_pipelineLayout = core::PipelineLayout::createShared(device,
+                                                          std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{*m_descriptorSetLayout},
                                                           std::vector<VkPushConstantRange>{});
     m_defaultSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 }
@@ -122,15 +123,13 @@ void PresentRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
     m_colorRenderTargets.resize(imageCount);
     m_descriptorSets.resize(imageCount);
 
-    static bool wasBuilt{false};
-
     for (uint32_t i = 0; i < imageCount; ++i)
     {
         m_colorRenderTargets[i] = storage.getTexture(m_colorTextureHandler[i]);
 
         auto texture = storage.getTexture(m_colorInputHandlers[i]);
 
-        if (!wasBuilt)
+        if (!m_descriptorSetsInitialized)
         {
             m_descriptorSets[i] = DescriptorSetBuilder::begin()
                                       .addImage(texture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
@@ -144,8 +143,8 @@ void PresentRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         }
     }
 
-    if (!wasBuilt)
-        wasBuilt = true;
+    if (!m_descriptorSetsInitialized)
+        m_descriptorSetsInitialized = true;
 }
 
 ELIX_NESTED_NAMESPACE_END

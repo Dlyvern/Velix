@@ -10,7 +10,24 @@
 
 namespace
 {
-    //! Remove this function...
+    uint32_t clampVulkanApiVersionForVma(uint32_t apiVersion)
+    {
+#if VMA_VULKAN_VERSION >= 1004000
+        constexpr uint32_t maxSupportedApiVersion = VK_MAKE_VERSION(1, 4, 0);
+#elif VMA_VULKAN_VERSION >= 1003000
+        constexpr uint32_t maxSupportedApiVersion = VK_MAKE_VERSION(1, 3, 0);
+#elif VMA_VULKAN_VERSION >= 1002000
+        constexpr uint32_t maxSupportedApiVersion = VK_MAKE_VERSION(1, 2, 0);
+#elif VMA_VULKAN_VERSION >= 1001000
+        constexpr uint32_t maxSupportedApiVersion = VK_MAKE_VERSION(1, 1, 0);
+#else
+        constexpr uint32_t maxSupportedApiVersion = VK_MAKE_VERSION(1, 0, 0);
+#endif
+
+        return std::min(apiVersion, maxSupportedApiVersion);
+    }
+
+    // TODO Remove this function...
     VmaMemoryUsage deleteMeMemoryHelper(elix::core::memory::MemoryUsage usage)
     {
         switch (usage)
@@ -59,17 +76,18 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 ELIX_CUSTOM_NAMESPACE_BEGIN(allocators)
 
 VMAAllocator::VMAAllocator(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
+                           uint32_t vulkanApiVersion,
                            const VkAllocationCallbacks *allocationCallbacks) : IAllocator(allocationCallbacks)
 {
     VmaAllocatorCreateInfo info{};
     info.instance = instance;
     info.physicalDevice = physicalDevice;
     info.device = device;
-    info.vulkanApiVersion = VK_API_VERSION_1_3;
+    info.vulkanApiVersion = clampVulkanApiVersionForVma(vulkanApiVersion);
 
     VmaVulkanFunctions volkFunctions{};
 
-    vmaImportVulkanFunctionsFromVolk(&info, &volkFunctions);
+    VX_VK_CHECK(vmaImportVulkanFunctionsFromVolk(&info, &volkFunctions));
 
     info.pVulkanFunctions = &volkFunctions;
 

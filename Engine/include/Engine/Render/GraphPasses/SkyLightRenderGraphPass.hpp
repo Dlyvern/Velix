@@ -4,10 +4,12 @@
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 #include "Engine/Render/RenderTarget.hpp"
 #include "Engine/SkyLightSystem.hpp"
+#include "Engine/Skybox.hpp"
 
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -50,6 +52,8 @@ private:
     VkRect2D m_scissor{};
 
     std::unique_ptr<SkyLightSystem> m_skyLightSystem{nullptr};
+    std::unique_ptr<Skybox> m_skybox{nullptr};
+    std::string m_loadedSkyboxHDRPath;
 };
 
 ELIX_CUSTOM_NAMESPACE_END

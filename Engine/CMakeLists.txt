@@ -17,6 +17,32 @@ target_include_directories(${PROJECT_NAME} PUBLIC
         ${INCLUDE_DIR}
 )
 
+if(TARGET OpenEXR::OpenEXR)
+    target_link_libraries(${PROJECT_NAME} PUBLIC OpenEXR::OpenEXR)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC ELIX_HAS_OPENEXR=1)
+elseif(TARGET OpenEXR)
+    target_link_libraries(${PROJECT_NAME} PUBLIC OpenEXR)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC ELIX_HAS_OPENEXR=1)
+else()
+    message(WARNING "OpenEXR target not found. .exr texture loading will be disabled.")
+endif()
+
+if(TARGET ZLIB::ZLIB)
+    target_link_libraries(${PROJECT_NAME} PUBLIC ZLIB::ZLIB)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC ELIX_HAS_ZLIB=1)
+elseif(TARGET zlib)
+    target_link_libraries(${PROJECT_NAME} PUBLIC zlib)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC ELIX_HAS_ZLIB=1)
+else()
+    find_package(ZLIB QUIET)
+    if(ZLIB_FOUND)
+        target_link_libraries(${PROJECT_NAME} PUBLIC ZLIB::ZLIB)
+        target_compile_definitions(${PROJECT_NAME} PUBLIC ELIX_HAS_ZLIB=1)
+    else()
+        message(WARNING "ZLIB not found. Texture asset byte compression will be disabled.")
+    endif()
+endif()
+
 target_link_libraries(${PROJECT_NAME}
         PUBLIC
         nlohmann_json
@@ -28,4 +54,5 @@ target_link_libraries(${PROJECT_NAME}
         spirv-cross-glsl
         shaderc
         physx
+        fmod
 )

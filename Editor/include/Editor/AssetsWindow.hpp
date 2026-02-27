@@ -38,9 +38,15 @@ public:
         m_onTextAssetOpenRequestFunction = function;
     }
 
+    void setOnAssetSelectionChanged(const std::function<void(const std::filesystem::path &)> &function)
+    {
+        m_onAssetSelectionChangedFunction = function;
+    }
+
 private:
     std::function<void(const std::filesystem::path &)> m_onMaterialOpenRequestFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onTextAssetOpenRequestFunction{nullptr};
+    std::function<void(const std::filesystem::path &)> m_onAssetSelectionChangedFunction{nullptr};
 
     AssetsPreviewSystem &m_assetsPreviewSystem;
 
@@ -71,6 +77,7 @@ private:
     bool deleteAsset(const std::filesystem::path &path);
     bool duplicateAsset(const std::filesystem::path &path);
     bool createMaterialFromTexture(const std::filesystem::path &texturePath);
+    void setSelectedAssetPath(const std::filesystem::path &path);
 
     void navigateToDirectory(const std::filesystem::path &path);
     std::string formatFileSize(uintmax_t size) const;
@@ -98,14 +105,24 @@ private:
     std::filesystem::path m_deleteAssetPath;
     bool m_openRenamePopupRequested{false};
     bool m_openDeletePopupRequested{false};
+    bool m_openImportPopupRequested{false};
     char m_renameBuffer[256] = "";
+    char m_importSourceBuffer[1024] = "";
+    char m_importDestinationBuffer[1024] = "";
+    char m_importNameBuffer[256] = "";
+    char m_importFilterBuffer[128] = "";
+    int m_importTypeIndex{0};
+    bool m_importRecursive{false};
+    std::string m_importStatusMessage;
+    bool m_importStatusIsError{false};
+    std::filesystem::path m_importBrowserCurrentDirectory;
+    std::unordered_set<std::string> m_importSelectedSourcePaths;
 
-    std::unordered_set<std::string> m_textureExtensions = {".png", ".jpg", ".jpeg"};
+    std::unordered_set<std::string> m_textureExtensions = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff", ".psd", ".gif", ".hdr", ".exr", ".dds"};
     std::unordered_set<std::string> m_velixExtensions = {".scene", ".elixproject", ".cc", ".cxx"};
     std::unordered_set<std::string> m_cppExtensions = {".cpp", ".c", ".cc", ".cxx"};
     std::unordered_set<std::string> m_headerExtensions = {".h", ".hpp", ".hh", ".hxx"};
-    std::unordered_set<std::string> m_imageExtensions = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff", ".psd", ".gif"};
-    std::unordered_set<std::string> m_modelExtensions = {".obj", ".OBJ", ".fbx", ".FBX"};
+    std::unordered_set<std::string> m_modelExtensions = {".obj", ".fbx"};
     std::unordered_set<std::string> m_sceneExtensions = {".scene", ".json", ".yaml", ".yml"};
     std::unordered_set<std::string> m_shaderExtensions = {".glsl", ".vert", ".frag", ".geom", ".tesc", ".tese", ".comp", ".hlsl", ".fx"};
     std::unordered_set<std::string> m_configExtensions = {".ini", ".cfg", ".toml", ".xml", ".properties"};

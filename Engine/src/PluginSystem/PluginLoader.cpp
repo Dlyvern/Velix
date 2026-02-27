@@ -1,10 +1,11 @@
 #include "Engine/PluginSystem/PluginLoader.hpp"
 
 #include <iostream>
+#include "Core/Logger.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-LibraryHandle PluginLoader::loadLibrary(const std::string& libraryPath)
+LibraryHandle PluginLoader::loadLibrary(const std::string &libraryPath)
 {
 #ifdef _WIN32
     HMODULE lib = LoadLibrary(libraryPath.c_str());
@@ -14,7 +15,9 @@ LibraryHandle PluginLoader::loadLibrary(const std::string& libraryPath)
 
     return lib;
 #else
-    void* handle = dlopen(libraryPath.c_str(), RTLD_LAZY);
+    // RTLD_GLOBAL allows dependent symbols to be resolved across loaded modules.
+    // RTLD_NOW fails early if something is missing.
+    void *handle = dlopen(libraryPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
 
     if (!handle)
         VX_ENGINE_ERROR_STREAM("Failed to load library " << dlerror());
@@ -23,7 +26,7 @@ LibraryHandle PluginLoader::loadLibrary(const std::string& libraryPath)
 #endif
 }
 
-void* PluginLoader::getFunction(const std::string& functionName, LibraryHandle library)
+void *PluginLoader::getFunction(const std::string &functionName, LibraryHandle library)
 {
 #ifdef _WIN32
     FARPROC function = GetProcAddress(library, functionName.c_str());
@@ -31,9 +34,9 @@ void* PluginLoader::getFunction(const std::string& functionName, LibraryHandle l
     if (!function)
         VX_ENGINE_ERROR_STREAM("Failed to get function" << std::endl);
 
-    return reinterpret_cast<void*>(function);
+    return reinterpret_cast<void *>(function);
 #else
-    void* function = dlsym(library, functionName.c_str());
+    void *function = dlsym(library, functionName.c_str());
 
     if (!function)
         VX_ENGINE_ERROR_STREAM("Failed to get function " << dlerror() << std::endl);

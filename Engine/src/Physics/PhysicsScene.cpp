@@ -1,6 +1,9 @@
 #include "Engine/Physics/PhysicsScene.hpp"
 
+#include <glm/geometric.hpp>
+
 #include <iostream>
+#include <limits>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -23,8 +26,37 @@ void PhysicsScene::update(float deltaTime)
     m_scene->fetchResults(true);
 }
 
-void PhysicsScene::raycast()
+bool PhysicsScene::raycast(const glm::vec3 &origin, const glm::vec3 &direction, float maxDistance, PhysicsRaycastHit *outHit) const
 {
+    if (!m_scene)
+        return false;
+
+    if (maxDistance <= 0.0f)
+        return false;
+
+    const float directionLength = glm::length(direction);
+    if (directionLength <= std::numeric_limits<float>::epsilon())
+        return false;
+
+    const glm::vec3 normalizedDirection = direction / directionLength;
+
+    physx::PxRaycastBuffer hitBuffer;
+    const bool hasHit = m_scene->raycast(
+        physx::PxVec3(origin.x, origin.y, origin.z),
+        physx::PxVec3(normalizedDirection.x, normalizedDirection.y, normalizedDirection.z),
+        maxDistance,
+        hitBuffer);
+
+    if (!hasHit || !outHit)
+        return hasHit;
+
+    const physx::PxRaycastHit &hit = hitBuffer.block;
+    outHit->distance = hit.distance;
+    outHit->position = glm::vec3(hit.position.x, hit.position.y, hit.position.z);
+    outHit->normal = glm::vec3(hit.normal.x, hit.normal.y, hit.normal.z);
+    outHit->actorUserData = hit.actor ? hit.actor->userData : nullptr;
+
+    return true;
 }
 
 physx::PxRigidDynamic *PhysicsScene::createDynamic(const physx::PxTransform &transform)
@@ -53,7 +85,8 @@ physx::PxRigidStatic *PhysicsScene::createStatic(const physx::PxTransform &trans
 
 physx::PxShape *PhysicsScene::createShape(const physx::PxGeometry &geometry)
 {
-    auto shape = m_physics->createShape(geometry, *m_defaultMaterial);
+    // Use exclusive shapes so collider geometry can be edited at runtime.
+    auto shape = m_physics->createShape(geometry, *m_defaultMaterial, true);
 
     physx::PxFilterData filterData;
     filterData.word0 = 1;

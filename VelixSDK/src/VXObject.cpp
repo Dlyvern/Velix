@@ -1,0 +1,5 @@
+#include "VelixSDK/VXObject.hpp"
+
+ELIX_NESTED_NAMESPACE_BEGIN(sdk)
+
+ELIX_NESTED_NAMESPACE_END

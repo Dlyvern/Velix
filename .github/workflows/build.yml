@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main, dev ]
 
+env:
+  CMAKE_VERSION: 3.31.6
+
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
@@ -25,19 +28,45 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y cmake build-essential libgl1-mesa-dev ninja-build libvulkan-dev vulkan-tools
+          sudo apt install -y build-essential libgl1-mesa-dev ninja-build libvulkan-dev vulkan-tools
           sudo apt install -y libwayland-dev wayland-protocols extra-cmake-modules
           sudo apt install -y libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
           sudo apt install -y libxkbcommon-dev
           sudo apt install -y pkg-config
 
+      - name: Download Portable CMake (Linux)
+        run: |
+          set -euo pipefail
+          CMAKE_ROOT="$GITHUB_WORKSPACE/bundled/cmake"
+          ARCHIVE_NAME="cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz"
+          DOWNLOAD_URL="https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/${ARCHIVE_NAME}"
+          TMP_ARCHIVE="$RUNNER_TEMP/${ARCHIVE_NAME}"
+          TMP_EXTRACT="$RUNNER_TEMP/cmake-${CMAKE_VERSION}-linux-x86_64"
+
+          mkdir -p "$CMAKE_ROOT"
+          curl -L --retry 5 --retry-all-errors --output "$TMP_ARCHIVE" "$DOWNLOAD_URL"
+          rm -rf "$TMP_EXTRACT"
+          tar -xzf "$TMP_ARCHIVE" -C "$RUNNER_TEMP"
+          cp -a "$TMP_EXTRACT/." "$CMAKE_ROOT/"
+
+          echo "$CMAKE_ROOT/bin" >> "$GITHUB_PATH"
+          echo "VELIX_BUNDLED_CMAKE_DIR=$CMAKE_ROOT" >> "$GITHUB_ENV"
+
       - name: Configure and Build
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPHYSX_BUILD_TYPE=checked && cmake --build build
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPHYSX_BUILD_TYPE=checked -DVELIX_BUNDLED_CMAKE_DIR="$VELIX_BUNDLED_CMAKE_DIR" && cmake --build build
       
       - name: Install to Staging Dir
         run: |
           mkdir -p build/lib
           cmake --install build --prefix staging/Velix
+
+      - name: SDK Smoke Test (Template Module)
+        run: |
+          rm -rf /tmp/velix-template-smoke
+          mkdir -p /tmp/velix-template-smoke
+          cp -r resources/projectTemplate/* /tmp/velix-template-smoke/
+          cmake -S /tmp/velix-template-smoke -B /tmp/velix-template-smoke/build -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/staging/Velix"
+          cmake --build /tmp/velix-template-smoke/build
 
       - name: Create Archive
         run: |
@@ -74,9 +103,30 @@ jobs:
       - name: Setup MSVC Developer Environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Download Portable CMake (Windows)
+        shell: pwsh
+        run: |
+          $cmakeRoot = Join-Path $env:GITHUB_WORKSPACE "bundled/cmake"
+          $archiveName = "cmake-$env:CMAKE_VERSION-windows-x86_64.zip"
+          $downloadUrl = "https://github.com/Kitware/CMake/releases/download/v$env:CMAKE_VERSION/$archiveName"
+          $archivePath = Join-Path $env:RUNNER_TEMP $archiveName
+          $extractDir = Join-Path $env:RUNNER_TEMP "cmake-$env:CMAKE_VERSION-windows-x86_64"
+
+          New-Item -ItemType Directory -Force -Path $cmakeRoot | Out-Null
+          if (Test-Path $extractDir) {
+            Remove-Item $extractDir -Recurse -Force
+          }
+
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+          Expand-Archive -Path $archivePath -DestinationPath $env:RUNNER_TEMP -Force
+          Copy-Item (Join-Path $extractDir '*') $cmakeRoot -Recurse -Force
+
+          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $cmakeRoot 'bin')
+          Add-Content -Path $env:GITHUB_ENV -Value "VELIX_BUNDLED_CMAKE_DIR=$cmakeRoot"
+
       - name: Configure and Build
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DPHYSX_BUILD_TYPE=checked -DVulkan_ROOT="$env:VULKAN_SDK"
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DPHYSX_BUILD_TYPE=checked -DVulkan_ROOT="$env:VULKAN_SDK" -DVELIX_BUNDLED_CMAKE_DIR="$env:VELIX_BUNDLED_CMAKE_DIR"
           cmake --build build --config Release
 
       - name: Install to Staging Dir
@@ -134,68 +184,3 @@ jobs:
         with:
           name: Velix-windows
           path: Velix-windows.tar.gz
-
-  # build-macos:
-  #   runs-on: macos-latest
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #       with:
-  #         submodules: 'recursive'
-  #         fetch-depth: 0
-
-  #     - name: Verify and Update Submodules
-  #       run: |
-  #         git submodule update --init --recursive
-  #         git submodule status
-  #         ls -la external/
-
-  #     - name: Install Dependencies
-  #       run: |
-  #         brew uninstall cmake || true
-  #         brew install cmake ninja freetype glfw
-
-  #     - name: Install Vulkan SDK
-  #       run: |
-  #         curl -Lo vulkan-sdk.zip https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.zip
-  #         unzip -q vulkan-sdk.zip -d vulkan-sdk-extracted
-  #         cd vulkan-sdk-extracted
-  #         SDK_APP=$(find . -name "*.app" | head -n 1)
-  #         echo "Found installer: $SDK_APP"
-
-  #         VERSION_DIR="$HOME/VulkanSDK/1.4.321.0"
-  #         mkdir -p "$VERSION_DIR"
-
-  #         sudo "$SDK_APP/Contents/MacOS/$(basename "$SDK_APP" .app)" \
-  #           --root "$VERSION_DIR" \
-  #           --accept-licenses --default-answer --confirm-command install \
-  #           com.lunarg.vulkan.core com.lunarg.vulkan.usr com.lunarg.vulkan.volk com.lunarg.vulkan.vma
-          
-  #         echo "VULKAN_SDK=$VERSION_DIR/macOS" >> $GITHUB_ENV
-  #         echo "$VERSION_DIR/macOS/bin" >> $GITHUB_PATH
-
-  #     - name: Configure and Build
-  #       run: |
-  #         cmake -S . -B build -G Ninja -DVELIX_USE_PHYSX=OFF -DVulkan_ROOT="$VULKAN_SDK"
-  #         cmake --build build
-
-  #     - name: Install to Staging Dir
-  #       run: |
-  #         cmake --install build --prefix staging/Velix
-
-  #     - name: Copy MoltenVK Runtime Libraries
-  #       run: |
-  #         mkdir -p staging/Velix/lib/
-  #         cp "/usr/local/lib/libMoltenVK.dylib" "staging/Velix/lib/"
-  #         cp "/usr/local/share/vulkan/icd.d/MoltenVK_icd.json" "staging/Velix/lib/"
-  #         cp "/usr/local/lib/libvulkan.dylib" "staging/Velix/lib/" 2>/dev/null || true
-
-  #     - name: Create Archive
-  #       run: |
-  #         tar -czvf Velix-macos.tar.gz -C staging Velix
-
-  #     - name: Upload Build Artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: Velix-macos
-  #         path: Velix-macos.tar.gz
