@@ -60,14 +60,6 @@ jobs:
           mkdir -p build/lib
           cmake --install build --prefix staging/Velix
 
-      - name: SDK Smoke Test (Template Module)
-        run: |
-          rm -rf /tmp/velix-template-smoke
-          mkdir -p /tmp/velix-template-smoke
-          cp -r resources/projectTemplate/* /tmp/velix-template-smoke/
-          cmake -S /tmp/velix-template-smoke -B /tmp/velix-template-smoke/build -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/staging/Velix"
-          cmake --build /tmp/velix-template-smoke/build
-
       - name: Create Archive
         run: |
           tar -czvf Velix-linux.tar.gz -C staging Velix

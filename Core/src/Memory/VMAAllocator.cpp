@@ -4,6 +4,7 @@
 #include "Core/VulkanAssert.hpp"
 #include <iomanip>
 #include <sstream>
+#include <algorithm>
 #include <volk.h>
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
@@ -23,7 +24,6 @@ namespace
 #else
         constexpr uint32_t maxSupportedApiVersion = VK_MAKE_VERSION(1, 0, 0);
 #endif
-
         return std::min(apiVersion, maxSupportedApiVersion);
     }
 
