@@ -1,5 +1,9 @@
 #include "Core/Memory/VMAAllocator.hpp"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include "Core/VulkanHelpers.hpp"
 #include "Core/VulkanAssert.hpp"
 #include <iomanip>
@@ -24,7 +28,7 @@ namespace
 #else
         constexpr uint32_t maxSupportedApiVersion = VK_MAKE_VERSION(1, 0, 0);
 #endif
-        return std::min(apiVersion, maxSupportedApiVersion);
+        return (std::min)(apiVersion, maxSupportedApiVersion);
     }
 
     // TODO Remove this function...
@@ -92,6 +96,20 @@ VMAAllocator::VMAAllocator(VkInstance instance, VkPhysicalDevice physicalDevice,
     info.pVulkanFunctions = &volkFunctions;
 
     VX_VK_CHECK(vmaCreateAllocator(&info, &m_allocator));
+
+    auto majorPassed = VK_API_VERSION_MAJOR(vulkanApiVersion);
+    auto minorPassed = VK_API_VERSION_MINOR(vulkanApiVersion);
+    auto patchPassed = VK_API_VERSION_PATCH(vulkanApiVersion);
+
+    auto majorUsed = VK_API_VERSION_MAJOR(info.vulkanApiVersion);
+    auto minorUsed = VK_API_VERSION_MINOR(info.vulkanApiVersion);
+    auto patchUsed = VK_API_VERSION_PATCH(info.vulkanApiVersion);
+
+    VX_CORE_INFO_STREAM("Passed Vulkan version: "
+                        << majorPassed << "." << minorPassed << "." << patchPassed);
+
+    VX_CORE_INFO_STREAM("Using Vulkan version for VMA: "
+                        << majorUsed << "." << minorUsed << "." << patchUsed);
 }
 
 void VMAAllocator::mapMemory(VkDevice device, void *allocation, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void *&data)

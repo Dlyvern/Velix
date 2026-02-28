@@ -87,7 +87,45 @@ void VulkanContext::initVulkan(platform::Window &window)
 
 void VulkanContext::createLogicalDevice()
 {
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR supportedAS{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR supportedRTP{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR supportedRQ{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    VkPhysicalDeviceVulkan12Features supportedV12{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceVulkan13Features supportedV13{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    VkPhysicalDeviceFeatures2 supportedFeatures2{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+
+    supportedFeatures2.pNext = &supportedV12;
+    supportedV12.pNext = &supportedV13;
+    supportedV13.pNext = &supportedAS;
+    supportedAS.pNext = &supportedRTP;
+    supportedRTP.pNext = &supportedRQ;
+    supportedRQ.pNext = nullptr;
+
+    vkGetPhysicalDeviceFeatures2(m_physicalDevice, &supportedFeatures2);
+
+    if (!supportedFeatures2.features.samplerAnisotropy)
+        throw std::runtime_error("Selected GPU does not support samplerAnisotropy");
+
+    if (!supportedFeatures2.features.imageCubeArray)
+        throw std::runtime_error("Selected GPU does not support imageCubeArray");
+
+    if (!supportedV12.bufferDeviceAddress)
+        throw std::runtime_error("Selected GPU does not support bufferDeviceAddress");
+
+    if (!supportedV13.dynamicRendering)
+        throw std::runtime_error("Selected GPU does not support dynamicRendering");
+
+    if (!supportedV13.synchronization2)
+        throw std::runtime_error("Selected GPU does not support synchronization2");
+
     m_queueFamilyIndices = findQueueFamilies(m_physicalDevice, m_surface);
+
     VX_CORE_INFO_STREAM("[Vulkan] Queue families found:");
     VX_CORE_INFO_STREAM("  graphics: " << m_queueFamilyIndices.graphicsFamily.value());
     VX_CORE_INFO_STREAM("  present:  " << m_queueFamilyIndices.presentFamily.value());
@@ -98,49 +136,122 @@ void VulkanContext::createLogicalDevice()
     if (m_queueFamilyIndices.transferFamily == m_queueFamilyIndices.graphicsFamily)
         VX_CORE_INFO_STREAM(" (fallback to graphics)");
 
-    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos{};
+    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+    std::set<uint32_t> uniqueQueueFamilies = {
+        m_queueFamilyIndices.graphicsFamily.value(),
+        m_queueFamilyIndices.presentFamily.value(),
+        m_queueFamilyIndices.computeFamily.value(),
+        m_queueFamilyIndices.transferFamily.value()};
 
-    std::set<uint32_t> uniqueQueueFamilies =
-        {
-            m_queueFamilyIndices.graphicsFamily.value(),
-            m_queueFamilyIndices.presentFamily.value(),
-            m_queueFamilyIndices.computeFamily.value(),
-            m_queueFamilyIndices.transferFamily.value()};
-
-    float queuePriority{1.0f};
+    float queuePriority = 1.0f;
 
     for (uint32_t queueFamily : uniqueQueueFamilies)
     {
-        VkDeviceQueueCreateInfo queueCreateInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+        VkDeviceQueueCreateInfo queueCreateInfo{
+            VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
         queueCreateInfo.queueFamilyIndex = queueFamily;
         queueCreateInfo.queueCount = 1;
         queueCreateInfo.pQueuePriorities = &queuePriority;
         queueCreateInfos.push_back(queueCreateInfo);
     }
 
-    VkPhysicalDeviceFeatures deviceFeatures{};
+    std::vector<const char *> enabledExtensions = m_deviceExtensions;
+    auto availableExtensions = enumerateDeviceExtensions(m_physicalDevice);
 
-    deviceFeatures.samplerAnisotropy = VK_TRUE;
-    deviceFeatures.fillModeNonSolid = VK_TRUE;
-    deviceFeatures.independentBlend = VK_TRUE;
-    deviceFeatures.imageCubeArray = VK_TRUE;
+    const bool hasAS = hasExtension(availableExtensions, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+    const bool hasRTP = hasExtension(availableExtensions, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+    const bool hasRQ = hasExtension(availableExtensions, VK_KHR_RAY_QUERY_EXTENSION_NAME);
+    const bool hasDHO = hasExtension(availableExtensions, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 
-    VkPhysicalDeviceVulkan13Features v13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    m_rayTracingSupport = {};
+
+    if (hasAS && hasRTP && hasDHO &&
+        supportedAS.accelerationStructure &&
+        supportedRTP.rayTracingPipeline)
+    {
+        m_rayTracingSupport.rayTracingPipeline = true;
+        m_rayTracingMode = RayTracingMode::Pipeline;
+
+        enabledExtensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        enabledExtensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        enabledExtensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+
+        VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: Pipeline");
+    }
+    else if (hasAS && hasRQ && hasDHO &&
+             supportedAS.accelerationStructure &&
+             supportedRQ.rayQuery)
+    {
+        m_rayTracingSupport.rayQuery = true;
+        m_rayTracingMode = RayTracingMode::RayQuery;
+
+        enabledExtensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        enabledExtensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        enabledExtensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+
+        VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: RayQuery");
+    }
+    else
+        VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: None");
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtpFeatures{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR rqFeatures{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+
+    VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    features2.features.samplerAnisotropy = VK_TRUE;
+    features2.features.imageCubeArray = VK_TRUE;
+
+    features2.features.fillModeNonSolid = supportedFeatures2.features.fillModeNonSolid;
+    features2.features.independentBlend = supportedFeatures2.features.independentBlend;
+
+    VkPhysicalDeviceVulkan12Features v12{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    v12.bufferDeviceAddress = VK_TRUE;
+
+    VkPhysicalDeviceVulkan13Features v13{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     v13.dynamicRendering = VK_TRUE;
     v13.synchronization2 = VK_TRUE;
 
+    features2.pNext = &v12;
+    v12.pNext = &v13;
+    v13.pNext = nullptr;
+
+    if (m_rayTracingMode == RayTracingMode::Pipeline)
+    {
+        asFeatures.accelerationStructure = VK_TRUE;
+        rtpFeatures.rayTracingPipeline = VK_TRUE;
+
+        v13.pNext = &asFeatures;
+        asFeatures.pNext = &rtpFeatures;
+        rtpFeatures.pNext = nullptr;
+    }
+    else if (m_rayTracingMode == RayTracingMode::RayQuery)
+    {
+        asFeatures.accelerationStructure = VK_TRUE;
+        rqFeatures.rayQuery = VK_TRUE;
+
+        v13.pNext = &asFeatures;
+        asFeatures.pNext = &rqFeatures;
+        rqFeatures.pNext = nullptr;
+    }
+
     VkDeviceCreateInfo createInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-    createInfo.queueCreateInfoCount = queueCreateInfos.size();
+    createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
-    createInfo.pEnabledFeatures = &deviceFeatures;
-    createInfo.enabledExtensionCount = m_deviceExtensions.size();
-    createInfo.ppEnabledExtensionNames = m_deviceExtensions.data();
+    createInfo.pEnabledFeatures = nullptr;
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
+    createInfo.ppEnabledExtensionNames = enabledExtensions.data();
     createInfo.enabledLayerCount = 0;
-    createInfo.pNext = &v13;
+    createInfo.pNext = &features2;
 
     if (m_isValidationLayersEnabled)
     {
-        createInfo.enabledLayerCount = m_validationLayers.size();
+        createInfo.enabledLayerCount = static_cast<uint32_t>(m_validationLayers.size());
         createInfo.ppEnabledLayerNames = m_validationLayers.data();
     }
 
@@ -153,11 +264,15 @@ void VulkanContext::createLogicalDevice()
 
     volkLoadDevice(m_vkDevice);
 
-    m_transferCommandPool = CommandPool::createShared(m_vkDevice, m_queueFamilyIndices.transferFamily.value(),
-                                                      VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+    m_transferCommandPool = CommandPool::createShared(
+        m_vkDevice,
+        m_queueFamilyIndices.transferFamily.value(),
+        VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
-    m_graphicsCommandPool = CommandPool::createShared(m_vkDevice, m_queueFamilyIndices.graphicsFamily.value(),
-                                                      VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+    m_graphicsCommandPool = CommandPool::createShared(
+        m_vkDevice,
+        m_queueFamilyIndices.graphicsFamily.value(),
+        VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
     std::vector<VkDescriptorPoolSize> descriptorPoolSizes = {
         {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
@@ -170,15 +285,25 @@ void VulkanContext::createLogicalDevice()
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
-        {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+        {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000},
+    };
 
-    m_descriptorPool = DescriptorPool::createShared(m_vkDevice, descriptorPoolSizes, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT, 1000);
+    m_descriptorPool = DescriptorPool::createShared(
+        m_vkDevice,
+        descriptorPoolSizes,
+        VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        1000);
 
-    VkPhysicalDeviceProperties selectedProperties{};
-    vkGetPhysicalDeviceProperties(m_physicalDevice, &selectedProperties);
+    auto vmaAllocator = std::make_unique<allocators::VMAAllocator>(
+        m_instance,
+        m_physicalDevice,
+        m_vkDevice,
+        VK_API_VERSION_1_3);
 
-    auto vmaAllocator = std::make_unique<allocators::VMAAllocator>(m_instance, m_physicalDevice, m_vkDevice, selectedProperties.apiVersion);
-    m_device = Device::createShared(m_vkDevice, m_physicalDevice, std::move(vmaAllocator));
+    m_device = Device::createShared(
+        m_vkDevice,
+        m_physicalDevice,
+        std::move(vmaAllocator));
 }
 
 DescriptorPool::SharedPtr VulkanContext::getPersistentDescriptorPool() const
@@ -295,22 +420,80 @@ VkPhysicalDeviceFeatures VulkanContext::getPhysicalDeviceFeatures()
     return features;
 }
 
-bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device)
+std::vector<VkExtensionProperties> VulkanContext::enumerateDeviceExtensions(VkPhysicalDevice physicalDevice)
 {
     uint32_t extensionCount{0};
 
-    VX_VK_CHECK(vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr));
+    VX_VK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, nullptr));
 
     std::vector<VkExtensionProperties> availableExtensions(extensionCount);
 
-    VX_VK_CHECK(vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data()));
+    VX_VK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, availableExtensions.data()));
 
-    std::set<std::string> requiredExtensions(m_deviceExtensions.begin(), m_deviceExtensions.end());
+    return availableExtensions;
+}
 
-    for (const auto &extension : availableExtensions)
-        requiredExtensions.erase(extension.extensionName);
+bool VulkanContext::hasExtension(const std::vector<VkExtensionProperties> &extensions, const char *name)
+{
+    for (const auto &ext : extensions)
+        if (strcmp(ext.extensionName, name) == 0)
+            return true;
 
-    return requiredExtensions.empty();
+    return false;
+}
+
+bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device)
+{
+    auto extensions = enumerateDeviceExtensions(device);
+
+    for (const auto &ext : m_deviceExtensions)
+        if (!hasExtension(extensions, ext))
+            return false;
+
+    return true;
+}
+
+VulkanContext::RayTracingSupport VulkanContext::hasRTXSupport(VkPhysicalDevice physicalDevice)
+{
+    auto extensions = enumerateDeviceExtensions(physicalDevice);
+    RayTracingSupport out{};
+
+    const bool hasAS = hasExtension(extensions, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+    const bool hasRTP = hasExtension(extensions, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+    const bool hasRQ = hasExtension(extensions, VK_KHR_RAY_QUERY_EXTENSION_NAME);
+    const bool hasDHO = hasExtension(extensions, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtpFeatures{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
+
+    VkPhysicalDeviceRayQueryFeaturesKHR rqFeatures{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+
+    VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    features2.pNext = &asFeatures;
+    asFeatures.pNext = &rtpFeatures;
+    rtpFeatures.pNext = &rqFeatures;
+
+    vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+
+    out.rayTracingPipeline =
+        hasAS &&
+        hasRTP &&
+        hasDHO &&
+        asFeatures.accelerationStructure &&
+        rtpFeatures.rayTracingPipeline;
+
+    out.rayQuery =
+        hasAS &&
+        hasRQ &&
+        hasDHO &&
+        asFeatures.accelerationStructure &&
+        rqFeatures.rayQuery;
+
+    return out;
 }
 
 bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device)
@@ -355,7 +538,7 @@ bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device)
     VkPhysicalDeviceFeatures features{};
     vkGetPhysicalDeviceFeatures(device, &features);
 
-    return indices.isComplete() && extensionsSupported && swapChainAdequate && features.samplerAnisotropy && features.imageCubeArray;
+    return indices.isComplete() && extensionsSupported && swapChainAdequate && features.samplerAnisotropy && features.imageCubeArray && properties.apiVersion >= VK_API_VERSION_1_3;
 }
 
 void VulkanContext::pickPhysicalDevice()
@@ -427,7 +610,6 @@ void VulkanContext::pickPhysicalDevice()
                 score += static_cast<int>(memProps.memoryHeaps[i].size / (1024 * 1024 * 1024));
 
         candidates.push_back({device, props, score, canPresent});
-
     }
 
     if (candidates.empty())
@@ -474,8 +656,8 @@ void VulkanContext::pickPhysicalDevice()
     if (!selectedHardwareGpu)
     {
         VX_CORE_WARNING_STREAM("[Vulkan] Selected adapter is not a hardware GPU (" << toDeviceTypeName(selected.deviceType)
-                                                                                    << "). Performance may be very poor. "
-                                                                                    << "Please update/reinstall graphics drivers and ensure Vulkan runs on your real GPU.\n");
+                                                                                   << "). Performance may be very poor. "
+                                                                                   << "Please update/reinstall graphics drivers and ensure Vulkan runs on your real GPU.\n");
     }
 }
 

@@ -17,6 +17,8 @@
 #include "Engine/Render/GraphPasses/BloomRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/BloomCompositeRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/FXAARenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/SSAORenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/PreviewAssetsRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/SelectionOverlayRenderGraphPass.hpp"
 #include "Editor/ImGuiRenderGraphPass.hpp"
@@ -58,6 +60,8 @@ private:
     engine::renderGraph::TonemapRenderGraphPass    *m_tonemapRenderGraphPass{nullptr};
     engine::renderGraph::BloomCompositeRenderGraphPass *m_bloomCompositeRenderGraphPass{nullptr};
     engine::renderGraph::FXAARenderGraphPass       *m_fxaaRenderGraphPass{nullptr};
+    engine::renderGraph::SSAORenderGraphPass       *m_ssaoRenderGraphPass{nullptr};
+    engine::renderGraph::SMAAPassRenderGraphPass   *m_smaaRenderGraphPass{nullptr};
     SelectionOverlayRenderGraphPass *m_selectionOverlayRenderGraphPass{nullptr};
     ImGuiRenderGraphPass *m_imGuiRenderGraphPass{nullptr};
 

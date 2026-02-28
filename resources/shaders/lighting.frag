@@ -49,6 +49,7 @@ layout(set = 1, binding = 3) uniform sampler2D uDepth;
 layout(set = 1, binding = 4) uniform sampler2DArray directionalShadowMaps;
 layout(set = 1, binding = 5) uniform sampler2DArray spotShadowMaps;
 layout(set = 1, binding = 6) uniform samplerCubeArray cubeShadowMaps;
+layout(set = 1, binding = 7) uniform sampler2D uSSAO; // SSAO occlusion (1=lit, 0=occluded)
 
 float DistributionGGX(vec3 N, vec3 H, float roughness)
 {
@@ -200,7 +201,7 @@ void main()
     vec3 albedo = gA.rgb;
     float alpha = gA.a;
 
-    float ao        = gM.r;
+    float ao        = gM.r * texture(uSSAO, vUV).r; // material AO × SSAO (1=lit when SSAO disabled)
     float roughness = clamp(gM.g, 0.04, 1.0);
     float metallic  = clamp(gM.b, 0.0, 1.0);
     float emissiveStrength = gM.a; 

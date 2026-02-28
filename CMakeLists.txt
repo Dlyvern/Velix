@@ -164,6 +164,12 @@ if(EXISTS "${FMOD_LINUX_RUNTIME_CANDIDATE}")
             "${FMOD_LINUX_RUNTIME_CANDIDATE}"
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>/libfmod.so.14.8"
 
+        # Force-recreate symlinks so rebuilds don't leave stale ones.
+        # cmake -E create_symlink fails if the link already exists, so remove first.
+        COMMAND ${CMAKE_COMMAND} -E remove
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/libfmod.so.14"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/libfmod.so"
+
         COMMAND ${CMAKE_COMMAND} -E create_symlink
             "libfmod.so.14.8"
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>/libfmod.so.14"

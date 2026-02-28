@@ -76,6 +76,8 @@ void GraphicsPipelineManager::loadShaderModules()
     bloomExtractShader   = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_extract.frag.spv");
     bloomCompositeShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_composite.frag.spv");
     ssrShader            = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssr.frag.spv");
+    ssaoShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssao.frag.spv");
+    smaaShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/smaa.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -105,6 +107,8 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(bloomExtractShader);
     destroyShader(bloomCompositeShader);
     destroyShader(ssrShader);
+    destroyShader(ssaoShader);
+    destroyShader(smaaShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -171,6 +175,12 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         break;
     case ShaderId::SSR:
         stages = ssrShader->getShaderStages();
+        break;
+    case ShaderId::SSAO:
+        stages = ssaoShader->getShaderStages();
+        break;
+    case ShaderId::SMAA:
+        stages = smaaShader->getShaderStages();
         break;
     default:
         throw std::runtime_error("Unknown ShaderId");

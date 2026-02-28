@@ -273,6 +273,7 @@ private:
 
     bool m_showAssetsWindow{false};
     bool m_showTerminal{false};
+    bool m_showRenderSettings{false};
     bool m_terminalAutoScroll{true};
     bool m_terminalClearInputOnSubmit{true};
     char m_terminalCommandBuffer[512]{};
@@ -303,6 +304,7 @@ private:
 
     void drawBottomPanel();
     void drawToolBar();
+    void drawRenderSettings();
     void showDockSpace();
     void syncAssetsAndTerminalDocking();
     void drawCustomTitleBar();

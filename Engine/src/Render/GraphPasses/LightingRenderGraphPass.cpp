@@ -12,14 +12,16 @@ LightingRenderGraphPass::LightingRenderGraphPass(RGPResourceHandler &shadowTextu
                                                  RGPResourceHandler &depthTextureHandler, RGPResourceHandler &cubeTextureHandler, RGPResourceHandler &arrayTextureHandler,
                                                  std::vector<RGPResourceHandler> &albedoTextureHandlers,
                                                  std::vector<RGPResourceHandler> &normalTextureHandlers,
-                                                 std::vector<RGPResourceHandler> &materialTextureHandlers)
+                                                 std::vector<RGPResourceHandler> &materialTextureHandlers,
+                                                 std::vector<RGPResourceHandler> *aoTextureHandlers)
     : m_albedoTextureHandlers(albedoTextureHandlers),
       m_normalTextureHandlers(normalTextureHandlers),
       m_materialTextureHandlers(materialTextureHandlers),
       m_depthTextureHandler(depthTextureHandler),
       m_shadowTextureHandler(shadowTextureHandler),
       m_cubeTextureHandler(cubeTextureHandler),
-      m_arrayTextureHandler(arrayTextureHandler)
+      m_arrayTextureHandler(arrayTextureHandler),
+      m_aoTextureHandlers(aoTextureHandlers)
 {
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
 
@@ -110,6 +112,15 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
         auto cubeTexture = storage.getTexture(m_cubeTextureHandler);
         auto arrayTexture = storage.getTexture(m_arrayTextureHandler);
 
+        // AO texture: use the SSAO output when available, otherwise fall back to depth (shader ignores it)
+        const RenderTarget *aoTexture = depthTexture;
+        VkImageLayout aoLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        if (m_aoTextureHandlers && i < m_aoTextureHandlers->size())
+        {
+            aoTexture = storage.getTexture((*m_aoTextureHandlers)[i]);
+            aoLayout  = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
+
         if (!m_descriptorSetsInitialized)
         {
             m_descriptorSets[i] = DescriptorSetBuilder::begin()
@@ -120,6 +131,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                                       .addImage(shadowTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 4)
                                       .addImage(arrayTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 5)
                                       .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 6)
+                                      .addImage(aoTexture->vkImageView(), m_defaultSampler, aoLayout, 7)
                                       .build(core::VulkanContext::getContext()->getDevice(), core::VulkanContext::getContext()->getPersistentDescriptorPool(), m_descriptorSetLayout);
         }
         else
@@ -132,6 +144,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                 .addImage(shadowTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 4)
                 .addImage(arrayTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 5)
                 .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 6)
+                .addImage(aoTexture->vkImageView(), m_defaultSampler, aoLayout, 7)
                 .update(core::VulkanContext::getContext()->getDevice(), m_descriptorSets[i]);
         }
     }
@@ -161,6 +174,9 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
         builder.read(m_albedoTextureHandlers[imageIndex], RGPTextureUsage::SAMPLED);
         builder.read(m_normalTextureHandlers[imageIndex], RGPTextureUsage::SAMPLED);
         builder.read(m_materialTextureHandlers[imageIndex], RGPTextureUsage::SAMPLED);
+
+        if (m_aoTextureHandlers && imageIndex < static_cast<int>(m_aoTextureHandlers->size()))
+            builder.read((*m_aoTextureHandlers)[imageIndex], RGPTextureUsage::SAMPLED);
     }
 
     builder.read(m_depthTextureHandler, RGPTextureUsage::SAMPLED);
@@ -219,9 +235,16 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
     pointMapBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pointMapBinding.pImmutableSamplers = nullptr;
 
+    VkDescriptorSetLayoutBinding aoBinding{};
+    aoBinding.binding = 7;
+    aoBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    aoBinding.descriptorCount = 1;
+    aoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    aoBinding.pImmutableSamplers = nullptr;
+
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{bindingNormal,
                                                                                                                       bindingAlbedo, bindingMaterial, bindingDepth, lightMapBinding,
-                                                                                                                      spotMapBinding, pointMapBinding});
+                                                                                                                      spotMapBinding, pointMapBinding, aoBinding});
 
     m_pipelineLayout = core::PipelineLayout::createShared(device,
                                                           std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{*EngineShaderFamilies::cameraDescriptorSetLayout, *m_descriptorSetLayout},

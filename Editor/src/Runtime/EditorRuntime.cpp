@@ -56,6 +56,10 @@ bool EditorRuntime::init()
     m_gBufferRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::GBufferRenderGraphPass>();
     m_shadowRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ShadowRenderGraphPass>();
 
+    m_ssaoRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SSAORenderGraphPass>(
+        m_gBufferRenderGraphPass->getDepthTextureHandler(),
+        m_gBufferRenderGraphPass->getNormalTextureHandlers());
+
     m_lightingRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::LightingRenderGraphPass>(
         m_shadowRenderGraphPass->getDirectionalShadowHandler(),
         m_gBufferRenderGraphPass->getDepthTextureHandler(),
@@ -63,41 +67,38 @@ bool EditorRuntime::init()
         m_shadowRenderGraphPass->getSpotShadowHandler(),
         m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
-        m_gBufferRenderGraphPass->getMaterialTextureHandlers());
+        m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+        &m_ssaoRenderGraphPass->getAOHandlers());
 
-    // SSR reads HDR lighting + G-buffer; outputs modified HDR (pass-through when disabled)
     m_ssrRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
         m_lightingRenderGraphPass->getOutput(),
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
-    // SkyLight (IBL + skybox) reads SSR-modified HDR
     m_skyLightRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SkyLightRenderGraphPass>(
         m_ssrRenderGraphPass->getOutput(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
-    // Bloom extract: reads HDR (before tonemap), outputs half-res bright texture
     m_bloomRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::BloomRenderGraphPass>(
         m_skyLightRenderGraphPass->getOutput());
 
-    // Tonemap: HDR → LDR
     m_tonemapRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::TonemapRenderGraphPass>(
         m_skyLightRenderGraphPass->getOutput());
 
-    // Bloom composite: upsample + add bloom to LDR
     m_bloomCompositeRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::BloomCompositeRenderGraphPass>(
         m_tonemapRenderGraphPass->getHandlers(),
         m_bloomRenderGraphPass->getHandlers());
 
-    // FXAA: anti-alias the final LDR image
     m_fxaaRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::FXAARenderGraphPass>(
         m_bloomCompositeRenderGraphPass->getHandlers());
 
-    // Editor overlays read FXAA output
+    m_smaaRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SMAAPassRenderGraphPass>(
+        m_fxaaRenderGraphPass->getHandlers());
+
     m_selectionOverlayRenderGraphPass = m_renderGraph->addPass<SelectionOverlayRenderGraphPass>(
         m_editor,
-        m_fxaaRenderGraphPass->getHandlers(),
+        m_smaaRenderGraphPass->getHandlers(),
         m_gBufferRenderGraphPass->getObjectTextureHandler());
 
     m_renderGraph->addPass<ImGuiRenderGraphPass>(
@@ -115,6 +116,7 @@ bool EditorRuntime::init()
                                            {
                                                VkExtent2D extent{.width = w, .height = h};
                                                m_gBufferRenderGraphPass->setExtent(extent);
+                                               m_ssaoRenderGraphPass->setExtent(extent);
                                                m_lightingRenderGraphPass->setExtent(extent);
                                                m_ssrRenderGraphPass->setExtent(extent);
                                                m_skyLightRenderGraphPass->setExtent(extent);
@@ -122,6 +124,7 @@ bool EditorRuntime::init()
                                                m_tonemapRenderGraphPass->setExtent(extent);
                                                m_bloomCompositeRenderGraphPass->setExtent(extent);
                                                m_fxaaRenderGraphPass->setExtent(extent);
+                                               m_smaaRenderGraphPass->setExtent(extent);
                                                m_selectionOverlayRenderGraphPass->setExtent(extent); });
 
     m_editor->setScene(m_scene);

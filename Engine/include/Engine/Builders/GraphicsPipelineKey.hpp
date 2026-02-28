@@ -26,6 +26,8 @@ enum class ShaderId : uint8_t
     BloomExtract,
     BloomComposite,
     SSR,
+    SSAO,
+    SMAA,
     None
 };
 

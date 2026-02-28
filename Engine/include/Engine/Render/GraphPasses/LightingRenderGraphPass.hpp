@@ -15,7 +15,8 @@ public:
                             RGPResourceHandler &depthTextureHandler, RGPResourceHandler &cubeTextureHandler, RGPResourceHandler &arrayTextureHandler,
                             std::vector<RGPResourceHandler> &albedoTextureHandlers,
                             std::vector<RGPResourceHandler> &normalTextureHandlers,
-                            std::vector<RGPResourceHandler> &materialTextureHandlers);
+                            std::vector<RGPResourceHandler> &materialTextureHandlers,
+                            std::vector<RGPResourceHandler> *aoTextureHandlers = nullptr);
 
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
@@ -53,6 +54,8 @@ private:
     std::vector<RGPResourceHandler> &m_albedoTextureHandlers;
     std::vector<RGPResourceHandler> &m_normalTextureHandlers;
     std::vector<RGPResourceHandler> &m_materialTextureHandlers;
+
+    std::vector<RGPResourceHandler> *m_aoTextureHandlers{nullptr}; // optional, binding 7
 
     core::Sampler::SharedPtr m_defaultSampler{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};

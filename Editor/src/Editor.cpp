@@ -23,6 +23,7 @@
 #include "Engine/PluginSystem/PluginLoader.hpp"
 #include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Utilities/ImageUtilities.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 
 #include "Editor/FileHelper.hpp"
 
@@ -952,9 +953,7 @@ void Editor::drawGuizmo()
                 worldCorners[index] = transformPoint(colliderMatrix, localCorners[index]);
 
             constexpr std::array<std::pair<int, int>, 12> edges = {
-                std::pair<int, int>{0, 1}, {1, 2}, {2, 3}, {3, 0},
-                {4, 5}, {5, 6}, {6, 7}, {7, 4},
-                {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+                std::pair<int, int>{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
 
             for (const auto &[from, to] : edges)
                 drawLine3D(drawList, worldCorners[from], worldCorners[to], view, projection, viewportPos, viewportSize, colliderLineColor, 1.5f);
@@ -2028,6 +2027,13 @@ void Editor::drawToolBar()
             changeMode(EditorMode::EDIT);
         }
 
+        ImGui::SameLine();
+
+        if (ImGui::Button("Render Settings"))
+            m_showRenderSettings = !m_showRenderSettings;
+
+        ImGui::SameLine();
+
         if (ImGui::Button("Benchmark"))
         {
             if (ImGui::IsPopupOpen("BenchmarkPopup"))
@@ -2113,6 +2119,123 @@ void Editor::drawToolBar()
     ImGui::End();
 }
 
+void Editor::drawRenderSettings()
+{
+    if (!m_showRenderSettings)
+        return;
+
+    ImGui::SetNextWindowSize(ImVec2(420, 560), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(80, 80), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Render Settings", &m_showRenderSettings))
+    {
+        ImGui::End();
+        return;
+    }
+
+    auto &settings = engine::RenderQualitySettings::getInstance();
+
+    ImGui::SeparatorText("General");
+    ImGui::Checkbox("Enable Post-Processing", &settings.enablePostProcessing);
+
+    ImGui::DragFloat("Render Scale", &settings.renderScale, 0.01f, 0.25f, 2.0f, "%.2f");
+    ImGui::SetItemTooltip("1.0 = native resolution. Values below 1 reduce quality but improve performance.");
+
+    ImGui::SeparatorText("Shadows");
+    {
+        const char *shadowItems[] = {"Low (512)", "Medium (1024)", "High (2048)", "Ultra (4096)"};
+        int shadowIndex = 0;
+        switch (settings.shadowQuality)
+        {
+        case engine::RenderQualitySettings::ShadowQuality::Low:
+            shadowIndex = 0;
+            break;
+        case engine::RenderQualitySettings::ShadowQuality::Medium:
+            shadowIndex = 1;
+            break;
+        case engine::RenderQualitySettings::ShadowQuality::High:
+            shadowIndex = 2;
+            break;
+        case engine::RenderQualitySettings::ShadowQuality::Ultra:
+            shadowIndex = 3;
+            break;
+        }
+
+        if (ImGui::Combo("Shadow Quality", &shadowIndex, shadowItems, 4))
+        {
+            switch (shadowIndex)
+            {
+            case 0:
+                settings.shadowQuality = engine::RenderQualitySettings::ShadowQuality::Low;
+                break;
+            case 1:
+                settings.shadowQuality = engine::RenderQualitySettings::ShadowQuality::Medium;
+                break;
+            case 2:
+                settings.shadowQuality = engine::RenderQualitySettings::ShadowQuality::High;
+                break;
+            case 3:
+                settings.shadowQuality = engine::RenderQualitySettings::ShadowQuality::Ultra;
+                break;
+            }
+        }
+    }
+    ImGui::SeparatorText("Ambient Occlusion");
+    ImGui::Checkbox("SSAO", &settings.enableSSAO);
+    if (settings.enableSSAO)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Radius##ssao", &settings.ssaoRadius, 0.01f, 0.05f, 5.0f, "%.2f");
+        ImGui::DragFloat("Bias##ssao", &settings.ssaoBias, 0.001f, 0.0f, 0.1f, "%.4f");
+        ImGui::DragFloat("Strength##ssao", &settings.ssaoStrength, 0.05f, 0.1f, 5.0f, "%.2f");
+        ImGui::DragInt("Samples##ssao", &settings.ssaoSamples, 1, 4, 64);
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Bloom");
+    ImGui::Checkbox("Bloom##toggle", &settings.enableBloom);
+    if (settings.enableBloom)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Threshold##bloom", &settings.bloomThreshold, 0.01f, 0.0f, 5.0f, "%.2f");
+        ImGui::DragFloat("Knee##bloom", &settings.bloomKnee, 0.01f, 0.0f, 1.0f, "%.2f");
+        ImGui::DragFloat("Strength##bloom", &settings.bloomStrength, 0.01f, 0.0f, 2.0f, "%.2f");
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Reflections (SSR)");
+    ImGui::Checkbox("SSR##toggle", &settings.enableSSR);
+    if (settings.enableSSR)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Max Distance##ssr", &settings.ssrMaxDistance, 0.5f, 1.0f, 200.0f, "%.1f");
+        ImGui::DragFloat("Thickness##ssr", &settings.ssrThickness, 0.01f, 0.0f, 2.0f, "%.2f");
+        ImGui::DragFloat("Strength##ssr", &settings.ssrStrength, 0.01f, 0.0f, 1.0f, "%.2f");
+        ImGui::DragInt("Steps##ssr", &settings.ssrSteps, 1, 4, 64);
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Anti-Aliasing");
+
+    ImGui::Checkbox("FXAA##aa", &settings.enableFXAA);
+    ImGui::SetItemTooltip("Fast Approximate Anti-Aliasing. Cheap, slight blur.");
+
+    ImGui::Checkbox("SMAA##aa", &settings.enableSMAA);
+    ImGui::SetItemTooltip("Subpixel Morphological Anti-Aliasing. Better edge quality than FXAA.");
+
+    if (settings.enableFXAA && settings.enableSMAA)
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Note: SMAA runs after FXAA when both enabled.");
+
+    ImGui::Checkbox("TAA (Experimental)##aa", &settings.enableTAA);
+    ImGui::SetItemTooltip("Temporal Anti-Aliasing. Requires velocity buffer — not fully wired yet.");
+    if (settings.enableTAA)
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "TAA requires a rebuild with velocity buffer support.");
+
+    ImGui::TextDisabled("MSAA: not supported in deferred rendering.");
+
+    ImGui::End();
+}
+
 void Editor::drawBottomPanel()
 {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
@@ -2158,6 +2281,7 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet)
     drawBottomPanel();
     drawHierarchy();
     drawDetails();
+    drawRenderSettings();
 
     m_notificationManager.render();
 }
@@ -3581,11 +3705,11 @@ bool Editor::exportModelMaterials(const std::filesystem::path &modelPath,
             const std::string originalPath = texturePath;
             bool resolved = true;
             texturePath = toMaterialTextureReferencePath(resolveTexturePathForMaterialExport(texturePath,
-                                                                                            modelDirectory,
-                                                                                            projectRoot,
-                                                                                            textureSearchDirectory,
-                                                                                            textureOverrides,
-                                                                                            resolved),
+                                                                                             modelDirectory,
+                                                                                             projectRoot,
+                                                                                             textureSearchDirectory,
+                                                                                             textureOverrides,
+                                                                                             resolved),
                                                          projectRoot);
 
             const std::filesystem::path resolvedTexturePath = std::filesystem::path(resolveTexturePathAgainstProjectRoot(texturePath, projectRoot)).lexically_normal();

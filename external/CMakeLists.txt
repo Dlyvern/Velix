@@ -23,6 +23,17 @@ add_subdirectory(tinyobjloader)
 set(VOLK_INSTALL OFF CACHE BOOL "Disable volk install target" FORCE)
 add_subdirectory(volk)
 
+# freetype
+set(FT_DISABLE_ZLIB TRUE CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2 TRUE CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG TRUE CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ TRUE CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI TRUE CACHE BOOL "" FORCE)
+set(FT_ENABLE_ERROR_STRINGS FALSE CACHE BOOL "" FORCE)
+# set(SKIP_INSTALL_ALL TRUE CACHE BOOL "" FORCE)
+# set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+add_subdirectory(freetype)
+
 # fbx sdk wrapper
 add_subdirectory(fbx_sdk)
 

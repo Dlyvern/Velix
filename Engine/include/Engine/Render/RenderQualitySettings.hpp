@@ -47,6 +47,21 @@ public:
     // Render scale (1.0 = native)
     float renderScale{1.0f};
 
+    // SSAO / GTAO
+    bool  enableSSAO{true};
+    float ssaoRadius{0.5f};
+    float ssaoBias{0.025f};
+    float ssaoStrength{1.2f};
+    int   ssaoSamples{32};
+    bool  enableGTAO{false}; // higher-quality SSAO variant (more expensive)
+
+    // TAA (temporal anti-aliasing) — requires velocity buffer
+    bool  enableTAA{false};
+    float taaHistoryWeight{0.9f};
+
+    // SMAA
+    bool  enableSMAA{false}; // replaces FXAA when on
+
     uint32_t getShadowResolution() const
     {
         return static_cast<uint32_t>(shadowQuality);

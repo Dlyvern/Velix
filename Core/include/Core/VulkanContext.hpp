@@ -98,8 +98,7 @@ private:
 
     const std::vector<const char *> m_validationLayers{"VK_LAYER_KHRONOS_validation"};
     const std::vector<const char *> m_deviceExtensions{
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
-    };
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
     VkInstance m_instance{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
@@ -128,6 +127,27 @@ private:
     std::vector<const char *> getRequiredExtensions();
     void pickPhysicalDevice();
     bool isDeviceSuitable(VkPhysicalDevice device);
+
+    std::vector<VkExtensionProperties> enumerateDeviceExtensions(VkPhysicalDevice physicalDevice);
+    bool hasExtension(const std::vector<VkExtensionProperties> &extensions, const char *name);
+
+    struct RayTracingSupport
+    {
+        bool rayTracingPipeline{false}; // full RT pipelines
+        bool rayQuery{false};           // inline ray queries in shaders
+    };
+
+    enum class RayTracingMode : uint8_t
+    {
+        None = 0,
+        RayQuery = 1,
+        Pipeline = 2
+    };
+
+    RayTracingMode m_rayTracingMode{RayTracingMode::None};
+    RayTracingSupport m_rayTracingSupport{};
+
+    RayTracingSupport hasRTXSupport(VkPhysicalDevice physicalDevice);
 
     void initVulkan(platform::Window &window);
     void createInstance();
