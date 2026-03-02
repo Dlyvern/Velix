@@ -28,10 +28,8 @@ public:
 
     virtual ParticleModuleType getType() const = 0;
 
-    /// Initialise a freshly-spawned particle.
     virtual void onParticleSpawn(Particle & /*particle*/) {}
 
-    /// Advance a live particle by deltaTime seconds.
     virtual void onParticleUpdate(Particle & /*particle*/, float /*deltaTime*/) {}
 
     bool isEnabled() const { return m_enabled; }

@@ -80,7 +80,6 @@ private:
 
     bool m_compiled{false};
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
     void collectParticleData(std::vector<ParticleGPUData> &out,
                              const glm::vec3 &cameraRight,
                              const glm::vec3 &cameraUp) const;

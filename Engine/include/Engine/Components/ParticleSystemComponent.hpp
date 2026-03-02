@@ -12,9 +12,6 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 /// ECS component that drives a ParticleSystem.
 /// Registered as a multi-component so one entity can carry multiple effects.
-/// Usage:
-///   auto *ps = entity->addComponent<ParticleSystemComponent>();
-///   ps->setParticleSystem(ParticleSystem::createRain());
 class ParticleSystemComponent final : public ECS
 {
 public:

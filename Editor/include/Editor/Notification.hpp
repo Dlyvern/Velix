@@ -3,7 +3,10 @@
 
 #include "Core/Macros.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <string>
 #include <vector>
 
 #include "imgui.h"
@@ -12,10 +15,10 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 enum class NotificationType
 {
-    INFO,
-    SUCCESS,
-    WARNING,
-    ERROR
+    Info,
+    Success,
+    Warning,
+    Error
 };
 
 struct Notification
@@ -77,7 +80,7 @@ public:
     void setPosition(ImVec2 pos) { m_position = pos; }
     void setWidth(float width) { m_width = width; }
 
-    void show(const std::string &message, NotificationType type = NotificationType::INFO, float duration = 3.0f)
+    void show(const std::string &message, NotificationType type = NotificationType::Info, float duration = 3.0f)
     {
         m_notifications.emplace_back(message, type, duration);
 
@@ -89,22 +92,22 @@ public:
 
     void showInfo(const std::string &message, float duration = 3.0f)
     {
-        show(message, NotificationType::INFO, duration);
+        show(message, NotificationType::Info, duration);
     }
 
     void showSuccess(const std::string &message, float duration = 3.0f)
     {
-        show(message, NotificationType::SUCCESS, duration);
+        show(message, NotificationType::Success, duration);
     }
 
     void showWarning(const std::string &message, float duration = 3.0f)
     {
-        show(message, NotificationType::WARNING, duration);
+        show(message, NotificationType::Warning, duration);
     }
 
     void showError(const std::string &message, float duration = 3.0f)
     {
-        show(message, NotificationType::ERROR, duration);
+        show(message, NotificationType::Error, duration);
     }
 
     void render()
@@ -149,16 +152,16 @@ public:
 
             switch (notification.type)
             {
-            case NotificationType::INFO:
+            case NotificationType::Info:
                 ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.3f, 0.9f));
                 break;
-            case NotificationType::SUCCESS:
+            case NotificationType::Success:
                 ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.3f, 0.1f, 0.9f));
                 break;
-            case NotificationType::WARNING:
+            case NotificationType::Warning:
                 ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.3f, 0.2f, 0.1f, 0.9f));
                 break;
-            case NotificationType::ERROR:
+            case NotificationType::Error:
                 ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.3f, 0.1f, 0.1f, 0.9f));
                 break;
             }
@@ -168,19 +171,19 @@ public:
 
             switch (notification.type)
             {
-            case NotificationType::INFO:
+            case NotificationType::Info:
                 ImGui::Text("I");
                 ImGui::SameLine();
                 break;
-            case NotificationType::SUCCESS:
+            case NotificationType::Success:
                 ImGui::Text("@");
                 ImGui::SameLine();
                 break;
-            case NotificationType::WARNING:
+            case NotificationType::Warning:
                 ImGui::Text("^");
                 ImGui::SameLine();
                 break;
-            case NotificationType::ERROR:
+            case NotificationType::Error:
                 ImGui::Text("X");
                 ImGui::SameLine();
                 break;

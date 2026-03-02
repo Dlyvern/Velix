@@ -1,6 +1,9 @@
 #include "Editor/FileHelper.hpp"
 
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdio>

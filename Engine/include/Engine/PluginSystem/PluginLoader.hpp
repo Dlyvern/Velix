@@ -8,7 +8,19 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 #ifdef _WIN32
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <windows.h>
+    #ifdef min
+        #undef min
+    #endif
+    #ifdef max
+        #undef max
+    #endif
     using LibraryHandle = HMODULE;
 #else
     #include <dlfcn.h>
