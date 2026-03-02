@@ -2,8 +2,7 @@
 
 layout(push_constant) uniform ModelPushConstant
 {
-    mat4 model;
-    uint objectId;
+    uint baseInstance;
 } modelPushConstant;
 
 layout(set = 0, binding = 0) uniform CameraUniformObject
@@ -13,6 +12,17 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
     mat4 invView;
     mat4 invProjection;
 } cameraUniformObject;
+
+struct InstanceData
+{
+    mat4 model;
+    uvec4 objectInfo; // x = objectId, y = bonesOffset, z/w = reserved
+};
+
+layout(std430, set = 2, binding = 1) readonly buffer InstanceDataSSBO
+{
+    InstanceData instances[];
+} instanceDataBuffer;
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec2 inTextures;
@@ -25,15 +35,22 @@ layout(location = 1) out vec3 fragNormalView;
 layout(location = 2) out vec3 fragPositionView; 
 layout(location = 3) out vec3 fragTangentView;
 layout(location = 4) out vec3 fragBitangentView;
+layout(location = 5) out flat uint fragObjectId;
 
 void main()
 {
+    uint instanceIndex = modelPushConstant.baseInstance + uint(gl_InstanceIndex);
+    InstanceData instanceData = instanceDataBuffer.instances[instanceIndex];
+
+    mat4 modelMatrix = instanceData.model;
+    fragObjectId = instanceData.objectInfo.x;
+
     fragUV = inTextures;
 
-    vec4 worldPos = modelPushConstant.model * vec4(inPosition, 1.0);
+    vec4 worldPos = modelMatrix * vec4(inPosition, 1.0);
     vec4 viewPos  = cameraUniformObject.view * worldPos;
 
-    mat3 normalMatrixWorld = transpose(inverse(mat3(modelPushConstant.model)));
+    mat3 normalMatrixWorld = transpose(inverse(mat3(modelMatrix)));
 
     vec3 worldNormal    = normalize(normalMatrixWorld * inNormal);
     vec3 worldTangent   = normalize(normalMatrixWorld * inTangent);

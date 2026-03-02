@@ -25,18 +25,42 @@ ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, std::
 
 void ImGuiRenderGraphPass::setViewportImages(const std::vector<VkImageView> &imageViews)
 {
-    for (auto descriptorSet : m_descriptorSets)
+    for (auto descriptorSet : m_viewportDescriptorSets)
     {
         if (descriptorSet != VK_NULL_HANDLE)
             ImGui_ImplVulkan_RemoveTexture(descriptorSet);
     }
 
-    m_descriptorSets.clear();
+    m_viewportDescriptorSets.clear();
 
     for (int index = 0; index < imageViews.size(); ++index)
     {
-        m_descriptorSets.push_back(ImGui_ImplVulkan_AddTexture(m_sampler, imageViews[index],
-                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+        m_viewportDescriptorSets.push_back(ImGui_ImplVulkan_AddTexture(m_sampler, imageViews[index],
+                                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+    }
+}
+
+void ImGuiRenderGraphPass::setGameViewportImages(const std::vector<VkImageView> &imageViews, bool hasGameCamera, uint32_t renderedImageIndex)
+{
+    m_hasGameCamera = hasGameCamera;
+    m_gameViewportRenderedImageIndex = renderedImageIndex;
+
+    if (imageViews == m_gameViewportImageViews)
+        return;
+
+    for (auto descriptorSet : m_gameViewportDescriptorSets)
+    {
+        if (descriptorSet != VK_NULL_HANDLE)
+            ImGui_ImplVulkan_RemoveTexture(descriptorSet);
+    }
+
+    m_gameViewportDescriptorSets.clear();
+    m_gameViewportImageViews = imageViews;
+
+    for (const auto imageView : m_gameViewportImageViews)
+    {
+        m_gameViewportDescriptorSets.push_back(ImGui_ImplVulkan_AddTexture(
+            m_sampler, imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
     }
 }
 
@@ -218,7 +242,19 @@ void ImGuiRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, 
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    m_editor->drawFrame(!m_descriptorSets.empty() && m_descriptorSets.size() > renderContext.currentImageIndex ? m_descriptorSets.at(renderContext.currentImageIndex) : VK_NULL_HANDLE);
+    const VkDescriptorSet viewportDescriptorSet = (!m_viewportDescriptorSets.empty() && m_viewportDescriptorSets.size() > renderContext.currentImageIndex)
+                                                      ? m_viewportDescriptorSets.at(renderContext.currentImageIndex)
+                                                      : VK_NULL_HANDLE;
+
+    VkDescriptorSet gameViewportDescriptorSet = VK_NULL_HANDLE;
+    if (!m_gameViewportDescriptorSets.empty())
+    {
+        const size_t descriptorIndex =
+            std::min(static_cast<size_t>(m_gameViewportRenderedImageIndex), m_gameViewportDescriptorSets.size() - 1);
+        gameViewportDescriptorSet = m_gameViewportDescriptorSets.at(descriptorIndex);
+    }
+
+    m_editor->drawFrame(viewportDescriptorSet, gameViewportDescriptorSet, m_hasGameCamera);
 
     ImGui::Render();
 
@@ -233,13 +269,22 @@ void ImGuiRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, 
 
 void ImGuiRenderGraphPass::cleanup()
 {
-    for (auto descriptorSet : m_descriptorSets)
+    for (auto descriptorSet : m_viewportDescriptorSets)
     {
         if (descriptorSet != VK_NULL_HANDLE)
             ImGui_ImplVulkan_RemoveTexture(descriptorSet);
     }
 
-    m_descriptorSets.clear();
+    m_viewportDescriptorSets.clear();
+
+    for (auto descriptorSet : m_gameViewportDescriptorSets)
+    {
+        if (descriptorSet != VK_NULL_HANDLE)
+            ImGui_ImplVulkan_RemoveTexture(descriptorSet);
+    }
+
+    m_gameViewportDescriptorSets.clear();
+    m_gameViewportImageViews.clear();
 
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();

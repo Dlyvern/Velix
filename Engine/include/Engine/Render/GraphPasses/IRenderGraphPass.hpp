@@ -26,6 +26,7 @@ public:
         VkRenderingAttachmentInfo depthRenderingItem;
         std::vector<VkFormat> colorFormats;
         VkFormat depthFormat{VK_FORMAT_UNDEFINED};
+        VkSampleCountFlagBits rasterizationSamples{VK_SAMPLE_COUNT_1_BIT};
 
         bool useDepth{true};
 

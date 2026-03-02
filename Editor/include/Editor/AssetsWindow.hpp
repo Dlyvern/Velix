@@ -123,6 +123,7 @@ private:
     std::unordered_set<std::string> m_cppExtensions = {".cpp", ".c", ".cc", ".cxx"};
     std::unordered_set<std::string> m_headerExtensions = {".h", ".hpp", ".hh", ".hxx"};
     std::unordered_set<std::string> m_modelExtensions = {".obj", ".fbx"};
+    std::unordered_set<std::string> m_audioExtensions = {".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif", ".mid", ".midi"};
     std::unordered_set<std::string> m_sceneExtensions = {".scene", ".json", ".yaml", ".yml"};
     std::unordered_set<std::string> m_shaderExtensions = {".glsl", ".vert", ".frag", ".geom", ".tesc", ".tese", ".comp", ".hlsl", ".fx"};
     std::unordered_set<std::string> m_configExtensions = {".ini", ".cfg", ".toml", ".xml", ".properties"};

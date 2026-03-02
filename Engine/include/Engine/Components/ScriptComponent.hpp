@@ -22,6 +22,9 @@ public:
 
     [[nodiscard]] const std::string &getScriptName() const;
     [[nodiscard]] Script *getScript() const;
+    void setSerializedVariables(const Script::ExposedVariablesMap &variables);
+    const Script::ExposedVariablesMap &getSerializedVariables() const;
+    void syncSerializedVariablesFromScript();
 
     ~ScriptComponent() override;
 
@@ -31,6 +34,7 @@ protected:
 private:
     Script *m_script{nullptr};
     std::string m_scriptName;
+    Script::ExposedVariablesMap m_serializedVariables;
     bool m_isAttached{false};
 };
 

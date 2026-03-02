@@ -3,8 +3,19 @@
 layout(push_constant) uniform LightSpaceMatrixPushConstant
 {
     mat4 lightSpaceMatrix;
-    mat4 model;
+    uint baseInstance;
 } lightSpaceMatrixPushConstant;
+
+struct InstanceData
+{
+    mat4 model;
+    uvec4 objectInfo; // x = objectId, y = bonesOffset, z/w = reserved
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer InstanceDataSSBO
+{
+    InstanceData instances[];
+} instanceDataBuffer;
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec2 inTextures;
@@ -14,5 +25,7 @@ layout(location = 4) in vec3 inTangent;
 
 void main()
 {
-    gl_Position = lightSpaceMatrixPushConstant.lightSpaceMatrix * lightSpaceMatrixPushConstant.model * vec4(inPosition, 1.0);
+    uint instanceIndex = lightSpaceMatrixPushConstant.baseInstance + uint(gl_InstanceIndex);
+    mat4 modelMatrix = instanceDataBuffer.instances[instanceIndex].model;
+    gl_Position = lightSpaceMatrixPushConstant.lightSpaceMatrix * modelMatrix * vec4(inPosition, 1.0);
 }

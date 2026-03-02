@@ -11,6 +11,11 @@ ScriptComponent::ScriptComponent(Script *script) : ScriptComponent("", script)
 ScriptComponent::ScriptComponent(const std::string &scriptName, Script *script) : m_script(script),
                                                                                   m_scriptName(scriptName)
 {
+    if (m_script)
+    {
+        m_script->finalizeVariableRegistrationContext();
+        m_serializedVariables = m_script->getSerializableVariables();
+    }
 }
 
 void ScriptComponent::onAttach()
@@ -24,8 +29,10 @@ void ScriptComponent::onAttach()
     }
 
     m_script->setOwnerEntity(getOwner<Entity>());
+    m_script->applySerializedVariables(m_serializedVariables);
     m_isAttached = true;
     m_script->onStart();
+    syncSerializedVariablesFromScript();
 }
 
 void ScriptComponent::onDetach()
@@ -37,6 +44,7 @@ void ScriptComponent::onDetach()
 
     if (m_script)
     {
+        syncSerializedVariablesFromScript();
         m_script->onStop();
         m_script->setOwnerEntity(nullptr);
     }
@@ -70,12 +78,36 @@ Script *ScriptComponent::getScript() const
     return m_script;
 }
 
+void ScriptComponent::setSerializedVariables(const Script::ExposedVariablesMap &variables)
+{
+    m_serializedVariables = variables;
+
+    if (m_script)
+        m_script->applySerializedVariables(m_serializedVariables);
+}
+
+const Script::ExposedVariablesMap &ScriptComponent::getSerializedVariables() const
+{
+    return m_serializedVariables;
+}
+
+void ScriptComponent::syncSerializedVariablesFromScript()
+{
+    if (!m_script)
+        return;
+
+    m_serializedVariables = m_script->getSerializableVariables();
+}
+
 void ScriptComponent::onOwnerAttached()
 {
     ECS::onOwnerAttached();
 
     if (m_script)
+    {
         m_script->setOwnerEntity(getOwner<Entity>());
+        m_script->applySerializedVariables(m_serializedVariables);
+    }
 }
 
 ScriptComponent::~ScriptComponent()

@@ -2,6 +2,7 @@
 #define ELIX_PREVIEW_ASSETS_RENDER_GRAPH_PASS_HPP
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
+#include "Core/PipelineLayout.hpp"
 
 #include <vector>
 #include <array>
@@ -60,6 +61,7 @@ private:
     std::array<VkClearValue, 1> m_clearValues;
 
     engine::GPUMesh::SharedPtr m_circleGpuMesh{nullptr};
+    core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
 
     uint32_t m_indexBusyJobs{0};
     uint32_t m_currentJob{0};

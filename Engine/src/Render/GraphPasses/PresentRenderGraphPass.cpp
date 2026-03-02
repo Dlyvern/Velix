@@ -31,15 +31,11 @@ void PresentRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     ldrDesc.setIsSwapChainTarget(true);
     ldrDesc.setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
 
-    const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
-
-    for (uint32_t i = 0; i < imageCount; ++i)
-    {
-        ldrDesc.setDebugName("__ELIX_SCENE_PRESENT_" + std::to_string(i) + "__");
-        auto h = builder.createTexture(ldrDesc);
-        m_colorTextureHandler.push_back(h);
-        builder.write(h, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
-    }
+    m_colorTextureHandler.clear();
+    ldrDesc.setDebugName("__ELIX_SCENE_PRESENT__");
+    auto swapchainTargetHandler = builder.createTexture(ldrDesc);
+    m_colorTextureHandler.push_back(swapchainTargetHandler);
+    builder.write(swapchainTargetHandler, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
@@ -86,6 +82,13 @@ void PresentRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
 
 std::vector<PresentRenderGraphPass::RenderPassExecution> PresentRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const
 {
+    if (m_colorTextureHandler.empty() || renderContext.currentImageIndex >= m_colorRenderTargets.size() || !m_colorRenderTargets[renderContext.currentImageIndex])
+    {
+        VX_ENGINE_ERROR_STREAM("PresentRenderGraphPass: invalid swapchain render target for image index "
+                               << renderContext.currentImageIndex << '\n');
+        return {};
+    }
+
     IRenderGraphPass::RenderPassExecution exec{};
     exec.renderArea.offset = {0, 0};
     exec.renderArea.extent = m_extent;
@@ -102,7 +105,7 @@ std::vector<PresentRenderGraphPass::RenderPassExecution> PresentRenderGraphPass:
     exec.colorFormats = {m_colorFormat};
     exec.depthFormat = VK_FORMAT_UNDEFINED;
 
-    exec.targets[m_colorTextureHandler[renderContext.currentImageIndex]] =
+    exec.targets[m_colorTextureHandler.front()] =
         m_colorRenderTargets[renderContext.currentImageIndex];
 
     return {exec};
@@ -123,11 +126,34 @@ void PresentRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
     m_colorRenderTargets.resize(imageCount);
     m_descriptorSets.resize(imageCount);
 
+    if (m_colorTextureHandler.empty())
+    {
+        VX_ENGINE_ERROR_STREAM("PresentRenderGraphPass: no swapchain target handler was created\n");
+        return;
+    }
+
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        m_colorRenderTargets[i] = storage.getTexture(m_colorTextureHandler[i]);
+        m_colorRenderTargets[i] = storage.getSwapChainTexture(m_colorTextureHandler.front(), static_cast<int>(i));
+
+        if (!m_colorRenderTargets[i])
+        {
+            VX_ENGINE_ERROR_STREAM("PresentRenderGraphPass: failed to fetch swapchain render target for image index " << i << '\n');
+            continue;
+        }
+
+        if (i >= m_colorInputHandlers.size())
+        {
+            VX_ENGINE_ERROR_STREAM("PresentRenderGraphPass: input handler index out of range: " << i << '\n');
+            continue;
+        }
 
         auto texture = storage.getTexture(m_colorInputHandlers[i]);
+        if (!texture)
+        {
+            VX_ENGINE_ERROR_STREAM("PresentRenderGraphPass: failed to fetch input color texture for image index " << i << '\n');
+            continue;
+        }
 
         if (!m_descriptorSetsInitialized)
         {

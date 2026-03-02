@@ -21,25 +21,31 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-// TODO maybe later -> one DrawItem = one mesh draw
-// struct DrawItem
-// {
-//     GPUMesh::SharedPtr mesh;
-//     glm::mat4 transform;
-//     std::vector<glm::mat4> finalBones;
-
-//     Material::SharedPtr material;
-//     GraphicsPipelineKey graphicsPipelineKey;
-// };
-
 struct DrawItem
 {
     std::vector<GPUMesh::SharedPtr> meshes;
+    std::vector<glm::vec3> localMeshBoundsCenters;
+    std::vector<float> localMeshBoundsRadii;
     glm::mat4 transform;
     std::vector<glm::mat4> finalBones;
     uint32_t bonesOffset{0};
 
     GraphicsPipelineKey graphicsPipelineKey;
+};
+
+struct PerObjectInstanceData
+{
+    glm::mat4 model{1.0f};
+    glm::uvec4 objectInfo{0u}; // x = objectId, y = bonesOffset, z/w = reserved
+};
+
+struct DrawBatch
+{
+    GPUMesh::SharedPtr mesh{nullptr};
+    Material::SharedPtr material{nullptr};
+    bool skinned{false};
+    uint32_t firstInstance{0};
+    uint32_t instanceCount{0};
 };
 
 class AdditionalPerFrameData
@@ -67,11 +73,18 @@ class RenderGraphPassPerFrameData
 {
 public:
     std::map<Entity::SharedPtr, DrawItem> drawItems;
+    std::vector<PerObjectInstanceData> perObjectInstances;
+    std::vector<DrawBatch> drawBatches;
+    std::array<std::vector<DrawBatch>, ShadowConstants::MAX_DIRECTIONAL_CASCADES> directionalShadowDrawBatches;
+    std::array<std::vector<DrawBatch>, ShadowConstants::MAX_SPOT_SHADOWS> spotShadowDrawBatches;
+    std::array<std::vector<DrawBatch>, ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES> pointShadowDrawBatches;
 
     std::vector<AdditionalPerFrameData> additionalData;
 
     glm::vec3 directionalLightDirection;
     float directionalLightStrength;
+    bool hasDirectionalLight{false};
+    bool skyLightEnabled{false};
 
     glm::mat4 lightSpaceMatrix;
     std::array<glm::mat4, ShadowConstants::MAX_DIRECTIONAL_CASCADES> directionalLightSpaceMatrices{};
@@ -87,6 +100,7 @@ public:
     VkDescriptorSet cameraDescriptorSet;
     VkDescriptorSet previewCameraDescriptorSet;
     VkDescriptorSet perObjectDescriptorSet;
+    VkDescriptorSet shadowPerObjectDescriptorSet;
 
     float deltaTime;
 

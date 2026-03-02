@@ -35,6 +35,16 @@ struct IsMultiComponent<elix::engine::ScriptComponent>
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+class ParticleSystemComponent;
+ELIX_NESTED_NAMESPACE_END
+
+template <>
+struct IsMultiComponent<elix::engine::ParticleSystemComponent>
+{
+    static constexpr bool value = true;
+};
+
+ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class Entity
 {
@@ -159,6 +169,7 @@ public:
     void addTag(const std::string &tag);
     bool removeTag(const std::string &tag);
     bool hasTag(const std::string &tag) const;
+    const std::unordered_set<std::string> &getTags() const;
 
     const std::string &getName() const;
     void setName(const std::string &name);

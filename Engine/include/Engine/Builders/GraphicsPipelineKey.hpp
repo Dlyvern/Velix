@@ -28,6 +28,11 @@ enum class ShaderId : uint8_t
     SSR,
     SSAO,
     SMAA,
+    EditorBillboard,
+    Billboard,
+    UIText,
+    UIQuad,
+    Particle,
     None
 };
 
@@ -51,6 +56,12 @@ enum class CullMode : uint8_t
     Front
 };
 
+enum class GBufferOutputMode : uint8_t
+{
+    Full = 0,
+    ObjectOnly = 1
+};
+
 struct GraphicsPipelineKey
 {
     ShaderId shader{ShaderId::None};
@@ -61,6 +72,8 @@ struct GraphicsPipelineKey
     VkCompareOp depthCompare{VK_COMPARE_OP_LESS};
     VkPolygonMode polygonMode{VK_POLYGON_MODE_FILL};
     VkPrimitiveTopology topology{VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
+    VkSampleCountFlagBits rasterizationSamples{VK_SAMPLE_COUNT_1_BIT};
+    GBufferOutputMode gbufferOutputMode{GBufferOutputMode::Full};
 
     VkPipelineLayout pipelineLayout{VK_NULL_HANDLE};
 
@@ -78,6 +91,8 @@ struct GraphicsPipelineKey
                depthCompare == o.depthCompare &&
                polygonMode == o.polygonMode &&
                topology == o.topology &&
+               rasterizationSamples == o.rasterizationSamples &&
+               gbufferOutputMode == o.gbufferOutputMode &&
                colorFormats == o.colorFormats &&
                depthFormat == o.depthFormat;
     }
@@ -97,6 +112,8 @@ struct GraphicsPipelineKeyHash
         hashing::hash(data, static_cast<uint32_t>(k.depthCompare));
         hashing::hash(data, static_cast<uint32_t>(k.polygonMode));
         hashing::hash(data, static_cast<uint32_t>(k.topology));
+        hashing::hash(data, static_cast<uint32_t>(k.rasterizationSamples));
+        hashing::hash(data, static_cast<uint8_t>(k.gbufferOutputMode));
         // hashing::hash(data, static_cast<uint32_t>(k.pipelineLayout));
 
         for (const auto &colorFormat : k.colorFormats)

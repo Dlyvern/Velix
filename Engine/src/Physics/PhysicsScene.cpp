@@ -2,8 +2,9 @@
 
 #include <glm/geometric.hpp>
 
-#include <iostream>
 #include <limits>
+#include <algorithm>
+#include <cmath>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -11,7 +12,8 @@ PhysicsScene::PhysicsScene(physx::PxPhysics *physics) : m_physics(physics)
 {
     physx::PxSceneDesc sceneDesc(m_physics->getTolerancesScale());
     sceneDesc.gravity = physx::PxVec3(0.0f, -9.81f, 0.0f);
-    sceneDesc.cpuDispatcher = physx::PxDefaultCpuDispatcherCreate(2);
+    m_defaultCpuDispatcher = physx::PxDefaultCpuDispatcherCreate(2);
+    sceneDesc.cpuDispatcher = m_defaultCpuDispatcher;
     sceneDesc.filterShader = physx::PxDefaultSimulationFilterShader;
     m_scene = m_physics->createScene(sceneDesc);
 
@@ -102,26 +104,49 @@ physx::PxShape *PhysicsScene::createShape(const physx::PxGeometry &geometry)
 
 physx::PxController *PhysicsScene::createController(const physx::PxVec3 &position, float radius, float height)
 {
+    if (!m_controllerManager || !m_defaultMaterial)
+        return nullptr;
+
+    const float clampedRadius = std::max(radius, 0.05f);
+    const float clampedHeight = std::max(height, 0.1f);
+
     physx::PxCapsuleControllerDesc desc;
     desc.position = {position.x, position.y, position.z};
-    desc.stepOffset = 0.0f;
+    desc.stepOffset = 0.3f;
+    desc.contactOffset = 0.05f;
+    desc.upDirection = physx::PxVec3(0.0f, 1.0f, 0.0f);
+    desc.slopeLimit = std::cos(physx::PxPi / 4.0f);
     desc.material = m_defaultMaterial;
-    desc.radius = radius;
-    desc.height = height;
+    desc.radius = clampedRadius;
+    desc.height = clampedHeight;
 
-    physx::PxController *controller = m_controllerManager->createController(desc);
-
-    // physx::PxRigidDynamic *rigidbody = controller->getActor();
-
-    return controller;
+    return m_controllerManager->createController(desc);
 }
 
 PhysicsScene::~PhysicsScene()
 {
+    if (m_controllerManager)
+    {
+        m_controllerManager->release();
+        m_controllerManager = nullptr;
+    }
+
     if (m_scene)
     {
         m_scene->release();
         m_scene = nullptr;
+    }
+
+    if (m_defaultMaterial)
+    {
+        m_defaultMaterial->release();
+        m_defaultMaterial = nullptr;
+    }
+
+    if (m_defaultCpuDispatcher)
+    {
+        m_defaultCpuDispatcher->release();
+        m_defaultCpuDispatcher = nullptr;
     }
 }
 

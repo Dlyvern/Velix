@@ -86,8 +86,15 @@ void EngineShaderFamilies::initEngineShaderFamilies()
         bonesBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         bonesBinding.pImmutableSamplers = nullptr;
 
+        VkDescriptorSetLayoutBinding instanceBinding{};
+        instanceBinding.binding = 1;
+        instanceBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        instanceBinding.descriptorCount = 1;
+        instanceBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        instanceBinding.pImmutableSamplers = nullptr;
+
         objectDescriptorSetLayout = core::DescriptorSetLayout::createShared(device,
-                                                                            std::vector<VkDescriptorSetLayoutBinding>{bonesBinding});
+                                                                            std::vector<VkDescriptorSetLayoutBinding>{bonesBinding, instanceBinding});
     }
 
     meshShaderFamily.layouts.push_back(cameraDescriptorSetLayout);
@@ -96,10 +103,8 @@ void EngineShaderFamilies::initEngineShaderFamilies()
 
     struct PushConstants
     {
-        glm::mat4 modelMatrix; // offset 0, size 64 bytes
-        uint32_t objectId;     // offset 64, size 4 bytes
-        uint32_t bonesOffset;  // offset 68, size 4 bytes
-        uint32_t padding[2];
+        uint32_t baseInstance{0};
+        uint32_t padding[3]{0, 0, 0};
     };
 
     const std::vector<VkPushConstantRange> pushConstantsStatic{

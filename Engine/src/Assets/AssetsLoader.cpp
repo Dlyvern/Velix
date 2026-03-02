@@ -577,6 +577,16 @@ std::filesystem::path AssetsLoader::toTextureAssetPath(const std::filesystem::pa
     return outputPath.lexically_normal();
 }
 
+std::filesystem::path AssetsLoader::toAudioAssetPath(const std::filesystem::path &sourcePath)
+{
+    if (isElixAssetFile(sourcePath))
+        return sourcePath;
+
+    auto outputPath = sourcePath;
+    outputPath.replace_extension(".audio.elixasset");
+    return outputPath.lexically_normal();
+}
+
 bool AssetsLoader::needsReimport(const std::filesystem::path &sourcePath, const std::filesystem::path &serializedPath)
 {
     std::error_code errorCode;
@@ -756,6 +766,73 @@ bool AssetsLoader::importTextureAsset(const std::string &sourcePath, const std::
     }
 
     return true;
+}
+
+bool AssetsLoader::importAudioAsset(const std::string &sourcePath, const std::string &outputAssetPath)
+{
+    const std::filesystem::path normalizedSourcePath = normalizePath(sourcePath);
+    if (normalizedSourcePath.empty())
+        return false;
+
+    std::ifstream sourceFile(normalizedSourcePath, std::ios::binary | std::ios::ate);
+    if (!sourceFile.is_open())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to open audio source file: " << normalizedSourcePath.string() << '\n');
+        return false;
+    }
+
+    const std::streamsize fileSize = sourceFile.tellg();
+    if (fileSize <= 0)
+    {
+        VX_ENGINE_ERROR_STREAM("Audio source file is empty: " << normalizedSourcePath.string() << '\n');
+        return false;
+    }
+
+    sourceFile.seekg(0, std::ios::beg);
+    AudioAsset audioAsset{};
+    audioAsset.name = normalizedSourcePath.stem().string();
+    audioAsset.sourcePath = normalizedSourcePath.string();
+
+    const std::filesystem::path normalizedOutputPath = normalizePath(outputAssetPath);
+    audioAsset.assetPath = normalizedOutputPath.string();
+
+    audioAsset.audioData.resize(static_cast<size_t>(fileSize));
+    if (!sourceFile.read(reinterpret_cast<char *>(audioAsset.audioData.data()), fileSize))
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to read audio source file: " << normalizedSourcePath.string() << '\n');
+        return false;
+    }
+
+    AssetsSerializer serializer;
+    if (!serializer.writeAudio(audioAsset, normalizedOutputPath.string()))
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to serialize audio asset: " << normalizedOutputPath.string() << '\n');
+        return false;
+    }
+
+    return true;
+}
+
+std::optional<AudioAsset> AssetsLoader::loadAudio(const std::string &path)
+{
+    const std::filesystem::path sourcePath = normalizePath(path);
+    if (sourcePath.empty())
+        return std::nullopt;
+
+    AssetsSerializer serializer;
+
+    if (isElixAssetFile(sourcePath))
+    {
+        auto audio = serializer.readAudio(sourcePath.string());
+        if (audio.has_value())
+            return audio;
+
+        VX_ENGINE_ERROR_STREAM("Failed to load serialized audio asset: " << sourcePath.string() << '\n');
+        return std::nullopt;
+    }
+
+    VX_ENGINE_ERROR_STREAM("Audio must be loaded from a .elixasset file. Import the audio first: " << sourcePath.string() << '\n');
+    return std::nullopt;
 }
 
 std::optional<MaterialAsset> AssetsLoader::loadMaterial(const std::string &path)

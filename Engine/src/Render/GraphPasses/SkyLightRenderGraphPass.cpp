@@ -26,6 +26,9 @@ void SkyLightRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     vkCmdSetViewport(commandBuffer, 0, 1, &m_viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &m_scissor);
 
+    if (!data.hasDirectionalLight || !data.skyLightEnabled)
+        return;
+
     if (m_loadedSkyboxHDRPath != data.skyboxHDRPath)
     {
         m_skybox.reset();

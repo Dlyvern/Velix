@@ -22,8 +22,10 @@ public:
     static void clearAssetLoaders();
     static bool importModelAsset(const std::string &sourcePath, const std::string &outputAssetPath);
     static bool importTextureAsset(const std::string &sourcePath, const std::string &outputAssetPath);
+    static bool importAudioAsset(const std::string &sourcePath, const std::string &outputAssetPath);
     static std::optional<ModelAsset> loadModel(const std::string &path);
     static std::optional<TextureAsset> loadTexture(const std::string &path);
+    static std::optional<AudioAsset> loadAudio(const std::string &path);
     static Texture::SharedPtr loadTextureGPU(const std::string &path, VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB);
     static Texture::SharedPtr createTextureGPU(const TextureAsset &textureAsset, VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB);
     static std::optional<MaterialAsset> loadMaterial(const std::string &path);
@@ -36,6 +38,7 @@ private:
     static std::optional<TextureAsset> importTextureFromSource(const std::string &path);
     static std::filesystem::path toModelAssetPath(const std::filesystem::path &sourcePath);
     static std::filesystem::path toTextureAssetPath(const std::filesystem::path &sourcePath);
+    static std::filesystem::path toAudioAssetPath(const std::filesystem::path &sourcePath);
     static bool needsReimport(const std::filesystem::path &sourcePath, const std::filesystem::path &serializedPath);
 };
 

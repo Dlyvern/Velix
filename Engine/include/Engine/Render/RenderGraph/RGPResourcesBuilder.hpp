@@ -20,6 +20,7 @@ public:
     void read(const RGPResourceHandler &handler, RGPTextureUsage usage);
 
     const RGPTextureDescription *getTextureDescription(const RGPResourceHandler &handler) const;
+    RGPTextureDescription *getTextureDescriptionMutable(const RGPResourceHandler &handler);
 
     const std::unordered_map<RGPResourceHandler, RGPTextureDescription> &getAllTextureDescriptions() const;
 

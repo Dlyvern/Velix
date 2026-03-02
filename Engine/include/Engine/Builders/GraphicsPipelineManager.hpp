@@ -50,6 +50,11 @@ private:
     static inline core::Shader::SharedPtr ssrShader{nullptr};
     static inline core::Shader::SharedPtr ssaoShader{nullptr};
     static inline core::Shader::SharedPtr smaaShader{nullptr};
+    static inline core::Shader::SharedPtr editorBillboardShader{nullptr};
+    static inline core::Shader::SharedPtr billboardShader{nullptr};
+    static inline core::Shader::SharedPtr uiTextShader{nullptr};
+    static inline core::Shader::SharedPtr uiQuadShader{nullptr};
+    static inline core::Shader::SharedPtr particleShader{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

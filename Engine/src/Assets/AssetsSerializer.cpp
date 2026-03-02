@@ -633,4 +633,61 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
     return modelAsset;
 }
 
+bool AssetsSerializer::writeAudio(const AudioAsset &audioAsset, const std::string &outputPath) const
+{
+    std::ostringstream payloadStream(std::ios::binary);
+    if (!writeString(payloadStream, audioAsset.name) ||
+        !writeString(payloadStream, audioAsset.sourcePath) ||
+        !writeString(payloadStream, audioAsset.assetPath) ||
+        !writeBytes(payloadStream, audioAsset.audioData))
+        return false;
+
+    const std::string payload = payloadStream.str();
+
+    std::error_code directoryError;
+    const auto outputFilesystemPath = std::filesystem::path(outputPath).lexically_normal();
+    const auto parentPath = outputFilesystemPath.parent_path();
+    if (!parentPath.empty())
+        std::filesystem::create_directories(parentPath, directoryError);
+
+    std::ofstream stream(outputFilesystemPath, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to open audio asset output file: " << outputPath << '\n');
+        return false;
+    }
+
+    if (!writeHeader(stream, Asset::AssetType::AUDIO, static_cast<uint64_t>(payload.size())))
+        return false;
+
+    stream.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    return stream.good();
+}
+
+std::optional<AudioAsset> AssetsSerializer::readAudio(const std::string &path) const
+{
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream.is_open())
+        return std::nullopt;
+
+    Asset::BinaryHeader header{};
+    if (!::readHeader(stream, header))
+        return std::nullopt;
+
+    if (static_cast<Asset::AssetType>(header.type) != Asset::AssetType::AUDIO)
+        return std::nullopt;
+
+    AudioAsset audioAsset{};
+    if (!readString(stream, audioAsset.name) ||
+        !readString(stream, audioAsset.sourcePath) ||
+        !readString(stream, audioAsset.assetPath) ||
+        !readBytes(stream, audioAsset.audioData))
+        return std::nullopt;
+
+    if (audioAsset.assetPath.empty())
+        audioAsset.assetPath = std::filesystem::path(path).lexically_normal().string();
+
+    return audioAsset;
+}
+
 ELIX_NESTED_NAMESPACE_END

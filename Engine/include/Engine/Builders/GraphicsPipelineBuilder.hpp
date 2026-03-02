@@ -39,11 +39,11 @@ public:
         return ci;
     }
 
-    static VkPipelineMultisampleStateCreateInfo multisamplingCI()
+    static VkPipelineMultisampleStateCreateInfo multisamplingCI(VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT)
     {
         VkPipelineMultisampleStateCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         ci.sampleShadingEnable = VK_FALSE;
-        ci.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        ci.rasterizationSamples = samples;
         ci.minSampleShading = 1.0f;
         ci.pSampleMask = nullptr;
         ci.alphaToCoverageEnable = VK_FALSE;

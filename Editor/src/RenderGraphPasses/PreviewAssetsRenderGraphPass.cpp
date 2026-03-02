@@ -5,6 +5,7 @@
 #include "Engine/Builders/GraphicsPipelineBuilder.hpp"
 #include "Engine/Builders/RenderPassBuilder.hpp"
 #include "Engine/Shaders/ShaderFamily.hpp"
+#include "Engine/Shaders/PushConstant.hpp"
 #include "Engine/Primitives.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
@@ -58,6 +59,14 @@ void PreviewAssetsRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilde
     const auto format = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();
     const auto device = core::VulkanContext::getContext()->getDevice();
 
+    m_pipelineLayout = core::PipelineLayout::createShared(
+        device,
+        std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{
+            *engine::EngineShaderFamilies::cameraDescriptorSetLayout,
+            *engine::EngineShaderFamilies::materialDescriptorSetLayout},
+        std::vector<VkPushConstantRange>{
+            engine::PushConstant<ModelOnly>::getRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)});
+
     engine::renderGraph::RGPTextureDescription colorTextureDescription(format, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
     colorTextureDescription.setExtent(m_extent);
     colorTextureDescription.setInitialLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -93,9 +102,10 @@ void PreviewAssetsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
     key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     key.colorFormats = {core::VulkanContext::getContext()->getSwapchain()->getImageFormat()};
     key.depthFormat = VK_FORMAT_UNDEFINED;
+    key.pipelineLayout = m_pipelineLayout;
 
     auto graphicsPipeline = engine::GraphicsPipelineManager::getOrCreate(key);
-    auto pipelineLayout = engine::EngineShaderFamilies::meshShaderFamily.pipelineLayout;
+    auto pipelineLayout = m_pipelineLayout;
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 

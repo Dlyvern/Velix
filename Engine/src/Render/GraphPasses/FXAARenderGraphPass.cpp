@@ -126,7 +126,10 @@ void FXAARenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     const auto &settings = RenderQualitySettings::getInstance();
     FXAApc pc{};
     pc.texelSize      = {1.0f / m_extent.width, 1.0f / m_extent.height};
-    pc.enabled        = (settings.enablePostProcessing && settings.enableFXAA) ? 1.0f : 0.0f;
+    pc.enabled        = (settings.enablePostProcessing &&
+                         settings.getAntiAliasingMode() == RenderQualitySettings::AntiAliasingMode::FXAA)
+                             ? 1.0f
+                             : 0.0f;
     pc.subpixelQuality = 0.75f;
 
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);

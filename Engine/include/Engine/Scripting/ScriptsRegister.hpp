@@ -13,16 +13,18 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class ScriptsRegister
 {
 public:
-    //?Should we use pointer here
     using ScriptFactoryFunction = std::function<Script *()>;
 
     void registerScript(const std::string &name, const ScriptFactoryFunction &function);
 
     static ScriptsRegister &instance();
+    static void setActiveRegister(ScriptsRegister *registerInstance);
+    static ScriptsRegister *getActiveRegister();
+    static Script *createScriptFromActiveRegister(const std::string &name);
 
     const std::unordered_map<std::string, ScriptFactoryFunction> &getScripts() const;
 
-    Script *createScript(const std::string name) const;
+    Script *createScript(const std::string &name) const;
 
 private:
     std::unordered_map<std::string, ScriptFactoryFunction> m_scripts;

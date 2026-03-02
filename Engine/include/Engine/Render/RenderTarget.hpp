@@ -18,10 +18,10 @@ public:
     RenderTarget(VkDevice device,
                  VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
                  core::memory::MemoryUsage memFlags = core::memory::MemoryUsage::GPU_ONLY, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1,
-                 VkImageCreateFlags flags = 0)
+                 VkImageCreateFlags flags = 0, VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT)
         : m_device(device), m_aspect(aspect), m_format(format), m_arrayLayers(arrayLayers)
     {
-        m_image = core::Image::createShared(extent, usage, memFlags, format, tiling, arrayLayers, flags);
+        m_image = core::Image::createShared(extent, usage, memFlags, format, tiling, arrayLayers, flags, sampleCount);
         m_extent = extent;
     }
 
@@ -36,11 +36,11 @@ public:
     }
 
     void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, core::memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling,
-                       uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0)
+                       uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0, VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT)
     {
         m_extent = extent;
         m_arrayLayers = arrayLayers;
-        m_image->createVk(extent, usage, memFlags, format, tiling, m_arrayLayers, flags);
+        m_image->createVk(extent, usage, memFlags, format, tiling, m_arrayLayers, flags, sampleCount);
     }
 
     void destroyVkImage()

@@ -16,6 +16,7 @@
 #include "Engine/Utilities/BufferUtilities.hpp"
 #include "Engine/Utilities/AsyncGpuUpload.hpp"
 #include "Engine/Utilities/ImageUtilities.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
@@ -154,6 +155,22 @@ namespace
         default:
             return false;
         }
+    }
+
+    std::pair<VkBool32, float> resolveTextureAnisotropy()
+    {
+        const float requestedAnisotropy = elix::engine::RenderQualitySettings::getInstance().getRequestedAnisotropyLevel();
+        if (requestedAnisotropy <= 1.0f)
+            return {VK_FALSE, 1.0f};
+
+        const float maxSupportedAnisotropy =
+            elix::core::VulkanContext::getContext()->getPhysicalDevicePoperties().limits.maxSamplerAnisotropy;
+        const float clampedAnisotropy = std::clamp(requestedAnisotropy, 1.0f, maxSupportedAnisotropy);
+
+        if (clampedAnisotropy <= 1.0f)
+            return {VK_FALSE, 1.0f};
+
+        return {VK_TRUE, clampedAnisotropy};
     }
 
     uint32_t compressedBlockByteSize(VkFormat format)
@@ -738,9 +755,9 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
     if (VkResult result = vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView); result != VK_SUCCESS)
         throw std::runtime_error("Failed to create image view: " + core::helpers::vulkanResultToString(result));
 
-    auto maxAnisotropyLevel = core::VulkanContext::getContext()->getPhysicalDevicePoperties().limits.maxSamplerAnisotropy;
+    const auto [anisotropyEnabled, anisotropyLevel] = resolveTextureAnisotropy();
     m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_COMPARE_OP_ALWAYS,
-                                            VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_TRUE, maxAnisotropyLevel);
+                                            VK_SAMPLER_MIPMAP_MODE_LINEAR, anisotropyEnabled, anisotropyLevel);
 
     return true;
 }
@@ -914,7 +931,9 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
     if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView) != VK_SUCCESS)
         throw std::runtime_error("Failed to create cubemap image view!");
 
-    m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
+    const auto [anisotropyEnabled, anisotropyLevel] = resolveTextureAnisotropy();
+    m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_COMPARE_OP_ALWAYS,
+                                            VK_SAMPLER_MIPMAP_MODE_LINEAR, anisotropyEnabled, anisotropyLevel);
 
     return true;
 }

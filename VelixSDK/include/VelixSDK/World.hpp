@@ -2,6 +2,7 @@
 #define ELIX_SDK_WORLD_HPP
 
 #include "Engine/Scripting/VelixAPI.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -88,6 +89,11 @@ public:
                 ++removedCount;
 
         return removedCount;
+    }
+
+    engine::RenderQualitySettings &renderSettings() const
+    {
+        return *engine::scripting::getRenderQualitySettings();
     }
 
 private:

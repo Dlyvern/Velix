@@ -22,4 +22,9 @@
         static Type##Registrar global_##Type##Registrar;                                                                                \
     }
 
+#define VX_VARIABLE(Type, Name) ::elix::engine::Script::Variable<Type> Name{#Name}
+#define VX_VARIABLE_DEFAULT(Type, Name, DefaultValue) ::elix::engine::Script::Variable<Type> Name{#Name, (DefaultValue)}
+#define VX_ENTITY_VARIABLE(Name) ::elix::engine::Script::Variable<::elix::engine::Script::EntityRef> Name{#Name}
+#define VX_ENTITY_VARIABLE_DEFAULT(Name, EntityId) ::elix::engine::Script::Variable<::elix::engine::Script::EntityRef> Name{#Name, ::elix::engine::Script::EntityRef(static_cast<uint32_t>(EntityId))}
+
 #endif // ELIX_SCRIPT_MACROSES_HPP

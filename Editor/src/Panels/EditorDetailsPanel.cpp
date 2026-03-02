@@ -1,7 +1,9 @@
 #include "Editor/Editor.hpp"
 
 #include "Engine/Components/AnimatorComponent.hpp"
+#include "Engine/Components/AudioComponent.hpp"
 #include "Engine/Components/CameraComponent.hpp"
+#include "Engine/Components/CharacterMovementComponent.hpp"
 #include "Engine/Components/CollisionComponent.hpp"
 #include "Engine/Components/LightComponent.hpp"
 #include "Engine/Components/RigidBodyComponent.hpp"
@@ -11,12 +13,24 @@
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Primitives.hpp"
 
+#include "Engine/Components/ParticleSystemComponent.hpp"
+#include "Engine/Particles/Modules/ColorOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/ForceModule.hpp"
+#include "Engine/Particles/Modules/InitialVelocityModule.hpp"
+#include "Engine/Particles/Modules/LifetimeModule.hpp"
+#include "Engine/Particles/Modules/RendererModule.hpp"
+#include "Engine/Particles/Modules/SizeOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/SpawnModule.hpp"
+
 #include <imgui.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/common.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
 
 namespace
 {
@@ -59,6 +73,23 @@ namespace
         entity->removeComponent<elix::engine::CollisionComponent>();
     }
 
+    void destroyRigidBodyComponent(elix::engine::Scene *scene, elix::engine::Entity *entity, elix::engine::RigidBodyComponent *rigidBodyComponent)
+    {
+        if (!entity || !rigidBodyComponent)
+            return;
+
+        if (auto *collisionComponent = entity->getComponent<elix::engine::CollisionComponent>())
+            destroyCollisionComponent(scene, entity, collisionComponent);
+
+        if (auto *rigidActor = rigidBodyComponent->getRigidActor())
+        {
+            if (scene)
+                scene->getPhysicsScene().removeActor(*rigidActor, true, true);
+        }
+
+        entity->removeComponent<elix::engine::RigidBodyComponent>();
+    }
+
     bool createCollisionComponent(elix::engine::Scene *scene,
                                   elix::engine::Entity *entity,
                                   elix::engine::CollisionComponent::ShapeType shapeType)
@@ -69,6 +100,13 @@ namespace
         auto *transformComponent = entity->getComponent<elix::engine::Transform3DComponent>();
         if (!transformComponent)
             return false;
+
+        if (entity->getComponent<elix::engine::CharacterMovementComponent>())
+        {
+            VX_EDITOR_WARNING_STREAM("Collision component add blocked: entity '" << entity->getName()
+                                                                                 << "' already has CharacterMovementComponent.\n");
+            return false;
+        }
 
         if (auto *existingCollision = entity->getComponent<elix::engine::CollisionComponent>())
             destroyCollisionComponent(scene, entity, existingCollision);
@@ -190,6 +228,97 @@ void Editor::drawDetails()
             ImGui::OpenPopup("AddComponentPopup");
     }
 
+    bool componentRemovedFromPopup = false;
+    ImGui::SameLine();
+    if (ImGui::Button("Remove component"))
+        ImGui::OpenPopup("RemoveComponentPopup");
+
+    if (ImGui::BeginPopup("RemoveComponentPopup"))
+    {
+        ImGui::TextDisabled("Transform3DComponent cannot be removed.");
+        ImGui::Separator();
+
+        if (m_selectedEntity->getComponent<engine::LightComponent>() && ImGui::MenuItem("Light"))
+        {
+            m_selectedEntity->removeComponent<engine::LightComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (m_selectedEntity->getComponent<engine::StaticMeshComponent>() && ImGui::MenuItem("Static Mesh"))
+        {
+            m_selectedEntity->removeComponent<engine::StaticMeshComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (m_selectedEntity->getComponent<engine::SkeletalMeshComponent>() && ImGui::MenuItem("Skeletal Mesh"))
+        {
+            m_selectedEntity->removeComponent<engine::AnimatorComponent>();
+            m_selectedEntity->removeComponent<engine::SkeletalMeshComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (m_selectedEntity->getComponent<engine::AnimatorComponent>() && ImGui::MenuItem("Animator"))
+        {
+            m_selectedEntity->removeComponent<engine::AnimatorComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (m_selectedEntity->getComponent<engine::CameraComponent>() && ImGui::MenuItem("Camera"))
+        {
+            m_selectedEntity->removeComponent<engine::CameraComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (auto *rigidBodyComponent = m_selectedEntity->getComponent<engine::RigidBodyComponent>();
+            rigidBodyComponent && ImGui::MenuItem("RigidBody"))
+        {
+            destroyRigidBodyComponent(m_scene.get(), m_selectedEntity, rigidBodyComponent);
+            componentRemovedFromPopup = true;
+        }
+
+        if (m_selectedEntity->getComponent<engine::CharacterMovementComponent>() && ImGui::MenuItem("Character Movement"))
+        {
+            m_selectedEntity->removeComponent<engine::CharacterMovementComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (auto *collisionComponent = m_selectedEntity->getComponent<engine::CollisionComponent>();
+            collisionComponent && ImGui::MenuItem("Collision"))
+        {
+            destroyCollisionComponent(m_scene.get(), m_selectedEntity, collisionComponent);
+            componentRemovedFromPopup = true;
+        }
+
+        if (!m_selectedEntity->getComponents<engine::AudioComponent>().empty() && ImGui::MenuItem("Audio Source (All)"))
+        {
+            m_selectedEntity->removeComponent<engine::AudioComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (!m_selectedEntity->getComponents<engine::ScriptComponent>().empty() && ImGui::MenuItem("Script (All)"))
+        {
+            m_selectedEntity->removeComponent<engine::ScriptComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (!m_selectedEntity->getComponents<engine::ParticleSystemComponent>().empty() && ImGui::MenuItem("Particle System (All)"))
+        {
+            m_selectedEntity->removeComponent<engine::ParticleSystemComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (componentRemovedFromPopup)
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+
+    if (componentRemovedFromPopup)
+    {
+        ImGui::End();
+        return;
+    }
+
     const auto *parentEntity = m_selectedEntity->getParent();
     ImGui::Text("Parent: %s", parentEntity ? parentEntity->getName().c_str() : "<Root>");
     if (parentEntity && ImGui::Button("Detach From Parent"))
@@ -289,6 +418,31 @@ void Editor::drawDetails()
             }
         }
 
+        if (ImGui::Button("Character Movement"))
+        {
+            if (m_selectedEntity->getComponent<engine::CharacterMovementComponent>())
+            {
+                m_notificationManager.showWarning("Character movement already exists");
+            }
+            else if (m_selectedEntity->getComponent<engine::CollisionComponent>())
+            {
+                m_notificationManager.showWarning("Remove Collision component before adding Character Movement");
+            }
+            else
+            {
+                auto *transform = m_selectedEntity->getComponent<engine::Transform3DComponent>();
+                const glm::vec3 safeScale = transform
+                                                ? glm::max(glm::abs(transform->getScale()), glm::vec3(0.1f))
+                                                : glm::vec3(1.0f);
+                const float radius = std::max(0.1f, std::max(safeScale.x, safeScale.z) * 0.25f);
+                const float height = std::max(0.5f, safeScale.y);
+                m_selectedEntity->addComponent<engine::CharacterMovementComponent>(m_scene.get(), radius, height);
+                m_notificationManager.showSuccess("Character movement added");
+            }
+
+            ImGui::CloseCurrentPopup();
+        }
+
         if (ImGui::Button("Box Collision"))
         {
             if (createCollisionComponent(m_scene.get(), m_selectedEntity, engine::CollisionComponent::ShapeType::BOX))
@@ -307,11 +461,39 @@ void Editor::drawDetails()
             ImGui::CloseCurrentPopup();
         }
 
-        ImGui::Button("Audio");
+        if (ImGui::Button("Audio Source"))
+        {
+            m_selectedEntity->addComponent<engine::AudioComponent>();
+            ImGui::CloseCurrentPopup();
+        }
 
         if (ImGui::Button("Light"))
         {
             m_selectedEntity->addComponent<engine::LightComponent>(engine::LightComponent::LightType::POINT);
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (ImGui::Button("Particle System"))
+        {
+            auto *psComp = m_selectedEntity->addComponent<engine::ParticleSystemComponent>();
+            auto newSys = std::make_shared<engine::ParticleSystem>();
+            newSys->name = "Particle System";
+            auto *emitter = newSys->addEmitter("Emitter 0");
+            emitter->addModule<engine::SpawnModule>();
+            emitter->addModule<engine::LifetimeModule>();
+            emitter->addModule<engine::InitialVelocityModule>();
+            emitter->addModule<engine::SizeOverLifetimeModule>();
+            emitter->addModule<engine::ForceModule>();
+            emitter->addModule<engine::RendererModule>();
+            emitter->addModule<engine::ColorOverLifetimeModule>();
+            psComp->setParticleSystem(newSys);
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (ImGui::Button("Particle System (Rain)"))
+        {
+            auto *psComp = m_selectedEntity->addComponent<engine::ParticleSystemComponent>();
+            psComp->setParticleSystem(engine::ParticleSystem::createRain());
             ImGui::CloseCurrentPopup();
         }
 
@@ -439,6 +621,7 @@ void Editor::drawDetails()
                 }
                 ImGui::ColorEdit3("Light color", &light->color.x);
                 ImGui::DragFloat("Light strength", &light->strength, 0.1f, 0.0f, 150.0f);
+                ImGui::Checkbox("Cast Shadows", &light->castsShadows);
 
                 if (lightType == engine::LightComponent::LightType::POINT)
                 {
@@ -808,7 +991,6 @@ void Editor::drawDetails()
                 auto camera = cameraComponent->getCamera();
                 float yaw = camera->getYaw();
                 float pitch = camera->getPitch();
-                glm::vec3 position = camera->getPosition();
                 float fov = camera->getFOV();
 
                 if (ImGui::DragFloat("Yaw", &yaw))
@@ -820,8 +1002,18 @@ void Editor::drawDetails()
                 if (ImGui::DragFloat("FOV", &fov))
                     camera->setFOV(fov);
 
-                if (ImGui::DragFloat3("Camera position", &position.x, 0.1f, 0.0f))
-                    camera->setPosition(position);
+                glm::vec3 cameraOffset = cameraComponent->getPositionOffset();
+                if (ImGui::DragFloat3("Position offset", &cameraOffset.x, 0.01f))
+                    cameraComponent->setPositionOffset(cameraOffset);
+
+                if (auto *transformComponent = m_selectedEntity->getComponent<engine::Transform3DComponent>())
+                {
+                    const glm::vec3 entityWorldPosition = transformComponent->getWorldPosition();
+                    ImGui::Text("Entity position: %.2f %.2f %.2f", entityWorldPosition.x, entityWorldPosition.y, entityWorldPosition.z);
+                }
+
+                const glm::vec3 cameraWorldPosition = camera->getPosition();
+                ImGui::Text("Camera position: %.2f %.2f %.2f", cameraWorldPosition.x, cameraWorldPosition.y, cameraWorldPosition.z);
             }
         }
         else if (auto rigidBodyComponent = dynamic_cast<engine::RigidBodyComponent *>(component.get()))
@@ -833,6 +1025,41 @@ void Editor::drawDetails()
                 if (ImGui::Checkbox("Kinematic", &isKinematic))
                 {
                     rigidBodyComponent->setKinematic(isKinematic);
+                }
+            }
+        }
+        else if (auto characterMovement = dynamic_cast<engine::CharacterMovementComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Character Movement", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                float radius = characterMovement->getCapsuleRadius();
+                float height = characterMovement->getCapsuleHeight();
+                bool capsuleChanged = false;
+                capsuleChanged |= ImGui::DragFloat("Capsule Radius", &radius, 0.01f, 0.05f, 1000.0f, "%.3f");
+                capsuleChanged |= ImGui::DragFloat("Capsule Height", &height, 0.01f, 0.1f, 1000.0f, "%.3f");
+                if (capsuleChanged)
+                    characterMovement->setCapsule(radius, height);
+
+                float stepOffset = characterMovement->getStepOffset();
+                if (ImGui::DragFloat("Step Offset", &stepOffset, 0.01f, 0.0f, 1000.0f, "%.3f"))
+                    characterMovement->setStepOffset(stepOffset);
+
+                float contactOffset = characterMovement->getContactOffset();
+                if (ImGui::DragFloat("Contact Offset", &contactOffset, 0.001f, 0.001f, 1.0f, "%.3f"))
+                    characterMovement->setContactOffset(contactOffset);
+
+                float slopeLimit = characterMovement->getSlopeLimitDegrees();
+                if (ImGui::DragFloat("Slope Limit (deg)", &slopeLimit, 0.5f, 0.0f, 89.0f, "%.1f"))
+                    characterMovement->setSlopeLimitDegrees(slopeLimit);
+
+                ImGui::Text("Grounded: %s", characterMovement->isGrounded() ? "Yes" : "No");
+                ImGui::Text("Collision flags: %u", characterMovement->getCollisionFlags());
+
+                if (ImGui::Button("Remove Character Movement"))
+                {
+                    m_selectedEntity->removeComponent<engine::CharacterMovementComponent>();
+                    ImGui::End();
+                    return;
                 }
             }
         }
@@ -873,6 +1100,129 @@ void Editor::drawDetails()
                 }
             }
         }
+        else if (auto audioComponent = dynamic_cast<engine::AudioComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Audio Source", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                const std::string &assetPath = audioComponent->getAssetPath();
+                const bool hasAudio = !assetPath.empty();
+
+                ImGui::PushID("AudioAssetDrop");
+
+                const std::string assetLabel = hasAudio
+                                                   ? std::filesystem::path(assetPath).filename().string()
+                                                   : "<None>";
+
+                ImGui::TextUnformatted("Audio Asset:");
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", assetLabel.c_str());
+
+                ImGui::Button("Drop .audio.elixasset here##AudioDrop");
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                    {
+                        std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
+                        std::string extension = std::filesystem::path(droppedPath).extension().string();
+                        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c)
+                                       { return static_cast<char>(std::tolower(c)); });
+                        if (extension == ".elixasset")
+                        {
+                            if (audioComponent->loadFromAsset(droppedPath))
+                                m_notificationManager.showSuccess("Audio asset loaded");
+                            else
+                                m_notificationManager.showError("Failed to load audio asset");
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                if (hasAudio && ImGui::Button("Clear##AudioClear"))
+                {
+                    audioComponent->clearAudio();
+                    m_notificationManager.showSuccess("Audio cleared");
+                }
+
+                ImGui::PopID();
+
+                ImGui::Separator();
+
+                bool playOnStart = audioComponent->isPlayOnStart();
+                if (ImGui::Checkbox("Play On Start", &playOnStart))
+                    audioComponent->setPlayOnStart(playOnStart);
+
+                bool loop = audioComponent->isLooping();
+                if (ImGui::Checkbox("Loop", &loop))
+                    audioComponent->setLooping(loop);
+
+                bool muted = audioComponent->isMuted();
+                if (ImGui::Checkbox("Mute", &muted))
+                    audioComponent->setMuted(muted);
+
+                bool spatial = audioComponent->isSpatial();
+                if (ImGui::Checkbox("Spatial (3D)", &spatial))
+                    audioComponent->setSpatial(spatial);
+
+                float volume = audioComponent->getVolume();
+                if (ImGui::SliderFloat("Volume", &volume, 0.0f, 1.0f, "%.2f"))
+                    audioComponent->setVolume(volume);
+
+                float pitch = audioComponent->getPitch();
+                if (ImGui::SliderFloat("Pitch", &pitch, 0.1f, 4.0f, "%.2f"))
+                    audioComponent->setPitch(pitch);
+
+                if (spatial)
+                {
+                    float minDist = audioComponent->getMinDistance();
+                    if (ImGui::DragFloat("Min Distance", &minDist, 0.1f, 0.0f, 10000.0f, "%.1f"))
+                        audioComponent->setMinDistance(minDist);
+
+                    float maxDist = audioComponent->getMaxDistance();
+                    if (ImGui::DragFloat("Max Distance", &maxDist, 1.0f, 0.0f, 10000.0f, "%.1f"))
+                        audioComponent->setMaxDistance(maxDist);
+                }
+
+                ImGui::Separator();
+
+                const bool isPlaying = audioComponent->isPlaying();
+                const bool isPaused = audioComponent->isPaused();
+
+                if (!isPlaying && !isPaused)
+                {
+                    if (ImGui::Button("Play") && hasAudio)
+                        audioComponent->play();
+                }
+                else if (isPaused)
+                {
+                    if (ImGui::Button("Resume"))
+                        audioComponent->resume();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Stop"))
+                        audioComponent->stop();
+                }
+                else
+                {
+                    if (ImGui::Button("Pause"))
+                        audioComponent->pause();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Stop"))
+                        audioComponent->stop();
+                }
+
+                ImGui::SameLine();
+                const char *statusText = isPlaying ? "Playing" : (isPaused ? "Paused" : "Stopped");
+                ImGui::TextDisabled("[%s]", statusText);
+
+                ImGui::Separator();
+
+                if (ImGui::Button("Remove Audio Source"))
+                {
+                    m_selectedEntity->removeComponent<engine::AudioComponent>();
+                    ImGui::End();
+                    return;
+                }
+            }
+        }
     }
 
     const auto scriptComponents = m_selectedEntity->getComponents<engine::ScriptComponent>();
@@ -881,14 +1231,423 @@ void Editor::drawDetails()
     {
         for (size_t scriptIndex = 0; scriptIndex < scriptComponents.size(); ++scriptIndex)
         {
-            const auto *scriptComponent = scriptComponents[scriptIndex];
+            auto *scriptComponent = scriptComponents[scriptIndex];
             const std::string &scriptName = scriptComponent->getScriptName();
             const std::string displayName = scriptName.empty() ? std::string("<Unnamed Script>") : scriptName;
 
             ImGui::PushID(static_cast<int>(scriptIndex));
-            ImGui::BulletText("%s", displayName.c_str());
+
+            if (ImGui::TreeNodeEx(displayName.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                auto *scriptInstance = scriptComponent->getScript();
+                if (!scriptInstance)
+                {
+                    ImGui::TextDisabled("Script instance is null");
+                }
+                else
+                {
+                    const auto &variables = scriptInstance->getExposedVariables();
+                    if (variables.empty())
+                    {
+                        ImGui::TextDisabled("No exposed variables");
+                        ImGui::TextDisabled("Use Script::exposeBool/Int/Float/String/Vec2/Vec3/Vec4/Entity");
+                    }
+                    else
+                    {
+                        std::vector<std::string> variableNames;
+                        variableNames.reserve(variables.size());
+                        for (const auto &[variableName, _] : variables)
+                            variableNames.push_back(variableName);
+
+                        std::sort(variableNames.begin(), variableNames.end());
+
+                        for (const auto &variableName : variableNames)
+                        {
+                            const auto variableIt = variables.find(variableName);
+                            if (variableIt == variables.end())
+                                continue;
+
+                            const auto &variable = variableIt->second;
+                            using ExposedVariableType = engine::Script::ExposedVariableType;
+
+                            switch (variable.type)
+                            {
+                            case ExposedVariableType::Bool:
+                            {
+                                bool value = std::get<bool>(variable.value);
+                                if (ImGui::Checkbox(variableName.c_str(), &value))
+                                    scriptInstance->setExposedVariable(variableName, value);
+                                break;
+                            }
+                            case ExposedVariableType::Int:
+                            {
+                                int value = std::get<int32_t>(variable.value);
+                                if (ImGui::DragInt(variableName.c_str(), &value, 1.0f))
+                                    scriptInstance->setExposedVariable(variableName, static_cast<int32_t>(value));
+                                break;
+                            }
+                            case ExposedVariableType::Float:
+                            {
+                                float value = std::get<float>(variable.value);
+                                if (ImGui::DragFloat(variableName.c_str(), &value, 0.05f))
+                                    scriptInstance->setExposedVariable(variableName, value);
+                                break;
+                            }
+                            case ExposedVariableType::String:
+                            {
+                                const auto &stringValue = std::get<std::string>(variable.value);
+                                std::array<char, 512> buffer{};
+                                std::strncpy(buffer.data(), stringValue.c_str(), buffer.size() - 1);
+                                if (ImGui::InputText(variableName.c_str(), buffer.data(), buffer.size()))
+                                    scriptInstance->setExposedVariable(variableName, std::string(buffer.data()));
+                                break;
+                            }
+                            case ExposedVariableType::Vec2:
+                            {
+                                glm::vec2 value = std::get<glm::vec2>(variable.value);
+                                if (ImGui::DragFloat2(variableName.c_str(), glm::value_ptr(value), 0.05f))
+                                    scriptInstance->setExposedVariable(variableName, value);
+                                break;
+                            }
+                            case ExposedVariableType::Vec3:
+                            {
+                                glm::vec3 value = std::get<glm::vec3>(variable.value);
+                                if (ImGui::DragFloat3(variableName.c_str(), glm::value_ptr(value), 0.05f))
+                                    scriptInstance->setExposedVariable(variableName, value);
+                                break;
+                            }
+                            case ExposedVariableType::Vec4:
+                            {
+                                glm::vec4 value = std::get<glm::vec4>(variable.value);
+                                if (ImGui::DragFloat4(variableName.c_str(), glm::value_ptr(value), 0.05f))
+                                    scriptInstance->setExposedVariable(variableName, value);
+                                break;
+                            }
+                            case ExposedVariableType::Entity:
+                            {
+                                auto selectedRef = std::get<engine::Script::EntityRef>(variable.value);
+                                std::string previewValue = "<None>";
+
+                                if (selectedRef.isValid())
+                                {
+                                    if (m_scene)
+                                    {
+                                        if (auto *selectedEntity = m_scene->getEntityById(selectedRef.id))
+                                            previewValue = selectedEntity->getName() + " (" + std::to_string(selectedRef.id) + ")";
+                                        else
+                                            previewValue = "<Missing: " + std::to_string(selectedRef.id) + ">";
+                                    }
+                                    else
+                                        previewValue = "<Entity id: " + std::to_string(selectedRef.id) + ">";
+                                }
+
+                                if (ImGui::BeginCombo(variableName.c_str(), previewValue.c_str()))
+                                {
+                                    const bool isNoneSelected = !selectedRef.isValid();
+                                    if (ImGui::Selectable("<None>", isNoneSelected))
+                                        scriptInstance->setExposedVariable(variableName, engine::Script::EntityRef{});
+
+                                    if (isNoneSelected)
+                                        ImGui::SetItemDefaultFocus();
+
+                                    if (m_scene)
+                                    {
+                                        for (const auto &candidateEntity : m_scene->getEntities())
+                                        {
+                                            if (!candidateEntity)
+                                                continue;
+
+                                            const auto candidateId = candidateEntity->getId();
+                                            const bool isCurrent = selectedRef.isValid() && selectedRef.id == candidateId;
+                                            const std::string label = candidateEntity->getName() + " (" + std::to_string(candidateId) + ")";
+
+                                            if (ImGui::Selectable(label.c_str(), isCurrent))
+                                                scriptInstance->setExposedVariable(variableName, engine::Script::EntityRef(candidateId));
+
+                                            if (isCurrent)
+                                                ImGui::SetItemDefaultFocus();
+                                        }
+                                    }
+
+                                    ImGui::EndCombo();
+                                }
+
+                                break;
+                            }
+                            default:
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                scriptComponent->syncSerializedVariablesFromScript();
+                ImGui::TreePop();
+            }
+
             ImGui::PopID();
         }
+    }
+
+    const auto particleSystemComponents = m_selectedEntity->getComponents<engine::ParticleSystemComponent>();
+
+    for (size_t psIdx = 0; psIdx < particleSystemComponents.size(); ++psIdx)
+    {
+        auto *psComp = particleSystemComponents[psIdx];
+        auto *ps = psComp->getParticleSystem();
+
+        ImGui::PushID(static_cast<int>(psIdx));
+
+        const std::string psHeader = std::string("Particle System: ") + (ps ? ps->name : "<No System>");
+        if (ImGui::CollapsingHeader(psHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::Checkbox("Play On Start", &psComp->playOnStart);
+
+            if (!ps)
+            {
+                if (ImGui::Button("Create Empty System"))
+                {
+                    auto newSys = std::make_shared<engine::ParticleSystem>();
+                    newSys->name = "Particle System";
+                    psComp->setParticleSystem(newSys);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Create Rain Preset"))
+                    psComp->setParticleSystem(engine::ParticleSystem::createRain());
+            }
+            else
+            {
+                char sysNameBuf[128];
+                std::strncpy(sysNameBuf, ps->name.c_str(), sizeof(sysNameBuf));
+                if (ImGui::InputText("Name##SysName", sysNameBuf, sizeof(sysNameBuf)))
+                    ps->name = sysNameBuf;
+
+                if (ImGui::Button("Apply Rain Preset"))
+                {
+                    psComp->setParticleSystem(engine::ParticleSystem::createRain());
+                    ps = psComp->getParticleSystem();
+                }
+
+                ImGui::Separator();
+                const bool sysPlaying = ps->isPlaying();
+                const bool sysPaused = ps->isPaused();
+
+                if (!sysPlaying && !sysPaused)
+                {
+                    if (ImGui::Button("Play"))
+                        psComp->play();
+                }
+                else if (sysPaused)
+                {
+                    if (ImGui::Button("Resume"))
+                        psComp->play();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Stop"))
+                        psComp->stop();
+                }
+                else
+                {
+                    if (ImGui::Button("Pause"))
+                        psComp->pause();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Stop"))
+                        psComp->stop();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset"))
+                    psComp->reset();
+                ImGui::SameLine();
+                ImGui::TextDisabled("[%s]", sysPlaying ? "Playing" : (sysPaused ? "Paused" : "Stopped"));
+
+                ImGui::Separator();
+                if (ImGui::Button("+ Add Emitter"))
+                    ps->addEmitter("Emitter " + std::to_string(ps->getEmitters().size()));
+                ImGui::Separator();
+
+                std::string emitterToRemove;
+                const auto &emitters = ps->getEmitters();
+
+                for (size_t emIdx = 0; emIdx < emitters.size(); ++emIdx)
+                {
+                    auto *em = emitters[emIdx].get();
+                    ImGui::PushID(static_cast<int>(emIdx));
+
+                    const std::string emHeader = std::string("Emitter: ") + em->name;
+                    if (ImGui::CollapsingHeader(emHeader.c_str()))
+                    {
+                        char emNameBuf[128];
+                        std::strncpy(emNameBuf, em->name.c_str(), sizeof(emNameBuf));
+                        if (ImGui::InputText("##EmName", emNameBuf, sizeof(emNameBuf)))
+                            em->name = emNameBuf;
+                        ImGui::SameLine();
+                        ImGui::Checkbox("Enabled##Em", &em->enabled);
+                        ImGui::TextDisabled("Alive: %u / %u", em->getAliveCount(), engine::ParticleEmitter::MAX_PARTICLES);
+
+                        // SpawnModule
+                        if (auto *spawn = em->getModule<engine::SpawnModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Spawn##SpawnMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                ImGui::DragFloat("Rate (p/s)", &spawn->spawnRate, 1.0f, 0.0f, 100000.0f);
+                                ImGui::DragFloat("Burst Count", &spawn->burstCount, 1.0f, 0.0f, 100000.0f);
+                                ImGui::Checkbox("Loop", &spawn->loop);
+                                if (!spawn->loop)
+                                    ImGui::DragFloat("Duration (s)", &spawn->duration, 0.01f, 0.01f, 1000.0f);
+
+                                static const char *shapeNames[] = {"Point", "Sphere", "Box", "Cone", "Cylinder"};
+                                int shapeIdx = static_cast<int>(spawn->shape.shape);
+                                if (ImGui::Combo("Shape", &shapeIdx, shapeNames, 5))
+                                    spawn->shape.shape = static_cast<engine::EmitterShape>(shapeIdx);
+
+                                using ES = engine::EmitterShape;
+                                if (spawn->shape.shape != ES::Point)
+                                {
+                                    if (spawn->shape.shape == ES::Box)
+                                        ImGui::DragFloat3("Extents", &spawn->shape.extents.x, 0.1f, 0.0f, 10000.0f);
+                                    else
+                                        ImGui::DragFloat("Radius", &spawn->shape.radius, 0.1f, 0.0f, 10000.0f);
+
+                                    if (spawn->shape.shape == ES::Cone || spawn->shape.shape == ES::Cylinder)
+                                    {
+                                        ImGui::DragFloat("Height", &spawn->shape.height, 0.1f, 0.0f, 10000.0f);
+                                        if (spawn->shape.shape == ES::Cone)
+                                            ImGui::DragFloat("Half Angle (deg)", &spawn->shape.angle, 0.5f, 0.0f, 90.0f);
+                                    }
+                                    ImGui::Checkbox("Surface Only", &spawn->shape.surfaceOnly);
+                                }
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Spawn"))
+                            em->addModule<engine::SpawnModule>();
+
+                        // LifetimeModule
+                        if (auto *lt = em->getModule<engine::LifetimeModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Lifetime##LTMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                ImGui::DragFloat("Min (s)", &lt->minLifetime, 0.01f, 0.01f, 1000.0f);
+                                ImGui::DragFloat("Max (s)", &lt->maxLifetime, 0.01f, 0.01f, 1000.0f);
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Lifetime"))
+                            em->addModule<engine::LifetimeModule>();
+
+                        // InitialVelocityModule
+                        if (auto *vel = em->getModule<engine::InitialVelocityModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Initial Velocity##VelMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                ImGui::DragFloat3("Base Velocity", &vel->baseVelocity.x, 0.1f);
+                                ImGui::DragFloat3("Randomness", &vel->randomness.x, 0.1f, 0.0f, 1000.0f);
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Velocity"))
+                            em->addModule<engine::InitialVelocityModule>();
+
+                        // ForceModule
+                        if (auto *force = em->getModule<engine::ForceModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Force##ForceMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                ImGui::DragFloat3("Force (m/s²)", &force->force.x, 0.1f);
+                                ImGui::DragFloat("Drag", &force->drag, 0.001f, 0.0f, 100.0f);
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Force"))
+                            em->addModule<engine::ForceModule>();
+
+                        // SizeOverLifetimeModule
+                        if (auto *sz = em->getModule<engine::SizeOverLifetimeModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Size##SizeMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                ImGui::DragFloat2("Base Size (W x H)", &sz->baseSize.x, 0.001f, 0.0001f, 1000.0f);
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Size"))
+                            em->addModule<engine::SizeOverLifetimeModule>();
+
+                        // ColorOverLifetimeModule
+                        if (auto *col = em->getModule<engine::ColorOverLifetimeModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Color Over Lifetime##ColMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                for (size_t gi = 0; gi < col->gradient.size(); ++gi)
+                                {
+                                    auto &pt = col->gradient[gi];
+                                    ImGui::PushID(static_cast<int>(gi));
+                                    ImGui::SetNextItemWidth(60.0f);
+                                    ImGui::DragFloat("##GradTime", &pt.time, 0.01f, 0.0f, 1.0f, "%.2f");
+                                    ImGui::SameLine();
+                                    ImGui::ColorEdit4("##GradColor", &pt.color.r, ImGuiColorEditFlags_NoInputs);
+                                    ImGui::PopID();
+                                }
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Color"))
+                            em->addModule<engine::ColorOverLifetimeModule>();
+
+                        // RendererModule
+                        if (auto *rend = em->getModule<engine::RendererModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Renderer##RendMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                static const char *blendModes[] = {"Alpha Blend", "Additive", "Premultiplied"};
+                                static const char *facingModes[] = {"Camera Facing", "Velocity Aligned", "World Up"};
+                                int blendIdx = static_cast<int>(rend->blendMode);
+                                int facingIdx = static_cast<int>(rend->facingMode);
+                                if (ImGui::Combo("Blend Mode", &blendIdx, blendModes, 3))
+                                    rend->blendMode = static_cast<engine::ParticleBlendMode>(blendIdx);
+                                if (ImGui::Combo("Facing Mode", &facingIdx, facingModes, 3))
+                                    rend->facingMode = static_cast<engine::ParticleFacingMode>(facingIdx);
+                                ImGui::Checkbox("Soft Particles", &rend->softParticles);
+                                if (rend->softParticles)
+                                    ImGui::DragFloat("Soft Range", &rend->softParticleRange, 0.1f, 0.0f, 100.0f);
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Renderer"))
+                            em->addModule<engine::RendererModule>();
+
+                        // Remove emitter
+                        ImGui::Spacing();
+                        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(160, 40, 40, 255));
+                        if (ImGui::Button("Remove Emitter"))
+                            emitterToRemove = em->name;
+                        ImGui::PopStyleColor();
+                    }
+
+                    ImGui::PopID();
+
+                    if (!emitterToRemove.empty())
+                        break;
+                }
+
+                if (!emitterToRemove.empty())
+                    ps->removeEmitter(emitterToRemove);
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(160, 40, 40, 255));
+            if (ImGui::Button("Remove Particle System"))
+            {
+                ImGui::PopStyleColor();
+                ImGui::PopID();
+                m_selectedEntity->removeComponent<engine::ParticleSystemComponent>();
+                ImGui::End();
+                return;
+            }
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::PopID();
     }
 
     ImGui::End();

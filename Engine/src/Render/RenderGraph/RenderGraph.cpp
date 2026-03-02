@@ -1,6 +1,8 @@
 #include "Engine/Render/RenderGraph/RenderGraph.hpp"
 #include "Core/VulkanContext.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
+#include "Engine/Render/ObjectIdEncoding.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 
 #include <iostream>
 #include <array>
@@ -12,6 +14,8 @@
 #include <unordered_set>
 #include <limits>
 #include <cmath>
+#include <cfloat>
+#include <filesystem>
 
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
@@ -62,8 +66,10 @@ struct LightSpaceMatrixUBO
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-RenderGraph::RenderGraph()
+RenderGraph::RenderGraph(bool presentToSwapchain, bool cleanupSharedShaderFamilies)
 {
+    m_presentToSwapchain = presentToSwapchain;
+    m_cleanupSharedShaderFamilies = cleanupSharedShaderFamilies;
     m_device = core::VulkanContext::getContext()->getDevice();
     m_swapchain = core::VulkanContext::getContext()->getSwapchain();
 
@@ -97,7 +103,7 @@ RenderGraph::RenderGraph()
     }
 }
 
-void RenderGraph::prepareFrameDataFromScene(Scene *scene)
+void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling)
 {
     const auto &sceneEntities = scene->getEntities();
 
@@ -107,13 +113,9 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
     if (entitiesSize != lastEntitiesSize)
     {
         if (entitiesSize < lastEntitiesSize)
-        {
             VX_ENGINE_INFO_STREAM("Entity was deleted");
-        }
         else if (entitiesSize > lastEntitiesSize)
-        {
             VX_ENGINE_INFO_STREAM("Entity was addded");
-        }
 
         lastEntitiesSize = entitiesSize;
     }
@@ -141,16 +143,51 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
         return hashData;
     };
 
+    auto computeMeshLocalBounds = [&](const CPUMesh &mesh) -> MeshLocalBounds
+    {
+        MeshLocalBounds bounds{};
+        if (mesh.vertexStride < sizeof(glm::vec3) || mesh.vertexData.empty())
+            return bounds;
+
+        const uint32_t vertexCount = static_cast<uint32_t>(mesh.vertexData.size() / mesh.vertexStride);
+        if (vertexCount == 0)
+            return bounds;
+
+        glm::vec3 minPosition(FLT_MAX);
+        glm::vec3 maxPosition(-FLT_MAX);
+
+        for (uint32_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+        {
+            glm::vec3 position(0.0f);
+            std::memcpy(&position, mesh.vertexData.data() + static_cast<size_t>(vertexIndex) * mesh.vertexStride, sizeof(glm::vec3));
+            minPosition = glm::min(minPosition, position);
+            maxPosition = glm::max(maxPosition, position);
+        }
+
+        bounds.center = (minPosition + maxPosition) * 0.5f;
+        bounds.radius = 0.0f;
+
+        for (uint32_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+        {
+            glm::vec3 position(0.0f);
+            std::memcpy(&position, mesh.vertexData.data() + static_cast<size_t>(vertexIndex) * mesh.vertexStride, sizeof(glm::vec3));
+            bounds.radius = std::max(bounds.radius, glm::length(position - bounds.center));
+        }
+
+        return bounds;
+    };
+
     auto getOrCreateSharedGeometryMesh = [&](const CPUMesh &mesh) -> GPUMesh::SharedPtr
     {
         const std::size_t hashData = computeMeshGeometryHash(mesh);
 
-        auto it = m_meshes.find(hashData);
-        if (it != m_meshes.end())
-            return it->second;
+        auto meshIt = m_meshes.find(hashData);
+        if (meshIt != m_meshes.end())
+            return meshIt->second;
 
         auto createdMesh = GPUMesh::createFromMesh(mesh);
         m_meshes[hashData] = createdMesh;
+        m_meshLocalBoundsByHash[hashData] = computeMeshLocalBounds(mesh);
         return createdMesh;
     };
 
@@ -169,17 +206,156 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
         return instance;
     };
 
+    auto looksLikeWindowsAbsolutePath = [](const std::string &path) -> bool
+    {
+        return path.size() >= 3u &&
+               std::isalpha(static_cast<unsigned char>(path[0])) &&
+               path[1] == ':' &&
+               (path[2] == '\\' || path[2] == '/');
+    };
+
+    auto makeAbsoluteNormalized = [](const std::filesystem::path &path) -> std::filesystem::path
+    {
+        std::error_code errorCode;
+        const std::filesystem::path absolutePath = std::filesystem::absolute(path, errorCode);
+        if (errorCode)
+            return path.lexically_normal();
+
+        return absolutePath.lexically_normal();
+    };
+
+    auto resolveTexturePathForMaterial = [&](const std::string &texturePath, const std::filesystem::path &materialAssetPath) -> std::string
+    {
+        if (texturePath.empty())
+            return {};
+
+        if (looksLikeWindowsAbsolutePath(texturePath))
+            return texturePath;
+
+        const std::filesystem::path parsedPath(texturePath);
+        if (parsedPath.is_absolute())
+            return makeAbsoluteNormalized(parsedPath).string();
+
+        if (!materialAssetPath.empty())
+        {
+            const std::filesystem::path materialRelativePath = makeAbsoluteNormalized(materialAssetPath.parent_path() / parsedPath);
+            std::error_code errorCode;
+            if (std::filesystem::exists(materialRelativePath, errorCode) && !errorCode)
+                return materialRelativePath.string();
+        }
+
+        const std::filesystem::path cwdRelativePath = makeAbsoluteNormalized(parsedPath);
+        return cwdRelativePath.string();
+    };
+
+    auto loadTextureForMaterial = [&](const std::string &texturePath, VkFormat format, const std::filesystem::path &materialAssetPath) -> Texture::SharedPtr
+    {
+        if (texturePath.empty())
+            return nullptr;
+
+        const std::string resolvedTexturePath = resolveTexturePathForMaterial(texturePath, materialAssetPath);
+        if (!resolvedTexturePath.empty())
+        {
+            if (auto texture = AssetsLoader::loadTextureGPU(resolvedTexturePath, format))
+                return texture;
+        }
+
+        if (resolvedTexturePath != texturePath)
+            return AssetsLoader::loadTextureGPU(texturePath, format);
+
+        return nullptr;
+    };
+
+    auto resolveMaterialOverrideFromPath = [&](const std::string &materialPath) -> Material::SharedPtr
+    {
+        if (materialPath.empty())
+            return nullptr;
+
+        std::string normalizedMaterialPath = materialPath;
+        if (!looksLikeWindowsAbsolutePath(materialPath))
+            normalizedMaterialPath = makeAbsoluteNormalized(std::filesystem::path(materialPath)).string();
+
+        auto cachedMaterialIt = m_materialsByAssetPath.find(normalizedMaterialPath);
+        if (cachedMaterialIt != m_materialsByAssetPath.end())
+            return cachedMaterialIt->second;
+
+        if (m_failedMaterialAssetPaths.find(normalizedMaterialPath) != m_failedMaterialAssetPaths.end())
+            return nullptr;
+
+        auto materialAsset = AssetsLoader::loadMaterial(normalizedMaterialPath);
+        if (!materialAsset.has_value())
+        {
+            const auto [_, inserted] = m_failedMaterialAssetPaths.insert(normalizedMaterialPath);
+            if (inserted)
+                VX_ENGINE_ERROR_STREAM("Failed to load material override asset: " << normalizedMaterialPath << '\n');
+            return nullptr;
+        }
+
+        auto materialCPU = materialAsset.value().material;
+        const std::filesystem::path materialAssetFilePath = std::filesystem::path(normalizedMaterialPath);
+
+        auto albedoTexture = loadTextureForMaterial(materialCPU.albedoTexture, VK_FORMAT_R8G8B8A8_SRGB, materialAssetFilePath);
+        auto normalTexture = loadTextureForMaterial(materialCPU.normalTexture, VK_FORMAT_R8G8B8A8_UNORM, materialAssetFilePath);
+        auto ormTexture = loadTextureForMaterial(materialCPU.ormTexture, VK_FORMAT_R8G8B8A8_UNORM, materialAssetFilePath);
+        auto emissiveTexture = loadTextureForMaterial(materialCPU.emissiveTexture, VK_FORMAT_R8G8B8A8_SRGB, materialAssetFilePath);
+
+        auto material = Material::create(albedoTexture);
+        if (!material)
+            return nullptr;
+
+        material->setAlbedoTexture(albedoTexture);
+        material->setNormalTexture(normalTexture);
+        material->setOrmTexture(ormTexture);
+        material->setEmissiveTexture(emissiveTexture);
+        material->setBaseColorFactor(materialCPU.baseColorFactor);
+        material->setEmissiveFactor(materialCPU.emissiveFactor);
+        material->setMetallic(materialCPU.metallicFactor);
+        material->setRoughness(materialCPU.roughnessFactor);
+        material->setAoStrength(materialCPU.aoStrength);
+        material->setNormalScale(materialCPU.normalScale);
+        material->setAlphaCutoff(materialCPU.alphaCutoff);
+        material->setFlags(materialCPU.flags);
+        material->setUVScale(materialCPU.uvScale);
+        material->setUVOffset(materialCPU.uvOffset);
+
+        m_failedMaterialAssetPaths.erase(normalizedMaterialPath);
+        m_materialsByAssetPath[normalizedMaterialPath] = material;
+        return material;
+    };
+
     auto resolveMeshMaterial = [&](const CPUMesh &mesh, StaticMeshComponent *staticComponent, SkeletalMeshComponent *skeletalComponent, size_t slot) -> Material::SharedPtr
     {
         if (staticComponent)
         {
             auto overrideMaterial = staticComponent->getMaterialOverride(slot);
+            if (!overrideMaterial)
+            {
+                const std::string &overridePath = staticComponent->getMaterialOverridePath(slot);
+                if (!overridePath.empty())
+                {
+                    overrideMaterial = resolveMaterialOverrideFromPath(overridePath);
+                    if (overrideMaterial)
+                        staticComponent->setMaterialOverride(slot, overrideMaterial);
+                }
+            }
+
             if (overrideMaterial)
                 return overrideMaterial;
         }
         else if (skeletalComponent)
         {
             auto overrideMaterial = skeletalComponent->getMaterialOverride(slot);
+            if (!overrideMaterial)
+            {
+                const std::string &overridePath = skeletalComponent->getMaterialOverridePath(slot);
+                if (!overridePath.empty())
+                {
+                    overrideMaterial = resolveMaterialOverrideFromPath(overridePath);
+                    if (overrideMaterial)
+                        skeletalComponent->setMaterialOverride(slot, overrideMaterial);
+                }
+            }
+
             if (overrideMaterial)
                 return overrideMaterial;
         }
@@ -229,6 +405,46 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
             drawItem.finalBones.clear();
     };
 
+    std::array<glm::vec4, 6> frustumPlanes{};
+    if (enableFrustumCulling)
+    {
+        const glm::mat4 viewProjection = projection * view;
+
+        const glm::vec4 row0(viewProjection[0][0], viewProjection[1][0], viewProjection[2][0], viewProjection[3][0]);
+        const glm::vec4 row1(viewProjection[0][1], viewProjection[1][1], viewProjection[2][1], viewProjection[3][1]);
+        const glm::vec4 row2(viewProjection[0][2], viewProjection[1][2], viewProjection[2][2], viewProjection[3][2]);
+        const glm::vec4 row3(viewProjection[0][3], viewProjection[1][3], viewProjection[2][3], viewProjection[3][3]);
+
+        frustumPlanes[0] = row3 + row0; // left
+        frustumPlanes[1] = row3 - row0; // right
+        frustumPlanes[2] = row3 + row1; // bottom
+        frustumPlanes[3] = row3 - row1; // top
+        frustumPlanes[4] = row3 + row2; // near
+        frustumPlanes[5] = row3 - row2; // far
+
+        for (auto &plane : frustumPlanes)
+        {
+            const float length = glm::length(glm::vec3(plane));
+            if (length > std::numeric_limits<float>::epsilon())
+                plane /= length;
+        }
+    }
+
+    auto isSphereVisible = [&](const glm::vec3 &center, float radius) -> bool
+    {
+        if (!enableFrustumCulling)
+            return true;
+
+        for (const auto &plane : frustumPlanes)
+        {
+            const float distance = glm::dot(glm::vec3(plane), center) + plane.w;
+            if (distance < -radius)
+                return false;
+        }
+
+        return true;
+    };
+
     for (const auto &entity : sceneEntities)
     {
         if (!entity || !entity->isEnabled())
@@ -269,16 +485,66 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
         {
             drawItem.meshes.clear();
             drawItem.meshes.reserve(meshes->size());
+            drawItem.localMeshBoundsCenters.clear();
+            drawItem.localMeshBoundsCenters.reserve(meshes->size());
+            drawItem.localMeshBoundsRadii.clear();
+            drawItem.localMeshBoundsRadii.reserve(meshes->size());
 
             for (const auto &mesh : *meshes)
+            {
                 drawItem.meshes.push_back(createDrawMeshInstance(mesh));
+
+                const std::size_t hashData = computeMeshGeometryHash(mesh);
+                const auto boundsIt = m_meshLocalBoundsByHash.find(hashData);
+                if (boundsIt != m_meshLocalBoundsByHash.end())
+                {
+                    drawItem.localMeshBoundsCenters.push_back(boundsIt->second.center);
+                    drawItem.localMeshBoundsRadii.push_back(boundsIt->second.radius);
+                }
+                else
+                {
+                    drawItem.localMeshBoundsCenters.push_back(glm::vec3(0.0f));
+                    drawItem.localMeshBoundsRadii.push_back(0.0f);
+                }
+            }
         }
 
         for (size_t meshIndex = 0; meshIndex < meshes->size() && meshIndex < drawItem.meshes.size(); ++meshIndex)
             drawItem.meshes[meshIndex]->material = resolveMeshMaterial((*meshes)[meshIndex], staticMeshComponent, skeletalMeshComponent, meshIndex);
+
+        glm::vec3 boundsMin(FLT_MAX);
+        glm::vec3 boundsMax(-FLT_MAX);
+        bool hasBounds = false;
+        const float scaleX = glm::length(glm::vec3(drawItem.transform[0]));
+        const float scaleY = glm::length(glm::vec3(drawItem.transform[1]));
+        const float scaleZ = glm::length(glm::vec3(drawItem.transform[2]));
+        const float maxScale = std::max({scaleX, scaleY, scaleZ, 1.0f});
+
+        for (size_t meshIndex = 0; meshIndex < drawItem.localMeshBoundsRadii.size(); ++meshIndex)
+        {
+            const glm::vec3 worldCenter = glm::vec3(drawItem.transform * glm::vec4(drawItem.localMeshBoundsCenters[meshIndex], 1.0f));
+            const float worldRadius = drawItem.localMeshBoundsRadii[meshIndex] * maxScale;
+            const glm::vec3 extents(worldRadius);
+            boundsMin = glm::min(boundsMin, worldCenter - extents);
+            boundsMax = glm::max(boundsMax, worldCenter + extents);
+            hasBounds = true;
+        }
+
+        if (hasBounds)
+        {
+            const glm::vec3 sphereCenter = (boundsMin + boundsMax) * 0.5f;
+            const float sphereRadius = glm::length(boundsMax - sphereCenter);
+
+            if (!isSphereVisible(sphereCenter, sphereRadius))
+            {
+                m_perFrameData.drawItems.erase(drawItemIt);
+                continue;
+            }
+        }
     }
 
     std::vector<glm::mat4> frameBones;
+    frameBones.reserve(1024);
 
     for (auto &[_, drawItem] : m_perFrameData.drawItems)
     {
@@ -291,26 +557,306 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene)
         frameBones.insert(frameBones.end(), drawItem.finalBones.begin(), drawItem.finalBones.end());
     }
 
+    struct MeshDrawReference
+    {
+        Entity::SharedPtr entity;
+        DrawItem *drawItem{nullptr};
+        uint32_t meshIndex{0};
+        GPUMesh::SharedPtr mesh{nullptr};
+        Material::SharedPtr material{nullptr};
+        glm::vec3 worldBoundsCenter{0.0f};
+        float worldBoundsRadius{0.0f};
+        bool skinned{false};
+    };
+
+    std::vector<MeshDrawReference> drawReferences;
+    drawReferences.reserve(m_perFrameData.drawItems.size() * 2);
+
+    for (auto &[entity, drawItem] : m_perFrameData.drawItems)
+    {
+        const bool isSkinned = !drawItem.finalBones.empty();
+        const float scaleX = glm::length(glm::vec3(drawItem.transform[0]));
+        const float scaleY = glm::length(glm::vec3(drawItem.transform[1]));
+        const float scaleZ = glm::length(glm::vec3(drawItem.transform[2]));
+        const float maxScale = std::max({scaleX, scaleY, scaleZ, 1.0f});
+
+        for (uint32_t meshIndex = 0; meshIndex < drawItem.meshes.size(); ++meshIndex)
+        {
+            const auto &mesh = drawItem.meshes[meshIndex];
+            if (!mesh)
+                continue;
+
+            auto material = mesh->material ? mesh->material : Material::getDefaultMaterial();
+            mesh->material = material;
+
+            glm::vec3 worldBoundsCenter{0.0f};
+            float worldBoundsRadius{0.0f};
+            if (meshIndex < drawItem.localMeshBoundsCenters.size() &&
+                meshIndex < drawItem.localMeshBoundsRadii.size())
+            {
+                worldBoundsCenter = glm::vec3(drawItem.transform * glm::vec4(drawItem.localMeshBoundsCenters[meshIndex], 1.0f));
+                worldBoundsRadius = drawItem.localMeshBoundsRadii[meshIndex] * maxScale;
+            }
+
+            drawReferences.push_back(MeshDrawReference{
+                .entity = entity,
+                .drawItem = &drawItem,
+                .meshIndex = meshIndex,
+                .mesh = mesh,
+                .material = material,
+                .worldBoundsCenter = worldBoundsCenter,
+                .worldBoundsRadius = worldBoundsRadius,
+                .skinned = isSkinned});
+        }
+    }
+
+    std::sort(drawReferences.begin(), drawReferences.end(),
+              [](const MeshDrawReference &left, const MeshDrawReference &right)
+              {
+                  if (left.skinned != right.skinned)
+                      return left.skinned < right.skinned;
+
+                  if (left.mesh->vertexBuffer.get() != right.mesh->vertexBuffer.get())
+                      return left.mesh->vertexBuffer.get() < right.mesh->vertexBuffer.get();
+
+                  if (left.mesh->indexBuffer.get() != right.mesh->indexBuffer.get())
+                      return left.mesh->indexBuffer.get() < right.mesh->indexBuffer.get();
+
+                  if (left.material.get() != right.material.get())
+                      return left.material.get() < right.material.get();
+
+                  return left.meshIndex < right.meshIndex;
+              });
+
+    m_perFrameData.perObjectInstances.clear();
+    m_perFrameData.perObjectInstances.reserve(drawReferences.size());
+    m_perFrameData.drawBatches.clear();
+    m_perFrameData.drawBatches.reserve(drawReferences.size());
+
+    for (auto &batches : m_perFrameData.directionalShadowDrawBatches)
+        batches.clear();
+    for (auto &batches : m_perFrameData.spotShadowDrawBatches)
+        batches.clear();
+    for (auto &batches : m_perFrameData.pointShadowDrawBatches)
+        batches.clear();
+
+    auto hasSameGeometry = [](const GPUMesh::SharedPtr &left, const GPUMesh::SharedPtr &right) -> bool
+    {
+        if (!left || !right)
+            return false;
+
+        return left->vertexBuffer.get() == right->vertexBuffer.get() &&
+               left->indexBuffer.get() == right->indexBuffer.get() &&
+               left->indicesCount == right->indicesCount &&
+               left->indexType == right->indexType &&
+               left->vertexStride == right->vertexStride &&
+               left->vertexLayoutHash == right->vertexLayoutHash;
+    };
+
+    for (const auto &reference : drawReferences)
+    {
+        const uint32_t instanceIndex = static_cast<uint32_t>(m_perFrameData.perObjectInstances.size());
+
+        PerObjectInstanceData instanceData{};
+        instanceData.model = reference.drawItem->transform;
+        instanceData.objectInfo = glm::uvec4(
+            render::encodeObjectId(reference.entity->getId(), reference.meshIndex),
+            reference.drawItem->bonesOffset,
+            0u,
+            0u);
+        m_perFrameData.perObjectInstances.push_back(instanceData);
+
+        if (!m_perFrameData.drawBatches.empty())
+        {
+            auto &lastBatch = m_perFrameData.drawBatches.back();
+            if (lastBatch.skinned == reference.skinned &&
+                lastBatch.material.get() == reference.material.get() &&
+                hasSameGeometry(lastBatch.mesh, reference.mesh) &&
+                lastBatch.firstInstance + lastBatch.instanceCount == instanceIndex)
+            {
+                ++lastBatch.instanceCount;
+                continue;
+            }
+        }
+
+        DrawBatch batch{};
+        batch.mesh = reference.mesh;
+        batch.material = reference.material;
+        batch.skinned = reference.skinned;
+        batch.firstInstance = instanceIndex;
+        batch.instanceCount = 1;
+        m_perFrameData.drawBatches.push_back(batch);
+    }
+
+    std::vector<const MeshDrawReference *> shadowReferences;
+    shadowReferences.reserve(drawReferences.size());
+    for (const auto &reference : drawReferences)
+        shadowReferences.push_back(&reference);
+
+    std::sort(shadowReferences.begin(), shadowReferences.end(),
+              [](const MeshDrawReference *left, const MeshDrawReference *right)
+              {
+                  if (left->skinned != right->skinned)
+                      return left->skinned < right->skinned;
+
+                  if (left->mesh->vertexBuffer.get() != right->mesh->vertexBuffer.get())
+                      return left->mesh->vertexBuffer.get() < right->mesh->vertexBuffer.get();
+
+                  if (left->mesh->indexBuffer.get() != right->mesh->indexBuffer.get())
+                      return left->mesh->indexBuffer.get() < right->mesh->indexBuffer.get();
+
+                  return left->meshIndex < right->meshIndex;
+              });
+
+    std::vector<PerObjectInstanceData> shadowPerObjectInstances;
+    {
+        const uint32_t activeShadowExecutions = m_perFrameData.activeDirectionalCascadeCount +
+                                                m_perFrameData.activeSpotShadowCount +
+                                                m_perFrameData.activePointShadowCount * ShadowConstants::POINT_SHADOW_FACES;
+        shadowPerObjectInstances.reserve(shadowReferences.size() * std::max<uint32_t>(activeShadowExecutions, 1u));
+    }
+
+    auto extractFrustumPlanes = [](const glm::mat4 &viewProjection) -> std::array<glm::vec4, 6>
+    {
+        std::array<glm::vec4, 6> planes{};
+
+        const glm::vec4 row0(viewProjection[0][0], viewProjection[1][0], viewProjection[2][0], viewProjection[3][0]);
+        const glm::vec4 row1(viewProjection[0][1], viewProjection[1][1], viewProjection[2][1], viewProjection[3][1]);
+        const glm::vec4 row2(viewProjection[0][2], viewProjection[1][2], viewProjection[2][2], viewProjection[3][2]);
+        const glm::vec4 row3(viewProjection[0][3], viewProjection[1][3], viewProjection[2][3], viewProjection[3][3]);
+
+        planes[0] = row3 + row0; // left
+        planes[1] = row3 - row0; // right
+        planes[2] = row3 + row1; // bottom
+        planes[3] = row3 - row1; // top
+        planes[4] = row3 + row2; // near
+        planes[5] = row3 - row2; // far
+
+        for (auto &plane : planes)
+        {
+            const float length = glm::length(glm::vec3(plane));
+            if (length > std::numeric_limits<float>::epsilon())
+                plane /= length;
+        }
+
+        return planes;
+    };
+
+    auto isSphereVisibleAgainstPlanes = [](const std::array<glm::vec4, 6> &planes, const glm::vec3 &center, float radius) -> bool
+    {
+        for (const auto &plane : planes)
+        {
+            const float distance = glm::dot(glm::vec3(plane), center) + plane.w;
+            if (distance < -radius)
+                return false;
+        }
+
+        return true;
+    };
+
+    auto hasSameShadowKey = [&](const DrawBatch &batch, const MeshDrawReference &reference) -> bool
+    {
+        return batch.skinned == reference.skinned && hasSameGeometry(batch.mesh, reference.mesh);
+    };
+
+    auto buildShadowBatchesForMatrix = [&](const glm::mat4 &lightSpaceMatrix, std::vector<DrawBatch> &outBatches)
+    {
+        outBatches.clear();
+        const std::array<glm::vec4, 6> frustum = extractFrustumPlanes(lightSpaceMatrix);
+
+        for (const MeshDrawReference *reference : shadowReferences)
+        {
+            if (!reference || !reference->mesh)
+                continue;
+
+            if (enableFrustumCulling && !isSphereVisibleAgainstPlanes(frustum, reference->worldBoundsCenter, reference->worldBoundsRadius))
+                continue;
+
+            const uint32_t instanceIndex = static_cast<uint32_t>(shadowPerObjectInstances.size());
+            PerObjectInstanceData instanceData{};
+            instanceData.model = reference->drawItem->transform;
+            instanceData.objectInfo = glm::uvec4(
+                render::encodeObjectId(reference->entity->getId(), reference->meshIndex),
+                reference->drawItem->bonesOffset,
+                0u,
+                0u);
+            shadowPerObjectInstances.push_back(instanceData);
+
+            if (!outBatches.empty())
+            {
+                auto &lastBatch = outBatches.back();
+                if (hasSameShadowKey(lastBatch, *reference) &&
+                    lastBatch.firstInstance + lastBatch.instanceCount == instanceIndex)
+                {
+                    ++lastBatch.instanceCount;
+                    continue;
+                }
+            }
+
+            DrawBatch batch{};
+            batch.mesh = reference->mesh;
+            batch.material = reference->material;
+            batch.skinned = reference->skinned;
+            batch.firstInstance = instanceIndex;
+            batch.instanceCount = 1;
+            outBatches.push_back(batch);
+        }
+    };
+
+    for (uint32_t cascadeIndex = 0; cascadeIndex < m_perFrameData.activeDirectionalCascadeCount; ++cascadeIndex)
+        buildShadowBatchesForMatrix(m_perFrameData.directionalLightSpaceMatrices[cascadeIndex], m_perFrameData.directionalShadowDrawBatches[cascadeIndex]);
+
+    for (uint32_t spotIndex = 0; spotIndex < m_perFrameData.activeSpotShadowCount; ++spotIndex)
+        buildShadowBatchesForMatrix(m_perFrameData.spotLightSpaceMatrices[spotIndex], m_perFrameData.spotShadowDrawBatches[spotIndex]);
+
+    for (uint32_t pointIndex = 0; pointIndex < m_perFrameData.activePointShadowCount; ++pointIndex)
+    {
+        for (uint32_t faceIndex = 0; faceIndex < ShadowConstants::POINT_SHADOW_FACES; ++faceIndex)
+        {
+            const uint32_t matrixIndex = pointIndex * ShadowConstants::POINT_SHADOW_FACES + faceIndex;
+            buildShadowBatchesForMatrix(m_perFrameData.pointLightSpaceMatrices[matrixIndex], m_perFrameData.pointShadowDrawBatches[matrixIndex]);
+        }
+    }
+
     const VkDeviceSize requiredBonesSize = static_cast<VkDeviceSize>(frameBones.size() * sizeof(glm::mat4));
     const VkDeviceSize availableBonesSize = m_bonesSSBOs[m_currentFrame]->getSize();
-
     if (requiredBonesSize > availableBonesSize)
         throw std::runtime_error("Bones SSBO size is too small for current frame. Increase initial bones buffer size.");
 
-    glm::mat4 *mapped = nullptr;
-    m_bonesSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(mapped));
+    const VkDeviceSize requiredInstanceSize = static_cast<VkDeviceSize>(m_perFrameData.perObjectInstances.size() * sizeof(PerObjectInstanceData));
+    const VkDeviceSize availableInstanceSize = m_instanceSSBOs[m_currentFrame]->getSize();
+    if (requiredInstanceSize > availableInstanceSize)
+        throw std::runtime_error("Instance SSBO size is too small for current frame. Increase initial instance buffer size.");
 
+    const VkDeviceSize requiredShadowInstanceSize = static_cast<VkDeviceSize>(shadowPerObjectInstances.size() * sizeof(PerObjectInstanceData));
+    const VkDeviceSize availableShadowInstanceSize = m_shadowInstanceSSBOs[m_currentFrame]->getSize();
+    if (requiredShadowInstanceSize > availableShadowInstanceSize)
+        throw std::runtime_error("Shadow instance SSBO size is too small for current frame. Increase initial shadow instance buffer size.");
+
+    glm::mat4 *bonesMapped = nullptr;
+    m_bonesSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(bonesMapped));
     if (!frameBones.empty())
-        std::memcpy(mapped, frameBones.data(), frameBones.size() * sizeof(glm::mat4));
-
+        std::memcpy(bonesMapped, frameBones.data(), frameBones.size() * sizeof(glm::mat4));
     m_bonesSSBOs[m_currentFrame]->unmap();
+
+    PerObjectInstanceData *instancesMapped = nullptr;
+    m_instanceSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(instancesMapped));
+    if (!m_perFrameData.perObjectInstances.empty())
+        std::memcpy(instancesMapped, m_perFrameData.perObjectInstances.data(), requiredInstanceSize);
+    m_instanceSSBOs[m_currentFrame]->unmap();
+
+    PerObjectInstanceData *shadowInstancesMapped = nullptr;
+    m_shadowInstanceSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(shadowInstancesMapped));
+    if (!shadowPerObjectInstances.empty())
+        std::memcpy(shadowInstancesMapped, shadowPerObjectInstances.data(), requiredShadowInstanceSize);
+    m_shadowInstanceSSBOs[m_currentFrame]->unmap();
+
     m_perFrameData.perObjectDescriptorSet = m_perObjectDescriptorSets[m_currentFrame];
+    m_perFrameData.shadowPerObjectDescriptorSet = m_shadowPerObjectDescriptorSets[m_currentFrame];
 }
 
 void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime)
 {
-    prepareFrameDataFromScene(scene);
-
     m_perFrameData.swapChainViewport = m_swapchain->getViewport();
     m_perFrameData.swapChainScissor = m_swapchain->getScissor();
     m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
@@ -397,6 +943,8 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     m_perFrameData.activePointShadowCount = 0;
     m_perFrameData.directionalLightDirection = glm::vec3(0.0f, -1.0f, 0.0f);
     m_perFrameData.directionalLightStrength = 0.0f;
+    m_perFrameData.hasDirectionalLight = false;
+    m_perFrameData.skyLightEnabled = false;
 
     LightSpaceMatrixUBO lightSpaceMatrixUBO{};
     lightSpaceMatrixUBO.lightSpaceMatrix = glm::mat4(1.0f);
@@ -437,6 +985,8 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
 
         if (auto directionalLight = dynamic_cast<DirectionalLight *>(lightComponent.get()))
         {
+            m_perFrameData.hasDirectionalLight = true;
+
             glm::vec3 dirWorld = glm::normalize(directionalLight->direction);
             glm::vec3 dirView = glm::normalize(view3 * dirWorld);
 
@@ -446,6 +996,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
             if (!directionalDataAssigned)
             {
                 m_perFrameData.directionalLightDirection = dirWorld;
+                m_perFrameData.skyLightEnabled = directionalLight->skyLightEnabled;
                 m_perFrameData.directionalLightStrength = directionalLight->skyLightEnabled ? directionalLight->strength : 0.0f;
                 directionalDataAssigned = true;
             }
@@ -466,19 +1017,20 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
                 if (glm::length(camRight) < 0.001f)
                     camRight = glm::vec3(1.0f, 0.0f, 0.0f);
 
+                const uint32_t configuredCascadeCount = std::max(1u, std::min(RenderQualitySettings::getInstance().getShadowCascadeCount(), ShadowConstants::MAX_DIRECTIONAL_CASCADES));
                 const float cascadeLambda = 0.85f;
                 std::array<float, ShadowConstants::MAX_DIRECTIONAL_CASCADES + 1> cascadeDepths{};
                 cascadeDepths[0] = cameraNear;
 
-                for (uint32_t cascadeIndex = 0; cascadeIndex < ShadowConstants::MAX_DIRECTIONAL_CASCADES; ++cascadeIndex)
+                for (uint32_t cascadeIndex = 0; cascadeIndex < configuredCascadeCount; ++cascadeIndex)
                 {
-                    const float p = static_cast<float>(cascadeIndex + 1) / static_cast<float>(ShadowConstants::MAX_DIRECTIONAL_CASCADES);
+                    const float p = static_cast<float>(cascadeIndex + 1) / static_cast<float>(configuredCascadeCount);
                     const float logSplit = cameraNear * std::pow(cameraFar / cameraNear, p);
                     const float uniformSplit = cameraNear + (cameraFar - cameraNear) * p;
                     cascadeDepths[cascadeIndex + 1] = glm::mix(uniformSplit, logSplit, cascadeLambda);
                 }
 
-                for (uint32_t cascadeIndex = 0; cascadeIndex < ShadowConstants::MAX_DIRECTIONAL_CASCADES; ++cascadeIndex)
+                for (uint32_t cascadeIndex = 0; cascadeIndex < configuredCascadeCount; ++cascadeIndex)
                 {
                     const float splitNear = cascadeDepths[cascadeIndex];
                     const float splitFar = cascadeDepths[cascadeIndex + 1];
@@ -541,7 +1093,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
                     }
                 }
 
-                m_perFrameData.activeDirectionalCascadeCount = ShadowConstants::MAX_DIRECTIONAL_CASCADES;
+                m_perFrameData.activeDirectionalCascadeCount = configuredCascadeCount;
                 ssboData->lights[i].shadowInfo.x = 1.0f;
                 directionalShadowAssigned = true;
             }
@@ -610,6 +1162,8 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
 
     m_lightSSBOs[m_currentFrame]->unmap();
     std::memcpy(m_lightMapped[m_currentFrame], &lightSpaceMatrixUBO, sizeof(LightSpaceMatrixUBO));
+
+    prepareFrameDataFromScene(scene, cameraUBO.view, cameraUBO.projection, camera != nullptr);
 }
 
 void RenderGraph::createDescriptorSetPool()
@@ -623,8 +1177,8 @@ void RenderGraph::createDescriptorSetPool()
         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 100},
         {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 100}};
 
-    // Camera + preview camera + per-object descriptor sets per frame.
-    static constexpr uint32_t kRenderGraphSetGroupsPerFrame = 3;
+    // Camera + preview camera + per-object + shadow-per-object descriptor sets per frame.
+    static constexpr uint32_t kRenderGraphSetGroupsPerFrame = 4;
     const uint32_t maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * kRenderGraphSetGroupsPerFrame;
 
     m_descriptorPool = core::DescriptorPool::createShared(m_device, poolSizes, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
@@ -693,21 +1247,30 @@ bool RenderGraph::begin()
 
     m_commandPools[m_currentFrame]->reset(0);
 
-    const auto acquireImageStart = std::chrono::high_resolution_clock::now();
-    VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
-    const auto acquireImageEnd = std::chrono::high_resolution_clock::now();
-    cpuStageProfilingData.acquireImageMs = std::chrono::duration<double, std::milli>(acquireImageEnd - acquireImageStart).count();
-
-    if (result == VK_ERROR_OUT_OF_DATE_KHR)
+    if (m_presentToSwapchain)
     {
-        recreateSwapChain();
+        const auto acquireImageStart = std::chrono::high_resolution_clock::now();
+        VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
+        const auto acquireImageEnd = std::chrono::high_resolution_clock::now();
+        cpuStageProfilingData.acquireImageMs = std::chrono::duration<double, std::milli>(acquireImageEnd - acquireImageStart).count();
 
-        return false;
+        if (result == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            recreateSwapChain();
+
+            return false;
+        }
+        else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+        {
+            VX_ENGINE_ERROR_STREAM("Failed to acquire swap chain image: " << core::helpers::vulkanResultToString(result) << '\n');
+            return false;
+        }
     }
-    else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+    else
     {
-        VX_ENGINE_ERROR_STREAM("Failed to acquire swap chain image: " << core::helpers::vulkanResultToString(result) << '\n');
-        return false;
+        cpuStageProfilingData.acquireImageMs = 0.0;
+        const uint32_t imageCount = std::max(1u, m_swapchain->getImageCount());
+        m_imageIndex = m_currentFrame % imageCount;
     }
 
     std::vector<uint32_t> dirtyPassIds;
@@ -883,7 +1446,7 @@ bool RenderGraph::begin()
             someShit.pColorAttachmentFormats = execution.colorFormats.data();
             someShit.depthAttachmentFormat = execution.depthFormat;
             someShit.viewMask = 0;
-            someShit.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            someShit.rasterizationSamples = execution.rasterizationSamples;
             someShit.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
 
             VkCommandBufferInheritanceInfo inherit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
@@ -1010,10 +1573,17 @@ bool RenderGraph::begin()
 void RenderGraph::end()
 {
     const auto &currentCommandBuffer = m_commandBuffers.at(m_currentFrame);
-    std::vector<VkSemaphore> waitSemaphores = {m_imageAvailableSemaphores[m_currentFrame]};
-    std::vector<VkPipelineStageFlags> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    const std::vector<VkSemaphore> signalSemaphores = {m_renderFinishedSemaphores[m_currentFrame]};
+    std::vector<VkSemaphore> waitSemaphores;
+    std::vector<VkPipelineStageFlags> waitStages;
+    std::vector<VkSemaphore> signalSemaphores;
     const std::vector<VkSwapchainKHR> swapChains = {m_swapchain->vk()};
+
+    if (m_presentToSwapchain)
+    {
+        waitSemaphores.push_back(m_imageAvailableSemaphores[m_currentFrame]);
+        waitStages.push_back(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        signalSemaphores.push_back(m_renderFinishedSemaphores[m_currentFrame]);
+    }
 
     auto &cpuStageProfilingData = m_cpuStageProfilingByFrame[m_currentFrame];
 
@@ -1042,23 +1612,30 @@ void RenderGraph::end()
     m_usedTimestampQueriesByFrame[m_currentFrame] = m_usedTimestampQueries;
     m_hasPendingProfilingResolve[m_currentFrame] = true;
 
-    VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    presentInfo.waitSemaphoreCount = static_cast<uint32_t>(signalSemaphores.size());
-    presentInfo.pWaitSemaphores = signalSemaphores.data();
-    presentInfo.swapchainCount = static_cast<uint32_t>(swapChains.size());
-    presentInfo.pSwapchains = swapChains.data();
-    presentInfo.pImageIndices = &m_imageIndex;
-    presentInfo.pResults = nullptr;
+    if (m_presentToSwapchain)
+    {
+        VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+        presentInfo.waitSemaphoreCount = static_cast<uint32_t>(signalSemaphores.size());
+        presentInfo.pWaitSemaphores = signalSemaphores.data();
+        presentInfo.swapchainCount = static_cast<uint32_t>(swapChains.size());
+        presentInfo.pSwapchains = swapChains.data();
+        presentInfo.pImageIndices = &m_imageIndex;
+        presentInfo.pResults = nullptr;
 
-    const auto presentStart = std::chrono::high_resolution_clock::now();
-    VkResult result = vkQueuePresentKHR(core::VulkanContext::getContext()->getPresentQueue(), &presentInfo);
-    const auto presentEnd = std::chrono::high_resolution_clock::now();
-    cpuStageProfilingData.presentMs = std::chrono::duration<double, std::milli>(presentEnd - presentStart).count();
+        const auto presentStart = std::chrono::high_resolution_clock::now();
+        VkResult result = vkQueuePresentKHR(core::VulkanContext::getContext()->getPresentQueue(), &presentInfo);
+        const auto presentEnd = std::chrono::high_resolution_clock::now();
+        cpuStageProfilingData.presentMs = std::chrono::duration<double, std::milli>(presentEnd - presentStart).count();
 
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
-        recreateSwapChain();
-    else if (result != VK_SUCCESS)
-        throw std::runtime_error("Failed to present swap chain image: " + core::helpers::vulkanResultToString(result));
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+            recreateSwapChain();
+        else if (result != VK_SUCCESS)
+            throw std::runtime_error("Failed to present swap chain image: " + core::helpers::vulkanResultToString(result));
+    }
+    else
+    {
+        cpuStageProfilingData.presentMs = 0.0;
+    }
 
     m_perFrameData.additionalData.clear();
 }
@@ -1237,8 +1814,11 @@ void RenderGraph::compile()
     for (const auto &[id, pass] : m_renderGraphPasses)
         pass.renderGraphPass->compile(m_renderGraphPassesStorage);
 
-    core::VulkanContext::getContext()->getSwapchain()->getWindow().addResizeCallback([this](platform::Window *, int, int)
-                                                                                     { recreateSwapChain(); });
+    if (m_presentToSwapchain)
+    {
+        core::VulkanContext::getContext()->getSwapchain()->getWindow().addResizeCallback([this](platform::Window *, int, int)
+                                                                                         { recreateSwapChain(); });
+    }
 
     // VX_ENGINE_INFO_STREAM("Memory after render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n');
 }
@@ -1265,21 +1845,41 @@ void RenderGraph::createPreviewCameraDescriptorSets()
 void RenderGraph::createPerObjectDescriptorSets()
 {
     m_perObjectDescriptorSets.resize(RenderGraph::MAX_FRAMES_IN_FLIGHT);
+    m_shadowPerObjectDescriptorSets.resize(RenderGraph::MAX_FRAMES_IN_FLIGHT);
 
     m_bonesSSBOs.reserve(RenderGraph::MAX_FRAMES_IN_FLIGHT);
+    m_instanceSSBOs.reserve(RenderGraph::MAX_FRAMES_IN_FLIGHT);
+    m_shadowInstanceSSBOs.reserve(RenderGraph::MAX_FRAMES_IN_FLIGHT);
 
     static constexpr VkDeviceSize bonesStructSize = sizeof(glm::mat4);
-    static constexpr uint8_t INIT_BONES_COUNT = 100;
-    static constexpr VkDeviceSize INITIAL_SIZE = bonesStructSize * (INIT_BONES_COUNT * bonesStructSize);
+    static constexpr uint32_t INIT_BONES_COUNT = 1000u;
+    static constexpr VkDeviceSize BONES_INITIAL_SIZE = bonesStructSize * INIT_BONES_COUNT;
+
+    static constexpr VkDeviceSize instanceStructSize = sizeof(PerObjectInstanceData);
+    static constexpr uint32_t INIT_INSTANCE_COUNT = 20000u;
+    static constexpr VkDeviceSize INSTANCES_INITIAL_SIZE = instanceStructSize * INIT_INSTANCE_COUNT;
+    static constexpr uint32_t INIT_SHADOW_INSTANCE_COUNT = 100000u;
+    static constexpr VkDeviceSize SHADOW_INSTANCES_INITIAL_SIZE = instanceStructSize * INIT_SHADOW_INSTANCE_COUNT;
 
     for (size_t i = 0; i < RenderGraph::MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        auto ssboBuffer = m_bonesSSBOs.emplace_back(core::Buffer::createShared(INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                                                               core::memory::MemoryUsage::CPU_TO_GPU));
+        auto bonesBuffer = m_bonesSSBOs.emplace_back(core::Buffer::createShared(BONES_INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                                                core::memory::MemoryUsage::CPU_TO_GPU));
+        auto instanceBuffer = m_instanceSSBOs.emplace_back(core::Buffer::createShared(INSTANCES_INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                                                      core::memory::MemoryUsage::CPU_TO_GPU));
+        auto shadowInstanceBuffer = m_shadowInstanceSSBOs.emplace_back(core::Buffer::createShared(SHADOW_INSTANCES_INITIAL_SIZE,
+                                                                                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                                                                   core::memory::MemoryUsage::CPU_TO_GPU));
 
         m_perObjectDescriptorSets[i] = DescriptorSetBuilder::begin()
-                                           .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                                           .addBuffer(bonesBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                                           .addBuffer(instanceBuffer, VK_WHOLE_SIZE, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                                            .build(core::VulkanContext::getContext()->getDevice(), m_descriptorPool, EngineShaderFamilies::objectDescriptorSetLayout->vk());
+
+        m_shadowPerObjectDescriptorSets[i] = DescriptorSetBuilder::begin()
+                                                 .addBuffer(bonesBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                                                 .addBuffer(shadowInstanceBuffer, VK_WHOLE_SIZE, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                                                 .build(core::VulkanContext::getContext()->getDevice(), m_descriptorPool, EngineShaderFamilies::objectDescriptorSetLayout->vk());
     }
 }
 
@@ -1412,7 +2012,8 @@ void RenderGraph::cleanResources()
     m_failedAlbedoTexturePaths.clear();
     m_renderGraphPassesStorage.cleanup();
 
-    EngineShaderFamilies::cleanEngineShaderFamilies();
+    if (m_cleanupSharedShaderFamilies)
+        EngineShaderFamilies::cleanEngineShaderFamilies();
 }
 
 ELIX_CUSTOM_NAMESPACE_END

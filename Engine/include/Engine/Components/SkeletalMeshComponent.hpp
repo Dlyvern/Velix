@@ -70,11 +70,15 @@ public:
     const Skeleton &getSkeleton() const;
     Skeleton &getSkeleton();
 
+    void setAssetPath(const std::string &path) { m_assetPath = path; }
+    const std::string &getAssetPath() const { return m_assetPath; }
+
 private:
     std::vector<CPUMesh> m_meshes;
     Skeleton m_skeleton;
     std::vector<Material::SharedPtr> m_perMeshMaterialOverrides;
     std::vector<std::string> m_perMeshMaterialOverridePaths;
+    std::string m_assetPath;
 };
 
 ELIX_NESTED_NAMESPACE_END

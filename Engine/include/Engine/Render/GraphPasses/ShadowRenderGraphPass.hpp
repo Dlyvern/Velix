@@ -24,6 +24,7 @@ public:
     void setup(RGPResourcesBuilder &builder) override;
     void compile(RGPResourcesStorage &storage) override;
     void cleanup() override;
+    void syncQualitySettings();
 
     RGPResourceHandler &getDirectionalShadowHandler()
     {
@@ -59,6 +60,9 @@ private:
     void destroyLayerViews();
     void rebuildLayerViews();
     VkImageView createSingleLayerView(const RenderTarget *target, uint32_t baseArrayLayer) const;
+    void setShadowExtent(VkExtent2D extent);
+    void updateShadowExtentFromSettings();
+    void updateDirectionalCascadeCountFromSettings();
 
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
 
@@ -71,7 +75,8 @@ private:
     VkViewport m_viewport{};
     VkRect2D m_scissor{};
 
-    VkExtent2D m_extent{2096, 2096};
+    VkExtent2D m_extent{2048, 2048};
+    uint32_t m_directionalCascadeCount{ShadowConstants::MAX_DIRECTIONAL_CASCADES};
 
     VkClearValue m_clearValue;
 

@@ -21,7 +21,8 @@ class Image
     ELIX_DECLARE_VK_LIFECYCLE()
 public:
     Image(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
-          VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0);
+          VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0,
+          VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT);
 
     Image(VkImage image);
 
@@ -31,7 +32,8 @@ public:
     void bind(VkDeviceSize memoryOffset = 0);
 
     void createVk(VkExtent2D extent, VkImageUsageFlags usage,
-                  memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0);
+                  memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1,
+                  VkImageCreateFlags flags = 0, VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT);
 
     ~Image();
 

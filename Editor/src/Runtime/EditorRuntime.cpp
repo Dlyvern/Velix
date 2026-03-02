@@ -7,14 +7,187 @@
 
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Components/CameraComponent.hpp"
+#include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/PluginSystem/PluginLoader.hpp"
+#include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Engine/Scripting/VelixAPI.hpp"
 
 #include "Core/Logger.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
+#include <limits>
+#include <string>
 #include <vector>
+
+namespace
+{
+    std::string sharedLibraryExtension()
+    {
+#if defined(_WIN32)
+        return ".dll";
+#elif defined(__linux__)
+        return ".so";
+#else
+        return "";
+#endif
+    }
+
+    std::string toLowerCopy(std::string value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
+                       { return static_cast<char>(std::tolower(character)); });
+        return value;
+    }
+
+    int buildArtifactPreference(const std::filesystem::path &path)
+    {
+        for (const auto &segment : path)
+        {
+            const std::string loweredSegment = toLowerCopy(segment.string());
+            if (loweredSegment == "release")
+                return 0;
+            if (loweredSegment == "relwithdebinfo")
+                return 1;
+            if (loweredSegment == "minsizerel")
+                return 2;
+            if (loweredSegment == "debug")
+                return 4;
+        }
+
+        return 3;
+    }
+
+    std::filesystem::path findGameModuleLibraryPath(const std::filesystem::path &buildDirectory)
+    {
+        if (buildDirectory.empty() || !std::filesystem::exists(buildDirectory))
+            return {};
+
+        const std::string libraryExtension = sharedLibraryExtension();
+        if (libraryExtension.empty())
+            return {};
+
+        const std::vector<std::filesystem::path> searchRoots = {
+            buildDirectory / "Release",
+            buildDirectory / "RelWithDebInfo",
+            buildDirectory / "MinSizeRel",
+            buildDirectory,
+            buildDirectory / "Debug",
+        };
+
+        const std::vector<std::string> moduleNames = {
+            std::string("GameModule") + libraryExtension,
+            std::string("libGameModule") + libraryExtension};
+
+        for (const auto &searchRoot : searchRoots)
+        {
+            if (!std::filesystem::exists(searchRoot))
+                continue;
+
+            for (const auto &moduleName : moduleNames)
+            {
+                const auto candidatePath = searchRoot / moduleName;
+                if (std::filesystem::exists(candidatePath) && std::filesystem::is_regular_file(candidatePath))
+                    return candidatePath;
+            }
+        }
+
+        std::filesystem::path bestMatch;
+        int bestPreference = std::numeric_limits<int>::max();
+
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(buildDirectory))
+        {
+            if (!entry.is_regular_file())
+                continue;
+
+            const auto path = entry.path();
+            if (path.extension() != libraryExtension)
+                continue;
+
+            const std::string stem = path.stem().string();
+            if (stem == "GameModule" || stem == "libGameModule")
+            {
+                const int candidatePreference = buildArtifactPreference(path);
+                if (candidatePreference < bestPreference ||
+                    (candidatePreference == bestPreference && path.string() < bestMatch.string()))
+                {
+                    bestPreference = candidatePreference;
+                    bestMatch = path;
+                }
+                continue;
+            }
+
+            if (path.filename().string().find("GameModule") != std::string::npos)
+            {
+                const int candidatePreference = buildArtifactPreference(path);
+                if (candidatePreference < bestPreference ||
+                    (candidatePreference == bestPreference && path.string() < bestMatch.string()))
+                {
+                    bestPreference = candidatePreference;
+                    bestMatch = path;
+                }
+            }
+        }
+
+        return bestMatch;
+    }
+
+    bool tryLoadProjectScriptsModule(elix::editor::Project &project,
+                                     elix::engine::ScriptsRegister *&outScriptsRegister,
+                                     std::string &outModulePath)
+    {
+        outScriptsRegister = nullptr;
+        outModulePath.clear();
+
+        const std::filesystem::path buildDirectory = project.buildDir.empty()
+                                                         ? std::filesystem::path(project.fullPath) / "build"
+                                                         : std::filesystem::path(project.buildDir);
+
+        const std::filesystem::path moduleLibraryPath = findGameModuleLibraryPath(buildDirectory);
+        if (moduleLibraryPath.empty())
+        {
+            elix::engine::ScriptsRegister::setActiveRegister(nullptr);
+            VX_EDITOR_WARNING_STREAM("GameModule not found in build directory. Scripts will remain unavailable until module is built.\n");
+            return false;
+        }
+
+        if (project.projectLibrary)
+        {
+            elix::engine::ScriptsRegister::setActiveRegister(nullptr);
+            elix::engine::PluginLoader::closeLibrary(project.projectLibrary);
+            project.projectLibrary = nullptr;
+        }
+
+        project.projectLibrary = elix::engine::PluginLoader::loadLibrary(moduleLibraryPath.string());
+        if (!project.projectLibrary)
+        {
+            elix::engine::ScriptsRegister::setActiveRegister(nullptr);
+            VX_EDITOR_ERROR_STREAM("Failed to load game module on startup: " << moduleLibraryPath << '\n');
+            return false;
+        }
+
+        auto getScriptsRegisterFunction = elix::engine::PluginLoader::getFunction<elix::engine::ScriptsRegister &(*)()>(
+            "getScriptsRegister",
+            project.projectLibrary);
+        if (!getScriptsRegisterFunction)
+        {
+            elix::engine::PluginLoader::closeLibrary(project.projectLibrary);
+            project.projectLibrary = nullptr;
+            elix::engine::ScriptsRegister::setActiveRegister(nullptr);
+            VX_EDITOR_ERROR_STREAM("Game module loaded but getScriptsRegister symbol is missing: " << moduleLibraryPath << '\n');
+            return false;
+        }
+
+        outScriptsRegister = &getScriptsRegisterFunction();
+        outModulePath = moduleLibraryPath.string();
+        elix::engine::ScriptsRegister::setActiveRegister(outScriptsRegister);
+
+        VX_EDITOR_INFO_STREAM("Loaded " << outScriptsRegister->getScripts().size() << " script(s) from " << outModulePath << '\n');
+        return true;
+    }
+} // namespace
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -39,19 +212,24 @@ bool EditorRuntime::init()
         return false;
     }
 
-    m_scene = std::make_shared<engine::Scene>();
-    engine::scripting::setActiveScene(m_scene.get());
+    engine::ScriptsRegister *startupScriptsRegister = nullptr;
+    std::string startupModulePath;
+    tryLoadProjectScriptsModule(*m_project, startupScriptsRegister, startupModulePath);
 
-    if (!m_scene->loadSceneFromFile(m_project->entryScene))
+    m_editorScene = std::make_shared<engine::Scene>();
+    if (!m_editorScene->loadSceneFromFile(m_project->entryScene))
         throw std::runtime_error("Failed to load scene");
+
+    m_activeScene = m_editorScene;
+    engine::scripting::setActiveScene(m_activeScene.get());
 
     m_shaderHotReloader = std::make_unique<engine::shaders::ShaderHotReloader>("./resources/shaders");
     m_shaderHotReloader->setPollIntervalSeconds(0.35);
     m_shaderHotReloader->prime();
 
-    m_renderGraph = std::make_unique<engine::renderGraph::RenderGraph>();
-
     m_editor = std::make_shared<Editor>();
+
+    m_renderGraph = std::make_unique<engine::renderGraph::RenderGraph>(true, true);
 
     m_gBufferRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::GBufferRenderGraphPass>();
     m_shadowRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ShadowRenderGraphPass>();
@@ -80,11 +258,16 @@ bool EditorRuntime::init()
         m_ssrRenderGraphPass->getOutput(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
+    m_particleRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
+        m_skyLightRenderGraphPass->getOutput(),
+        &m_gBufferRenderGraphPass->getDepthTextureHandler());
+    m_particleRenderGraphPass->setScene(m_activeScene.get());
+
     m_bloomRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::BloomRenderGraphPass>(
-        m_skyLightRenderGraphPass->getOutput());
+        m_particleRenderGraphPass->getHandlers());
 
     m_tonemapRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::TonemapRenderGraphPass>(
-        m_skyLightRenderGraphPass->getOutput());
+        m_particleRenderGraphPass->getHandlers());
 
     m_bloomCompositeRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::BloomCompositeRenderGraphPass>(
         m_tonemapRenderGraphPass->getHandlers(),
@@ -101,46 +284,138 @@ bool EditorRuntime::init()
         m_smaaRenderGraphPass->getHandlers(),
         m_gBufferRenderGraphPass->getObjectTextureHandler());
 
-    m_renderGraph->addPass<ImGuiRenderGraphPass>(
+    m_uiRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::UIRenderGraphPass>(
+        m_selectionOverlayRenderGraphPass->getHandlers());
+
+    m_editorBillboardRenderGraphPass = m_renderGraph->addPass<EditorBillboardRenderGraphPass>(
+        m_activeScene,
+        m_uiRenderGraphPass->getHandlers());
+    m_editorBillboardRenderGraphPass->setCameraIconTexturePath("./resources/textures/velix_logo.tex.elixasset");
+    m_editorBillboardRenderGraphPass->setLightIconTexturePath("./resources/textures/velix_logo.tex.elixasset");
+    m_editorBillboardRenderGraphPass->setAudioIconTexturePath("./resources/textures/velix_logo.tex.elixasset");
+
+    m_imGuiRenderGraphPass = m_renderGraph->addPass<ImGuiRenderGraphPass>(
         m_editor,
-        m_selectionOverlayRenderGraphPass->getHandlers(),
+        m_editorBillboardRenderGraphPass->getHandlers(),
         m_gBufferRenderGraphPass->getObjectTextureHandler());
 
-    VkExtent2D extent{.width = 256, .height = 256};
-    m_previewAssetsRenderGraphPass = m_renderGraph->addPass<PreviewAssetsRenderGraphPass>(extent);
+    VkExtent2D previewExtent{.width = 256, .height = 256};
+    m_previewAssetsRenderGraphPass = m_renderGraph->addPass<PreviewAssetsRenderGraphPass>(previewExtent);
 
     m_renderGraph->setup();
     m_renderGraph->createRenderGraphResources();
 
-    m_editor->addOnViewportChangedCallback([&](uint32_t w, uint32_t h)
-                                           {
-                                               VkExtent2D extent{.width = w, .height = h};
-                                               m_gBufferRenderGraphPass->setExtent(extent);
-                                               m_ssaoRenderGraphPass->setExtent(extent);
-                                               m_lightingRenderGraphPass->setExtent(extent);
-                                               m_ssrRenderGraphPass->setExtent(extent);
-                                               m_skyLightRenderGraphPass->setExtent(extent);
-                                               m_bloomRenderGraphPass->setExtent(extent);
-                                               m_tonemapRenderGraphPass->setExtent(extent);
-                                               m_bloomCompositeRenderGraphPass->setExtent(extent);
-                                               m_fxaaRenderGraphPass->setExtent(extent);
-                                               m_smaaRenderGraphPass->setExtent(extent);
-                                               m_selectionOverlayRenderGraphPass->setExtent(extent); });
+    m_gameViewportRenderGraph = std::make_unique<engine::renderGraph::RenderGraph>(false, false);
 
-    m_editor->setScene(m_scene);
-    m_editor->setProject(m_project);
+    m_gameGBufferRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::GBufferRenderGraphPass>();
+    m_gameShadowRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ShadowRenderGraphPass>();
 
-    m_currentRenderCamera = m_editor->getCurrentCamera();
-    if (m_currentRenderCamera)
-        m_currentRenderCamera->setPosition({0.0f, 1.0f, 5.0f});
+    m_gameSSAORenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SSAORenderGraphPass>(
+        m_gameGBufferRenderGraphPass->getDepthTextureHandler(),
+        m_gameGBufferRenderGraphPass->getNormalTextureHandlers());
 
-    auto forEachScriptComponent = [&](auto &&function)
+    m_gameLightingRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::LightingRenderGraphPass>(
+        m_gameShadowRenderGraphPass->getDirectionalShadowHandler(),
+        m_gameGBufferRenderGraphPass->getDepthTextureHandler(),
+        m_gameShadowRenderGraphPass->getCubeShadowHandler(),
+        m_gameShadowRenderGraphPass->getSpotShadowHandler(),
+        m_gameGBufferRenderGraphPass->getAlbedoTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getMaterialTextureHandlers(),
+        &m_gameSSAORenderGraphPass->getAOHandlers());
+
+    m_gameSSRRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
+        m_gameLightingRenderGraphPass->getOutput(),
+        m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getDepthTextureHandler());
+
+    m_gameSkyLightRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SkyLightRenderGraphPass>(
+        m_gameSSRRenderGraphPass->getOutput(),
+        m_gameGBufferRenderGraphPass->getDepthTextureHandler());
+
+    m_gameParticleRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
+        m_gameSkyLightRenderGraphPass->getOutput(),
+        &m_gameGBufferRenderGraphPass->getDepthTextureHandler());
+    m_gameParticleRenderGraphPass->setScene(m_activeScene.get());
+
+    m_gameBloomRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::BloomRenderGraphPass>(
+        m_gameParticleRenderGraphPass->getHandlers());
+
+    m_gameTonemapRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::TonemapRenderGraphPass>(
+        m_gameParticleRenderGraphPass->getHandlers());
+
+    m_gameBloomCompositeRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::BloomCompositeRenderGraphPass>(
+        m_gameTonemapRenderGraphPass->getHandlers(),
+        m_gameBloomRenderGraphPass->getHandlers());
+
+    m_gameFXAARenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::FXAARenderGraphPass>(
+        m_gameBloomCompositeRenderGraphPass->getHandlers());
+
+    m_gameSMAARenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SMAAPassRenderGraphPass>(
+        m_gameFXAARenderGraphPass->getHandlers());
+
+    m_gameUIRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::UIRenderGraphPass>(
+        m_gameSMAARenderGraphPass->getHandlers());
+
+    m_gameViewportRenderGraph->setup();
+    m_gameViewportRenderGraph->createRenderGraphResources();
+
+    auto syncEditorViewportExtent = [&](uint32_t width, uint32_t height)
     {
-        // Scripts can spawn/destroy entities in onStart/onStop.
-        // Copy shared_ptrs first to keep iteration stable and objects alive.
+        const VkExtent2D extent{.width = std::max(width, 1u), .height = std::max(height, 1u)};
+        m_gBufferRenderGraphPass->setExtent(extent);
+        m_ssaoRenderGraphPass->setExtent(extent);
+        m_lightingRenderGraphPass->setExtent(extent);
+        m_ssrRenderGraphPass->setExtent(extent);
+        m_skyLightRenderGraphPass->setExtent(extent);
+        m_bloomRenderGraphPass->setExtent(extent);
+        m_tonemapRenderGraphPass->setExtent(extent);
+        m_bloomCompositeRenderGraphPass->setExtent(extent);
+        m_fxaaRenderGraphPass->setExtent(extent);
+        m_smaaRenderGraphPass->setExtent(extent);
+        m_selectionOverlayRenderGraphPass->setExtent(extent);
+        m_uiRenderGraphPass->setExtent(extent);
+        m_editorBillboardRenderGraphPass->setExtent(extent);
+        m_particleRenderGraphPass->setExtent(extent);
+    };
+
+    auto syncGameViewportExtent = [&](uint32_t width, uint32_t height)
+    {
+        const VkExtent2D extent{.width = std::max(width, 1u), .height = std::max(height, 1u)};
+        m_gameGBufferRenderGraphPass->setExtent(extent);
+        m_gameSSAORenderGraphPass->setExtent(extent);
+        m_gameLightingRenderGraphPass->setExtent(extent);
+        m_gameSSRRenderGraphPass->setExtent(extent);
+        m_gameSkyLightRenderGraphPass->setExtent(extent);
+        m_gameBloomRenderGraphPass->setExtent(extent);
+        m_gameTonemapRenderGraphPass->setExtent(extent);
+        m_gameBloomCompositeRenderGraphPass->setExtent(extent);
+        m_gameFXAARenderGraphPass->setExtent(extent);
+        m_gameSMAARenderGraphPass->setExtent(extent);
+        m_gameUIRenderGraphPass->setExtent(extent);
+        m_gameParticleRenderGraphPass->setExtent(extent);
+    };
+
+    m_editor->addOnViewportChangedCallback(syncEditorViewportExtent);
+    m_editor->addOnGameViewportChangedCallback(syncGameViewportExtent);
+
+    m_editor->setScene(m_activeScene);
+    m_editor->setProject(m_project);
+    m_editor->setProjectScriptsRegister(startupScriptsRegister, startupModulePath);
+
+    m_editorRenderCamera = m_editor->getCurrentCamera();
+    if (m_editorRenderCamera)
+        m_editorRenderCamera->setPosition({0.0f, 1.0f, 5.0f});
+
+    auto forEachScriptComponent = [](const std::shared_ptr<engine::Scene> &scene, auto &&function)
+    {
+        if (!scene)
+            return;
+
         std::vector<engine::Entity::SharedPtr> entitiesSnapshot;
-        entitiesSnapshot.reserve(m_scene->getEntities().size());
-        for (const auto &entity : m_scene->getEntities())
+        entitiesSnapshot.reserve(scene->getEntities().size());
+        for (const auto &entity : scene->getEntities())
             entitiesSnapshot.push_back(entity);
 
         for (const auto &entity : entitiesSnapshot)
@@ -153,36 +428,58 @@ bool EditorRuntime::init()
         }
     };
 
-    m_editor->addOnModeChangedCallback([&](Editor::EditorMode mode)
+    auto switchActiveScene = [this](const std::shared_ptr<engine::Scene> &scene)
+    {
+        if (!scene)
+            return;
+
+        m_activeScene = scene;
+        engine::scripting::setActiveScene(m_activeScene.get());
+        m_editor->setScene(m_activeScene);
+
+        if (m_particleRenderGraphPass)
+            m_particleRenderGraphPass->setScene(m_activeScene.get());
+        if (m_gameParticleRenderGraphPass)
+            m_gameParticleRenderGraphPass->setScene(m_activeScene.get());
+        if (m_editorBillboardRenderGraphPass)
+            m_editorBillboardRenderGraphPass->setScene(m_activeScene);
+
+        m_gameRenderCamera = nullptr;
+        for (const auto &entity : m_activeScene->getEntities())
+        {
+            if (!entity || !entity->isEnabled())
+                continue;
+
+            if (auto *cameraComponent = entity->getComponent<engine::CameraComponent>())
+            {
+                m_gameRenderCamera = cameraComponent->getCamera();
+                break;
+            }
+        }
+    };
+
+    switchActiveScene(m_editorScene);
+
+    m_editor->addOnModeChangedCallback([this, switchActiveScene, forEachScriptComponent](Editor::EditorMode mode)
                                        {
                                            if (mode == Editor::EditorMode::PLAY)
                                            {
                                                if (!m_isPlaySessionActive)
                                                {
-                                                   m_currentRenderCamera = nullptr;
-
-                                                   for (const auto &entity : m_scene->getEntities())
+                                                   m_playScene = m_editorScene ? m_editorScene->copy() : nullptr;
+                                                   if (!m_playScene)
                                                    {
-                                                       if (!entity || !entity->isEnabled())
-                                                           continue;
-
-                                                       // Find first camera for play rendering.
-                                                       if (auto cameraComponent = entity->getComponent<engine::CameraComponent>())
-                                                       {
-                                                           m_currentRenderCamera = cameraComponent->getCamera();
-                                                           break;
-                                                       }
+                                                       VX_EDITOR_ERROR_STREAM("Failed to create play scene copy.\n");
+                                                       m_shouldUpdate = false;
+                                                       return;
                                                    }
 
-                                                   for (const auto &entity : m_scene->getEntities())
-                                                   {
-                                                       if (!entity || !entity->isEnabled())
-                                                           continue;
-
-                                                       for (auto *scriptComponent : entity->getComponents<engine::ScriptComponent>())
-                                                           scriptComponent->onAttach();
-                                                   }
-
+                                                   switchActiveScene(m_playScene);
+                                                   forEachScriptComponent(m_activeScene, [](engine::ScriptComponent *scriptComponent)
+                                                                          {
+                                                                              if (scriptComponent)
+                                                                                  scriptComponent->onAttach();
+                                                                          });
                                                    m_isPlaySessionActive = true;
                                                }
 
@@ -196,13 +493,17 @@ bool EditorRuntime::init()
                                            {
                                                if (m_isPlaySessionActive)
                                                {
-                                                   forEachScriptComponent([](engine::ScriptComponent *scriptComponent)
-                                                                          { scriptComponent->onDetach(); });
+                                                   forEachScriptComponent(m_activeScene, [](engine::ScriptComponent *scriptComponent)
+                                                                          {
+                                                                              if (scriptComponent)
+                                                                                  scriptComponent->onDetach();
+                                                                          });
 
+                                                   m_playScene.reset();
                                                    m_isPlaySessionActive = false;
                                                }
 
-                                               m_currentRenderCamera = m_editor->getCurrentCamera();
+                                               switchActiveScene(m_editorScene);
                                                m_shouldUpdate = false;
                                            } });
 
@@ -211,25 +512,34 @@ bool EditorRuntime::init()
 
 void EditorRuntime::tick(float deltaTime)
 {
-    // m_shaderHotReloader->update(deltaTime);
-
-    // bool shouldReloadShaders = m_shaderHotReloader->consumeReloadRequest();
-    // if (m_editor->consumeShaderReloadRequest())
-    //     shouldReloadShaders = true;
-
-    // if (shouldReloadShaders)
-    // {
-    //     vkDeviceWaitIdle(core::VulkanContext::getContext()->getDevice());
-    //     engine::GraphicsPipelineManager::reloadShaders();
-    // }
+    if (!m_activeScene || !m_editor || !m_renderGraph)
+        return;
 
     if (m_shouldUpdate)
-        m_scene->update(deltaTime);
+        m_activeScene->update(deltaTime);
     else
+    {
         m_editor->updateAnimationPreview(deltaTime);
 
-    m_previewAssetsRenderGraphPass->clearJobs();
+        if (!m_isPlaySessionActive)
+        {
+            for (const auto &entity : m_activeScene->getEntities())
+            {
+                if (!entity || !entity->isEnabled())
+                    continue;
 
+                for (auto *particleSystemComponent : entity->getComponents<engine::ParticleSystemComponent>())
+                {
+                    if (!particleSystemComponent)
+                        continue;
+
+                    particleSystemComponent->update(deltaTime);
+                }
+            }
+        }
+    }
+
+    m_previewAssetsRenderGraphPass->clearJobs();
     for (const auto &previewJob : m_editor->getRequestedPreviewJobs())
     {
         PreviewAssetsRenderGraphPass::PreviewJob job;
@@ -239,12 +549,67 @@ void EditorRuntime::tick(float deltaTime)
         m_previewAssetsRenderGraphPass->addPreviewJob(job);
     }
 
-    const uint32_t viewportWidth = m_editor->getViewportX();
-    const uint32_t viewportHeight = m_editor->getViewportY();
-    if (m_currentRenderCamera && viewportWidth > 0 && viewportHeight > 0)
-        m_currentRenderCamera->setAspect(static_cast<float>(viewportWidth) / static_cast<float>(viewportHeight));
+    const uint32_t editorViewportWidth = m_editor->getViewportX();
+    const uint32_t editorViewportHeight = m_editor->getViewportY();
+    if (m_editorRenderCamera && editorViewportWidth > 0 && editorViewportHeight > 0)
+        m_editorRenderCamera->setAspect(static_cast<float>(editorViewportWidth) / static_cast<float>(editorViewportHeight));
 
-    m_renderGraph->prepareFrame(m_currentRenderCamera, m_scene.get(), deltaTime);
+    m_gameRenderCamera = nullptr;
+    for (const auto &entity : m_activeScene->getEntities())
+    {
+        if (!entity || !entity->isEnabled())
+            continue;
+
+        if (auto *cameraComponent = entity->getComponent<engine::CameraComponent>())
+        {
+            m_gameRenderCamera = cameraComponent->getCamera();
+            break;
+        }
+    }
+
+    const uint32_t gameViewportWidth = m_editor->getGameViewportX();
+    const uint32_t gameViewportHeight = m_editor->getGameViewportY();
+    if (m_gameRenderCamera && gameViewportWidth > 0 && gameViewportHeight > 0)
+        m_gameRenderCamera->setAspect(static_cast<float>(gameViewportWidth) / static_cast<float>(gameViewportHeight));
+
+    engine::ui::UIRenderData uiData;
+    for (const auto &text : m_activeScene->getUITexts())
+        if (text && text->isEnabled())
+            uiData.texts.push_back(text.get());
+    for (const auto &button : m_activeScene->getUIButtons())
+        if (button && button->isEnabled())
+            uiData.buttons.push_back(button.get());
+    for (const auto &billboard : m_activeScene->getBillboards())
+        if (billboard && billboard->isEnabled())
+            uiData.billboards.push_back(billboard.get());
+
+    if (m_uiRenderGraphPass)
+        m_uiRenderGraphPass->setRenderData(uiData);
+    if (m_gameUIRenderGraphPass)
+        m_gameUIRenderGraphPass->setRenderData(uiData);
+
+    if (m_shadowRenderGraphPass)
+        m_shadowRenderGraphPass->syncQualitySettings();
+    if (m_gameShadowRenderGraphPass)
+        m_gameShadowRenderGraphPass->syncQualitySettings();
+
+    if (m_gameViewportRenderGraph && m_gameRenderCamera)
+    {
+        m_gameViewportRenderGraph->prepareFrame(m_gameRenderCamera, m_activeScene.get(), deltaTime);
+        m_gameViewportRenderGraph->draw();
+
+        if (m_imGuiRenderGraphPass && m_gameUIRenderGraphPass)
+            m_imGuiRenderGraphPass->setGameViewportImages(
+                m_gameUIRenderGraphPass->getOutputImageViews(),
+                true,
+                m_gameViewportRenderGraph->getCurrentImageIndex());
+    }
+    else if (m_imGuiRenderGraphPass)
+    {
+        m_imGuiRenderGraphPass->setGameViewportImages({}, false, 0u);
+    }
+
+    m_renderGraph->prepareFrame(m_editorRenderCamera, m_activeScene.get(), deltaTime);
     m_editor->setRenderGraphProfilingData(m_renderGraph->getLastFrameProfilingData());
     m_renderGraph->draw();
     m_editor->processPendingObjectSelection();
@@ -254,8 +619,13 @@ void EditorRuntime::tick(float deltaTime)
 
 void EditorRuntime::shutdown()
 {
+    engine::ScriptsRegister::setActiveRegister(nullptr);
+
     if (m_renderGraph)
         m_renderGraph->cleanResources();
+
+    if (m_gameViewportRenderGraph)
+        m_gameViewportRenderGraph->cleanResources();
 
     engine::scripting::setActiveScene(nullptr);
     engine::scripting::setActiveWindow(nullptr);

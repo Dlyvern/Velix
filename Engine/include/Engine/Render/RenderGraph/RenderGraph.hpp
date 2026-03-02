@@ -39,7 +39,7 @@ class RenderGraph
     };
 
 public:
-    RenderGraph();
+    explicit RenderGraph(bool presentToSwapchain = true, bool cleanupSharedShaderFamilies = true);
 
     template <typename T, typename... Args>
     T *addPass(Args &&...args)
@@ -76,6 +76,11 @@ public:
         return m_lastFrameProfilingData;
     }
 
+    uint32_t getCurrentImageIndex() const
+    {
+        return m_imageIndex;
+    }
+
     static constexpr uint16_t MAX_FRAMES_IN_FLIGHT = 2;
 
     VkDescriptorPool getDescriptorPool() const
@@ -88,6 +93,12 @@ public:
     void cleanResources();
 
 private:
+    struct MeshLocalBounds
+    {
+        glm::vec3 center{0.0f};
+        float radius{0.0f};
+    };
+
     RenderGraphPassData *findRenderGraphPassById(uint32_t id)
     {
         for (auto &[_, renderGraphPass] : m_renderGraphPasses)
@@ -133,7 +144,7 @@ private:
     static constexpr uint32_t MAX_RENDER_JOBS = 255;
 
     void sortRenderGraphPasses();
-    void prepareFrameDataFromScene(Scene *scene);
+    void prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling);
 
     void recreateSwapChain();
 
@@ -160,7 +171,10 @@ private:
     std::vector<core::Buffer::SharedPtr> m_lightSSBOs;
 
     std::vector<core::Buffer::SharedPtr> m_bonesSSBOs;
+    std::vector<core::Buffer::SharedPtr> m_instanceSSBOs;
+    std::vector<core::Buffer::SharedPtr> m_shadowInstanceSSBOs;
     std::vector<VkDescriptorSet> m_perObjectDescriptorSets;
+    std::vector<VkDescriptorSet> m_shadowPerObjectDescriptorSets;
 
     std::vector<void *> m_cameraMapped;
     std::vector<core::Buffer::SharedPtr> m_cameraUniformObjects;
@@ -186,8 +200,11 @@ private:
     std::array<std::vector<VkSemaphore>, MAX_FRAMES_IN_FLIGHT> m_uploadWaitSemaphoresByFrame;
 
     std::unordered_map<std::size_t, GPUMesh::SharedPtr> m_meshes;
+    std::unordered_map<std::size_t, MeshLocalBounds> m_meshLocalBoundsByHash;
     std::unordered_map<std::string, Material::SharedPtr> m_materialsByAlbedoPath;
     std::unordered_set<std::string> m_failedAlbedoTexturePaths;
+    std::unordered_map<std::string, Material::SharedPtr> m_materialsByAssetPath;
+    std::unordered_set<std::string> m_failedMaterialAssetPaths;
 
     VkQueryPool m_timestampQueryPool{VK_NULL_HANDLE};
     uint32_t m_timestampQueryCapacity{0};
@@ -201,6 +218,8 @@ private:
     float m_timestampPeriodNs{0.0f};
     bool m_isGpuTimingAvailable{false};
     uint64_t m_profiledFrameIndex{0};
+    bool m_presentToSwapchain{true};
+    bool m_cleanupSharedShaderFamilies{true};
 
     std::array<std::vector<PassExecutionProfilingData>, MAX_FRAMES_IN_FLIGHT> m_passExecutionProfilingDataByFrame;
     std::array<bool, MAX_FRAMES_IN_FLIGHT> m_hasPendingProfilingResolve{};

@@ -24,8 +24,42 @@ public:
         Ultra  = 4096
     };
 
+    enum class ShadowCascadeCount : uint8_t
+    {
+        X1 = 1,
+        X2 = 2,
+        X4 = 4
+    };
+
+    enum class MSAAMode : uint8_t
+    {
+        OFF = 0,
+        X2  = 1,
+        X4  = 2,
+        X8  = 3,
+        X16 = 4
+    };
+
+    enum class AnisotropyMode : uint8_t
+    {
+        OFF = 0,
+        X2  = 1,
+        X4  = 2,
+        X8  = 3,
+        X16 = 4
+    };
+
+    enum class AntiAliasingMode : uint8_t
+    {
+        NONE = 0,
+        FXAA = 1,
+        SMAA = 2,
+        TAA  = 3
+    };
+
     // Shadow
     ShadowQuality shadowQuality{ShadowQuality::High};
+    ShadowCascadeCount shadowCascadeCount{ShadowCascadeCount::X4};
 
     // Post-processing toggles
     bool enablePostProcessing{true};
@@ -47,6 +81,10 @@ public:
     // Render scale (1.0 = native)
     float renderScale{1.0f};
 
+    // MSAA (deferred GBuffer path)
+    MSAAMode msaaMode{MSAAMode::OFF};
+    AnisotropyMode anisotropyMode{AnisotropyMode::X16};
+
     // SSAO / GTAO
     bool  enableSSAO{true};
     float ssaoRadius{0.5f};
@@ -62,9 +100,87 @@ public:
     // SMAA
     bool  enableSMAA{false}; // replaces FXAA when on
 
+    AntiAliasingMode getAntiAliasingMode() const
+    {
+        if (enableTAA)
+            return AntiAliasingMode::TAA;
+
+        if (enableSMAA)
+            return AntiAliasingMode::SMAA;
+
+        if (enableFXAA)
+            return AntiAliasingMode::FXAA;
+
+        return AntiAliasingMode::NONE;
+    }
+
+    void setAntiAliasingMode(AntiAliasingMode mode)
+    {
+        enableFXAA = false;
+        enableSMAA = false;
+        enableTAA = false;
+
+        switch (mode)
+        {
+        case AntiAliasingMode::FXAA:
+            enableFXAA = true;
+            break;
+        case AntiAliasingMode::SMAA:
+            enableSMAA = true;
+            break;
+        case AntiAliasingMode::TAA:
+            enableTAA = true;
+            break;
+        case AntiAliasingMode::NONE:
+        default:
+            break;
+        }
+    }
+
+    uint32_t getMSAASampleCount() const
+    {
+        switch (msaaMode)
+        {
+        case MSAAMode::X2:
+            return 2u;
+        case MSAAMode::X4:
+            return 4u;
+        case MSAAMode::X8:
+            return 8u;
+        case MSAAMode::X16:
+            return 16u;
+        case MSAAMode::OFF:
+        default:
+            return 1u;
+        }
+    }
+
     uint32_t getShadowResolution() const
     {
         return static_cast<uint32_t>(shadowQuality);
+    }
+
+    uint32_t getShadowCascadeCount() const
+    {
+        return static_cast<uint32_t>(shadowCascadeCount);
+    }
+
+    float getRequestedAnisotropyLevel() const
+    {
+        switch (anisotropyMode)
+        {
+        case AnisotropyMode::X2:
+            return 2.0f;
+        case AnisotropyMode::X4:
+            return 4.0f;
+        case AnisotropyMode::X8:
+            return 8.0f;
+        case AnisotropyMode::X16:
+            return 16.0f;
+        case AnisotropyMode::OFF:
+        default:
+            return 1.0f;
+        }
     }
 
 private:

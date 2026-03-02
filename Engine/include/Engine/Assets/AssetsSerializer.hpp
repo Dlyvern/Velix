@@ -15,9 +15,11 @@ public:
 
     bool writeTexture(const TextureAsset &textureAsset, const std::string &outputPath) const;
     bool writeModel(const ModelAsset &modelAsset, const std::string &outputPath) const;
+    bool writeAudio(const AudioAsset &audioAsset, const std::string &outputPath) const;
 
     std::optional<TextureAsset> readTexture(const std::string &path) const;
     std::optional<ModelAsset> readModel(const std::string &path) const;
+    std::optional<AudioAsset> readAudio(const std::string &path) const;
 };
 
 ELIX_NESTED_NAMESPACE_END

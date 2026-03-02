@@ -28,6 +28,13 @@ const RGPTextureDescription *RGPResourcesBuilder::getTextureDescription(const RG
     return it == m_textureDescriptions.end() ? nullptr : &it->second;
 }
 
+RGPTextureDescription *RGPResourcesBuilder::getTextureDescriptionMutable(const RGPResourceHandler &handler)
+{
+    auto it = m_textureDescriptions.find(handler);
+
+    return it == m_textureDescriptions.end() ? nullptr : &it->second;
+}
+
 const std::unordered_map<RGPResourceHandler, RGPTextureDescription> &RGPResourcesBuilder::getAllTextureDescriptions() const
 {
     return m_textureDescriptions;

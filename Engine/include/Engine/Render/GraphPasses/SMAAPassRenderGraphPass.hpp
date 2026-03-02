@@ -16,7 +16,7 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 /// Subpixel Morphological Anti-Aliasing (SMAA) pass.
 /// Single-pass implementation: performs edge-aware blending in the fragment shader.
-/// When disabled (RenderQualitySettings::enableSMAA == false), passes through unmodified.
+/// When AA mode is not SMAA, passes through unmodified.
 class SMAAPassRenderGraphPass : public IRenderGraphPass
 {
 public:

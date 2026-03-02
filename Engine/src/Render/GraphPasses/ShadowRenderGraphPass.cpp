@@ -2,19 +2,20 @@
 
 #include "Core/VulkanContext.hpp"
 #include "Core/VulkanHelpers.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Shaders/PushConstant.hpp"
 #include "Engine/Shaders/ShaderFamily.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 
+#include <algorithm>
 #include <glm/mat4x4.hpp>
 
 struct LightSpaceMatrixPushConstant
 {
     glm::mat4 lightSpaceMatrix;
-    glm::mat4 model;
-    uint32_t bonesOffset{0};
-    uint32_t padding[3];
+    uint32_t baseInstance{0};
+    uint32_t padding[3]{0, 0, 0};
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -24,13 +25,49 @@ ShadowRenderGraphPass::ShadowRenderGraphPass()
 {
     this->setDebugName("Shadow render graph pass");
     m_clearValue.depthStencil = {1.0f, 0};
+    updateDirectionalCascadeCountFromSettings();
+    updateShadowExtentFromSettings();
+}
+
+void ShadowRenderGraphPass::setShadowExtent(VkExtent2D extent)
+{
+    const bool extentChanged = (m_extent.width != extent.width) || (m_extent.height != extent.height);
+    m_extent = extent;
     m_viewport = VkViewport{0.0f, 0.0f, static_cast<float>(m_extent.width), static_cast<float>(m_extent.height), 0.0f, 1.0f};
     m_scissor.extent = m_extent;
     m_scissor.offset = {0, 0};
+
+    if (extentChanged)
+        requestRecompilation();
+}
+
+void ShadowRenderGraphPass::updateShadowExtentFromSettings()
+{
+    const auto &settings = RenderQualitySettings::getInstance();
+    const uint32_t shadowResolution = std::max(settings.getShadowResolution(), 1u);
+    setShadowExtent(VkExtent2D{shadowResolution, shadowResolution});
+}
+
+void ShadowRenderGraphPass::updateDirectionalCascadeCountFromSettings()
+{
+    const auto &settings = RenderQualitySettings::getInstance();
+    const uint32_t configuredCascadeCount = std::max(1u, std::min(settings.getShadowCascadeCount(), ShadowConstants::MAX_DIRECTIONAL_CASCADES));
+    m_directionalCascadeCount = configuredCascadeCount;
+}
+
+void ShadowRenderGraphPass::syncQualitySettings()
+{
+    const uint32_t oldCascadeCount = m_directionalCascadeCount;
+    updateDirectionalCascadeCountFromSettings();
+    if (oldCascadeCount != m_directionalCascadeCount)
+        requestRecompilation();
+
+    updateShadowExtentFromSettings();
 }
 
 void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
 {
+    updateShadowExtentFromSettings();
     m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
     const auto device = core::VulkanContext::getContext()->getDevice();
 
@@ -40,7 +77,8 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
     RGPTextureDescription depthTextureDescription(m_depthFormat, RGPTextureUsage::DEPTH_STENCIL);
     depthTextureDescription.setDebugName("__ELIX_SHADOW_DEPTH_TEXTURE__");
-    depthTextureDescription.setExtent(m_extent);
+    depthTextureDescription.setCustomExtentFunction([this]
+                                                    { return m_extent; });
     depthTextureDescription.setInitialLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     depthTextureDescription.setFinalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
     depthTextureDescription.setArrayLayers(ShadowConstants::MAX_DIRECTIONAL_CASCADES);
@@ -49,7 +87,8 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
     RGPTextureDescription cubeDepthTextureDescription(m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                                                       VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 
-    cubeDepthTextureDescription.setExtent(m_extent);
+    cubeDepthTextureDescription.setCustomExtentFunction([this]
+                                                        { return m_extent; });
     cubeDepthTextureDescription.setDebugName("__ELIX_CUBE_SHADOW_DEPTH_TEXTURE__");
     cubeDepthTextureDescription.setArrayLayers(ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES);
     cubeDepthTextureDescription.setFlags(VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
@@ -58,7 +97,8 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
     RGPTextureDescription arrayDepthTextureDescription(m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                                                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 
-    arrayDepthTextureDescription.setExtent(m_extent);
+    arrayDepthTextureDescription.setCustomExtentFunction([this]
+                                                         { return m_extent; });
     arrayDepthTextureDescription.setDebugName("__ELIX_ARRAY_SHADOW_DEPTH_TEXTURE__");
     arrayDepthTextureDescription.setArrayLayers(ShadowConstants::MAX_SPOT_SHADOWS);
     arrayDepthTextureDescription.setImageViewtype(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
@@ -84,11 +124,11 @@ void ShadowRenderGraphPass::compile(RGPResourcesStorage &storage)
     rebuildLayerViews();
 
     m_executionInfos.clear();
-    m_executionInfos.reserve(ShadowConstants::MAX_DIRECTIONAL_CASCADES +
+    m_executionInfos.reserve(m_directionalCascadeCount +
                              ShadowConstants::MAX_SPOT_SHADOWS +
                              ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES);
 
-    for (uint32_t cascadeIndex = 0; cascadeIndex < ShadowConstants::MAX_DIRECTIONAL_CASCADES; ++cascadeIndex)
+    for (uint32_t cascadeIndex = 0; cascadeIndex < m_directionalCascadeCount; ++cascadeIndex)
         m_executionInfos.push_back(ShadowExecutionInfo{.type = ShadowExecutionType::Directional, .layer = cascadeIndex, .lightIndex = cascadeIndex, .faceIndex = 0});
 
     for (uint32_t spotIndex = 0; spotIndex < ShadowConstants::MAX_SPOT_SHADOWS; ++spotIndex)
@@ -166,8 +206,8 @@ void ShadowRenderGraphPass::rebuildLayerViews()
     if (!m_renderTarget || !m_arrayRenderTarget || !m_cubeRenderTarget)
         return;
 
-    m_directionalLayerViews.reserve(ShadowConstants::MAX_DIRECTIONAL_CASCADES);
-    for (uint32_t cascadeIndex = 0; cascadeIndex < ShadowConstants::MAX_DIRECTIONAL_CASCADES; ++cascadeIndex)
+    m_directionalLayerViews.reserve(m_directionalCascadeCount);
+    for (uint32_t cascadeIndex = 0; cascadeIndex < m_directionalCascadeCount; ++cascadeIndex)
         m_directionalLayerViews.push_back(createSingleLayerView(m_renderTarget, cascadeIndex));
 
     m_spotLayerViews.reserve(ShadowConstants::MAX_SPOT_SHADOWS);
@@ -191,6 +231,7 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     const ShadowExecutionInfo executionInfo = m_executionInfos[m_currentExecutionIndex++];
 
     glm::mat4 activeLightSpaceMatrix{1.0f};
+    const std::vector<DrawBatch> *executionBatches{nullptr};
     bool shouldRender = true;
 
     switch (executionInfo.type)
@@ -199,13 +240,19 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
         if (executionInfo.lightIndex >= data.activeDirectionalCascadeCount)
             shouldRender = false;
         else
+        {
             activeLightSpaceMatrix = data.directionalLightSpaceMatrices[executionInfo.lightIndex];
+            executionBatches = &data.directionalShadowDrawBatches[executionInfo.lightIndex];
+        }
         break;
     case ShadowExecutionType::Spot:
         if (executionInfo.lightIndex >= data.activeSpotShadowCount)
             shouldRender = false;
         else
+        {
             activeLightSpaceMatrix = data.spotLightSpaceMatrices[executionInfo.lightIndex];
+            executionBatches = &data.spotShadowDrawBatches[executionInfo.lightIndex];
+        }
         break;
     case ShadowExecutionType::Point:
         if (executionInfo.lightIndex >= data.activePointShadowCount)
@@ -214,22 +261,28 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
         {
             const uint32_t matrixIndex = executionInfo.lightIndex * ShadowConstants::POINT_SHADOW_FACES + executionInfo.faceIndex;
             activeLightSpaceMatrix = data.pointLightSpaceMatrices[matrixIndex];
+            executionBatches = &data.pointShadowDrawBatches[matrixIndex];
         }
         break;
     }
 
-    if (!shouldRender)
+    if (!shouldRender || !executionBatches || executionBatches->empty())
         return;
 
     vkCmdSetViewport(commandBuffer, 0, 1, &m_viewport);
     vkCmdSetDepthBias(commandBuffer, 1.25f, 0.0f, 1.75f);
     vkCmdSetScissor(commandBuffer, 0, 1, &m_scissor);
 
-    for (const auto &[entity, drawItem] : data.drawItems)
+    const VkDescriptorSet perObjectSet = data.shadowPerObjectDescriptorSet ? data.shadowPerObjectDescriptorSet : data.perObjectDescriptorSet;
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &perObjectSet, 0, nullptr);
+
+    for (const auto &batch : *executionBatches)
     {
+        if (!batch.mesh || batch.instanceCount == 0)
+            continue;
+
         GraphicsPipelineKey key{};
-        const bool isSkinned = !drawItem.finalBones.empty();
-        key.shader = isSkinned ? ShaderId::SkinnedShadow : ShaderId::StaticShadow;
+        key.shader = batch.skinned ? ShaderId::SkinnedShadow : ShaderId::StaticShadow;
         key.cull = CullMode::Front;
         key.depthTest = true;
         key.depthWrite = true;
@@ -244,26 +297,19 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-        for (const auto &mesh : drawItem.meshes)
-        {
-            VkBuffer vertexBuffers[] = {mesh->vertexBuffer};
-            VkDeviceSize offset[] = {0};
+        VkBuffer vertexBuffers[] = {batch.mesh->vertexBuffer};
+        VkDeviceSize offset[] = {0};
 
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offset);
-            vkCmdBindIndexBuffer(commandBuffer, mesh->indexBuffer, 0, mesh->indexType);
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offset);
+        vkCmdBindIndexBuffer(commandBuffer, batch.mesh->indexBuffer, 0, batch.mesh->indexType);
 
-            LightSpaceMatrixPushConstant lightSpaceMatrixPushConstant{
-                .lightSpaceMatrix = activeLightSpaceMatrix,
-                .model = drawItem.transform,
-                .bonesOffset = drawItem.bonesOffset};
+        LightSpaceMatrixPushConstant lightSpaceMatrixPushConstant{
+            .lightSpaceMatrix = activeLightSpaceMatrix,
+            .baseInstance = batch.firstInstance};
 
-            if (isSkinned)
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &data.perObjectDescriptorSet, 0, nullptr);
-
-            vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(LightSpaceMatrixPushConstant),
-                               &lightSpaceMatrixPushConstant);
-            profiling::cmdDrawIndexed(commandBuffer, mesh->indicesCount, 1, 0, 0, 0);
-        }
+        vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(LightSpaceMatrixPushConstant),
+                           &lightSpaceMatrixPushConstant);
+        profiling::cmdDrawIndexed(commandBuffer, batch.mesh->indicesCount, batch.instanceCount, 0, 0, 0);
     }
 }
 

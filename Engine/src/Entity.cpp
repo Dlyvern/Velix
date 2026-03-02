@@ -55,10 +55,12 @@ bool Entity::removeTag(const std::string &tag)
 
 bool Entity::hasTag(const std::string &tag) const
 {
-    // auto it = std::find_if(m_tags.begin(), m_tags.end(), [&tag](const auto& t) {return tag == t; });
+    return m_tags.contains(tag);
+}
 
-    // return it != m_tags.end();
-    return false;
+const std::unordered_set<std::string> &Entity::getTags() const
+{
+    return m_tags;
 }
 
 void Entity::setLayer(int layerID)

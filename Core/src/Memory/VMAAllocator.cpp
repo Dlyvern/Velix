@@ -6,6 +6,7 @@
 
 #include "Core/VulkanHelpers.hpp"
 #include "Core/VulkanAssert.hpp"
+#include "Core/Logger.hpp"
 #include <iomanip>
 #include <sstream>
 #include <algorithm>
@@ -132,6 +133,46 @@ void VMAAllocator::freeMemory(VkDevice device, VkDeviceMemory memory)
 
 AllocatedImage VMAAllocator::createImage(VkDevice device, VkPhysicalDevice physicalDevice, const VkImageCreateInfo &createInfo, memory::MemoryUsage memFlags)
 {
+    VkImageCreateInfo safeCreateInfo = createInfo;
+    bool correctedInvalidImageInfo = false;
+
+    if (safeCreateInfo.extent.width == 0u)
+    {
+        safeCreateInfo.extent.width = 1u;
+        correctedInvalidImageInfo = true;
+    }
+
+    if (safeCreateInfo.extent.height == 0u)
+    {
+        safeCreateInfo.extent.height = 1u;
+        correctedInvalidImageInfo = true;
+    }
+
+    if (safeCreateInfo.extent.depth == 0u)
+    {
+        safeCreateInfo.extent.depth = 1u;
+        correctedInvalidImageInfo = true;
+    }
+
+    if (safeCreateInfo.arrayLayers == 0u)
+    {
+        safeCreateInfo.arrayLayers = 1u;
+        correctedInvalidImageInfo = true;
+    }
+
+    if (safeCreateInfo.mipLevels == 0u)
+    {
+        safeCreateInfo.mipLevels = 1u;
+        correctedInvalidImageInfo = true;
+    }
+
+    if (correctedInvalidImageInfo)
+    {
+        VX_CORE_WARNING_STREAM("Corrected invalid VkImageCreateInfo before allocation. Original: "
+                               << describeImageCreateInfo(createInfo)
+                               << " | Corrected: " << describeImageCreateInfo(safeCreateInfo));
+    }
+
     VmaMemoryUsage memoryUsage = static_cast<VmaMemoryUsage>(deleteMeMemoryHelper(memFlags));
 
     VmaAllocationCreateInfo allocInfo{};
@@ -139,9 +180,9 @@ AllocatedImage VMAAllocator::createImage(VkDevice device, VkPhysicalDevice physi
 
     AllocatedImage allocatedImage{};
 
-    VX_VK_CHECK_MSG(vmaCreateImage(m_allocator, &createInfo, &allocInfo, &allocatedImage.image,
+    VX_VK_CHECK_MSG(vmaCreateImage(m_allocator, &safeCreateInfo, &allocInfo, &allocatedImage.image,
                                    reinterpret_cast<VmaAllocation *>(&allocatedImage.allocation), nullptr),
-                    describeImageCreateInfo(createInfo));
+                    describeImageCreateInfo(safeCreateInfo));
 
     return allocatedImage;
 }

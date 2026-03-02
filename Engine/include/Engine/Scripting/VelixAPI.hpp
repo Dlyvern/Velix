@@ -12,6 +12,8 @@ ELIX_NESTED_NAMESPACE_END
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class Entity;
+class ECS;
+class RenderQualitySettings;
 ELIX_NESTED_NAMESPACE_END
 
 ELIX_NESTED_NAMESPACE_BEGIN(platform)
@@ -34,6 +36,14 @@ uint64_t getEntitiesCount(Scene *scene = nullptr);
 Entity *getEntityByIndex(uint64_t index, Scene *scene = nullptr);
 
 std::string getEntityName(const Entity *entity);
+
+ECS *getEntitySingleComponent(Entity *entity, const char *componentTypeName);
+uint64_t getEntityComponentsCount(Entity *entity, const char *componentTypeName);
+ECS *getEntityComponentByIndex(Entity *entity, const char *componentTypeName, uint64_t index);
+bool entityHasComponent(Entity *entity, const char *componentTypeName);
+
+RenderQualitySettings *getRenderQualitySettings();
+const RenderQualitySettings *getRenderQualitySettingsConst();
 
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END

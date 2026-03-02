@@ -21,7 +21,10 @@
 #include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/PreviewAssetsRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/SelectionOverlayRenderGraphPass.hpp"
+#include "Editor/RenderGraphPasses/EditorBillboardRenderGraphPass.hpp"
 #include "Editor/ImGuiRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/UIRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/ParticleRenderGraphPass.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -41,13 +44,17 @@ public:
 private:
     std::string m_projectPath;
 
-    std::shared_ptr<engine::Camera> m_currentRenderCamera{nullptr};
+    std::shared_ptr<engine::Camera> m_editorRenderCamera{nullptr};
+    std::shared_ptr<engine::Camera> m_gameRenderCamera{nullptr};
 
-    std::shared_ptr<engine::Scene> m_scene{nullptr};
+    std::shared_ptr<engine::Scene> m_editorScene{nullptr};
+    std::shared_ptr<engine::Scene> m_activeScene{nullptr};
+    std::shared_ptr<engine::Scene> m_playScene{nullptr};
     std::shared_ptr<Project> m_project{nullptr};
     std::shared_ptr<Editor> m_editor{nullptr};
 
     std::unique_ptr<engine::renderGraph::RenderGraph> m_renderGraph{nullptr};
+    std::unique_ptr<engine::renderGraph::RenderGraph> m_gameViewportRenderGraph{nullptr};
     std::unique_ptr<engine::shaders::ShaderHotReloader> m_shaderHotReloader{nullptr};
 
     PreviewAssetsRenderGraphPass *m_previewAssetsRenderGraphPass{nullptr};
@@ -63,7 +70,24 @@ private:
     engine::renderGraph::SSAORenderGraphPass       *m_ssaoRenderGraphPass{nullptr};
     engine::renderGraph::SMAAPassRenderGraphPass   *m_smaaRenderGraphPass{nullptr};
     SelectionOverlayRenderGraphPass *m_selectionOverlayRenderGraphPass{nullptr};
+    engine::renderGraph::UIRenderGraphPass *m_uiRenderGraphPass{nullptr};
+    EditorBillboardRenderGraphPass *m_editorBillboardRenderGraphPass{nullptr};
     ImGuiRenderGraphPass *m_imGuiRenderGraphPass{nullptr};
+    engine::renderGraph::ParticleRenderGraphPass *m_particleRenderGraphPass{nullptr};
+
+    engine::renderGraph::GBufferRenderGraphPass *m_gameGBufferRenderGraphPass{nullptr};
+    engine::renderGraph::ShadowRenderGraphPass *m_gameShadowRenderGraphPass{nullptr};
+    engine::renderGraph::SSAORenderGraphPass *m_gameSSAORenderGraphPass{nullptr};
+    engine::renderGraph::LightingRenderGraphPass *m_gameLightingRenderGraphPass{nullptr};
+    engine::renderGraph::SSRRenderGraphPass *m_gameSSRRenderGraphPass{nullptr};
+    engine::renderGraph::SkyLightRenderGraphPass *m_gameSkyLightRenderGraphPass{nullptr};
+    engine::renderGraph::ParticleRenderGraphPass *m_gameParticleRenderGraphPass{nullptr};
+    engine::renderGraph::BloomRenderGraphPass *m_gameBloomRenderGraphPass{nullptr};
+    engine::renderGraph::TonemapRenderGraphPass *m_gameTonemapRenderGraphPass{nullptr};
+    engine::renderGraph::BloomCompositeRenderGraphPass *m_gameBloomCompositeRenderGraphPass{nullptr};
+    engine::renderGraph::FXAARenderGraphPass *m_gameFXAARenderGraphPass{nullptr};
+    engine::renderGraph::SMAAPassRenderGraphPass *m_gameSMAARenderGraphPass{nullptr};
+    engine::renderGraph::UIRenderGraphPass *m_gameUIRenderGraphPass{nullptr};
 
     bool m_shouldUpdate{false};
     bool m_isPlaySessionActive{false};

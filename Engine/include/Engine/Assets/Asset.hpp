@@ -70,6 +70,15 @@ public:
     }
 };
 
+class AudioAsset : public IAsset
+{
+public:
+    std::string name;
+    std::string sourcePath;
+    std::string assetPath;
+    std::vector<uint8_t> audioData;
+};
+
 class Asset
 {
 public:
@@ -81,7 +90,8 @@ public:
         NONE = 0,
         TEXTURE = 1,
         MODEL = 2,
-        MATERIAL = 3
+        MATERIAL = 3,
+        AUDIO = 4
     };
 
     struct BinaryHeader

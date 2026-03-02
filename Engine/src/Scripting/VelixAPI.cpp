@@ -1,6 +1,26 @@
 #include "Engine/Scripting/VelixAPI.hpp"
 
 #include "Engine/Scene.hpp"
+#include "Engine/Entity.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
+
+#include "Engine/Components/AnimatorComponent.hpp"
+#include "Engine/Components/AudioComponent.hpp"
+#include "Engine/Components/CameraComponent.hpp"
+#include "Engine/Components/CharacterMovementComponent.hpp"
+#include "Engine/Components/CollisionComponent.hpp"
+#include "Engine/Components/LightComponent.hpp"
+#include "Engine/Components/ParticleSystemComponent.hpp"
+#include "Engine/Components/RigidBodyComponent.hpp"
+#include "Engine/Components/ScriptComponent.hpp"
+#include "Engine/Components/SkeletalMeshComponent.hpp"
+#include "Engine/Components/SpriteMeshComponent.hpp"
+#include "Engine/Components/StaticMeshComponent.hpp"
+#include "Engine/Components/Transform2DComponent.hpp"
+#include "Engine/Components/Transform3DComponent.hpp"
+
+#include <string_view>
+#include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(scripting)
@@ -13,6 +33,74 @@ namespace
     Scene *resolveScene(Scene *scene)
     {
         return scene ? scene : g_activeScene;
+    }
+
+    bool componentNameMatches(std::string_view componentName, std::initializer_list<std::string_view> aliases)
+    {
+        for (const auto alias : aliases)
+            if (componentName == alias)
+                return true;
+
+        return false;
+    }
+
+    template <typename T>
+    void appendSingleComponent(Entity *entity, std::vector<ECS *> &result)
+    {
+        if (!entity)
+            return;
+
+        if (auto *component = entity->getComponent<T>())
+            result.push_back(component);
+    }
+
+    template <typename T>
+    void appendMultiComponents(Entity *entity, std::vector<ECS *> &result)
+    {
+        if (!entity)
+            return;
+
+        const auto components = entity->getComponents<T>();
+        for (auto *component : components)
+            result.push_back(component);
+    }
+
+    std::vector<ECS *> collectComponentsByName(Entity *entity, std::string_view componentTypeName)
+    {
+        std::vector<ECS *> result;
+        if (!entity || componentTypeName.empty())
+            return result;
+
+        if (componentNameMatches(componentTypeName, {"Transform3DComponent", "Transform3D", "transform3d", "transform"}))
+            appendSingleComponent<Transform3DComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"Transform2DComponent", "Transform2D", "transform2d"}))
+            appendSingleComponent<Transform2DComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"CameraComponent", "Camera", "camera"}))
+            appendSingleComponent<CameraComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"StaticMeshComponent", "StaticMesh", "static_mesh"}))
+            appendSingleComponent<StaticMeshComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"SkeletalMeshComponent", "SkeletalMesh", "skeletal_mesh"}))
+            appendSingleComponent<SkeletalMeshComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"AnimatorComponent", "Animator", "animator"}))
+            appendSingleComponent<AnimatorComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"LightComponent", "Light", "light"}))
+            appendSingleComponent<LightComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"RigidBodyComponent", "RigidBody", "rigidbody"}))
+            appendSingleComponent<RigidBodyComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"CollisionComponent", "Collision", "collision"}))
+            appendSingleComponent<CollisionComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"CharacterMovementComponent", "CharacterMovement", "character_movement"}))
+            appendSingleComponent<CharacterMovementComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"SpriteMeshComponent", "SpriteMesh", "sprite_mesh"}))
+            appendSingleComponent<SpriteMeshComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"AudioComponent", "Audio", "audio"}))
+            appendMultiComponents<AudioComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"ScriptComponent", "Script", "script"}))
+            appendMultiComponents<ScriptComponent>(entity, result);
+        else if (componentNameMatches(componentTypeName, {"ParticleSystemComponent", "ParticleSystem", "particle_system"}))
+            appendMultiComponents<ParticleSystemComponent>(entity, result);
+
+        return result;
     }
 } // namespace
 
@@ -99,6 +187,50 @@ std::string getEntityName(const Entity *entity)
         return {};
 
     return entity->getName();
+}
+
+ECS *getEntitySingleComponent(Entity *entity, const char *componentTypeName)
+{
+    if (!componentTypeName)
+        return nullptr;
+
+    const auto components = collectComponentsByName(entity, componentTypeName);
+    return components.empty() ? nullptr : components.front();
+}
+
+uint64_t getEntityComponentsCount(Entity *entity, const char *componentTypeName)
+{
+    if (!componentTypeName)
+        return 0;
+
+    return static_cast<uint64_t>(collectComponentsByName(entity, componentTypeName).size());
+}
+
+ECS *getEntityComponentByIndex(Entity *entity, const char *componentTypeName, uint64_t index)
+{
+    if (!componentTypeName)
+        return nullptr;
+
+    const auto components = collectComponentsByName(entity, componentTypeName);
+    if (index >= components.size())
+        return nullptr;
+
+    return components[index];
+}
+
+bool entityHasComponent(Entity *entity, const char *componentTypeName)
+{
+    return getEntitySingleComponent(entity, componentTypeName) != nullptr;
+}
+
+RenderQualitySettings *getRenderQualitySettings()
+{
+    return &RenderQualitySettings::getInstance();
+}
+
+const RenderQualitySettings *getRenderQualitySettingsConst()
+{
+    return &RenderQualitySettings::getInstance();
 }
 
 ELIX_CUSTOM_NAMESPACE_END

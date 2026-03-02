@@ -30,6 +30,7 @@ public:
     std::vector<RenderPassExecution> getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const override;
 
     void setViewportImages(const std::vector<VkImageView> &imageViews);
+    void setGameViewportImages(const std::vector<VkImageView> &imageViews, bool hasGameCamera, uint32_t renderedImageIndex);
 
     void cleanup();
 
@@ -46,7 +47,11 @@ private:
 
     VkFormat m_colorFormat;
 
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    std::vector<VkDescriptorSet> m_viewportDescriptorSets;
+    std::vector<VkDescriptorSet> m_gameViewportDescriptorSets;
+    std::vector<VkImageView> m_gameViewportImageViews;
+    bool m_hasGameCamera{false};
+    uint32_t m_gameViewportRenderedImageIndex{0};
 
     engine::renderGraph::RGPResourceHandler m_colorTextureHandler;
 

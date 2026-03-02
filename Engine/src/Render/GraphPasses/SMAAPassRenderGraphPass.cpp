@@ -136,7 +136,10 @@ void SMAAPassRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     const auto &settings = RenderQualitySettings::getInstance();
     SMAApc pc{};
     pc.texelSize = {1.0f / m_extent.width, 1.0f / m_extent.height};
-    pc.enabled = (settings.enableSMAA && settings.enablePostProcessing) ? 1.0f : 0.0f;
+    pc.enabled = (settings.enablePostProcessing &&
+                  settings.getAntiAliasingMode() == RenderQualitySettings::AntiAliasingMode::SMAA)
+                     ? 1.0f
+                     : 0.0f;
     pc.edgeThreshold = 0.1f;
     pc.maxSearchSteps = 16.0f;
 

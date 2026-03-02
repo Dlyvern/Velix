@@ -5,17 +5,12 @@ layout(location = 1) in vec3 fragNormalView;
 layout(location = 2) in vec3 fragPositionView;
 layout(location = 3) in vec3 fragTangentView;
 layout(location = 4) in vec3 fragBitangentView;
+layout(location = 5) in flat uint fragObjectId;
 
 layout(location = 0) out vec4 outGBufferNormal;   // normal (encoded)
 layout(location = 1) out vec4 outGBufferAlbedo;   // albedo + alpha
 layout(location = 2) out vec4 outGBufferMaterial; // ao, roughness, metallic, emissiveStrength/flags
 layout(location = 3) out uint outObjectId;
-
-layout(push_constant) uniform ModelPushConstant
-{
-    mat4 model;
-    uint objectId;
-} modelPushConstant;
 
 layout(set = 1, binding = 0) uniform sampler2D uAlbedoTex;
 layout(set = 1, binding = 1) uniform sampler2D uNormalTex;
@@ -63,7 +58,7 @@ vec3 getNormalView()
 
 void main()
 {
-    outObjectId = modelPushConstant.objectId;
+    outObjectId = fragObjectId;
 
     vec2 uv = getUV();
 

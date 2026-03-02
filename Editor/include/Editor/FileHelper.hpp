@@ -24,6 +24,7 @@ public:
     static std::pair<int, std::string> executeCommand(const std::string &command);
     static bool launchDetachedCommand(const std::string &command);
 
+    static std::filesystem::path getExecutableFilePath();
     static std::filesystem::path getExecutablePath();
 
     // static std::string getHomeDirectory()

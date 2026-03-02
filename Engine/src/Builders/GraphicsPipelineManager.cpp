@@ -78,6 +78,11 @@ void GraphicsPipelineManager::loadShaderModules()
     ssrShader            = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssr.frag.spv");
     ssaoShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssao.frag.spv");
     smaaShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/smaa.frag.spv");
+    editorBillboardShader = std::make_shared<core::Shader>("./resources/shaders/editor_billboard.vert.spv", "./resources/shaders/editor_billboard.frag.spv");
+    billboardShader       = std::make_shared<core::Shader>("./resources/shaders/billboard.vert.spv", "./resources/shaders/billboard.frag.spv");
+    uiTextShader          = std::make_shared<core::Shader>("./resources/shaders/ui_text.vert.spv", "./resources/shaders/ui_text.frag.spv");
+    uiQuadShader          = std::make_shared<core::Shader>("./resources/shaders/ui_quad.vert.spv", "./resources/shaders/ui_quad.frag.spv");
+    particleShader        = std::make_shared<core::Shader>("./resources/shaders/particle.vert.spv", "./resources/shaders/particle.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -109,6 +114,11 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(ssrShader);
     destroyShader(ssaoShader);
     destroyShader(smaaShader);
+    destroyShader(editorBillboardShader);
+    destroyShader(billboardShader);
+    destroyShader(uiTextShader);
+    destroyShader(uiQuadShader);
+    destroyShader(particleShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -182,6 +192,21 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::SMAA:
         stages = smaaShader->getShaderStages();
         break;
+    case ShaderId::EditorBillboard:
+        stages = editorBillboardShader->getShaderStages();
+        break;
+    case ShaderId::Billboard:
+        stages = billboardShader->getShaderStages();
+        break;
+    case ShaderId::UIText:
+        stages = uiTextShader->getShaderStages();
+        break;
+    case ShaderId::UIQuad:
+        stages = uiQuadShader->getShaderStages();
+        break;
+    case ShaderId::Particle:
+        stages = particleShader->getShaderStages();
+        break;
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
@@ -213,7 +238,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         rasterizer.cullMode = VK_CULL_MODE_NONE;
     }
 
-    auto msaa = builders::GraphicsPipelineBuilder::multisamplingCI(); // 1x currently
+    auto msaa = builders::GraphicsPipelineBuilder::multisamplingCI(key.rasterizationSamples);
     auto depthStencil = builders::GraphicsPipelineBuilder::depthStencilCI(key.depthTest, key.depthWrite, key.depthCompare);
 
     std::vector<VkVertexInputBindingDescription> vertexBindingDescriptions;
@@ -243,18 +268,27 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     else if (key.shader == ShaderId::ToneMap || key.shader == ShaderId::SelectionOverlay ||
              key.shader == ShaderId::Present  || key.shader == ShaderId::Lighting       ||
              key.shader == ShaderId::FXAA     || key.shader == ShaderId::BloomExtract   ||
-             key.shader == ShaderId::BloomComposite || key.shader == ShaderId::SSR)
+             key.shader == ShaderId::BloomComposite || key.shader == ShaderId::SSR      ||
+             key.shader == ShaderId::SSAO     || key.shader == ShaderId::SMAA           ||
+             key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||
+             key.shader == ShaderId::Particle)
     {
+        // Fullscreen / billboard passes generate vertices procedurally in the vertex shader
         vertexBindingDescriptions = {};
         vertexAttributeDescriptions = {};
+    }
+    else if (key.shader == ShaderId::UIText || key.shader == ShaderId::UIQuad)
+    {
+        // UI passes use Vertex2D (vec3 pos + vec2 uv)
+        vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex2D))};
+        vertexAttributeDescriptions = vertex::Vertex2D::getAttributeDescriptions();
     }
     else if (key.shader == ShaderId::PreviewMesh)
     {
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D))};
         vertexAttributeDescriptions = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex::Vertex3D, position)},
-            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex::Vertex3D, textureCoordinates)},
-            {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex::Vertex3D, normal)}};
+            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex::Vertex3D, textureCoordinates)}};
     }
     else
     {
@@ -268,10 +302,32 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     colorBlendAttachments.reserve(key.colorFormats.size());
 
     for (size_t i = 0; i < key.colorFormats.size(); ++i)
-        colorBlendAttachments.push_back(builders::GraphicsPipelineBuilder::colorBlendAttachmentCI(false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO));
+    {
+        auto attachment = builders::GraphicsPipelineBuilder::colorBlendAttachmentCI(false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
+        if (key.blend == BlendMode::AlphaBlend)
+        {
+            attachment.blendEnable         = VK_TRUE;
+            attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            attachment.colorBlendOp        = VK_BLEND_OP_ADD;
+            attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
+        }
+        colorBlendAttachments.push_back(attachment);
+    }
 
     if (key.shader == ShaderId::GBufferStatic || key.shader == ShaderId::GBufferSkinned)
+    {
         colorBlendAttachments[3].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+
+        if (key.gbufferOutputMode == GBufferOutputMode::ObjectOnly && colorBlendAttachments.size() >= 4)
+        {
+            colorBlendAttachments[0].colorWriteMask = 0;
+            colorBlendAttachments[1].colorWriteMask = 0;
+            colorBlendAttachments[2].colorWriteMask = 0;
+        }
+    }
 
     if (key.shader == ShaderId::StaticShadow || key.shader == ShaderId::SkinnedShadow)
     {

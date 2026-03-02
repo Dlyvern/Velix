@@ -164,7 +164,7 @@ float calculateSpotLightShadow(int shadowIndex, vec3 worldPos, vec3 lightDirWorl
     return shadow / 9.0;
 }
 
-float calculatePointLightShadow(int shadowIndex, vec3 worldPos, vec3 lightPosWorld, float farPlane, float nearPlane)
+float calculatePointLightShadow(int shadowIndex, vec3 worldPos, vec3 normalWorld, vec3 lightPosWorld, float farPlane, float nearPlane)
 {
     if (shadowIndex < 0 || farPlane <= nearPlane || nearPlane <= 0.0)
         return 0.0;
@@ -174,12 +174,35 @@ float calculatePointLightShadow(int shadowIndex, vec3 worldPos, vec3 lightPosWor
     if (currentDepth <= 0.0 || currentDepth >= farPlane)
         return 0.0;
 
-    float sampledDepth = texture(cubeShadowMaps, vec4(normalize(toFragment), float(shadowIndex))).r;
-    float zNdc = sampledDepth * 2.0 - 1.0;
-    float closestDepth = (2.0 * nearPlane * farPlane) / (farPlane + nearPlane - zNdc * (farPlane - nearPlane));
-    float bias = 0.02;
+    vec3 lightDir = normalize(lightPosWorld - worldPos);
+    float normalBias = max(0.02 * (1.0 - max(dot(normalWorld, lightDir), 0.0)), 0.002);
 
-    return (currentDepth - bias) > closestDepth ? 1.0 : 0.0;
+    const vec3 sampleOffsets[8] = vec3[](
+        vec3(1.0,  1.0,  1.0),
+        vec3(-1.0, 1.0,  1.0),
+        vec3(1.0, -1.0,  1.0),
+        vec3(-1.0,-1.0,  1.0),
+        vec3(1.0,  1.0, -1.0),
+        vec3(-1.0, 1.0, -1.0),
+        vec3(1.0, -1.0, -1.0),
+        vec3(-1.0,-1.0, -1.0));
+
+    float shadow = 0.0;
+    float sampleRadius = 0.03 * (currentDepth / max(farPlane, 0.001));
+
+    for (int i = 0; i < 8; ++i)
+    {
+        vec3 sampleDirection = normalize(toFragment + sampleOffsets[i] * sampleRadius);
+        float sampledDepth = texture(cubeShadowMaps, vec4(sampleDirection, float(shadowIndex))).r;
+
+        // GLM_FORCE_DEPTH_ZERO_TO_ONE is enabled, so depth is stored in [0, 1].
+        // Reconstruct linear distance from Vulkan/ZO perspective depth.
+        float denom = max(farPlane - sampledDepth * (farPlane - nearPlane), 0.0001);
+        float closestDepth = (nearPlane * farPlane) / denom;
+        shadow += (currentDepth - normalBias) > closestDepth ? 1.0 : 0.0;
+    }
+
+    return shadow / 8.0;
 }
 
 
@@ -216,6 +239,17 @@ void main()
     vec3 N_world = normalize((camera.invView * vec4(N_view, 0.0)).xyz);
 
     int count = min(lightData.lightCount, MAX_LIGHT_COUNT);
+
+    bool hasDirectionalLight = false;
+    for (int i = 0; i < count; ++i)
+    {
+        if (int(lightData.lights[i].parameters.w) == DIRECTIONAL_LIGHT_TYPE)
+        {
+            hasDirectionalLight = true;
+            break;
+        }
+    }
+
     for (int i = 0; i < count; ++i)
     {
         Light light = lightData.lights[i];
@@ -254,7 +288,7 @@ void main()
             if (castsShadow)
             {
                 vec3 lightPosWorld = (camera.invView * vec4(light.position.xyz, 1.0)).xyz;
-                shadow = calculatePointLightShadow(shadowIndex, P_world, lightPosWorld, shadowFar, shadowNear);
+                shadow = calculatePointLightShadow(shadowIndex, P_world, N_world, lightPosWorld, shadowFar, shadowNear);
             }
         }
         else if (lightType == SPOT_LIGHT_TYPE)
@@ -303,7 +337,10 @@ void main()
         Lo += lightContrib;
     }
 
-    vec3 ambient = albedo * 0.03 * ao;
+    // Keep ambient from the sky pipeline disabled when there is no directional light.
+    // Local lights (point/spot) still contribute through Lo.
+    float ambientFactor = hasDirectionalLight ? 0.03 : 0.0;
+    vec3 ambient = albedo * ambientFactor * ao;
     vec3 emissive = vec3(emissiveStrength);
 
     vec3 color = ambient + Lo + emissive;

@@ -110,7 +110,8 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(const std::vect
         auto extent = textureDescription->getCustomExtentFunction() ? textureDescription->getCustomExtentFunction()() : textureDescription->getExtent();
 
         renderTarget->createVkImage(extent, toVkUsage(textureDescription->getUsage()), core::memory::MemoryUsage::AUTO, textureDescription->getFormat(),
-                                    VK_IMAGE_TILING_OPTIMAL, textureDescription->getArrayLayers(), textureDescription->getFlags());
+                                    VK_IMAGE_TILING_OPTIMAL, textureDescription->getArrayLayers(), textureDescription->getFlags(),
+                                    textureDescription->getSampleCount());
         renderTarget->createVkImageView(textureDescription->getImageViewtype());
 
         if (textureDescription->getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription->getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
@@ -206,7 +207,8 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
 
             auto renderTarget = std::make_shared<RenderTarget>(device, extent, textureDescription.getFormat(), toVkUsage(textureDescription.getUsage()),
                                                                utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat()), core::memory::MemoryUsage::AUTO,
-                                                               VK_IMAGE_TILING_OPTIMAL, textureDescription.getArrayLayers(), textureDescription.getFlags());
+                                                               VK_IMAGE_TILING_OPTIMAL, textureDescription.getArrayLayers(), textureDescription.getFlags(),
+                                                               textureDescription.getSampleCount());
             renderTarget->createVkImageView(textureDescription.getImageViewtype());
 
             storage.addTexture(id, std::move(renderTarget));

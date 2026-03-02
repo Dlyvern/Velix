@@ -4,13 +4,14 @@
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 Image::Image(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
-             VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags) : m_device(VulkanContext::getContext()->getDevice())
+             VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags, VkSampleCountFlagBits sampleCount)
+    : m_device(VulkanContext::getContext()->getDevice())
 {
-    createVk(extent, usage, memFlags, format, tiling, arrayLayers, flags);
+    createVk(extent, usage, memFlags, format, tiling, arrayLayers, flags, sampleCount);
 }
 
 void Image::createVk(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
-                     VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags)
+                     VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags, VkSampleCountFlagBits sampleCount)
 {
     ELIX_VK_CREATE_GUARD()
     VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -24,7 +25,7 @@ void Image::createVk(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryU
     imageInfo.tiling = tiling;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = usage;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.samples = sampleCount;
     imageInfo.flags = flags;
 
     auto context = VulkanContext::getContext();

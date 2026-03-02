@@ -115,19 +115,28 @@ bool FileHelper::launchDetachedCommand(const std::string &command)
 
 std::filesystem::path FileHelper::getExecutablePath()
 {
+    const std::filesystem::path executableFilePath = getExecutableFilePath();
+    if (executableFilePath.empty())
+        return {};
+
+    return executableFilePath.parent_path();
+}
+
+std::filesystem::path FileHelper::getExecutableFilePath()
+{
 #if defined(_WIN32)
     char buffer[MAX_PATH];
     DWORD size = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
     if (size == 0 || size == MAX_PATH)
         return {};
-    return std::filesystem::path(buffer).parent_path();
+    return std::filesystem::path(buffer);
 
 #elif defined(__linux__)
     char buffer[1024];
     ssize_t size = readlink("/proc/self/exe", buffer, sizeof(buffer));
     if (size <= 0 || size >= static_cast<ssize_t>(sizeof(buffer)))
         return {};
-    return std::filesystem::path(std::string(buffer, size)).parent_path();
+    return std::filesystem::path(std::string(buffer, size));
 #else
     return {};
 #endif

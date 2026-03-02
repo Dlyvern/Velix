@@ -79,6 +79,7 @@ namespace
 
         constexpr const char *modelSuffix = ".model.elixasset";
         constexpr const char *textureSuffix = ".tex.elixasset";
+        constexpr const char *audioSuffix = ".audio.elixasset";
         constexpr const char *genericSuffix = ".elixasset";
 
         if (lowerFilename.size() > std::strlen(modelSuffix) &&
@@ -88,6 +89,10 @@ namespace
         if (lowerFilename.size() > std::strlen(textureSuffix) &&
             lowerFilename.rfind(textureSuffix) == lowerFilename.size() - std::strlen(textureSuffix))
             return filename.substr(0, filename.size() - std::strlen(textureSuffix));
+
+        if (lowerFilename.size() > std::strlen(audioSuffix) &&
+            lowerFilename.rfind(audioSuffix) == lowerFilename.size() - std::strlen(audioSuffix))
+            return filename.substr(0, filename.size() - std::strlen(audioSuffix));
 
         if (lowerFilename.size() > std::strlen(genericSuffix) &&
             lowerFilename.rfind(genericSuffix) == lowerFilename.size() - std::strlen(genericSuffix))
@@ -125,9 +130,18 @@ namespace
         return textureExtensions.find(extensionLower) != textureExtensions.end();
     }
 
+    bool isSupportedAudioSourceExtension(const std::string &extensionLower)
+    {
+        static const std::unordered_set<std::string> audioExtensions = {
+            ".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif", ".mid", ".midi"};
+        return audioExtensions.find(extensionLower) != audioExtensions.end();
+    }
+
     bool isSupportedImportSourceExtension(const std::string &extensionLower)
     {
-        return isSupportedModelSourceExtension(extensionLower) || isSupportedTextureSourceExtension(extensionLower);
+        return isSupportedModelSourceExtension(extensionLower) ||
+               isSupportedTextureSourceExtension(extensionLower) ||
+               isSupportedAudioSourceExtension(extensionLower);
     }
 
     std::vector<std::filesystem::path> gatherImportableFiles(const std::filesystem::path &directory,
@@ -628,7 +642,12 @@ void AssetsWindow::drawAssetGrid()
 
             ImGui::EndGroup();
 
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            const bool selectOnReleaseWithoutDrag =
+                ImGui::IsItemHovered() &&
+                ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+                !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left);
+
+            if (selectOnReleaseWithoutDrag)
                 setSelectedAssetPath(assetPath);
 
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
@@ -659,6 +678,8 @@ void AssetsWindow::drawAssetGrid()
                         typeLabel = "Model Asset";
                     else if (serializedAssetType == engine::Asset::AssetType::MATERIAL)
                         typeLabel = "Material Asset";
+                    else if (serializedAssetType == engine::Asset::AssetType::AUDIO)
+                        typeLabel = "Audio Asset";
 
                     ImGui::Text("Type: %s", typeLabel.c_str());
                 }
@@ -825,7 +846,7 @@ void AssetsWindow::drawAssetGrid()
 
     if (ImGui::BeginPopupModal("Import Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
-        const char *importTypes[] = {"Auto Detect", "Model", "Texture"};
+        const char *importTypes[] = {"Auto Detect", "Model", "Texture", "Audio"};
         const std::filesystem::path projectRoot = m_currentProject ? std::filesystem::path(m_currentProject->fullPath).lexically_normal() : std::filesystem::path{};
 
         ImGui::SetNextItemWidth(640.0f);
@@ -965,7 +986,7 @@ void AssetsWindow::drawAssetGrid()
 
                 if (importFiles.empty())
                 {
-                    ImGui::TextDisabled("No importable model/texture files in this folder.");
+                    ImGui::TextDisabled("No importable model/texture/audio files in this folder.");
                 }
                 else
                 {
@@ -1071,23 +1092,29 @@ void AssetsWindow::drawAssetGrid()
                         const std::string extensionLower = toLowerCopy(sourcePath.extension().string());
                         const bool isModelSource = isSupportedModelSourceExtension(extensionLower);
                         const bool isTextureSource = isSupportedTextureSourceExtension(extensionLower);
+                        const bool isAudioSource = isSupportedAudioSourceExtension(extensionLower);
 
                         bool importModel = false;
                         bool importTexture = false;
+                        bool importAudio = false;
 
                         if (m_importTypeIndex == 1)
                             importModel = true;
                         else if (m_importTypeIndex == 2)
                             importTexture = true;
+                        else if (m_importTypeIndex == 3)
+                            importAudio = true;
                         else
                         {
                             importModel = isModelSource;
                             importTexture = isTextureSource;
+                            importAudio = isAudioSource;
                         }
 
-                        if ((!importModel && !importTexture) ||
+                        if ((!importModel && !importTexture && !importAudio) ||
                             (importModel && !isModelSource) ||
-                            (importTexture && !isTextureSource))
+                            (importTexture && !isTextureSource) ||
+                            (importAudio && !isAudioSource))
                         {
                             ++failedCount;
                             continue;
@@ -1095,7 +1122,7 @@ void AssetsWindow::drawAssetGrid()
 
                         std::string assetName = hasCustomSingleAssetName ? customAssetName : sourcePath.stem().string();
                         if (assetName.empty())
-                            assetName = importModel ? "ModelAsset" : "TextureAsset";
+                            assetName = importModel ? "ModelAsset" : (importAudio ? "AudioAsset" : "TextureAsset");
 
                         if (assetName.find('/') != std::string::npos || assetName.find('\\') != std::string::npos)
                         {
@@ -1103,12 +1130,16 @@ void AssetsWindow::drawAssetGrid()
                             continue;
                         }
 
-                        const std::string outputExtension = importModel ? ".model.elixasset" : ".tex.elixasset";
+                        const std::string outputExtension = importModel ? ".model.elixasset" : (importAudio ? ".audio.elixasset" : ".tex.elixasset");
                         const auto outputPath = makeUniquePathWithExtension(destinationDirectory, assetName, outputExtension);
 
-                        const bool importSuccess = importModel
-                                                       ? engine::AssetsLoader::importModelAsset(sourcePath.string(), outputPath.string())
-                                                       : engine::AssetsLoader::importTextureAsset(sourcePath.string(), outputPath.string());
+                        bool importSuccess = false;
+                        if (importModel)
+                            importSuccess = engine::AssetsLoader::importModelAsset(sourcePath.string(), outputPath.string());
+                        else if (importAudio)
+                            importSuccess = engine::AssetsLoader::importAudioAsset(sourcePath.string(), outputPath.string());
+                        else
+                            importSuccess = engine::AssetsLoader::importTextureAsset(sourcePath.string(), outputPath.string());
 
                         if (!importSuccess)
                         {

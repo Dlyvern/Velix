@@ -10,6 +10,7 @@
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/Components/CameraComponent.hpp"
+#include "Engine/Components/CharacterMovementComponent.hpp"
 #include "Engine/Components/RigidBodyComponent.hpp"
 #include "Engine/Primitives.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
@@ -24,6 +25,7 @@
 #include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Utilities/ImageUtilities.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
+#include "Engine/Assets/ElixPacket.hpp"
 
 #include "Editor/FileHelper.hpp"
 
@@ -45,6 +47,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <iomanip>
 #include <limits>
 #include <cmath>
@@ -174,17 +177,44 @@ namespace
         return value;
     }
 
+    int buildArtifactPreference(const std::filesystem::path &path)
+    {
+        auto toLower = [](std::string value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
+                           { return static_cast<char>(std::tolower(character)); });
+            return value;
+        };
+
+        for (const auto &segment : path)
+        {
+            const std::string loweredSegment = toLower(segment.string());
+            if (loweredSegment == "release")
+                return 0;
+            if (loweredSegment == "relwithdebinfo")
+                return 1;
+            if (loweredSegment == "minsizerel")
+                return 2;
+            if (loweredSegment == "debug")
+                return 4;
+        }
+
+        // Unknown/mixed folders (including single-config builds).
+        return 3;
+    }
+
     std::filesystem::path findGameModuleLibraryPath(const std::filesystem::path &buildDirectory)
     {
         if (buildDirectory.empty() || !std::filesystem::exists(buildDirectory))
             return {};
 
         const std::vector<std::filesystem::path> searchRoots = {
-            buildDirectory,
             buildDirectory / "Release",
             buildDirectory / "RelWithDebInfo",
+            buildDirectory / "MinSizeRel",
+            buildDirectory,
             buildDirectory / "Debug",
-            buildDirectory / "MinSizeRel"};
+        };
 
         const std::vector<std::string> moduleNames = {
             std::string("GameModule") + SHARED_LIB_EXTENSION,
@@ -203,6 +233,9 @@ namespace
             }
         }
 
+        std::filesystem::path bestMatch;
+        int bestPreference = std::numeric_limits<int>::max();
+
         for (const auto &entry : std::filesystem::recursive_directory_iterator(buildDirectory))
         {
             if (!entry.is_regular_file())
@@ -214,10 +247,90 @@ namespace
 
             const std::string stem = path.stem().string();
             if (stem == "GameModule" || stem == "libGameModule")
-                return path;
+            {
+                const int candidatePreference = buildArtifactPreference(path);
+                if (candidatePreference < bestPreference ||
+                    (candidatePreference == bestPreference && path.string() < bestMatch.string()))
+                {
+                    bestPreference = candidatePreference;
+                    bestMatch = path;
+                }
+                continue;
+            }
 
             if (path.filename().string().find("GameModule") != std::string::npos)
-                return path;
+            {
+                const int candidatePreference = buildArtifactPreference(path);
+                if (candidatePreference < bestPreference ||
+                    (candidatePreference == bestPreference && path.string() < bestMatch.string()))
+                {
+                    bestPreference = candidatePreference;
+                    bestMatch = path;
+                }
+            }
+        }
+
+        return bestMatch;
+    }
+
+    std::filesystem::path findPreferredRuntimeExecutableForExport(const std::filesystem::path &runningExecutablePath)
+    {
+        if (runningExecutablePath.empty())
+            return {};
+
+        auto toLower = [](std::string value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
+                           { return static_cast<char>(std::tolower(character)); });
+            return value;
+        };
+
+        auto isExistingFile = [](const std::filesystem::path &path) -> bool
+        {
+            if (path.empty())
+                return false;
+
+            std::error_code errorCode;
+            return std::filesystem::exists(path, errorCode) &&
+                   std::filesystem::is_regular_file(path, errorCode);
+        };
+
+        std::vector<std::filesystem::path> candidates;
+        auto addCandidate = [&](const std::filesystem::path &candidate)
+        {
+            if (candidate.empty())
+                return;
+
+            if (std::find(candidates.begin(), candidates.end(), candidate) == candidates.end())
+                candidates.push_back(candidate);
+        };
+
+        const std::filesystem::path executableFileName = runningExecutablePath.filename();
+        const std::filesystem::path executableDirectory = runningExecutablePath.parent_path();
+        const std::string directoryNameLower = toLower(executableDirectory.filename().string());
+
+        auto addConfigCandidates = [&](const std::filesystem::path &baseDirectory)
+        {
+            addCandidate(baseDirectory / "Release" / executableFileName);
+            addCandidate(baseDirectory / "RelWithDebInfo" / executableFileName);
+            addCandidate(baseDirectory / "MinSizeRel" / executableFileName);
+            addCandidate(baseDirectory / "release" / executableFileName);
+            addCandidate(baseDirectory / "relwithdebinfo" / executableFileName);
+            addCandidate(baseDirectory / "minsizerel" / executableFileName);
+        };
+
+        if (directoryNameLower == "debug" || directoryNameLower == "release" ||
+            directoryNameLower == "relwithdebinfo" || directoryNameLower == "minsizerel")
+            addConfigCandidates(executableDirectory.parent_path());
+        else
+            addConfigCandidates(executableDirectory);
+
+        addCandidate(runningExecutablePath);
+
+        for (const auto &candidate : candidates)
+        {
+            if (isExistingFile(candidate))
+                return candidate;
         }
 
         return {};
@@ -635,6 +748,27 @@ namespace
         return path.substr(lastSlashPosition + 1u);
     }
 
+    bool tryResolveCandidateTextureAssetPath(const std::filesystem::path &candidatePath,
+                                             const std::filesystem::path &projectRoot,
+                                             std::string &outResolvedPath)
+    {
+        std::string resolvedSourcePath;
+        if (!tryResolveCandidateTexturePath(candidatePath, resolvedSourcePath))
+            return false;
+
+        const std::string textureReferencePath = toMaterialTextureReferencePath(resolvedSourcePath, projectRoot);
+        if (textureReferencePath.empty())
+            return false;
+
+        const std::filesystem::path resolvedTexturePath = makeAbsoluteNormalized(std::filesystem::path(resolveTexturePathAgainstProjectRoot(textureReferencePath, projectRoot)));
+        auto textureType = readSerializedAssetType(resolvedTexturePath);
+        if (!textureType.has_value() || textureType.value() != engine::Asset::AssetType::TEXTURE)
+            return false;
+
+        outResolvedPath = resolvedTexturePath.string();
+        return true;
+    }
+
     std::string resolveTexturePathForMaterialExport(const std::string &rawTexturePath,
                                                     const std::filesystem::path &modelDirectory,
                                                     const std::filesystem::path &projectRoot,
@@ -656,26 +790,45 @@ namespace
 
         if (texturePath.is_absolute())
         {
-            if (tryResolveCandidateTexturePath(texturePath, resolvedPath))
+            if (tryResolveCandidateTextureAssetPath(texturePath, projectRoot, resolvedPath))
                 return resolvedPath;
 
             resolved = false;
             return sourcePath;
         }
 
-        if (!texturePath.empty() && tryResolveCandidateTexturePath(makeAbsoluteNormalized(modelDirectory / texturePath), resolvedPath))
+        if (!texturePath.empty() && tryResolveCandidateTextureAssetPath(makeAbsoluteNormalized(modelDirectory / texturePath),
+                                                                        projectRoot,
+                                                                        resolvedPath))
             return resolvedPath;
 
         if (!projectRoot.empty() && !texturePath.empty() &&
-            tryResolveCandidateTexturePath(makeAbsoluteNormalized(projectRoot / texturePath), resolvedPath))
+            tryResolveCandidateTextureAssetPath(makeAbsoluteNormalized(projectRoot / texturePath),
+                                                projectRoot,
+                                                resolvedPath))
             return resolvedPath;
 
         if (!textureSearchDirectory.empty())
         {
             const std::string textureFileName = extractFileNamePortable(sourcePath);
-            if (!textureFileName.empty() &&
-                tryResolveCandidateTexturePath(makeAbsoluteNormalized(textureSearchDirectory / textureFileName), resolvedPath))
-                return resolvedPath;
+            std::array<std::string, 2> candidateNames = {textureFileName, {}};
+
+            if (!textureFileName.empty())
+                candidateNames[1] = std::filesystem::path(textureFileName).stem().string() + ".tex.elixasset";
+
+            for (const auto &candidateName : candidateNames)
+            {
+                if (candidateName.empty())
+                    continue;
+
+                std::filesystem::path remappedPath = textureSearchDirectory / candidateName;
+                if (auto caseInsensitiveMatch = findCaseInsensitiveFileInDirectory(textureSearchDirectory, candidateName);
+                    caseInsensitiveMatch.has_value())
+                    remappedPath = caseInsensitiveMatch.value();
+
+                if (tryResolveCandidateTextureAssetPath(remappedPath, projectRoot, resolvedPath))
+                    return resolvedPath;
+            }
         }
 
         resolved = false;
@@ -915,15 +1068,18 @@ void Editor::drawGuizmo()
 
     std::vector<ColliderHandleProjection> colliderHandles;
     auto *collisionComponent = m_selectedEntity->getComponent<engine::CollisionComponent>();
+    auto *characterMovementComponent = m_selectedEntity->getComponent<engine::CharacterMovementComponent>();
 
-    if (collisionComponent && m_showCollisionBounds && m_editorCamera)
+    if ((collisionComponent || characterMovementComponent) && m_showCollisionBounds && m_editorCamera)
     {
         ImDrawList *drawList = ImGui::GetWindowDrawList();
         const glm::mat4 view = m_editorCamera->getViewMatrix();
         const glm::mat4 projection = m_editorCamera->getProjectionMatrix();
         const glm::vec3 worldPosition = tc->getWorldPosition();
         const glm::quat worldRotation = tc->getWorldRotation();
-        const glm::mat4 colliderMatrix = composeTransform(worldPosition, worldRotation) * shapeLocalPoseToMatrix(collisionComponent->getShape());
+        glm::mat4 colliderMatrix = composeTransform(worldPosition, worldRotation);
+        if (collisionComponent && collisionComponent->getShape())
+            colliderMatrix *= shapeLocalPoseToMatrix(collisionComponent->getShape());
 
         const glm::vec3 center = transformPoint(colliderMatrix, glm::vec3(0.0f));
         const glm::vec3 axisX = transformDirection(colliderMatrix, glm::vec3(1.0f, 0.0f, 0.0f));
@@ -935,7 +1091,10 @@ void Editor::drawGuizmo()
         constexpr ImU32 boxAxisYColor = IM_COL32(95, 235, 120, 235);
         constexpr ImU32 boxAxisZColor = IM_COL32(110, 160, 255, 235);
 
-        if (collisionComponent->getShapeType() == engine::CollisionComponent::ShapeType::BOX)
+        const bool drawCollisionBox = collisionComponent &&
+                                      collisionComponent->getShapeType() == engine::CollisionComponent::ShapeType::BOX;
+
+        if (drawCollisionBox)
         {
             const glm::vec3 halfExtents = collisionComponent->getBoxHalfExtents();
             const std::array<glm::vec3, 8> localCorners = {
@@ -966,12 +1125,24 @@ void Editor::drawGuizmo()
             colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::BOX_Y), center, handleY, view, projection, viewportPos, viewportSize));
             colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::BOX_Z), center, handleZ, view, projection, viewportPos, viewportSize));
         }
-        else if (collisionComponent->getShapeType() == engine::CollisionComponent::ShapeType::CAPSULE)
+        else
         {
-            const float radius = collisionComponent->getCapsuleRadius();
-            const float halfHeight = collisionComponent->getCapsuleHalfHeight();
-            const glm::vec3 topCenter = center + axisX * halfHeight;
-            const glm::vec3 bottomCenter = center - axisX * halfHeight;
+            const bool useCharacterMovementCapsule = characterMovementComponent &&
+                                                     (!collisionComponent || collisionComponent->getShapeType() != engine::CollisionComponent::ShapeType::CAPSULE);
+
+            const float radius = useCharacterMovementCapsule
+                                     ? characterMovementComponent->getCapsuleRadius()
+                                     : collisionComponent->getCapsuleRadius();
+            const float halfHeight = useCharacterMovementCapsule
+                                         ? (characterMovementComponent->getCapsuleHeight() * 0.5f)
+                                         : collisionComponent->getCapsuleHalfHeight();
+
+            const glm::vec3 capsuleAxis = useCharacterMovementCapsule ? axisY : axisX;
+            const glm::vec3 radiusAxisA = useCharacterMovementCapsule ? axisX : axisY;
+            const glm::vec3 radiusAxisB = axisZ;
+
+            const glm::vec3 topCenter = center + capsuleAxis * halfHeight;
+            const glm::vec3 bottomCenter = center - capsuleAxis * halfHeight;
 
             auto drawCircle = [&](const glm::vec3 &circleCenter,
                                   const glm::vec3 &basisU,
@@ -989,18 +1160,18 @@ void Editor::drawGuizmo()
                 }
             };
 
-            drawCircle(topCenter, axisY, axisZ, radius);
-            drawCircle(bottomCenter, axisY, axisZ, radius);
-            drawCircle(center, axisY, axisZ, radius);
+            drawCircle(topCenter, radiusAxisA, radiusAxisB, radius);
+            drawCircle(bottomCenter, radiusAxisA, radiusAxisB, radius);
+            drawCircle(center, radiusAxisA, radiusAxisB, radius);
 
-            drawLine3D(drawList, topCenter + axisY * radius, bottomCenter + axisY * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
-            drawLine3D(drawList, topCenter - axisY * radius, bottomCenter - axisY * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
-            drawLine3D(drawList, topCenter + axisZ * radius, bottomCenter + axisZ * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
-            drawLine3D(drawList, topCenter - axisZ * radius, bottomCenter - axisZ * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
+            drawLine3D(drawList, topCenter + radiusAxisA * radius, bottomCenter + radiusAxisA * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
+            drawLine3D(drawList, topCenter - radiusAxisA * radius, bottomCenter - radiusAxisA * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
+            drawLine3D(drawList, topCenter + radiusAxisB * radius, bottomCenter + radiusAxisB * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
+            drawLine3D(drawList, topCenter - radiusAxisB * radius, bottomCenter - radiusAxisB * radius, view, projection, viewportPos, viewportSize, colliderLineColor, 1.3f);
 
-            const glm::vec3 radiusHandleY = center + axisY * radius;
-            const glm::vec3 radiusHandleZ = center + axisZ * radius;
-            const glm::vec3 heightHandle = center + axisX * (halfHeight + radius);
+            const glm::vec3 radiusHandleY = center + radiusAxisA * radius;
+            const glm::vec3 radiusHandleZ = center + radiusAxisB * radius;
+            const glm::vec3 heightHandle = center + capsuleAxis * (halfHeight + radius);
 
             colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::CAPSULE_RADIUS_Y), center, radiusHandleY, view, projection, viewportPos, viewportSize));
             colliderHandles.push_back(makeHandleProjection(static_cast<int>(ColliderHandleType::CAPSULE_RADIUS_Z), center, radiusHandleZ, view, projection, viewportPos, viewportSize));
@@ -1047,9 +1218,19 @@ void Editor::drawGuizmo()
                 m_colliderDragStartMouse = glm::vec2(mousePosition.x, mousePosition.y);
                 m_colliderDragAxisScreenDir = handle.axisScreenDir;
                 m_colliderDragWorldPerPixel = handle.worldPerPixel;
-                m_colliderDragStartBoxHalfExtents = collisionComponent->getBoxHalfExtents();
-                m_colliderDragStartCapsuleRadius = collisionComponent->getCapsuleRadius();
-                m_colliderDragStartCapsuleHalfHeight = collisionComponent->getCapsuleHalfHeight();
+                if (collisionComponent)
+                    m_colliderDragStartBoxHalfExtents = collisionComponent->getBoxHalfExtents();
+
+                if (characterMovementComponent && (!collisionComponent || collisionComponent->getShapeType() != engine::CollisionComponent::ShapeType::CAPSULE))
+                {
+                    m_colliderDragStartCapsuleRadius = characterMovementComponent->getCapsuleRadius();
+                    m_colliderDragStartCapsuleHalfHeight = characterMovementComponent->getCapsuleHeight() * 0.5f;
+                }
+                else if (collisionComponent)
+                {
+                    m_colliderDragStartCapsuleRadius = collisionComponent->getCapsuleRadius();
+                    m_colliderDragStartCapsuleHalfHeight = collisionComponent->getCapsuleHalfHeight();
+                }
                 break;
             }
         }
@@ -1070,34 +1251,43 @@ void Editor::drawGuizmo()
                 {
                     glm::vec3 nextHalfExtents = m_colliderDragStartBoxHalfExtents;
                     nextHalfExtents.x = std::max(0.01f, nextHalfExtents.x + worldDelta);
-                    collisionComponent->setBoxHalfExtents(nextHalfExtents);
+                    if (collisionComponent)
+                        collisionComponent->setBoxHalfExtents(nextHalfExtents);
                     break;
                 }
                 case ColliderHandleType::BOX_Y:
                 {
                     glm::vec3 nextHalfExtents = m_colliderDragStartBoxHalfExtents;
                     nextHalfExtents.y = std::max(0.01f, nextHalfExtents.y + worldDelta);
-                    collisionComponent->setBoxHalfExtents(nextHalfExtents);
+                    if (collisionComponent)
+                        collisionComponent->setBoxHalfExtents(nextHalfExtents);
                     break;
                 }
                 case ColliderHandleType::BOX_Z:
                 {
                     glm::vec3 nextHalfExtents = m_colliderDragStartBoxHalfExtents;
                     nextHalfExtents.z = std::max(0.01f, nextHalfExtents.z + worldDelta);
-                    collisionComponent->setBoxHalfExtents(nextHalfExtents);
+                    if (collisionComponent)
+                        collisionComponent->setBoxHalfExtents(nextHalfExtents);
                     break;
                 }
                 case ColliderHandleType::CAPSULE_RADIUS_Y:
                 case ColliderHandleType::CAPSULE_RADIUS_Z:
                 {
                     const float nextRadius = std::max(0.01f, m_colliderDragStartCapsuleRadius + worldDelta);
-                    collisionComponent->setCapsuleDimensions(nextRadius, m_colliderDragStartCapsuleHalfHeight);
+                    if (characterMovementComponent && (!collisionComponent || collisionComponent->getShapeType() != engine::CollisionComponent::ShapeType::CAPSULE))
+                        characterMovementComponent->setCapsule(nextRadius, m_colliderDragStartCapsuleHalfHeight * 2.0f);
+                    else if (collisionComponent)
+                        collisionComponent->setCapsuleDimensions(nextRadius, m_colliderDragStartCapsuleHalfHeight);
                     break;
                 }
                 case ColliderHandleType::CAPSULE_HEIGHT:
                 {
                     const float nextHalfHeight = std::max(0.0f, m_colliderDragStartCapsuleHalfHeight + worldDelta);
-                    collisionComponent->setCapsuleDimensions(m_colliderDragStartCapsuleRadius, nextHalfHeight);
+                    if (characterMovementComponent && (!collisionComponent || collisionComponent->getShapeType() != engine::CollisionComponent::ShapeType::CAPSULE))
+                        characterMovementComponent->setCapsule(m_colliderDragStartCapsuleRadius, nextHalfHeight * 2.0f);
+                    else if (collisionComponent)
+                        collisionComponent->setCapsuleDimensions(m_colliderDragStartCapsuleRadius, nextHalfHeight);
                     break;
                 }
                 default:
@@ -1310,11 +1500,10 @@ void Editor::initStyle()
     m_assetsWindow->setOnAssetSelectionChanged([this](const std::filesystem::path &path)
                                                {
                                                    m_selectedAssetPath = path;
-                                                   invalidateModelDetailsCache();
-                                                   if (m_selectedAssetPath.empty())
-                                                       return;
-
-                                                   m_detailsContext = DetailsContext::Asset; });
+                                                   if (!m_selectedAssetPath.empty())
+                                                       m_detailsContext = DetailsContext::Asset;
+                                                   else if (m_selectedEntity)
+                                                       m_detailsContext = DetailsContext::Entity; });
 
     m_entityIdBuffer = core::Buffer::createShared(sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                   core::memory::MemoryUsage::CPU_TO_GPU);
@@ -1405,8 +1594,10 @@ void Editor::showDockSpace()
         ImGuiID assetsDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Down, 0.25f, nullptr, &dockMainId);
         m_assetsPanelsDockId = assetsDock;
         ImGui::DockBuilderDockWindow("Assets", assetsDock);
+        ImGui::DockBuilderDockWindow("UI Tools", assetsDock);
 
         ImGui::DockBuilderDockWindow("Viewport", dockMainId);
+        ImGui::DockBuilderDockWindow("Game Viewport", dockMainId);
         m_centerDockId = dockMainId;
         ImGui::DockBuilderFinish(dockspaceId);
 
@@ -1427,30 +1618,59 @@ void Editor::syncAssetsAndTerminalDocking()
 
     const bool assetsVisible = m_showAssetsWindow;
     const bool terminalVisible = m_showTerminal;
+    const bool uiToolsVisible = m_showUITools;
 
-    if (assetsVisible == m_lastDockedAssetsVisibility && terminalVisible == m_lastDockedTerminalVisibility)
+    if (assetsVisible == m_lastDockedAssetsVisibility &&
+        terminalVisible == m_lastDockedTerminalVisibility &&
+        uiToolsVisible == m_lastDockedUIToolsVisibility)
         return;
 
     m_lastDockedAssetsVisibility = assetsVisible;
     m_lastDockedTerminalVisibility = terminalVisible;
+    m_lastDockedUIToolsVisibility = uiToolsVisible;
 
     if (!ImGui::DockBuilderGetNode(m_assetsPanelsDockId))
         return;
 
     ImGui::DockBuilderRemoveNodeChildNodes(m_assetsPanelsDockId);
 
-    if (assetsVisible && terminalVisible)
+    std::vector<const char *> dockWindows;
+    if (assetsVisible)
+        dockWindows.push_back("Assets");
+    if (terminalVisible)
+        dockWindows.push_back("Terminal with logs");
+    if (uiToolsVisible)
+        dockWindows.push_back("UI Tools");
+
+    if (dockWindows.empty())
+    {
+        ImGui::DockBuilderFinish(m_dockSpaceId);
+        return;
+    }
+
+    if (dockWindows.size() == 1)
+    {
+        ImGui::DockBuilderDockWindow(dockWindows[0], m_assetsPanelsDockId);
+    }
+    else if (dockWindows.size() == 2)
     {
         ImGuiID leftNode = m_assetsPanelsDockId;
         ImGuiID rightNode = ImGui::DockBuilderSplitNode(leftNode, ImGuiDir_Right, 0.5f, nullptr, &leftNode);
 
-        ImGui::DockBuilderDockWindow("Assets", leftNode);
-        ImGui::DockBuilderDockWindow("Terminal with logs", rightNode);
+        ImGui::DockBuilderDockWindow(dockWindows[0], leftNode);
+        ImGui::DockBuilderDockWindow(dockWindows[1], rightNode);
     }
-    else if (assetsVisible)
-        ImGui::DockBuilderDockWindow("Assets", m_assetsPanelsDockId);
-    else if (terminalVisible)
-        ImGui::DockBuilderDockWindow("Terminal with logs", m_assetsPanelsDockId);
+    else
+    {
+        ImGuiID leftNode = m_assetsPanelsDockId;
+        ImGuiID rightGroupNode = ImGui::DockBuilderSplitNode(leftNode, ImGuiDir_Right, 0.66f, nullptr, &leftNode);
+        ImGuiID middleNode = rightGroupNode;
+        ImGuiID rightNode = ImGui::DockBuilderSplitNode(middleNode, ImGuiDir_Right, 0.5f, nullptr, &middleNode);
+
+        ImGui::DockBuilderDockWindow(dockWindows[0], leftNode);
+        ImGui::DockBuilderDockWindow(dockWindows[1], middleNode);
+        ImGui::DockBuilderDockWindow(dockWindows[2], rightNode);
+    }
 
     ImGui::DockBuilderFinish(m_dockSpaceId);
 }
@@ -1677,15 +1897,13 @@ void Editor::drawCustomTitleBar()
                                     {
                                         engine::PluginLoader::closeLibrary(project->projectLibrary);
                                         project->projectLibrary = nullptr;
-                                        m_projectScriptsRegister = nullptr;
-                                        m_loadedGameModulePath.clear();
+                                        setProjectScriptsRegister(nullptr, {});
                                     }
 
                                     project->projectLibrary = engine::PluginLoader::loadLibrary(moduleLibraryPath.string());
                                     if (!project->projectLibrary)
                                     {
-                                        m_projectScriptsRegister = nullptr;
-                                        m_loadedGameModulePath.clear();
+                                        setProjectScriptsRegister(nullptr, {});
                                         VX_EDITOR_ERROR_STREAM("Failed to load game module: " << moduleLibraryPath << '\n');
                                         m_notificationManager.showError("Build done, but failed to load module");
                                     }
@@ -1697,16 +1915,14 @@ void Editor::drawCustomTitleBar()
                                             engine::PluginLoader::closeLibrary(project->projectLibrary);
                                             project->projectLibrary = nullptr;
 
-                                            m_projectScriptsRegister = nullptr;
-                                            m_loadedGameModulePath.clear();
+                                            setProjectScriptsRegister(nullptr, {});
 
                                             VX_EDITOR_ERROR_STREAM("Module loaded but getScriptsRegister was not found: " << moduleLibraryPath << '\n');
                                             m_notificationManager.showError("Module loaded, but script register function is missing");
                                         }
                                         else
                                         {
-                                            m_projectScriptsRegister = &getScriptsRegisterFunction();
-                                            m_loadedGameModulePath = moduleLibraryPath.string();
+                                            setProjectScriptsRegister(&getScriptsRegisterFunction(), moduleLibraryPath.string());
 
                                             const std::size_t scriptsCount = m_projectScriptsRegister->getScripts().size();
                                             VX_EDITOR_INFO_STREAM("Loaded " << scriptsCount << " script(s) from " << m_loadedGameModulePath << '\n');
@@ -1720,6 +1936,9 @@ void Editor::drawCustomTitleBar()
                 }
             }
         }
+
+        if (ImGui::Button("Export Game (.elixpacket)"))
+            exportCurrentProjectPacket();
 
         ImGui::Separator();
 
@@ -1843,8 +2062,14 @@ void Editor::drawCustomTitleBar()
         }
         if (ImGui::Button("Save"))
         {
+            if (m_currentMode != EditorMode::EDIT)
+            {
+                m_notificationManager.showError("Cannot save scene while playing. Stop Play first.");
+                VX_EDITOR_WARNING_STREAM("Blocked scene save while not in Edit mode.\n");
+            }
+
             auto project = m_currentProject.lock();
-            if (m_scene && project)
+            if (m_scene && project && m_currentMode == EditorMode::EDIT)
             {
                 m_scene->saveSceneToFile(project->entryScene);
                 m_notificationManager.showInfo("Scene saved");
@@ -1852,11 +2077,58 @@ void Editor::drawCustomTitleBar()
             }
         }
 
+        if (ImGui::Button("Save As..."))
+        {
+            ImGui::CloseCurrentPopup();
+            ImGui::OpenPopup("SaveAsScenePopup");
+        }
+
         ImGui::Separator();
         if (ImGui::Button("Exit"))
             window.close(); // Ha-ha-ha-ha Kill it slower dumbass
         ImGui::PopStyleColor(1);
 
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::BeginPopupModal("SaveAsScenePopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        static char saveAsBuf[256] = "";
+        ImGui::Text("Save scene copy as:");
+        ImGui::SetNextItemWidth(300.0f);
+        ImGui::InputText("##saveas_name", saveAsBuf, sizeof(saveAsBuf));
+        ImGui::TextDisabled("File will be saved in the same directory as the current scene.");
+
+        ImGui::Spacing();
+        if (ImGui::Button("Save", ImVec2(120, 0)) && saveAsBuf[0] != '\0')
+        {
+            if (m_currentMode != EditorMode::EDIT)
+            {
+                m_notificationManager.showError("Cannot save scene while playing. Stop Play first.");
+                VX_EDITOR_WARNING_STREAM("Blocked scene save-as while not in Edit mode.\n");
+            }
+
+            auto project = m_currentProject.lock();
+            if (m_scene && project && m_currentMode == EditorMode::EDIT)
+            {
+                std::string filename = saveAsBuf;
+                if (filename.find('.') == std::string::npos)
+                    filename += ".elixscene";
+                const std::filesystem::path newPath =
+                    std::filesystem::path(project->entryScene).parent_path() / filename;
+                m_scene->saveSceneToFile(newPath.string());
+                m_notificationManager.showSuccess("Scene copy saved: " + newPath.filename().string());
+                VX_EDITOR_INFO_STREAM("Scene copy saved to: " << newPath.string());
+            }
+            saveAsBuf[0] = '\0';
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0)))
+        {
+            saveAsBuf[0] = '\0';
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 
@@ -1938,6 +2210,452 @@ void Editor::changeMode(EditorMode mode)
             callback(mode);
 }
 
+bool Editor::hasUnsavedSceneChanges()
+{
+    auto project = m_currentProject.lock();
+    if (!m_scene || !project)
+        return false;
+
+    const std::filesystem::path scenePath = project->entryScene;
+    if (scenePath.empty() || !std::filesystem::exists(scenePath))
+        return true;
+
+    const auto timestamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    std::filesystem::path sceneDirectory = scenePath.parent_path();
+    if (sceneDirectory.empty())
+        sceneDirectory = std::filesystem::current_path();
+
+    // Save temporary snapshot next to the entry scene.
+    // This keeps relative path serialization and fallback scene naming stable.
+    const std::filesystem::path tempScenePath = sceneDirectory / (scenePath.stem().string() +
+                                                                  ".__velix_editor_unsaved_scene_check_" +
+                                                                  std::to_string(timestamp));
+
+    auto readFileContents = [](const std::filesystem::path &path, std::string &outText) -> bool
+    {
+        std::ifstream input(path, std::ios::binary);
+        if (!input.is_open())
+            return false;
+
+        std::ostringstream stream;
+        stream << input.rdbuf();
+        outText = stream.str();
+        return input.good() || input.eof();
+    };
+
+    bool hasChanges = true;
+
+    try
+    {
+        m_scene->saveSceneToFile(tempScenePath.string());
+
+        std::string savedSceneText;
+        std::string currentSceneText;
+
+        if (readFileContents(scenePath, savedSceneText) &&
+            readFileContents(tempScenePath, currentSceneText))
+        {
+            hasChanges = (savedSceneText != currentSceneText);
+        }
+    }
+    catch (const std::exception &exception)
+    {
+        VX_EDITOR_WARNING_STREAM("Failed to evaluate unsaved scene changes: " << exception.what() << '\n');
+        hasChanges = true;
+    }
+    catch (...)
+    {
+        VX_EDITOR_WARNING_STREAM("Failed to evaluate unsaved scene changes: unknown error\n");
+        hasChanges = true;
+    }
+
+    std::error_code removeError;
+    std::filesystem::remove(tempScenePath, removeError);
+
+    return hasChanges;
+}
+
+void Editor::exportCurrentProjectPacket()
+{
+    if (m_currentMode != EditorMode::EDIT)
+    {
+        m_notificationManager.showError("Cannot export while playing. Stop Play first.");
+        VX_EDITOR_WARNING_STREAM("Blocked game export while not in Edit mode.\n");
+        return;
+    }
+
+    auto project = m_currentProject.lock();
+    if (!project)
+    {
+        m_notificationManager.showError("Export failed: no project loaded.");
+        VX_EDITOR_ERROR_STREAM("Game export failed: project is not loaded.\n");
+        return;
+    }
+
+    const std::filesystem::path projectRoot = makeAbsoluteNormalized(project->fullPath);
+    if (projectRoot.empty() || !std::filesystem::exists(projectRoot))
+    {
+        m_notificationManager.showError("Export failed: invalid project path.");
+        VX_EDITOR_ERROR_STREAM("Game export failed: invalid project path '" << project->fullPath << "'.\n");
+        return;
+    }
+
+    if (!m_scene || hasUnsavedSceneChanges())
+    {
+        m_notificationManager.showWarning("Save scene before exporting game packet.");
+        VX_EDITOR_WARNING_STREAM("Game export blocked due to unsaved scene changes.\n");
+        return;
+    }
+
+    const std::filesystem::path entryScenePath = makeAbsoluteNormalized(project->entryScene);
+    if (entryScenePath.empty() || !std::filesystem::exists(entryScenePath))
+    {
+        m_notificationManager.showError("Export failed: entry scene is missing.");
+        VX_EDITOR_ERROR_STREAM("Game export failed: entry scene file not found: " << project->entryScene << '\n');
+        return;
+    }
+
+    std::filesystem::path exportDirectory = project->exportDir.empty()
+                                                ? (projectRoot / "Export")
+                                                : makeAbsoluteNormalized(project->exportDir);
+
+    std::error_code createDirectoryError;
+    std::filesystem::create_directories(exportDirectory, createDirectoryError);
+    if (createDirectoryError)
+    {
+        m_notificationManager.showError("Export failed: cannot create export directory.");
+        VX_EDITOR_ERROR_STREAM("Game export failed: could not create export directory '" << exportDirectory
+                                                                                         << "': " << createDirectoryError.message() << '\n');
+        return;
+    }
+
+    std::string packetBaseName = sanitizeFileStem(project->name.empty()
+                                                      ? projectRoot.filename().string()
+                                                      : project->name);
+    if (packetBaseName.empty())
+        packetBaseName = "Game";
+
+    const std::filesystem::path packetPath = exportDirectory / (packetBaseName + ".elixpacket");
+
+    const std::filesystem::path buildDirectory = project->buildDir.empty() ? makeAbsoluteNormalized(projectRoot / "build")
+                                                                            : makeAbsoluteNormalized(std::filesystem::path(project->buildDir));
+    std::filesystem::path cmakePrefixPath = FileHelper::getExecutablePath();
+    if (cmakePrefixPath.filename() == "bin")
+        cmakePrefixPath = cmakePrefixPath.parent_path();
+
+    const std::filesystem::path cmakeExecutablePath = resolveCMakeExecutablePath();
+    const std::string cmakeCommandToken = makeExecutableCommandToken(cmakeExecutablePath);
+
+    const std::string configureCommand = cmakeCommandToken + " -S " + quoteShellArgument(projectRoot) +
+                                         " -B " + quoteShellArgument(buildDirectory) +
+                                         " -DCMAKE_PREFIX_PATH=" + quoteShellArgument(cmakePrefixPath) +
+                                         " -DCMAKE_BUILD_TYPE=Release" +
+                                         " -DCMAKE_EXPORT_COMPILE_COMMANDS=ON";
+
+    const auto [configureResult, configureOutput] = FileHelper::executeCommand(configureCommand);
+    if (configureResult != 0)
+    {
+        m_notificationManager.showError("Export failed: cmake configure error.");
+        VX_EDITOR_ERROR_STREAM("Game export configure failed.\n"
+                               << configureOutput << '\n');
+        return;
+    }
+
+    if (!syncProjectCompileCommands(*project))
+        VX_EDITOR_WARNING_STREAM("Failed to sync compile_commands.json to project root during export.\n");
+
+    std::string buildCommand = cmakeCommandToken + " --build " + quoteShellArgument(buildDirectory) + " --config Release";
+#if defined(__linux__)
+    buildCommand += " -j";
+#endif
+    const auto [buildResult, buildOutput] = FileHelper::executeCommand(buildCommand);
+    if (buildResult != 0)
+    {
+        m_notificationManager.showError("Export failed: project build failed.");
+        VX_EDITOR_ERROR_STREAM("Game export build failed.\n"
+                               << buildOutput << '\n');
+        return;
+    }
+
+    const std::filesystem::path moduleLibraryPath = findGameModuleLibraryPath(buildDirectory);
+    if (moduleLibraryPath.empty())
+    {
+        m_notificationManager.showError("Export failed: GameModule library was not found.");
+        VX_EDITOR_ERROR_STREAM("Game export failed: GameModule library was not found in build directory '" << buildDirectory << "'.\n");
+        return;
+    }
+
+    engine::ElixPacketSerializer serializer;
+    engine::ElixPacketSerializer::ExportOptions exportOptions;
+
+    exportOptions.excludedDirectories.push_back(projectRoot / ".git");
+    exportOptions.excludedDirectories.push_back(projectRoot / ".vscode");
+    if (!project->buildDir.empty())
+        exportOptions.excludedDirectories.push_back(makeAbsoluteNormalized(project->buildDir));
+    exportOptions.excludedDirectories.push_back(exportDirectory);
+
+    std::string exportError;
+    if (!serializer.writeProject(projectRoot, entryScenePath, packetPath, exportOptions, &exportError))
+    {
+        m_notificationManager.showError("Game export failed.");
+        VX_EDITOR_ERROR_STREAM("Failed to export .elixpacket: " << exportError << '\n');
+        return;
+    }
+
+    auto copyFile = [&](const std::filesystem::path &sourcePath,
+                        const std::filesystem::path &targetPath,
+                        const std::string &assetName) -> bool
+    {
+        if (sourcePath.empty() || !std::filesystem::exists(sourcePath) || !std::filesystem::is_regular_file(sourcePath))
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed: " << assetName << " source file is missing: " << sourcePath << '\n');
+            return false;
+        }
+
+        std::error_code createParentDirectoryError;
+        std::filesystem::create_directories(targetPath.parent_path(), createParentDirectoryError);
+        if (createParentDirectoryError)
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed: cannot create target directory for " << assetName << ": " << targetPath.parent_path()
+                                                                                               << " (" << createParentDirectoryError.message() << ")\n");
+            return false;
+        }
+
+        std::error_code copyError;
+        std::filesystem::copy_file(sourcePath, targetPath, std::filesystem::copy_options::overwrite_existing, copyError);
+        if (copyError)
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed: cannot copy " << assetName << " from '" << sourcePath << "' to '" << targetPath
+                                                                       << "' (" << copyError.message() << ")\n");
+            return false;
+        }
+
+        return true;
+    };
+
+    auto copyDirectoryContents = [&](const std::filesystem::path &sourceDirectory,
+                                     const std::filesystem::path &targetDirectory) -> bool
+    {
+        if (sourceDirectory.empty() || !std::filesystem::exists(sourceDirectory) || !std::filesystem::is_directory(sourceDirectory))
+            return true;
+
+        std::error_code createDirectoryError;
+        std::filesystem::create_directories(targetDirectory, createDirectoryError);
+        if (createDirectoryError)
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed: cannot create directory '" << targetDirectory << "': " << createDirectoryError.message() << '\n');
+            return false;
+        }
+
+        std::error_code iteratorError;
+        std::filesystem::recursive_directory_iterator iterator(
+            sourceDirectory,
+            std::filesystem::directory_options::skip_permission_denied,
+            iteratorError);
+        if (iteratorError)
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed: cannot enumerate directory '" << sourceDirectory << "': " << iteratorError.message() << '\n');
+            return false;
+        }
+
+        for (auto it = iterator; it != std::filesystem::recursive_directory_iterator(); ++it)
+        {
+            std::error_code relativeError;
+            const std::filesystem::path relativePath = std::filesystem::relative(it->path(), sourceDirectory, relativeError).lexically_normal();
+            if (relativeError || relativePath.empty())
+            {
+                VX_EDITOR_ERROR_STREAM("Game export failed: cannot compute relative path for '" << it->path() << "'.\n");
+                return false;
+            }
+
+            const std::filesystem::path targetPath = targetDirectory / relativePath;
+
+            if (it->is_directory())
+            {
+                std::error_code createSubdirectoryError;
+                std::filesystem::create_directories(targetPath, createSubdirectoryError);
+                if (createSubdirectoryError)
+                {
+                    VX_EDITOR_ERROR_STREAM("Game export failed: cannot create directory '" << targetPath << "': " << createSubdirectoryError.message() << '\n');
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!it->is_regular_file())
+                continue;
+
+            std::error_code createParentDirectoryError;
+            std::filesystem::create_directories(targetPath.parent_path(), createParentDirectoryError);
+            if (createParentDirectoryError)
+            {
+                VX_EDITOR_ERROR_STREAM("Game export failed: cannot create target directory '" << targetPath.parent_path()
+                                                                                               << "': " << createParentDirectoryError.message() << '\n');
+                return false;
+            }
+
+            std::error_code copyError;
+            std::filesystem::copy_file(it->path(), targetPath, std::filesystem::copy_options::overwrite_existing, copyError);
+            if (copyError)
+            {
+                VX_EDITOR_ERROR_STREAM("Game export failed: cannot copy file '" << it->path() << "' to '" << targetPath
+                                                                 << "': " << copyError.message() << '\n');
+                return false;
+            }
+        }
+
+        return true;
+    };
+
+    const std::filesystem::path runningExecutablePath = FileHelper::getExecutableFilePath();
+    const std::filesystem::path runtimeExecutablePath = findPreferredRuntimeExecutableForExport(runningExecutablePath);
+    if (runtimeExecutablePath.empty() || !std::filesystem::exists(runtimeExecutablePath) || !std::filesystem::is_regular_file(runtimeExecutablePath))
+    {
+        m_notificationManager.showError("Export failed: engine executable was not found.");
+        VX_EDITOR_ERROR_STREAM("Game export failed: runtime executable path is invalid: " << runtimeExecutablePath << '\n');
+        return;
+    }
+
+    if (runtimeExecutablePath != runningExecutablePath)
+        VX_EDITOR_INFO_STREAM("Game export will use runtime executable: " << runtimeExecutablePath << '\n');
+    else if (buildArtifactPreference(runtimeExecutablePath) >= 4)
+        VX_EDITOR_WARNING_STREAM("Game export is using a Debug runtime executable. Build the engine in Release to package optimized runtime binaries.\n");
+
+    std::string packagedExecutableName = packetBaseName;
+#if defined(_WIN32)
+    packagedExecutableName += ".exe";
+#endif
+    const std::filesystem::path packagedExecutablePath = exportDirectory / packagedExecutableName;
+
+    if (!copyFile(runtimeExecutablePath, packagedExecutablePath, "runtime executable"))
+    {
+        m_notificationManager.showError("Export failed while copying runtime executable.");
+        return;
+    }
+
+#if !defined(_WIN32)
+    std::error_code setPermissionsError;
+    std::filesystem::permissions(
+        packagedExecutablePath,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec,
+        std::filesystem::perm_options::add,
+        setPermissionsError);
+    if (setPermissionsError)
+        VX_EDITOR_WARNING_STREAM("Failed to add executable bit for '" << packagedExecutablePath << "': " << setPermissionsError.message() << '\n');
+#endif
+
+    const std::filesystem::path packagedModulePath = exportDirectory / moduleLibraryPath.filename();
+    if (!copyFile(moduleLibraryPath, packagedModulePath, "GameModule library"))
+    {
+        m_notificationManager.showError("Export failed while copying GameModule library.");
+        return;
+    }
+
+    std::unordered_map<std::string, std::filesystem::path> preferredVelixSdkLibrariesByName;
+    std::error_code iteratorError;
+    std::filesystem::recursive_directory_iterator iterator(
+        buildDirectory,
+        std::filesystem::directory_options::skip_permission_denied,
+        iteratorError);
+    if (!iteratorError)
+    {
+        for (auto it = iterator; it != std::filesystem::recursive_directory_iterator(); ++it)
+        {
+            if (!it->is_regular_file())
+                continue;
+
+            const std::string fileName = it->path().filename().string();
+            if (fileName.find("VelixSDK") == std::string::npos)
+                continue;
+
+#if defined(_WIN32)
+            if (it->path().extension() != ".dll")
+                continue;
+#else
+            if (fileName.find(".so") == std::string::npos)
+                continue;
+#endif
+            auto existing = preferredVelixSdkLibrariesByName.find(fileName);
+            if (existing == preferredVelixSdkLibrariesByName.end() ||
+                buildArtifactPreference(it->path()) < buildArtifactPreference(existing->second))
+                preferredVelixSdkLibrariesByName[fileName] = it->path();
+        }
+    }
+    else
+    {
+        VX_EDITOR_WARNING_STREAM("Failed to enumerate build directory for VelixSDK runtime libraries: " << iteratorError.message() << '\n');
+    }
+
+    std::vector<std::filesystem::path> velixSdkLibraries;
+    velixSdkLibraries.reserve(preferredVelixSdkLibrariesByName.size());
+    for (const auto &[_, path] : preferredVelixSdkLibrariesByName)
+        velixSdkLibraries.push_back(path);
+
+    std::sort(velixSdkLibraries.begin(), velixSdkLibraries.end(), [](const auto &lhs, const auto &rhs)
+              { return lhs.string() < rhs.string(); });
+
+    for (const auto &sdkLibraryPath : velixSdkLibraries)
+    {
+        const std::filesystem::path targetPath = exportDirectory / sdkLibraryPath.filename();
+        if (!copyFile(sdkLibraryPath, targetPath, "VelixSDK runtime library"))
+        {
+            m_notificationManager.showError("Export failed while copying VelixSDK runtime library.");
+            return;
+        }
+    }
+
+    const std::filesystem::path runtimeDirectory = runtimeExecutablePath.parent_path();
+
+    if (!copyDirectoryContents(runtimeDirectory / "resources", exportDirectory / "resources"))
+    {
+        m_notificationManager.showError("Export failed while copying runtime resources.");
+        return;
+    }
+
+    if (!copyDirectoryContents(runtimeDirectory / "lib", exportDirectory / "lib"))
+    {
+        m_notificationManager.showError("Export failed while copying runtime libraries.");
+        return;
+    }
+
+    std::error_code runtimeIteratorError;
+    for (const auto &entry : std::filesystem::directory_iterator(runtimeDirectory, runtimeIteratorError))
+    {
+        if (runtimeIteratorError)
+        {
+            VX_EDITOR_WARNING_STREAM("Failed to enumerate runtime directory for optional dynamic libraries: " << runtimeIteratorError.message() << '\n');
+            break;
+        }
+
+        if (!entry.is_regular_file())
+            continue;
+
+        const std::string fileName = entry.path().filename().string();
+        const bool isFmodRuntime =
+#if defined(_WIN32)
+            fileName == "fmod.dll";
+#else
+            fileName.rfind("libfmod.so", 0) == 0;
+#endif
+        if (!isFmodRuntime)
+            continue;
+
+        const std::filesystem::path targetPath = exportDirectory / entry.path().filename();
+        if (!copyFile(entry.path(), targetPath, "FMOD runtime library"))
+        {
+            m_notificationManager.showError("Export failed while copying FMOD runtime library.");
+            return;
+        }
+    }
+
+    m_notificationManager.showSuccess("Game export completed: " + exportDirectory.string());
+    VX_EDITOR_INFO_STREAM("Game export completed.\n"
+                          << "  Packet: " << packetPath << '\n'
+                          << "  Executable: " << packagedExecutablePath << '\n'
+                          << "  Module: " << packagedModulePath << '\n');
+}
+
 void Editor::drawToolBar()
 {
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
@@ -2012,7 +2730,15 @@ void Editor::drawToolBar()
         {
             if (m_currentMode == Editor::EDIT || m_currentMode == EditorMode::PAUSE)
             {
-                changeMode(EditorMode::PLAY);
+                if (m_currentMode == EditorMode::EDIT && hasUnsavedSceneChanges())
+                {
+                    m_notificationManager.showWarning("Scene has unsaved changes. Save scene before Play.");
+                    VX_EDITOR_WARNING_STREAM("Blocked Play due to unsaved scene changes.\n");
+                }
+                else
+                {
+                    changeMode(EditorMode::PLAY);
+                }
             }
             else if (m_currentMode == EditorMode::PLAY)
             {
@@ -2179,6 +2905,41 @@ void Editor::drawRenderSettings()
                 break;
             }
         }
+
+        const char *cascadeItems[] = {"1 Cascade", "2 Cascades", "4 Cascades"};
+        int cascadeIndex = 2;
+        switch (settings.shadowCascadeCount)
+        {
+        case engine::RenderQualitySettings::ShadowCascadeCount::X1:
+            cascadeIndex = 0;
+            break;
+        case engine::RenderQualitySettings::ShadowCascadeCount::X2:
+            cascadeIndex = 1;
+            break;
+        case engine::RenderQualitySettings::ShadowCascadeCount::X4:
+        default:
+            cascadeIndex = 2;
+            break;
+        }
+
+        if (ImGui::Combo("Directional Cascades", &cascadeIndex, cascadeItems, IM_ARRAYSIZE(cascadeItems)))
+        {
+            switch (cascadeIndex)
+            {
+            case 0:
+                settings.shadowCascadeCount = engine::RenderQualitySettings::ShadowCascadeCount::X1;
+                break;
+            case 1:
+                settings.shadowCascadeCount = engine::RenderQualitySettings::ShadowCascadeCount::X2;
+                break;
+            case 2:
+            default:
+                settings.shadowCascadeCount = engine::RenderQualitySettings::ShadowCascadeCount::X4;
+                break;
+            }
+        }
+
+        ImGui::TextDisabled("More cascades improve distance quality but increase shadow draw calls.");
     }
     ImGui::SeparatorText("Ambient Occlusion");
     ImGui::Checkbox("SSAO", &settings.enableSSAO);
@@ -2217,21 +2978,51 @@ void Editor::drawRenderSettings()
 
     ImGui::SeparatorText("Anti-Aliasing");
 
-    ImGui::Checkbox("FXAA##aa", &settings.enableFXAA);
-    ImGui::SetItemTooltip("Fast Approximate Anti-Aliasing. Cheap, slight blur.");
+    const char *aaModes[] = {
+        "None",
+        "FXAA",
+        "SMAA",
+        "TAA (Experimental)"};
 
-    ImGui::Checkbox("SMAA##aa", &settings.enableSMAA);
-    ImGui::SetItemTooltip("Subpixel Morphological Anti-Aliasing. Better edge quality than FXAA.");
+    int aaModeIndex = static_cast<int>(settings.getAntiAliasingMode());
+    if (ImGui::Combo("Mode##aa_mode", &aaModeIndex, aaModes, IM_ARRAYSIZE(aaModes)))
+        settings.setAntiAliasingMode(static_cast<engine::RenderQualitySettings::AntiAliasingMode>(aaModeIndex));
 
-    if (settings.enableFXAA && settings.enableSMAA)
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Note: SMAA runs after FXAA when both enabled.");
+    ImGui::SetItemTooltip("Choose one AA method. FXAA/SMAA are implemented; TAA is experimental and not fully wired.");
 
-    ImGui::Checkbox("TAA (Experimental)##aa", &settings.enableTAA);
-    ImGui::SetItemTooltip("Temporal Anti-Aliasing. Requires velocity buffer — not fully wired yet.");
-    if (settings.enableTAA)
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "TAA requires a rebuild with velocity buffer support.");
+    const auto aaMode = settings.getAntiAliasingMode();
+    if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::FXAA)
+        ImGui::TextDisabled("FXAA: fast, cheapest, softer image.");
+    else if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::SMAA)
+        ImGui::TextDisabled("SMAA: sharper edges than FXAA, slightly heavier.");
+    else if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::TAA)
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "TAA requires velocity buffer support and is not fully wired yet.");
+    else
+        ImGui::TextDisabled("AA disabled.");
 
-    ImGui::TextDisabled("MSAA: not supported in deferred rendering.");
+    const char *msaaModes[] = {
+        "OFF",
+        "2x",
+        "4x",
+        "8x",
+        "16x"};
+    int msaaModeIndex = static_cast<int>(settings.msaaMode);
+    if (ImGui::Combo("MSAA##msaa_mode", &msaaModeIndex, msaaModes, IM_ARRAYSIZE(msaaModes)))
+        settings.msaaMode = static_cast<engine::RenderQualitySettings::MSAAMode>(msaaModeIndex);
+
+    ImGui::TextDisabled("MSAA affects deferred GBuffer. Unsupported levels are clamped by GPU capabilities.");
+
+    const char *anisotropyModes[] = {
+        "OFF",
+        "2x",
+        "4x",
+        "8x",
+        "16x"};
+    int anisotropyModeIndex = static_cast<int>(settings.anisotropyMode);
+    if (ImGui::Combo("Anisotropic Filtering##anisotropy_mode", &anisotropyModeIndex, anisotropyModes, IM_ARRAYSIZE(anisotropyModes)))
+        settings.anisotropyMode = static_cast<engine::RenderQualitySettings::AnisotropyMode>(anisotropyModeIndex);
+
+    ImGui::TextDisabled("Applies to texture sampling. Unsupported levels are clamped by GPU capabilities.");
 
     ImGui::End();
 }
@@ -2255,10 +3046,17 @@ void Editor::drawBottomPanel()
     if (ImGui::Button("Terminal with logs"))
         m_showTerminal = !m_showTerminal;
 
+    ImGui::SameLine();
+
+    if (ImGui::Button("UI Tools"))
+        m_showUITools = !m_showUITools;
+
     ImGui::End();
 }
 
-void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet)
+void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
+                       VkDescriptorSet gameViewportDescriptorSet,
+                       bool hasGameCamera)
 {
     m_assetsPreviewSystem.beginFrame();
 
@@ -2272,6 +3070,7 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet)
 
     if (viewportDescriptorSet)
         drawViewport(viewportDescriptorSet);
+    drawGameViewport(gameViewportDescriptorSet, hasGameCamera);
 
     drawMaterialEditors();
 
@@ -2281,6 +3080,7 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet)
     drawBottomPanel();
     drawHierarchy();
     drawDetails();
+    drawUITools();
     drawRenderSettings();
 
     m_notificationManager.render();
@@ -3052,7 +3852,10 @@ void Editor::setSelectedEntity(engine::Entity *entity)
     m_selectedEntity = entity;
 
     if (m_selectedEntity)
+    {
+        clearSelectedUIElement();
         m_detailsContext = DetailsContext::Entity;
+    }
 
     if (m_selectedEntity)
         VX_EDITOR_DEBUG_STREAM("Selected entity: " << m_selectedEntity->getName() << " (id: " << m_selectedEntity->getId() << ")");
@@ -3133,6 +3936,33 @@ void Editor::handleInput()
     {
         m_scene->destroyEntity(m_selectedEntity);
         setSelectedEntity(nullptr);
+    }
+    else if (ImGui::IsKeyPressed(ImGuiKey_Delete) && m_hasSelectedUIElement && m_scene)
+    {
+        const auto &texts = m_scene->getUITexts();
+        const auto &buttons = m_scene->getUIButtons();
+        const auto &billboards = m_scene->getBillboards();
+
+        switch (m_uiSelectionType)
+        {
+        case UISelectionType::Text:
+            if (m_selectedUIElementIndex < texts.size())
+                m_scene->removeUIText(texts[m_selectedUIElementIndex].get());
+            break;
+        case UISelectionType::Button:
+            if (m_selectedUIElementIndex < buttons.size())
+                m_scene->removeUIButton(buttons[m_selectedUIElementIndex].get());
+            break;
+        case UISelectionType::Billboard:
+            if (m_selectedUIElementIndex < billboards.size())
+                m_scene->removeBillboard(billboards[m_selectedUIElementIndex].get());
+            break;
+        case UISelectionType::None:
+        default:
+            break;
+        }
+
+        clearSelectedUIElement();
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape))
@@ -3992,6 +4822,7 @@ void Editor::drawAssetDetails()
                 size_t mappedCount = 0;
                 size_t missingCount = 0;
                 bool overridesChanged = false;
+                auto previewOverrides = m_modelTextureManualOverrides;
 
                 for (const auto &unresolvedPath : unresolvedTexturePathList)
                 {
@@ -4003,13 +4834,50 @@ void Editor::drawAssetDetails()
                         continue;
                     }
 
-                    std::filesystem::path remappedPath = textureSearchDirectory / fileName;
-                    if (auto caseInsensitiveMatch = findCaseInsensitiveFileInDirectory(textureSearchDirectory, fileName);
-                        caseInsensitiveMatch.has_value())
-                        remappedPath = caseInsensitiveMatch.value();
+                    std::filesystem::path remappedPath;
+                    std::array<std::string, 2> candidateNames = {fileName, std::filesystem::path(fileName).stem().string() + ".tex.elixasset"};
+
+                    for (const auto &candidateName : candidateNames)
+                    {
+                        if (candidateName.empty())
+                            continue;
+
+                        std::filesystem::path candidatePath = textureSearchDirectory / candidateName;
+                        if (auto caseInsensitiveMatch = findCaseInsensitiveFileInDirectory(textureSearchDirectory, candidateName);
+                            caseInsensitiveMatch.has_value())
+                            candidatePath = caseInsensitiveMatch.value();
+
+                        std::error_code existsError;
+                        if (std::filesystem::exists(candidatePath, existsError) && !existsError)
+                        {
+                            remappedPath = candidatePath;
+                            break;
+                        }
+                    }
+
+                    if (remappedPath.empty())
+                    {
+                        const std::string defaultName = !candidateNames[1].empty() ? candidateNames[1] : candidateNames[0];
+                        remappedPath = textureSearchDirectory / defaultName;
+                    }
 
                     remappedPath = remappedPath.lexically_normal();
-                    const std::string remappedPathString = remappedPath.string();
+                    std::string remappedPathString = remappedPath.string();
+                    previewOverrides[unresolvedPath] = remappedPathString;
+
+                    bool remappedResolved = true;
+                    const std::string resolvedPreviewPath = resolveTexturePathForMaterialExport(unresolvedPath,
+                                                                                                modelDirectory,
+                                                                                                projectRoot,
+                                                                                                textureSearchDirectory,
+                                                                                                previewOverrides,
+                                                                                                remappedResolved);
+                    if (remappedResolved && !resolvedPreviewPath.empty())
+                    {
+                        remappedPathString = resolvedPreviewPath;
+                        previewOverrides[unresolvedPath] = remappedPathString;
+                    }
+
                     auto overrideIt = m_modelTextureManualOverrides.find(unresolvedPath);
                     if (overrideIt == m_modelTextureManualOverrides.end() || overrideIt->second != remappedPathString)
                     {
@@ -4017,7 +4885,7 @@ void Editor::drawAssetDetails()
                         overridesChanged = true;
                     }
 
-                    if (std::filesystem::exists(remappedPath))
+                    if (remappedResolved)
                         ++mappedCount;
                     else
                         ++missingCount;
@@ -4394,6 +5262,7 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
     if (model->skeleton.has_value())
     {
         auto *skeletalMeshComponent = entity->addComponent<engine::SkeletalMeshComponent>(model->meshes, model->skeleton.value());
+        skeletalMeshComponent->setAssetPath(assetPath);
 
         if (!model->animations.empty())
         {
@@ -4403,7 +5272,10 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
         }
     }
     else
-        entity->addComponent<engine::StaticMeshComponent>(model->meshes);
+    {
+        auto *staticMeshComponent = entity->addComponent<engine::StaticMeshComponent>(model->meshes);
+        staticMeshComponent->setAssetPath(assetPath);
+    }
 
     if (auto transform = entity->getComponent<engine::Transform3DComponent>())
     {
@@ -4500,6 +5372,40 @@ void Editor::addEmptyEntity(const std::string &name)
     m_notificationManager.showSuccess("Added empty entity");
 }
 
+void Editor::addDefaultCharacterEntity(const std::string &name)
+{
+    if (!m_scene)
+    {
+        VX_EDITOR_ERROR_STREAM("Add default character failed. Scene is null.");
+        return;
+    }
+
+    auto entity = m_scene->addEntity(name.empty() ? "Character" : name);
+    if (!entity)
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to create default character entity.");
+        return;
+    }
+
+    auto *transform = entity->getComponent<engine::Transform3DComponent>();
+    if (transform)
+    {
+        glm::vec3 spawnPosition(0.0f);
+        if (m_editorCamera)
+            spawnPosition = m_editorCamera->getPosition() + m_editorCamera->getForward() * 3.0f;
+
+        transform->setPosition(spawnPosition);
+        transform->setScale(glm::vec3(1.0f, 1.8f, 1.0f));
+    }
+
+    entity->addComponent<engine::CharacterMovementComponent>(m_scene.get(), 0.35f, 1.0f);
+
+    setSelectedEntity(entity.get());
+
+    VX_EDITOR_INFO_STREAM("Added default character entity: " << entity->getName());
+    m_notificationManager.showSuccess("Added default character");
+}
+
 engine::Camera::SharedPtr Editor::getCurrentCamera()
 {
     return m_editorCamera;
@@ -4508,6 +5414,514 @@ engine::Camera::SharedPtr Editor::getCurrentCamera()
 void Editor::addOnViewportChangedCallback(const std::function<void(uint32_t width, uint32_t height)> &function)
 {
     m_onViewportWindowResized.push_back(function);
+}
+
+void Editor::addOnGameViewportChangedCallback(const std::function<void(uint32_t width, uint32_t height)> &function)
+{
+    m_onGameViewportWindowResized.push_back(function);
+}
+
+glm::vec2 Editor::viewportPixelToNdc(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax) const
+{
+    const float width = std::max(1.0f, imageMax.x - imageMin.x);
+    const float height = std::max(1.0f, imageMax.y - imageMin.y);
+
+    const float u = std::clamp((pixelPos.x - imageMin.x) / width, 0.0f, 1.0f);
+    const float v = std::clamp((pixelPos.y - imageMin.y) / height, 0.0f, 1.0f);
+
+    return glm::vec2(
+        std::clamp(u * 2.0f - 1.0f, -1.0f, 1.0f),
+        std::clamp(1.0f - v * 2.0f, -1.0f, 1.0f));
+}
+
+glm::vec2 Editor::ndcToViewportPixel(const glm::vec2 &ndcPos, const ImVec2 &imageMin, const ImVec2 &imageMax) const
+{
+    const float width = std::max(1.0f, imageMax.x - imageMin.x);
+    const float height = std::max(1.0f, imageMax.y - imageMin.y);
+
+    const float u = std::clamp((ndcPos.x + 1.0f) * 0.5f, 0.0f, 1.0f);
+    const float v = std::clamp((1.0f - ndcPos.y) * 0.5f, 0.0f, 1.0f);
+
+    return glm::vec2(
+        imageMin.x + u * width,
+        imageMin.y + v * height);
+}
+
+glm::vec2 Editor::snapNdcToGrid(const glm::vec2 &ndcPos) const
+{
+    const float step = std::clamp(m_uiPlacementGridStepNdc, 0.02f, 1.0f);
+    if (!m_uiPlacementSnapToGrid || step <= std::numeric_limits<float>::epsilon())
+        return glm::clamp(ndcPos, glm::vec2(-1.0f), glm::vec2(1.0f));
+
+    const float snappedX = std::round(ndcPos.x / step) * step;
+    const float snappedY = std::round(ndcPos.y / step) * step;
+    return glm::clamp(glm::vec2(snappedX, snappedY), glm::vec2(-1.0f), glm::vec2(1.0f));
+}
+
+glm::vec3 Editor::computeBillboardPlacementWorldPosition(const glm::vec2 &ndcPos) const
+{
+    if (!m_editorCamera)
+        return glm::vec3(ndcPos.x, ndcPos.y, 0.0f);
+
+    const glm::mat4 view = m_editorCamera->getViewMatrix();
+    const glm::mat4 projection = m_editorCamera->getProjectionMatrix();
+    const glm::mat4 invViewProjection = glm::inverse(projection * view);
+
+    glm::vec4 nearPoint = invViewProjection * glm::vec4(ndcPos.x, ndcPos.y, -1.0f, 1.0f);
+    glm::vec4 farPoint = invViewProjection * glm::vec4(ndcPos.x, ndcPos.y, 1.0f, 1.0f);
+
+    if (std::abs(nearPoint.w) > std::numeric_limits<float>::epsilon())
+        nearPoint /= nearPoint.w;
+    if (std::abs(farPoint.w) > std::numeric_limits<float>::epsilon())
+        farPoint /= farPoint.w;
+
+    glm::vec3 rayDirection = glm::vec3(farPoint - nearPoint);
+    if (glm::length(rayDirection) <= std::numeric_limits<float>::epsilon())
+        rayDirection = m_editorCamera->getForward();
+    else
+        rayDirection = glm::normalize(rayDirection);
+
+    const float distance = std::max(0.1f, m_uiBillboardPlacementDistance);
+    return m_editorCamera->getPosition() + rayDirection * distance;
+}
+
+void Editor::clearSelectedUIElement()
+{
+    m_hasSelectedUIElement = false;
+    m_uiSelectionType = UISelectionType::None;
+    m_selectedUIElementIndex = 0;
+}
+
+bool Editor::placeUIElementAtViewportPosition(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax)
+{
+    if (!m_scene || m_uiPlacementTool == UIPlacementTool::None)
+        return false;
+
+    glm::vec2 ndc = viewportPixelToNdc(pixelPos, imageMin, imageMax);
+    ndc = snapNdcToGrid(ndc);
+
+    switch (m_uiPlacementTool)
+    {
+    case UIPlacementTool::Text:
+    {
+        auto *text = m_scene->addUIText();
+        if (!text)
+            return false;
+
+        text->setPosition(ndc);
+        text->setText("Text");
+        text->loadFont("./resources/fonts/JetBrainsMono-Regular.ttf");
+
+        m_hasSelectedUIElement = true;
+        m_uiSelectionType = UISelectionType::Text;
+        m_selectedUIElementIndex = m_scene->getUITexts().empty() ? 0 : (m_scene->getUITexts().size() - 1);
+        m_notificationManager.showInfo("Placed UIText");
+        return true;
+    }
+    case UIPlacementTool::Button:
+    {
+        auto *button = m_scene->addUIButton();
+        if (!button)
+            return false;
+
+        const glm::vec2 size = button->getSize();
+        glm::vec2 topLeft = ndc - size * 0.5f;
+        topLeft = glm::clamp(topLeft, glm::vec2(-1.0f), glm::vec2(1.0f) - size);
+        button->setPosition(topLeft);
+        button->setLabel("Button");
+        button->loadFont("./resources/fonts/JetBrainsMono-Regular.ttf");
+
+        m_hasSelectedUIElement = true;
+        m_uiSelectionType = UISelectionType::Button;
+        m_selectedUIElementIndex = m_scene->getUIButtons().empty() ? 0 : (m_scene->getUIButtons().size() - 1);
+        m_notificationManager.showInfo("Placed UIButton");
+        return true;
+    }
+    case UIPlacementTool::Billboard:
+    {
+        auto *billboard = m_scene->addBillboard();
+        if (!billboard)
+            return false;
+
+        billboard->setWorldPosition(computeBillboardPlacementWorldPosition(ndc));
+
+        m_hasSelectedUIElement = true;
+        m_uiSelectionType = UISelectionType::Billboard;
+        m_selectedUIElementIndex = m_scene->getBillboards().empty() ? 0 : (m_scene->getBillboards().size() - 1);
+        m_notificationManager.showInfo("Placed Billboard");
+        return true;
+    }
+    case UIPlacementTool::None:
+    default:
+        break;
+    }
+
+    return false;
+}
+
+void Editor::drawUITools()
+{
+    if (!m_showUITools)
+        return;
+
+    ImGui::Begin("UI Tools", &m_showUITools);
+
+    if (!m_scene)
+    {
+        ImGui::TextDisabled("Scene is not available.");
+        return ImGui::End();
+    }
+
+    ImGui::Checkbox("Show Placement Grid", &m_uiPlacementGridEnabled);
+    ImGui::SameLine();
+    ImGui::Checkbox("Snap To Grid", &m_uiPlacementSnapToGrid);
+    ImGui::SliderFloat("Grid Step (NDC)", &m_uiPlacementGridStepNdc, 0.02f, 0.5f, "%.2f");
+    ImGui::SliderFloat("Billboard Distance", &m_uiBillboardPlacementDistance, 0.5f, 100.0f, "%.1f");
+
+    int toolIndex = static_cast<int>(m_uiPlacementTool);
+    const char *toolItems[] = {"None", "UIText", "UIButton", "Billboard"};
+    if (ImGui::Combo("Placement Tool", &toolIndex, toolItems, IM_ARRAYSIZE(toolItems)))
+        m_uiPlacementTool = static_cast<UIPlacementTool>(toolIndex);
+
+    if (m_uiPlacementTool != UIPlacementTool::None)
+        ImGui::TextDisabled("Click inside Viewport to place selected UI element.");
+
+    ImGui::Separator();
+
+    if (ImGui::Button("Add UIText At Center"))
+    {
+        auto *text = m_scene->addUIText();
+        if (text)
+        {
+            text->setPosition(glm::vec2(-0.1f, 0.0f));
+            text->setText("Text");
+            text->loadFont("./resources/fonts/JetBrainsMono-Regular.ttf");
+            m_hasSelectedUIElement = true;
+            m_uiSelectionType = UISelectionType::Text;
+            m_selectedUIElementIndex = m_scene->getUITexts().empty() ? 0 : (m_scene->getUITexts().size() - 1);
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Add UIButton At Center"))
+    {
+        auto *button = m_scene->addUIButton();
+        if (button)
+        {
+            const glm::vec2 size = button->getSize();
+            button->setPosition(glm::vec2(-size.x * 0.5f, -size.y * 0.5f));
+            button->setLabel("Button");
+            button->loadFont("./resources/fonts/JetBrainsMono-Regular.ttf");
+            m_hasSelectedUIElement = true;
+            m_uiSelectionType = UISelectionType::Button;
+            m_selectedUIElementIndex = m_scene->getUIButtons().empty() ? 0 : (m_scene->getUIButtons().size() - 1);
+        }
+    }
+
+    if (ImGui::Button("Add Billboard In Front Of Camera"))
+    {
+        auto *billboard = m_scene->addBillboard();
+        if (billboard)
+        {
+            const glm::vec2 centerNdc = snapNdcToGrid(glm::vec2(0.0f));
+            billboard->setWorldPosition(computeBillboardPlacementWorldPosition(centerNdc));
+            m_hasSelectedUIElement = true;
+            m_uiSelectionType = UISelectionType::Billboard;
+            m_selectedUIElementIndex = m_scene->getBillboards().empty() ? 0 : (m_scene->getBillboards().size() - 1);
+        }
+    }
+
+    const auto &texts = m_scene->getUITexts();
+    const auto &buttons = m_scene->getUIButtons();
+    const auto &billboards = m_scene->getBillboards();
+
+    if (m_hasSelectedUIElement)
+    {
+        bool selectionIsValid = false;
+        switch (m_uiSelectionType)
+        {
+        case UISelectionType::Text:
+            selectionIsValid = m_selectedUIElementIndex < texts.size();
+            break;
+        case UISelectionType::Button:
+            selectionIsValid = m_selectedUIElementIndex < buttons.size();
+            break;
+        case UISelectionType::Billboard:
+            selectionIsValid = m_selectedUIElementIndex < billboards.size();
+            break;
+        case UISelectionType::None:
+        default:
+            selectionIsValid = false;
+            break;
+        }
+
+        if (!selectionIsValid)
+            clearSelectedUIElement();
+    }
+
+    ImGui::Separator();
+
+    if (ImGui::CollapsingHeader("UIText", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        for (std::size_t i = 0; i < texts.size(); ++i)
+        {
+            const auto &text = texts[i];
+            if (!text)
+                continue;
+
+            std::string label = text->getText().empty() ? ("Text##" + std::to_string(i)) : (text->getText() + "##" + std::to_string(i));
+            const bool selected = m_hasSelectedUIElement && m_uiSelectionType == UISelectionType::Text && m_selectedUIElementIndex == i;
+            if (ImGui::Selectable(label.c_str(), selected))
+            {
+                m_hasSelectedUIElement = true;
+                m_uiSelectionType = UISelectionType::Text;
+                m_selectedUIElementIndex = i;
+            }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("UIButton", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        for (std::size_t i = 0; i < buttons.size(); ++i)
+        {
+            const auto &button = buttons[i];
+            if (!button)
+                continue;
+
+            std::string label = button->getLabel().empty() ? ("Button##" + std::to_string(i)) : (button->getLabel() + "##" + std::to_string(i));
+            const bool selected = m_hasSelectedUIElement && m_uiSelectionType == UISelectionType::Button && m_selectedUIElementIndex == i;
+            if (ImGui::Selectable(label.c_str(), selected))
+            {
+                m_hasSelectedUIElement = true;
+                m_uiSelectionType = UISelectionType::Button;
+                m_selectedUIElementIndex = i;
+            }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Billboards", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        for (std::size_t i = 0; i < billboards.size(); ++i)
+        {
+            const auto &billboard = billboards[i];
+            if (!billboard)
+                continue;
+
+            std::string label = "Billboard " + std::to_string(i);
+            const bool selected = m_hasSelectedUIElement && m_uiSelectionType == UISelectionType::Billboard && m_selectedUIElementIndex == i;
+            if (ImGui::Selectable(label.c_str(), selected))
+            {
+                m_hasSelectedUIElement = true;
+                m_uiSelectionType = UISelectionType::Billboard;
+                m_selectedUIElementIndex = i;
+            }
+        }
+    }
+
+    if (m_hasSelectedUIElement)
+    {
+        ImGui::Separator();
+        ImGui::TextUnformatted("Selected UI Element");
+
+        switch (m_uiSelectionType)
+        {
+        case UISelectionType::Text:
+        {
+            auto *text = texts[m_selectedUIElementIndex].get();
+            bool enabled = text->isEnabled();
+            if (ImGui::Checkbox("Enabled", &enabled))
+                text->setEnabled(enabled);
+
+            std::array<char, 512> textBuffer{};
+            std::strncpy(textBuffer.data(), text->getText().c_str(), textBuffer.size() - 1);
+            if (ImGui::InputText("Text", textBuffer.data(), textBuffer.size()))
+                text->setText(std::string(textBuffer.data()));
+
+            glm::vec2 pos = text->getPosition();
+            if (ImGui::DragFloat2("Position (NDC)", glm::value_ptr(pos), 0.01f, -1.0f, 1.0f))
+                text->setPosition(glm::clamp(pos, glm::vec2(-1.0f), glm::vec2(1.0f)));
+
+            float scale = text->getScale();
+            if (ImGui::DragFloat("Scale", &scale, 0.01f, 0.01f, 100.0f))
+                text->setScale(scale);
+
+            float rotation = text->getRotation();
+            if (ImGui::DragFloat("Rotation (deg)", &rotation, 0.25f, -360.0f, 360.0f))
+                text->setRotation(rotation);
+
+            glm::vec4 color = text->getColor();
+            if (ImGui::ColorEdit4("Color", glm::value_ptr(color)))
+                text->setColor(color);
+
+            static std::array<char, 512> textFontPathBuffer{};
+            static std::size_t textFontPathBufferIndex = std::numeric_limits<std::size_t>::max();
+            if (textFontPathBufferIndex != m_selectedUIElementIndex)
+            {
+                std::string currentPath;
+                if (const auto *font = text->getFont())
+                    currentPath = font->getFontPath();
+                if (currentPath.empty())
+                    currentPath = "./resources/fonts/JetBrainsMono-Regular.ttf";
+                std::strncpy(textFontPathBuffer.data(), currentPath.c_str(), textFontPathBuffer.size() - 1);
+                textFontPathBuffer[textFontPathBuffer.size() - 1] = '\0';
+                textFontPathBufferIndex = m_selectedUIElementIndex;
+            }
+
+            ImGui::InputText("Font Path", textFontPathBuffer.data(), textFontPathBuffer.size());
+            if (ImGui::Button("Load Text Font"))
+                text->loadFont(std::string(textFontPathBuffer.data()));
+
+            break;
+        }
+        case UISelectionType::Button:
+        {
+            auto *button = buttons[m_selectedUIElementIndex].get();
+            bool enabled = button->isEnabled();
+            if (ImGui::Checkbox("Enabled", &enabled))
+                button->setEnabled(enabled);
+
+            glm::vec2 pos = button->getPosition();
+            if (ImGui::DragFloat2("Position (NDC)", glm::value_ptr(pos), 0.01f, -1.0f, 1.0f))
+                button->setPosition(pos);
+
+            glm::vec2 size = button->getSize();
+            if (ImGui::DragFloat2("Size (NDC)", glm::value_ptr(size), 0.01f, 0.01f, 2.0f))
+                button->setSize(glm::max(size, glm::vec2(0.01f)));
+
+            glm::vec4 background = button->getBackgroundColor();
+            if (ImGui::ColorEdit4("Background", glm::value_ptr(background)))
+                button->setBackgroundColor(background);
+
+            glm::vec4 hover = button->getHoverColor();
+            if (ImGui::ColorEdit4("Hover", glm::value_ptr(hover)))
+                button->setHoverColor(hover);
+
+            glm::vec4 border = button->getBorderColor();
+            if (ImGui::ColorEdit4("Border", glm::value_ptr(border)))
+                button->setBorderColor(border);
+
+            float borderWidth = button->getBorderWidth();
+            if (ImGui::DragFloat("Border Width", &borderWidth, 0.001f, 0.0f, 1.0f))
+                button->setBorderWidth(std::max(0.0f, borderWidth));
+
+            std::array<char, 512> labelBuffer{};
+            std::strncpy(labelBuffer.data(), button->getLabel().c_str(), labelBuffer.size() - 1);
+            if (ImGui::InputText("Label", labelBuffer.data(), labelBuffer.size()))
+                button->setLabel(std::string(labelBuffer.data()));
+
+            glm::vec4 labelColor = button->getLabelColor();
+            if (ImGui::ColorEdit4("Label Color", glm::value_ptr(labelColor)))
+                button->setLabelColor(labelColor);
+
+            float labelScale = button->getLabelScale();
+            if (ImGui::DragFloat("Label Scale", &labelScale, 0.01f, 0.01f, 100.0f))
+                button->setLabelScale(std::max(0.01f, labelScale));
+
+            float rotation = button->getRotation();
+            if (ImGui::DragFloat("Rotation (deg)", &rotation, 0.25f, -360.0f, 360.0f))
+                button->setRotation(rotation);
+
+            static std::array<char, 512> buttonFontPathBuffer{};
+            static std::size_t buttonFontPathBufferIndex = std::numeric_limits<std::size_t>::max();
+            if (buttonFontPathBufferIndex != m_selectedUIElementIndex)
+            {
+                std::string currentPath;
+                if (const auto *font = button->getFont())
+                    currentPath = font->getFontPath();
+                if (currentPath.empty())
+                    currentPath = "./resources/fonts/JetBrainsMono-Regular.ttf";
+                std::strncpy(buttonFontPathBuffer.data(), currentPath.c_str(), buttonFontPathBuffer.size() - 1);
+                buttonFontPathBuffer[buttonFontPathBuffer.size() - 1] = '\0';
+                buttonFontPathBufferIndex = m_selectedUIElementIndex;
+            }
+
+            ImGui::InputText("Button Font Path", buttonFontPathBuffer.data(), buttonFontPathBuffer.size());
+            if (ImGui::Button("Load Button Font"))
+                button->loadFont(std::string(buttonFontPathBuffer.data()));
+
+            break;
+        }
+        case UISelectionType::Billboard:
+        {
+            auto *billboard = billboards[m_selectedUIElementIndex].get();
+            bool enabled = billboard->isEnabled();
+            if (ImGui::Checkbox("Enabled", &enabled))
+                billboard->setEnabled(enabled);
+
+            glm::vec3 worldPosition = billboard->getWorldPosition();
+            if (ImGui::DragFloat3("World Position", glm::value_ptr(worldPosition), 0.05f))
+                billboard->setWorldPosition(worldPosition);
+
+            float size = billboard->getSize();
+            if (ImGui::DragFloat("Size", &size, 0.01f, 0.01f, 100.0f))
+                billboard->setSize(std::max(0.01f, size));
+
+            float rotation = billboard->getRotation();
+            if (ImGui::DragFloat("Rotation (deg)", &rotation, 0.25f, -360.0f, 360.0f))
+                billboard->setRotation(rotation);
+
+            glm::vec4 color = billboard->getColor();
+            if (ImGui::ColorEdit4("Color", glm::value_ptr(color)))
+                billboard->setColor(color);
+
+            static std::array<char, 512> texturePathBuffer{};
+            static std::size_t texturePathBufferIndex = std::numeric_limits<std::size_t>::max();
+            if (texturePathBufferIndex != m_selectedUIElementIndex)
+            {
+                const std::string currentPath = billboard->getTexturePath();
+                std::strncpy(texturePathBuffer.data(), currentPath.c_str(), texturePathBuffer.size() - 1);
+                texturePathBuffer[texturePathBuffer.size() - 1] = '\0';
+                texturePathBufferIndex = m_selectedUIElementIndex;
+            }
+
+            ImGui::InputText("Texture Path", texturePathBuffer.data(), texturePathBuffer.size());
+            if (ImGui::Button("Load Billboard Texture"))
+                billboard->loadTexture(std::string(texturePathBuffer.data()));
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Billboard Texture"))
+            {
+                billboard->clearTexture();
+                texturePathBuffer[0] = '\0';
+            }
+
+            break;
+        }
+        case UISelectionType::None:
+        default:
+            break;
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("Delete Selected UI Element"))
+        {
+            switch (m_uiSelectionType)
+            {
+            case UISelectionType::Text:
+                if (m_selectedUIElementIndex < texts.size())
+                    m_scene->removeUIText(texts[m_selectedUIElementIndex].get());
+                break;
+            case UISelectionType::Button:
+                if (m_selectedUIElementIndex < buttons.size())
+                    m_scene->removeUIButton(buttons[m_selectedUIElementIndex].get());
+                break;
+            case UISelectionType::Billboard:
+                if (m_selectedUIElementIndex < billboards.size())
+                    m_scene->removeBillboard(billboards[m_selectedUIElementIndex].get());
+                break;
+            case UISelectionType::None:
+            default:
+                break;
+            }
+
+            clearSelectedUIElement();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Clear UI Selection"))
+            clearSelectedUIElement();
+    }
+
+    ImGui::End();
 }
 
 void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
@@ -4519,6 +5933,50 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
     const ImVec2 imageMin = ImGui::GetItemRectMin();
     const ImVec2 imageMax = ImGui::GetItemRectMax();
     const bool imageHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+
+    if (m_uiPlacementGridEnabled)
+    {
+        const float imageWidth = imageMax.x - imageMin.x;
+        const float imageHeight = imageMax.y - imageMin.y;
+        if (imageWidth > 0.0f && imageHeight > 0.0f)
+        {
+            ImDrawList *drawList = ImGui::GetWindowDrawList();
+            const float gridStep = std::clamp(m_uiPlacementGridStepNdc, 0.02f, 1.0f);
+
+            const ImU32 shadowColor = IM_COL32(0, 0, 0, 170);
+            const ImU32 regularColor = IM_COL32(25, 245, 255, 185);
+            const ImU32 axisColor = IM_COL32(255, 135, 40, 230);
+            const float axisThreshold = gridStep * 0.5f;
+
+            for (float x = -1.0f; x <= 1.0001f; x += gridStep)
+            {
+                const glm::vec2 pixel = ndcToViewportPixel(glm::vec2(x, 0.0f), imageMin, imageMax);
+                const bool isAxis = std::abs(x) <= axisThreshold;
+                const float lineThickness = isAxis ? 1.8f : 1.2f;
+                drawList->AddLine(ImVec2(pixel.x, imageMin.y), ImVec2(pixel.x, imageMax.y), shadowColor, lineThickness + 1.2f);
+                drawList->AddLine(ImVec2(pixel.x, imageMin.y), ImVec2(pixel.x, imageMax.y), isAxis ? axisColor : regularColor, lineThickness);
+            }
+
+            for (float y = -1.0f; y <= 1.0001f; y += gridStep)
+            {
+                const glm::vec2 pixel = ndcToViewportPixel(glm::vec2(0.0f, y), imageMin, imageMax);
+                const bool isAxis = std::abs(y) <= axisThreshold;
+                const float lineThickness = isAxis ? 1.8f : 1.2f;
+                drawList->AddLine(ImVec2(imageMin.x, pixel.y), ImVec2(imageMax.x, pixel.y), shadowColor, lineThickness + 1.2f);
+                drawList->AddLine(ImVec2(imageMin.x, pixel.y), ImVec2(imageMax.x, pixel.y), isAxis ? axisColor : regularColor, lineThickness);
+            }
+
+            if (imageHovered && m_uiPlacementTool != UIPlacementTool::None)
+            {
+                const ImVec2 mouse = ImGui::GetMousePos();
+                glm::vec2 snappedNdc = viewportPixelToNdc(mouse, imageMin, imageMax);
+                snappedNdc = snapNdcToGrid(snappedNdc);
+                const glm::vec2 snappedPixel = ndcToViewportPixel(snappedNdc, imageMin, imageMax);
+                drawList->AddCircleFilled(ImVec2(snappedPixel.x, snappedPixel.y), 4.0f, IM_COL32(255, 210, 90, 220));
+                drawList->AddCircle(ImVec2(snappedPixel.x, snappedPixel.y), 8.0f, IM_COL32(255, 210, 90, 160), 16, 1.5f);
+            }
+        }
+    }
 
     if (imageHovered && ImGui::BeginDragDropTarget())
     {
@@ -4615,6 +6073,12 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
             ImGui::CloseCurrentPopup();
         }
 
+        if (ImGui::MenuItem("Default Character"))
+        {
+            addDefaultCharacterEntity("Character");
+            ImGui::CloseCurrentPopup();
+        }
+
         ImGui::Separator();
         ImGui::TextUnformatted("Environment");
 
@@ -4658,8 +6122,14 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 
     if (viewportFocused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
     {
+        if (m_currentMode != EditorMode::EDIT)
+        {
+            m_notificationManager.showError("Cannot save scene while playing. Stop Play first.");
+            VX_EDITOR_WARNING_STREAM("Blocked Ctrl+S while not in Edit mode.\n");
+        }
+
         auto project = m_currentProject.lock();
-        if (m_scene && project)
+        if (m_scene && project && m_currentMode == EditorMode::EDIT)
         {
             m_scene->saveSceneToFile(project->entryScene);
             m_notificationManager.showInfo("Scene saved");
@@ -4682,12 +6152,15 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
             mouse.x >= imageMin.x && mouse.x < imageMax.x &&
             mouse.y >= imageMin.y && mouse.y < imageMax.y)
         {
-            const float u = std::clamp((mouse.x - imageMin.x) / imageWidth, 0.0f, 0.999999f);
-            const float v = std::clamp((mouse.y - imageMin.y) / imageHeight, 0.0f, 0.999999f);
+            if (!placeUIElementAtViewportPosition(mouse, imageMin, imageMax))
+            {
+                const float u = std::clamp((mouse.x - imageMin.x) / imageWidth, 0.0f, 0.999999f);
+                const float v = std::clamp((mouse.y - imageMin.y) / imageHeight, 0.0f, 0.999999f);
 
-            m_pendingPickX = static_cast<uint32_t>(u * static_cast<float>(m_viewportSizeX));
-            m_pendingPickY = static_cast<uint32_t>(v * static_cast<float>(m_viewportSizeY));
-            m_hasPendingObjectPick = true;
+                m_pendingPickX = static_cast<uint32_t>(u * static_cast<float>(m_viewportSizeX));
+                m_pendingPickY = static_cast<uint32_t>(v * static_cast<float>(m_viewportSizeY));
+                m_hasPendingObjectPick = true;
+            }
         }
     }
 
@@ -4761,6 +6234,42 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 
         io.WantCaptureMouse = true;
         io.WantCaptureKeyboard = true;
+    }
+
+    ImGui::End();
+}
+
+void Editor::drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGameCamera)
+{
+    ImGui::Begin("Game Viewport", nullptr, ImGuiWindowFlags_None);
+
+    const ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
+    const uint32_t x = static_cast<uint32_t>(std::max(viewportPanelSize.x, 0.0f));
+    const uint32_t y = static_cast<uint32_t>(std::max(viewportPanelSize.y, 0.0f));
+
+    const bool sizeChanged = (m_gameViewportSizeX != x || m_gameViewportSizeY != y);
+    if (sizeChanged)
+    {
+        m_gameViewportSizeX = x;
+        m_gameViewportSizeY = y;
+
+        for (const auto &function : m_onGameViewportWindowResized)
+            if (function)
+                function(m_gameViewportSizeX, m_gameViewportSizeY);
+    }
+
+    if (viewportDescriptorSet != VK_NULL_HANDLE && hasGameCamera)
+    {
+        ImGui::Image(viewportDescriptorSet, ImVec2(viewportPanelSize.x, viewportPanelSize.y));
+    }
+    else
+    {
+        const char *statusText = hasGameCamera ? "Game viewport is unavailable." : "No camera in scene";
+        const ImVec2 textSize = ImGui::CalcTextSize(statusText);
+        const float textPosX = std::max((viewportPanelSize.x - textSize.x) * 0.5f, 0.0f);
+        const float textPosY = std::max((viewportPanelSize.y - textSize.y) * 0.5f, 0.0f);
+        ImGui::SetCursorPos(ImVec2(textPosX, textPosY));
+        ImGui::TextDisabled("%s", statusText);
     }
 
     ImGui::End();

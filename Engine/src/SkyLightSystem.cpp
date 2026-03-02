@@ -171,12 +171,33 @@ void SkyLightSystem::render(core::CommandBuffer::SharedPtr commandBuffer, float 
 
     UBO *uboData = static_cast<UBO *>(m_mappedData);
     uboData->sunDirection_time = glm::vec4(m_sunDirection, m_time);
-    uboData->sunColor_intensity = glm::vec4(1.0f, 0.95f, 0.85f, 6.0f); // HDR-ish
+
+    const glm::vec3 normalizedSunDirection = glm::normalize(m_sunDirection);
+    const float sunHeight = glm::clamp(glm::dot(normalizedSunDirection, glm::vec3(0.0f, 1.0f, 0.0f)), -1.0f, 1.0f);
+
+    const float horizonFactor = 1.0f - glm::smoothstep(0.18f, 0.55f, sunHeight);
+    const float belowHorizonFactor = 1.0f - glm::smoothstep(-0.18f, 0.02f, sunHeight);
+
+    glm::vec3 sunColor = glm::mix(glm::vec3(1.00f, 0.96f, 0.89f),
+                                  glm::vec3(1.00f, 0.57f, 0.24f),
+                                  horizonFactor);
+    sunColor = glm::mix(sunColor,
+                        glm::vec3(1.00f, 0.38f, 0.15f),
+                        belowHorizonFactor * 0.75f);
+
+    float sunIntensity = 6.0f;
+    sunIntensity *= glm::mix(1.0f, 0.82f, horizonFactor);
+    sunIntensity *= glm::mix(1.0f, 0.50f, belowHorizonFactor);
+    sunIntensity = glm::max(sunIntensity, 2.0f);
+
+    uboData->sunColor_intensity = glm::vec4(sunColor, sunIntensity);
+
+    const float sunsetExposureBoost = horizonFactor * (1.0f - belowHorizonFactor * 0.65f);
     uboData->skyParams = glm::vec4(
         m_cloudSpeed, // x
         0.55f,        // coverage
         0.75f,        // density
-        1.0f          // exposure
+        1.0f + sunsetExposureBoost * 0.12f // exposure
     );
 
     uboData->lightParams = glm::vec4(

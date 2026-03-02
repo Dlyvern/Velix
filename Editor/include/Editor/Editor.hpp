@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <cstdint>
+#include <cstddef>
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
@@ -58,10 +59,16 @@ public:
     void setScene(engine::Scene::SharedPtr scene)
     {
         m_scene = scene;
+        m_selectedEntity = nullptr;
+        m_selectedMeshSlot.reset();
+        m_hasPendingObjectPick = false;
+        clearSelectedUIElement();
     }
 
     void setProject(const std::shared_ptr<Project> &project)
     {
+        engine::ScriptsRegister::setActiveRegister(nullptr);
+
         if (auto previousProject = m_currentProject.lock(); previousProject && previousProject != project && previousProject->projectLibrary)
         {
             engine::PluginLoader::closeLibrary(previousProject->projectLibrary);
@@ -78,12 +85,21 @@ public:
             m_assetsWindow->setProject(project.get());
     }
 
+    void setProjectScriptsRegister(engine::ScriptsRegister *scriptsRegister, const std::string &modulePath = {})
+    {
+        m_projectScriptsRegister = scriptsRegister;
+        m_loadedGameModulePath = modulePath;
+        engine::ScriptsRegister::setActiveRegister(scriptsRegister);
+    }
+
     void setObjectIdColorImage(const engine::RenderTarget *renderTarget)
     {
         m_objectIdColorImage = renderTarget;
     }
 
-    void drawFrame(VkDescriptorSet viewportDescriptorSet = VK_NULL_HANDLE);
+    void drawFrame(VkDescriptorSet viewportDescriptorSet = VK_NULL_HANDLE,
+                   VkDescriptorSet gameViewportDescriptorSet = VK_NULL_HANDLE,
+                   bool hasGameCamera = false);
     void updateAnimationPreview(float deltaTime);
 
     void processPendingObjectSelection();
@@ -110,6 +126,7 @@ public:
     }
 
     void addOnViewportChangedCallback(const std::function<void(uint32_t width, uint32_t height)> &function);
+    void addOnGameViewportChangedCallback(const std::function<void(uint32_t width, uint32_t height)> &function);
 
     void addOnModeChangedCallback(const std::function<void(EditorMode)> &function);
 
@@ -121,6 +138,16 @@ public:
     uint32_t getViewportY() const
     {
         return m_viewportSizeY;
+    }
+
+    uint32_t getGameViewportX() const
+    {
+        return m_gameViewportSizeX;
+    }
+
+    uint32_t getGameViewportY() const
+    {
+        return m_gameViewportSizeY;
     }
 
     std::vector<AssetsPreviewSystem::RenderPreviewJob> getRequestedPreviewJobs()
@@ -173,6 +200,7 @@ private:
     bool spawnEntityFromModelAsset(const std::string &assetPath);
     void addPrimitiveEntity(const std::string &primitiveName);
     void addEmptyEntity(const std::string &name = "Empty");
+    void addDefaultCharacterEntity(const std::string &name = "Character");
 
     void openMaterialEditor(const std::filesystem::path &path);
     void openTextDocument(const std::filesystem::path &path);
@@ -207,6 +235,7 @@ private:
     ImGuiID m_assetsPanelsDockId = 0;
     bool m_lastDockedAssetsVisibility{false};
     bool m_lastDockedTerminalVisibility{false};
+    bool m_lastDockedUIToolsVisibility{false};
 
     const engine::RenderTarget *m_objectIdColorImage{nullptr};
 
@@ -253,6 +282,8 @@ private:
     std::unordered_map<std::string, MaterialEditorUIState> m_materialEditorUiState;
 
     void handleInput();
+    bool hasUnsavedSceneChanges();
+    void exportCurrentProjectPacket();
 
     void setSelectedEntity(engine::Entity *entity);
     void focusSelectedEntity();
@@ -273,6 +304,7 @@ private:
 
     bool m_showAssetsWindow{false};
     bool m_showTerminal{false};
+    bool m_showUITools{false};
     bool m_showRenderSettings{false};
     bool m_terminalAutoScroll{true};
     bool m_terminalClearInputOnSubmit{true};
@@ -305,6 +337,7 @@ private:
     void drawBottomPanel();
     void drawToolBar();
     void drawRenderSettings();
+    void drawUITools();
     void showDockSpace();
     void syncAssetsAndTerminalDocking();
     void drawCustomTitleBar();
@@ -313,11 +346,44 @@ private:
     void drawDetails();
     void drawAssetDetails();
     void drawViewport(VkDescriptorSet viewportDescriptorSet);
+    void drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGameCamera);
     void drawHierarchy();
     void drawHierarchyEntityNode(engine::Entity *entity);
     engine::Scene::SharedPtr m_scene{nullptr};
     engine::Entity *m_selectedEntity{nullptr};
     std::optional<uint32_t> m_selectedMeshSlot;
+
+    enum class UIPlacementTool : uint8_t
+    {
+        None = 0,
+        Text = 1,
+        Button = 2,
+        Billboard = 3
+    };
+
+    enum class UISelectionType : uint8_t
+    {
+        None = 0,
+        Text = 1,
+        Button = 2,
+        Billboard = 3
+    };
+
+    UIPlacementTool m_uiPlacementTool{UIPlacementTool::None};
+    UISelectionType m_uiSelectionType{UISelectionType::None};
+    std::size_t m_selectedUIElementIndex{0};
+    bool m_hasSelectedUIElement{false};
+    bool m_uiPlacementGridEnabled{false};
+    bool m_uiPlacementSnapToGrid{true};
+    float m_uiPlacementGridStepNdc{0.1f};
+    float m_uiBillboardPlacementDistance{6.0f};
+
+    glm::vec2 viewportPixelToNdc(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax) const;
+    glm::vec2 ndcToViewportPixel(const glm::vec2 &ndcPos, const ImVec2 &imageMin, const ImVec2 &imageMax) const;
+    glm::vec2 snapNdcToGrid(const glm::vec2 &ndcPos) const;
+    glm::vec3 computeBillboardPlacementWorldPosition(const glm::vec2 &ndcPos) const;
+    bool placeUIElementAtViewportPosition(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax);
+    void clearSelectedUIElement();
     std::filesystem::path m_selectedAssetPath;
     std::filesystem::path m_lastModelDetailsAssetPath;
 
@@ -362,9 +428,12 @@ private:
     bool m_isDockingWindowFullscreen{true};
 
     std::vector<std::function<void(uint32_t width, uint32_t height)>> m_onViewportWindowResized{nullptr};
+    std::vector<std::function<void(uint32_t width, uint32_t height)>> m_onGameViewportWindowResized{nullptr};
 
     uint32_t m_viewportSizeX{0};
     uint32_t m_viewportSizeY{0};
+    uint32_t m_gameViewportSizeX{0};
+    uint32_t m_gameViewportSizeY{0};
 
     core::Sampler::SharedPtr m_defaultSampler{nullptr};
 
