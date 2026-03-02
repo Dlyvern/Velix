@@ -29,36 +29,27 @@ void SkyLightRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     if (!data.hasDirectionalLight || !data.skyLightEnabled)
         return;
 
-    if (m_loadedSkyboxHDRPath != data.skyboxHDRPath)
+    if (m_requestedSkyboxHDRPath != data.skyboxHDRPath)
     {
-        m_skybox.reset();
-        m_loadedSkyboxHDRPath.clear();
-
-        if (!data.skyboxHDRPath.empty())
-        {
-            if (!std::filesystem::exists(data.skyboxHDRPath))
-            {
-                VX_ENGINE_WARNING_STREAM("Skybox HDR file was not found: " << data.skyboxHDRPath << '\n');
-                m_loadedSkyboxHDRPath = data.skyboxHDRPath;
-            }
-            else
-            {
-                m_skybox = std::make_unique<Skybox>(data.skyboxHDRPath, core::VulkanContext::getContext()->getPersistentDescriptorPool()->vk());
-                m_loadedSkyboxHDRPath = data.skyboxHDRPath;
-                VX_ENGINE_INFO_STREAM("Loaded skybox HDR: " << m_loadedSkyboxHDRPath << '\n');
-            }
-        }
+        m_requestedSkyboxHDRPath = data.skyboxHDRPath;
+        m_pendingSkyboxUpdate = true;
+        requestRecompilation();
     }
 
     if (m_skybox)
     {
-        auto skyKey = m_skybox->getGraphicsPipelineKey();
-        skyKey.colorFormats = {m_colorFormat};
-        skyKey.depthFormat = m_depthFormat;
+        if (m_skybox->hasTexture())
+        {
+            auto skyKey = m_skybox->getGraphicsPipelineKey();
+            skyKey.colorFormats = {m_colorFormat};
+            skyKey.depthFormat = m_depthFormat;
 
-        auto skyPipeline = GraphicsPipelineManager::getOrCreate(skyKey);
-        m_skybox->render(commandBuffer, data.view, data.projection, skyPipeline);
-        return;
+            auto skyPipeline = GraphicsPipelineManager::getOrCreate(skyKey);
+            m_skybox->render(commandBuffer, data.view, data.projection, skyPipeline);
+            return;
+        }
+
+        m_skybox.reset();
     }
 
     auto skyKey = m_skyLightSystem->getGraphicsPipelineKey();
@@ -119,6 +110,47 @@ void SkyLightRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 
     for (uint32_t i = 0; i < imageCount; ++i)
         m_colorRenderTargets[i] = storage.getTexture(m_colorTextureHandler[i]);
+
+    if (!m_pendingSkyboxUpdate)
+        return;
+
+    m_pendingSkyboxUpdate = false;
+
+    if (m_requestedSkyboxHDRPath == m_loadedSkyboxHDRPath)
+        return;
+
+    if (m_requestedSkyboxHDRPath.empty())
+    {
+        m_skybox.reset();
+        m_loadedSkyboxHDRPath.clear();
+        VX_ENGINE_INFO_STREAM("Skybox cleared; using procedural sky light.\n");
+        return;
+    }
+
+    if (!std::filesystem::exists(m_requestedSkyboxHDRPath))
+    {
+        VX_ENGINE_WARNING_STREAM("Skybox HDR file was not found: " << m_requestedSkyboxHDRPath << '\n');
+        m_skybox.reset();
+        m_loadedSkyboxHDRPath.clear();
+        return;
+    }
+
+    auto candidate = std::make_unique<Skybox>(
+        m_requestedSkyboxHDRPath,
+        core::VulkanContext::getContext()->getPersistentDescriptorPool()->vk());
+
+    if (!candidate->hasTexture())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to load skybox: " << m_requestedSkyboxHDRPath
+                                                         << ". Falling back to procedural sky light.\n");
+        m_skybox.reset();
+        m_loadedSkyboxHDRPath.clear();
+        return;
+    }
+
+    m_skybox = std::move(candidate);
+    m_loadedSkyboxHDRPath = m_requestedSkyboxHDRPath;
+    VX_ENGINE_INFO_STREAM("Loaded skybox HDR: " << m_loadedSkyboxHDRPath << '\n');
 }
 
 void SkyLightRenderGraphPass::setup(RGPResourcesBuilder &builder)

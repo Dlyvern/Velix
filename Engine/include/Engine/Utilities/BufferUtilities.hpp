@@ -13,7 +13,8 @@ class BufferUtilities
 public:
     static void copyBufferToImage(core::Buffer &buffer, core::Image &image, core::CommandBuffer &commandBuffer, VkExtent2D extent,
                                   VkImageAspectFlags aspectFlags = VK_IMAGE_ASPECT_COLOR_BIT,
-                                  VkImageLayout dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t layerCount = 1, uint32_t baseLayer = 0);
+                                  VkImageLayout dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t layerCount = 1, uint32_t baseLayer = 0,
+                                  uint32_t mipLevel = 0);
     static void copyBuffer(core::Buffer &srcBuffer, core::Buffer &dstBuffer, core::CommandBuffer &commandBuffer, VkDeviceSize size);
 };
 

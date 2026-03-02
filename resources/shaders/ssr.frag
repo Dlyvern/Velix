@@ -110,7 +110,20 @@ void main()
     vec3 N_view = normalize(gN.rgb * 2.0 - 1.0);
     vec3 P_view = reconstructViewPos(vUV, depth);
     vec3 V      = normalize(-P_view);
-    vec3 R      = reflect(-V, N_view);
+
+    // Fresnel-based reflectivity (Schlick approximation).
+    // Dielectrics (metallic=0) get ~4% F0, metals use F0=1.
+    // This allows non-metallic surfaces (puddles, polished stone, glass)
+    // to pick up reflections at grazing angles.
+    float cosTheta     = max(dot(V, N_view), 0.0);
+    float F0           = mix(0.04, 1.0, metallic);
+    float fresnel      = F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+    reflectivity       = fresnel * (1.0 - roughness * roughness);
+
+    if (reflectivity < 0.04)
+        return;
+
+    vec3 R = reflect(-V, N_view);
 
     // Avoid marching towards the camera
     if (R.z > -0.01)
@@ -135,9 +148,11 @@ void main()
         float sampleRawDepth = sampleDepth(sampleUV);
         vec3  sampleViewPos  = reconstructViewPos(sampleUV, sampleRawDepth);
 
+        // In view space, objects are at negative Z. A hit means the ray
+        // penetrated the surface: rayPos.z < sampleViewPos.z → depthDiff < 0.
         float depthDiff = rayPos.z - sampleViewPos.z;
 
-        if (depthDiff > 0.0 && depthDiff < pc.thickness)
+        if (depthDiff < 0.0 && depthDiff > -pc.thickness)
         {
             // Binary refinement for a sharper hit
             float lo = 0.0, hi = 1.0;
@@ -148,10 +163,11 @@ void main()
                 vec2  midUV  = viewToScreenUV(midPos);
                 float midD   = sampleDepth(midUV);
                 vec3  midP   = reconstructViewPos(midUV, midD);
+                // ray still in front of surface → hit is farther along → advance lo
                 if (midPos.z - midP.z > 0.0)
-                    hi = mid;
-                else
                     lo = mid;
+                else
+                    hi = mid;
             }
             hitUV  = viewToScreenUV((rayPos - R * stepSize) + R * stepSize * ((lo + hi) * 0.5));
             didHit = true;

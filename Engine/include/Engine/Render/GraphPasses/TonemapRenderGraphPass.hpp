@@ -3,6 +3,7 @@
 
 #include "Engine/Render/RenderTarget.hpp"
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
+#include "Engine/Texture.hpp"
 
 #include "Core/Buffer.hpp"
 #include "Core/PipelineLayout.hpp"
@@ -10,6 +11,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -39,6 +41,7 @@ private:
     std::array<VkClearValue, 1> m_clearValues;
 
     std::vector<const RenderTarget *> m_colorRenderTargets;
+    std::vector<const RenderTarget *> m_hdrInputTargets;
 
     VkFormat m_ldrFormat;
 
@@ -50,6 +53,11 @@ private:
 
     std::vector<VkDescriptorSet> m_descriptorSets{VK_NULL_HANDLE};
     bool m_descriptorSetsInitialized{false};
+
+    Texture::SharedPtr m_identityLUTTexture{nullptr};
+    Texture::SharedPtr m_lutTexture{nullptr};
+    std::string m_lastLUTPath{};
+    bool m_lutDescriptorDirty{true};
 
     VkExtent2D m_extent;
     VkViewport m_viewport;

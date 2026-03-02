@@ -29,6 +29,8 @@ public:
     VkViewport getViewport(float x = 0.0f, float y = 0.0f, float minDepth = 0.0f, float maxDepth = 1.0f);
     VkRect2D getScissor(VkOffset2D offset = {0, 0});
     const std::vector<VkImage>& getImages() const;
+    bool isVSyncEnabled() const;
+    void setVSyncEnabled(bool enabled);
 
     void recreate();
 
@@ -65,6 +67,7 @@ private:
     std::vector<VkImage> m_swapChainImages;
 
     uint32_t m_imageCount;
+    bool m_isVSyncEnabled{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

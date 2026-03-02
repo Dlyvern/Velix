@@ -176,8 +176,10 @@ bool EngineConfig::save() const
     }
 
     nlohmann::json json;
-    json["version"] = 1;
+    json["version"] = 3;
     json["preferred_ide"] = m_preferredIdeId;
+    json["show_asset_thumbnails"] = m_showAssetThumbnails;
+    json["detailed_render_profiling"] = m_detailedRenderProfilingEnabled;
 
     std::ofstream file(m_configFilePath);
     if (!file.is_open())
@@ -227,6 +229,26 @@ void EngineConfig::setPreferredIdeId(const std::string &ideId)
         return;
 
     m_preferredIdeId = ideId;
+}
+
+bool EngineConfig::getShowAssetThumbnails() const
+{
+    return m_showAssetThumbnails;
+}
+
+void EngineConfig::setShowAssetThumbnails(bool enabled)
+{
+    m_showAssetThumbnails = enabled;
+}
+
+bool EngineConfig::getDetailedRenderProfilingEnabled() const
+{
+    return m_detailedRenderProfilingEnabled;
+}
+
+void EngineConfig::setDetailedRenderProfilingEnabled(bool enabled)
+{
+    m_detailedRenderProfilingEnabled = enabled;
 }
 
 std::optional<EngineConfig::IdeInfo> EngineConfig::findPreferredVSCodeIde() const
@@ -316,6 +338,8 @@ void EngineConfig::applyDefaults()
     m_configDirectory = resolveConfigDirectory();
     m_configFilePath = m_configDirectory / "engine_config.json";
     m_preferredIdeId = "vscode";
+    m_showAssetThumbnails = true;
+    m_detailedRenderProfilingEnabled = true;
 }
 
 bool EngineConfig::loadFromDisk()
@@ -344,6 +368,12 @@ bool EngineConfig::loadFromDisk()
 
     if (json.contains("preferred_ide") && json["preferred_ide"].is_string())
         m_preferredIdeId = json["preferred_ide"].get<std::string>();
+
+    if (json.contains("show_asset_thumbnails") && json["show_asset_thumbnails"].is_boolean())
+        m_showAssetThumbnails = json["show_asset_thumbnails"].get<bool>();
+
+    if (json.contains("detailed_render_profiling") && json["detailed_render_profiling"].is_boolean())
+        m_detailedRenderProfilingEnabled = json["detailed_render_profiling"].get<bool>();
 
     return true;
 }

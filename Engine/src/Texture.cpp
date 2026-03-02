@@ -938,6 +938,128 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
     return true;
 }
 
+bool Texture::createPreFilteredCubemap(const std::vector<std::vector<std::vector<float>>> &mipFaceData,
+                                        const std::vector<uint32_t> &mipSizes)
+{
+    if (mipFaceData.empty() || mipSizes.empty())
+        return false;
+
+    const uint32_t numMips   = static_cast<uint32_t>(mipFaceData.size());
+    const uint32_t baseSize  = mipSizes[0];
+
+    m_device = core::VulkanContext::getContext()->getDevice();
+    m_width  = static_cast<int>(baseSize);
+    m_height = static_cast<int>(baseSize);
+
+    if (m_imageView)
+    {
+        vkDestroyImageView(m_device, m_imageView, nullptr);
+        m_imageView = VK_NULL_HANDLE;
+    }
+    m_image.reset();
+
+    VkExtent2D extent{baseSize, baseSize};
+    m_image = core::Image::createShared(extent,
+                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                         core::memory::MemoryUsage::GPU_ONLY,
+                                         VK_FORMAT_R32G32B32A32_SFLOAT,
+                                         VK_IMAGE_TILING_OPTIMAL,
+                                         6,
+                                         VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+                                         VK_SAMPLE_COUNT_1_BIT,
+                                         numMips);
+
+    auto commandPool   = core::VulkanContext::getContext()->getTransferCommandPool();
+    auto queue         = core::VulkanContext::getContext()->getTransferQueue();
+    auto commandBuffer = core::CommandBuffer::createShared(*commandPool);
+    commandBuffer->begin();
+
+    // Transition entire image (all mips, all faces) to TRANSFER_DST_OPTIMAL
+    auto firstBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+        *m_image, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, numMips, 0, 6});
+
+    VkDependencyInfo firstDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    firstDep.imageMemoryBarrierCount = 1;
+    firstDep.pImageMemoryBarriers    = &firstBarrier;
+    vkCmdPipelineBarrier2(commandBuffer, &firstDep);
+
+    // Upload each mip × face
+    std::vector<core::Buffer::SharedPtr> stagingBuffers;
+    stagingBuffers.reserve(numMips * 6);
+
+    for (uint32_t mip = 0; mip < numMips; ++mip)
+    {
+        const uint32_t mipSize    = mipSizes[mip];
+        const VkDeviceSize faceBytes = static_cast<VkDeviceSize>(mipSize) * mipSize * 4 * sizeof(float);
+
+        for (uint32_t face = 0; face < 6; ++face)
+        {
+            const auto &facePixels = mipFaceData[mip][face];
+
+            auto staging = core::Buffer::createShared(
+                faceBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                core::memory::MemoryUsage::CPU_TO_GPU);
+            staging->upload(facePixels.data(), faceBytes);
+
+            utilities::BufferUtilities::copyBufferToImage(
+                *staging, *m_image, *commandBuffer,
+                VkExtent2D{mipSize, mipSize},
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                1, face, mip);
+
+            stagingBuffers.push_back(std::move(staging));
+        }
+    }
+
+    // Transition to SHADER_READ_ONLY_OPTIMAL
+    auto secondBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+        *m_image, VK_ACCESS_TRANSFER_WRITE_BIT, 0,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, numMips, 0, 6});
+
+    VkDependencyInfo secondDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    secondDep.imageMemoryBarrierCount = 1;
+    secondDep.pImageMemoryBarriers    = &secondBarrier;
+    vkCmdPipelineBarrier2(commandBuffer, &secondDep);
+
+    commandBuffer->end();
+
+    if (!utilities::AsyncGpuUpload::submit(commandBuffer, queue, std::move(stagingBuffers)))
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to submit pre-filtered cubemap upload\n");
+        return false;
+    }
+
+    // Image view covering all mip levels
+    VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    viewInfo.image    = m_image->vk();
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    viewInfo.format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+    viewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel   = 0;
+    viewInfo.subresourceRange.levelCount     = numMips;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount     = 6;
+
+    if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create pre-filtered cubemap image view!");
+
+    // Sampler with maxLod matching number of mips
+    const auto [anisotropyEnabled, anisotropyLevel] = resolveTextureAnisotropy();
+    m_sampler = core::Sampler::createShared(
+        VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_COMPARE_OP_ALWAYS,
+        VK_SAMPLER_MIPMAP_MODE_LINEAR, anisotropyEnabled, anisotropyLevel,
+        VK_FALSE, VK_FALSE, 0.0f, 0.0f, static_cast<float>(numMips - 1));
+
+    return true;
+}
+
 void Texture::createFromPixels(uint32_t pixels, VkFormat format)
 {
     if (!createFromMemory(&pixels, sizeof(pixels), 1u, 1u, format, 4u))

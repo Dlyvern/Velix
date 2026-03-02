@@ -28,11 +28,14 @@ enum class ShaderId : uint8_t
     SSR,
     SSAO,
     SMAA,
+    ContactShadow,
+    CinematicEffects,
     EditorBillboard,
     Billboard,
     UIText,
     UIQuad,
     Particle,
+    Glass,
     None
 };
 

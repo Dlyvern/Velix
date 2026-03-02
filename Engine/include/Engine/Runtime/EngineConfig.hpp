@@ -34,6 +34,12 @@ public:
     const std::string &getPreferredIdeId() const;
     void setPreferredIdeId(const std::string &ideId);
 
+    bool getShowAssetThumbnails() const;
+    void setShowAssetThumbnails(bool enabled);
+
+    bool getDetailedRenderProfilingEnabled() const;
+    void setDetailedRenderProfilingEnabled(bool enabled);
+
     std::optional<IdeInfo> findPreferredVSCodeIde() const;
     bool hasVSCodeIde() const;
 
@@ -50,6 +56,8 @@ private:
     std::filesystem::path m_configDirectory;
     std::filesystem::path m_configFilePath;
     std::string m_preferredIdeId{"vscode"};
+    bool m_showAssetThumbnails{true};
+    bool m_detailedRenderProfilingEnabled{true};
     std::vector<IdeInfo> m_detectedIdes;
 };
 

@@ -134,14 +134,16 @@ void SMAAPassRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
                             &m_descriptorSets[renderContext.currentImageIndex], 0, nullptr);
 
     const auto &settings = RenderQualitySettings::getInstance();
+    const bool isSMAA = settings.getAntiAliasingMode() == RenderQualitySettings::AntiAliasingMode::SMAA;
+    const bool isCMAA = settings.getAntiAliasingMode() == RenderQualitySettings::AntiAliasingMode::CMAA;
     SMAApc pc{};
     pc.texelSize = {1.0f / m_extent.width, 1.0f / m_extent.height};
     pc.enabled = (settings.enablePostProcessing &&
-                  settings.getAntiAliasingMode() == RenderQualitySettings::AntiAliasingMode::SMAA)
+                  (isSMAA || isCMAA))
                      ? 1.0f
                      : 0.0f;
-    pc.edgeThreshold = 0.1f;
-    pc.maxSearchSteps = 16.0f;
+    pc.edgeThreshold = isCMAA ? 0.075f : 0.1f;
+    pc.maxSearchSteps = isCMAA ? 12.0f : 16.0f;
 
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(pc), &pc);

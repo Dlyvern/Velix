@@ -1,5 +1,6 @@
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 #include "Core/VulkanHelpers.hpp"
+#include "Core/Logger.hpp"
 
 #include <stdexcept>
 
@@ -38,6 +39,19 @@ DescriptorSetBuilder& DescriptorSetBuilder::addImage(VkImageView imageView, VkSa
 
 void DescriptorSetBuilder::update(VkDevice device, VkDescriptorSet dst)
 {
+    if (device == VK_NULL_HANDLE)
+    {
+        VX_ENGINE_ERROR_STREAM("DescriptorSetBuilder::update skipped: device is VK_NULL_HANDLE\n");
+        return;
+    }
+
+    if (dst == VK_NULL_HANDLE)
+    {
+        VX_ENGINE_ERROR_STREAM("DescriptorSetBuilder::update skipped: destination descriptor set is VK_NULL_HANDLE "
+                               << "(images=" << m_imageInfos.size() << ", buffers=" << m_bufferInfos.size() << ")\n");
+        return;
+    }
+
     std::vector<VkWriteDescriptorSet> writers;
     std::vector<VkDescriptorBufferInfo> bufferInfos;
     std::vector<VkDescriptorImageInfo> imageInfos;

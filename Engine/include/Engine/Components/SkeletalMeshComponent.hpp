@@ -19,6 +19,9 @@ public:
 
     void setMaterialOverride(size_t slot, Material::SharedPtr mat)
     {
+        if (slot >= m_meshes.size())
+            return;
+
         if (slot >= m_perMeshMaterialOverrides.size())
         {
             m_perMeshMaterialOverrides.resize(m_meshes.size(), nullptr);
@@ -37,15 +40,23 @@ public:
 
     void clearMaterialOverride(size_t slot)
     {
-        if (slot < m_perMeshMaterialOverrides.size())
-        {
-            m_perMeshMaterialOverrides[slot] = nullptr;
-            m_perMeshMaterialOverridePaths[slot].clear();
-        }
+        if (slot >= m_meshes.size())
+            return;
+
+        if (slot >= m_perMeshMaterialOverrides.size())
+            m_perMeshMaterialOverrides.resize(m_meshes.size(), nullptr);
+        if (slot >= m_perMeshMaterialOverridePaths.size())
+            m_perMeshMaterialOverridePaths.resize(m_meshes.size());
+
+        m_perMeshMaterialOverrides[slot] = nullptr;
+        m_perMeshMaterialOverridePaths[slot].clear();
     }
 
     void setMaterialOverridePath(size_t slot, const std::string &path)
     {
+        if (slot >= m_meshes.size())
+            return;
+
         if (slot >= m_perMeshMaterialOverridePaths.size())
         {
             m_perMeshMaterialOverrides.resize(m_meshes.size(), nullptr);

@@ -4,14 +4,14 @@
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 Image::Image(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
-             VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags, VkSampleCountFlagBits sampleCount)
+             VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags, VkSampleCountFlagBits sampleCount, uint32_t mipLevels)
     : m_device(VulkanContext::getContext()->getDevice())
 {
-    createVk(extent, usage, memFlags, format, tiling, arrayLayers, flags, sampleCount);
+    createVk(extent, usage, memFlags, format, tiling, arrayLayers, flags, sampleCount, mipLevels);
 }
 
 void Image::createVk(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
-                     VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags, VkSampleCountFlagBits sampleCount)
+                     VkImageTiling tiling, uint32_t arrayLayers, VkImageCreateFlags flags, VkSampleCountFlagBits sampleCount, uint32_t mipLevels)
 {
     ELIX_VK_CREATE_GUARD()
     VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -19,7 +19,7 @@ void Image::createVk(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryU
     imageInfo.extent.width = extent.width;
     imageInfo.extent.height = extent.height;
     imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
+    imageInfo.mipLevels = (mipLevels > 0) ? mipLevels : 1;
     imageInfo.arrayLayers = arrayLayers;
     imageInfo.format = format;
     imageInfo.tiling = tiling;

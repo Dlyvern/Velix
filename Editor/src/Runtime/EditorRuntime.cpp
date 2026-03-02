@@ -10,6 +10,7 @@
 #include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/PluginSystem/PluginLoader.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Engine/Scripting/VelixAPI.hpp"
 
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <limits>
 #include <string>
@@ -40,6 +42,17 @@ namespace
         std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
                        { return static_cast<char>(std::tolower(character)); });
         return value;
+    }
+
+    VkExtent2D makeScaledRenderExtent(uint32_t width, uint32_t height)
+    {
+        const float renderScale = std::clamp(elix::engine::RenderQualitySettings::getInstance().renderScale, 0.25f, 2.0f);
+        const uint32_t baseWidth = std::max(width, 1u);
+        const uint32_t baseHeight = std::max(height, 1u);
+
+        const uint32_t scaledWidth = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(baseWidth) * renderScale)));
+        const uint32_t scaledHeight = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(baseHeight) * renderScale)));
+        return VkExtent2D{scaledWidth, scaledHeight};
     }
 
     int buildArtifactPreference(const std::filesystem::path &path)
@@ -246,10 +259,16 @@ bool EditorRuntime::init()
         m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         &m_ssaoRenderGraphPass->getAOHandlers());
 
-    m_ssrRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
+    m_contactShadowRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ContactShadowRenderGraphPass>(
         m_lightingRenderGraphPass->getOutput(),
+        m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+        m_gBufferRenderGraphPass->getDepthTextureHandler());
+
+    m_ssrRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
+        m_contactShadowRenderGraphPass->getOutput(),
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
@@ -258,8 +277,13 @@ bool EditorRuntime::init()
         m_ssrRenderGraphPass->getOutput(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
-    m_particleRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
+    m_glassRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::GlassRenderGraphPass>(
         m_skyLightRenderGraphPass->getOutput(),
+        m_gBufferRenderGraphPass->getDepthTextureHandler());
+    m_glassRenderGraphPass->setScene(m_activeScene.get());
+
+    m_particleRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
+        m_glassRenderGraphPass->getHandlers(),
         &m_gBufferRenderGraphPass->getDepthTextureHandler());
     m_particleRenderGraphPass->setScene(m_activeScene.get());
 
@@ -279,9 +303,12 @@ bool EditorRuntime::init()
     m_smaaRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SMAAPassRenderGraphPass>(
         m_fxaaRenderGraphPass->getHandlers());
 
+    m_cinematicEffectsRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::CinematicEffectsRenderGraphPass>(
+        m_smaaRenderGraphPass->getHandlers());
+
     m_selectionOverlayRenderGraphPass = m_renderGraph->addPass<SelectionOverlayRenderGraphPass>(
         m_editor,
-        m_smaaRenderGraphPass->getHandlers(),
+        m_cinematicEffectsRenderGraphPass->getHandlers(),
         m_gBufferRenderGraphPass->getObjectTextureHandler());
 
     m_uiRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::UIRenderGraphPass>(
@@ -322,10 +349,16 @@ bool EditorRuntime::init()
         m_gameGBufferRenderGraphPass->getAlbedoTextureHandlers(),
         m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gameGBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         &m_gameSSAORenderGraphPass->getAOHandlers());
 
-    m_gameSSRRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
+    m_gameContactShadowRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ContactShadowRenderGraphPass>(
         m_gameLightingRenderGraphPass->getOutput(),
+        m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getDepthTextureHandler());
+
+    m_gameSSRRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
+        m_gameContactShadowRenderGraphPass->getOutput(),
         m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gameGBufferRenderGraphPass->getMaterialTextureHandlers(),
         m_gameGBufferRenderGraphPass->getDepthTextureHandler());
@@ -334,8 +367,13 @@ bool EditorRuntime::init()
         m_gameSSRRenderGraphPass->getOutput(),
         m_gameGBufferRenderGraphPass->getDepthTextureHandler());
 
-    m_gameParticleRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
+    m_gameGlassRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::GlassRenderGraphPass>(
         m_gameSkyLightRenderGraphPass->getOutput(),
+        m_gameGBufferRenderGraphPass->getDepthTextureHandler());
+    m_gameGlassRenderGraphPass->setScene(m_activeScene.get());
+
+    m_gameParticleRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
+        m_gameGlassRenderGraphPass->getHandlers(),
         &m_gameGBufferRenderGraphPass->getDepthTextureHandler());
     m_gameParticleRenderGraphPass->setScene(m_activeScene.get());
 
@@ -355,50 +393,26 @@ bool EditorRuntime::init()
     m_gameSMAARenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SMAAPassRenderGraphPass>(
         m_gameFXAARenderGraphPass->getHandlers());
 
-    m_gameUIRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::UIRenderGraphPass>(
+    m_gameCinematicEffectsRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::CinematicEffectsRenderGraphPass>(
         m_gameSMAARenderGraphPass->getHandlers());
+
+    m_gameUIRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::UIRenderGraphPass>(
+        m_gameCinematicEffectsRenderGraphPass->getHandlers());
 
     m_gameViewportRenderGraph->setup();
     m_gameViewportRenderGraph->createRenderGraphResources();
 
-    auto syncEditorViewportExtent = [&](uint32_t width, uint32_t height)
-    {
-        const VkExtent2D extent{.width = std::max(width, 1u), .height = std::max(height, 1u)};
-        m_gBufferRenderGraphPass->setExtent(extent);
-        m_ssaoRenderGraphPass->setExtent(extent);
-        m_lightingRenderGraphPass->setExtent(extent);
-        m_ssrRenderGraphPass->setExtent(extent);
-        m_skyLightRenderGraphPass->setExtent(extent);
-        m_bloomRenderGraphPass->setExtent(extent);
-        m_tonemapRenderGraphPass->setExtent(extent);
-        m_bloomCompositeRenderGraphPass->setExtent(extent);
-        m_fxaaRenderGraphPass->setExtent(extent);
-        m_smaaRenderGraphPass->setExtent(extent);
-        m_selectionOverlayRenderGraphPass->setExtent(extent);
-        m_uiRenderGraphPass->setExtent(extent);
-        m_editorBillboardRenderGraphPass->setExtent(extent);
-        m_particleRenderGraphPass->setExtent(extent);
-    };
+    m_iblManager.createFallback();
+    m_lightingRenderGraphPass->setIBLManager(&m_iblManager);
+    m_gameLightingRenderGraphPass->setIBLManager(&m_iblManager);
 
-    auto syncGameViewportExtent = [&](uint32_t width, uint32_t height)
-    {
-        const VkExtent2D extent{.width = std::max(width, 1u), .height = std::max(height, 1u)};
-        m_gameGBufferRenderGraphPass->setExtent(extent);
-        m_gameSSAORenderGraphPass->setExtent(extent);
-        m_gameLightingRenderGraphPass->setExtent(extent);
-        m_gameSSRRenderGraphPass->setExtent(extent);
-        m_gameSkyLightRenderGraphPass->setExtent(extent);
-        m_gameBloomRenderGraphPass->setExtent(extent);
-        m_gameTonemapRenderGraphPass->setExtent(extent);
-        m_gameBloomCompositeRenderGraphPass->setExtent(extent);
-        m_gameFXAARenderGraphPass->setExtent(extent);
-        m_gameSMAARenderGraphPass->setExtent(extent);
-        m_gameUIRenderGraphPass->setExtent(extent);
-        m_gameParticleRenderGraphPass->setExtent(extent);
-    };
+    m_editor->addOnViewportChangedCallback([this](uint32_t width, uint32_t height)
+                                           { applyEditorViewportExtent(width, height); });
+    m_editor->addOnGameViewportChangedCallback([this](uint32_t width, uint32_t height)
+                                               { applyGameViewportExtent(width, height); });
 
-    m_editor->addOnViewportChangedCallback(syncEditorViewportExtent);
-    m_editor->addOnGameViewportChangedCallback(syncGameViewportExtent);
+    applyEditorViewportExtent(m_editor->getViewportX(), m_editor->getViewportY());
+    applyGameViewportExtent(m_editor->getGameViewportX(), m_editor->getGameViewportY());
 
     m_editor->setScene(m_activeScene);
     m_editor->setProject(m_project);
@@ -439,6 +453,10 @@ bool EditorRuntime::init()
 
         if (m_particleRenderGraphPass)
             m_particleRenderGraphPass->setScene(m_activeScene.get());
+        if (m_glassRenderGraphPass)
+            m_glassRenderGraphPass->setScene(m_activeScene.get());
+        if (m_gameGlassRenderGraphPass)
+            m_gameGlassRenderGraphPass->setScene(m_activeScene.get());
         if (m_gameParticleRenderGraphPass)
             m_gameParticleRenderGraphPass->setScene(m_activeScene.get());
         if (m_editorBillboardRenderGraphPass)
@@ -551,6 +569,7 @@ void EditorRuntime::tick(float deltaTime)
 
     const uint32_t editorViewportWidth = m_editor->getViewportX();
     const uint32_t editorViewportHeight = m_editor->getViewportY();
+    applyEditorViewportExtent(editorViewportWidth, editorViewportHeight);
     if (m_editorRenderCamera && editorViewportWidth > 0 && editorViewportHeight > 0)
         m_editorRenderCamera->setAspect(static_cast<float>(editorViewportWidth) / static_cast<float>(editorViewportHeight));
 
@@ -569,6 +588,7 @@ void EditorRuntime::tick(float deltaTime)
 
     const uint32_t gameViewportWidth = m_editor->getGameViewportX();
     const uint32_t gameViewportHeight = m_editor->getGameViewportY();
+    applyGameViewportExtent(gameViewportWidth, gameViewportHeight);
     if (m_gameRenderCamera && gameViewportWidth > 0 && gameViewportHeight > 0)
         m_gameRenderCamera->setAspect(static_cast<float>(gameViewportWidth) / static_cast<float>(gameViewportHeight));
 
@@ -593,7 +613,9 @@ void EditorRuntime::tick(float deltaTime)
     if (m_gameShadowRenderGraphPass)
         m_gameShadowRenderGraphPass->syncQualitySettings();
 
-    if (m_gameViewportRenderGraph && m_gameRenderCamera)
+    const bool shouldRenderGameViewport = m_isPlaySessionActive || m_editor->isGameViewportVisible();
+
+    if (m_gameViewportRenderGraph && m_gameRenderCamera && shouldRenderGameViewport)
     {
         m_gameViewportRenderGraph->prepareFrame(m_gameRenderCamera, m_activeScene.get(), deltaTime);
         m_gameViewportRenderGraph->draw();
@@ -606,7 +628,7 @@ void EditorRuntime::tick(float deltaTime)
     }
     else if (m_imGuiRenderGraphPass)
     {
-        m_imGuiRenderGraphPass->setGameViewportImages({}, false, 0u);
+        m_imGuiRenderGraphPass->setGameViewportImages({}, m_gameRenderCamera != nullptr, 0u);
     }
 
     m_renderGraph->prepareFrame(m_editorRenderCamera, m_activeScene.get(), deltaTime);
@@ -615,6 +637,58 @@ void EditorRuntime::tick(float deltaTime)
     m_editor->processPendingObjectSelection();
 
     m_editor->setDonePreviewJobs(m_previewAssetsRenderGraphPass->getRenderedImages());
+}
+
+void EditorRuntime::applyEditorViewportExtent(uint32_t width, uint32_t height)
+{
+    const VkExtent2D extent = makeScaledRenderExtent(width, height);
+    if (extent.width == m_lastEditorRenderExtent.width && extent.height == m_lastEditorRenderExtent.height)
+        return;
+
+    m_gBufferRenderGraphPass->setExtent(extent);
+    m_ssaoRenderGraphPass->setExtent(extent);
+    m_lightingRenderGraphPass->setExtent(extent);
+    m_ssrRenderGraphPass->setExtent(extent);
+    m_skyLightRenderGraphPass->setExtent(extent);
+    m_bloomRenderGraphPass->setExtent(extent);
+    m_tonemapRenderGraphPass->setExtent(extent);
+    m_bloomCompositeRenderGraphPass->setExtent(extent);
+    m_fxaaRenderGraphPass->setExtent(extent);
+    m_smaaRenderGraphPass->setExtent(extent);
+    m_contactShadowRenderGraphPass->setExtent(extent);
+    m_cinematicEffectsRenderGraphPass->setExtent(extent);
+    m_selectionOverlayRenderGraphPass->setExtent(extent);
+    m_uiRenderGraphPass->setExtent(extent);
+    m_editorBillboardRenderGraphPass->setExtent(extent);
+    m_particleRenderGraphPass->setExtent(extent);
+    m_glassRenderGraphPass->setExtent(extent);
+
+    m_lastEditorRenderExtent = extent;
+}
+
+void EditorRuntime::applyGameViewportExtent(uint32_t width, uint32_t height)
+{
+    const VkExtent2D extent = makeScaledRenderExtent(width, height);
+    if (extent.width == m_lastGameRenderExtent.width && extent.height == m_lastGameRenderExtent.height)
+        return;
+
+    m_gameGBufferRenderGraphPass->setExtent(extent);
+    m_gameSSAORenderGraphPass->setExtent(extent);
+    m_gameLightingRenderGraphPass->setExtent(extent);
+    m_gameSSRRenderGraphPass->setExtent(extent);
+    m_gameSkyLightRenderGraphPass->setExtent(extent);
+    m_gameBloomRenderGraphPass->setExtent(extent);
+    m_gameTonemapRenderGraphPass->setExtent(extent);
+    m_gameBloomCompositeRenderGraphPass->setExtent(extent);
+    m_gameFXAARenderGraphPass->setExtent(extent);
+    m_gameSMAARenderGraphPass->setExtent(extent);
+    m_gameContactShadowRenderGraphPass->setExtent(extent);
+    m_gameCinematicEffectsRenderGraphPass->setExtent(extent);
+    m_gameUIRenderGraphPass->setExtent(extent);
+    m_gameParticleRenderGraphPass->setExtent(extent);
+    m_gameGlassRenderGraphPass->setExtent(extent);
+
+    m_lastGameRenderExtent = extent;
 }
 
 void EditorRuntime::shutdown()

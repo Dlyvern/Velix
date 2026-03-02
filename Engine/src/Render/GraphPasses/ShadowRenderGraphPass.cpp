@@ -276,32 +276,54 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     const VkDescriptorSet perObjectSet = data.shadowPerObjectDescriptorSet ? data.shadowPerObjectDescriptorSet : data.perObjectDescriptorSet;
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &perObjectSet, 0, nullptr);
 
+    // Resolve both pipeline variants once — avoids re-hashing the key per draw.
+    auto makeKey = [&](bool skinned) -> GraphicsPipelineKey
+    {
+        GraphicsPipelineKey k{};
+        k.shader = skinned ? ShaderId::SkinnedShadow : ShaderId::StaticShadow;
+        k.cull = CullMode::Front;
+        k.depthTest = true;
+        k.depthWrite = true;
+        k.depthCompare = VK_COMPARE_OP_LESS;
+        k.polygonMode = VK_POLYGON_MODE_FILL;
+        k.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        k.pipelineLayout = m_pipelineLayout;
+        k.depthFormat = m_depthFormat;
+        return k;
+    };
+    const VkPipeline staticPipeline  = GraphicsPipelineManager::getOrCreate(makeKey(false));
+    const VkPipeline skinnedPipeline = GraphicsPipelineManager::getOrCreate(makeKey(true));
+
+    VkPipeline boundPipeline     = VK_NULL_HANDLE;
+    VkBuffer   boundVertexBuffer = VK_NULL_HANDLE;
+    VkBuffer   boundIndexBuffer  = VK_NULL_HANDLE;
+
     for (const auto &batch : *executionBatches)
     {
         if (!batch.mesh || batch.instanceCount == 0)
             continue;
 
-        GraphicsPipelineKey key{};
-        key.shader = batch.skinned ? ShaderId::SkinnedShadow : ShaderId::StaticShadow;
-        key.cull = CullMode::Front;
-        key.depthTest = true;
-        key.depthWrite = true;
-        key.depthCompare = VK_COMPARE_OP_LESS;
-        key.polygonMode = VK_POLYGON_MODE_FILL;
-        key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        key.pipelineLayout = m_pipelineLayout;
-        key.colorFormats = {};
-        key.depthFormat = m_depthFormat;
+        const VkPipeline batchPipeline = batch.skinned ? skinnedPipeline : staticPipeline;
+        if (batchPipeline != boundPipeline)
+        {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, batchPipeline);
+            boundPipeline = batchPipeline;
+        }
 
-        auto graphicsPipeline = GraphicsPipelineManager::getOrCreate(key);
+        const VkBuffer vb = batch.mesh->vertexBuffer;
+        if (vb != boundVertexBuffer)
+        {
+            const VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &offset);
+            boundVertexBuffer = vb;
+        }
 
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-        VkBuffer vertexBuffers[] = {batch.mesh->vertexBuffer};
-        VkDeviceSize offset[] = {0};
-
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offset);
-        vkCmdBindIndexBuffer(commandBuffer, batch.mesh->indexBuffer, 0, batch.mesh->indexType);
+        const VkBuffer ib = batch.mesh->indexBuffer;
+        if (ib != boundIndexBuffer)
+        {
+            vkCmdBindIndexBuffer(commandBuffer, ib, 0, batch.mesh->indexType);
+            boundIndexBuffer = ib;
+        }
 
         LightSpaceMatrixPushConstant lightSpaceMatrixPushConstant{
             .lightSpaceMatrix = activeLightSpaceMatrix,
@@ -315,15 +337,28 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
 
 std::vector<IRenderGraphPass::RenderPassExecution> ShadowRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const
 {
-    (void)renderContext;
-
     m_currentExecutionIndex = 0;
 
+    const uint32_t activeDirectionalCount = std::min(renderContext.activeDirectionalShadowCount, m_directionalCascadeCount);
+    const uint32_t activeSpotCount = std::min(renderContext.activeSpotShadowCount, ShadowConstants::MAX_SPOT_SHADOWS);
+    const uint32_t activePointCount = std::min(renderContext.activePointShadowCount, ShadowConstants::MAX_POINT_SHADOWS);
+    const uint32_t activeExecutionCount =
+        activeDirectionalCount +
+        activeSpotCount +
+        activePointCount * ShadowConstants::POINT_SHADOW_FACES;
+
     std::vector<IRenderGraphPass::RenderPassExecution> executions;
-    executions.reserve(m_executionInfos.size());
+    executions.reserve(activeExecutionCount);
 
     for (const auto &executionInfo : m_executionInfos)
     {
+        if (executionInfo.type == ShadowExecutionType::Directional && executionInfo.lightIndex >= activeDirectionalCount)
+            continue;
+        if (executionInfo.type == ShadowExecutionType::Spot && executionInfo.lightIndex >= activeSpotCount)
+            continue;
+        if (executionInfo.type == ShadowExecutionType::Point && executionInfo.lightIndex >= activePointCount)
+            continue;
+
         IRenderGraphPass::RenderPassExecution renderPassExecution;
         renderPassExecution.renderArea.offset = {0, 0};
         renderPassExecution.renderArea.extent = m_extent;

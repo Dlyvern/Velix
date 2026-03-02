@@ -11,11 +11,14 @@
 
 #include "Editor/AssetsPreviewSystem.hpp"
 
+#include <atomic>
 #include <string>
 #include <filesystem>
 #include <unordered_set>
 #include <unordered_map>
 #include <functional>
+#include <memory>
+#include <thread>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -23,6 +26,7 @@ class AssetsWindow
 {
 public:
     AssetsWindow(EditorResourcesStorage *resourcesStorage, AssetsPreviewSystem &assetsPreviewSystem);
+    ~AssetsWindow();
 
     void setProject(Project *project);
 
@@ -84,6 +88,7 @@ private:
 
     bool matchesSearch(const std::string &filename) const;
     void refreshCurrentDirectory();
+    void pollAsyncImportJob();
 
     Project *m_currentProject{nullptr};
     EditorResourcesStorage *m_resourcesStorage{nullptr};
@@ -117,6 +122,20 @@ private:
     bool m_importStatusIsError{false};
     std::filesystem::path m_importBrowserCurrentDirectory;
     std::unordered_set<std::string> m_importSelectedSourcePaths;
+
+    struct AsyncImportState
+    {
+        std::atomic<uint32_t> totalCount{0u};
+        std::atomic<uint32_t> processedCount{0u};
+        std::atomic<uint32_t> importedCount{0u};
+        std::atomic<uint32_t> failedCount{0u};
+        std::atomic<bool> finished{false};
+        std::filesystem::path destinationDirectory;
+        std::filesystem::path lastImportedOutputPath;
+    };
+    std::shared_ptr<AsyncImportState> m_asyncImportState{nullptr};
+    std::thread m_asyncImportThread;
+    std::filesystem::path m_asyncImportProjectRoot;
 
     std::unordered_set<std::string> m_textureExtensions = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff", ".psd", ".gif", ".hdr", ".exr", ".dds"};
     std::unordered_set<std::string> m_velixExtensions = {".scene", ".elixproject", ".cc", ".cxx"};

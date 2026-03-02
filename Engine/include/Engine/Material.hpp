@@ -24,8 +24,9 @@ public:
     enum MaterialFlags : uint8_t
     {
         EMATERIAL_FLAG_NONE = 0,
-        EMATERIAL_FLAG_ALPHA_MASK = 1 << 0,
-        EMATERIAL_FLAG_ALPHA_BLEND = 1 << 1
+        EMATERIAL_FLAG_ALPHA_MASK  = 1 << 0,
+        EMATERIAL_FLAG_ALPHA_BLEND = 1 << 1,
+        EMATERIAL_FLAG_GLASS       = 1 << 2,
     };
 
     struct GPUParams
@@ -41,7 +42,8 @@ public:
 
         uint32_t flags = MaterialFlags::EMATERIAL_FLAG_NONE;
         float alphaCutoff = 0.5f;
-        glm::vec2 _padding = {0.0f, 0.0f}; // keep alignment safe (std140)
+        float ior = 1.5f;    // Index of Refraction (glass=1.5, water=1.33, diamond=2.4)
+        float _pad = 0.0f;   // keep 16-byte alignment
     };
 
     Material(Texture::SharedPtr texture);
@@ -68,6 +70,7 @@ public:
     void setUVOffset(const glm::vec2 &offset);
     void setAlphaCutoff(float cutoff);
     void setFlags(uint32_t flags);
+    void setIor(float ior);
 
     const GPUParams &params() const;
 
@@ -118,6 +121,7 @@ public:
     float aoStrength{1.0f};
     float normalScale{1.0f};
     float alphaCutoff{0.5f};
+    float ior{1.5f};
 
     glm::vec2 uvScale{1.0f, 1.0f};
     glm::vec2 uvOffset{0.0f, 0.0f};

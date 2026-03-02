@@ -89,6 +89,19 @@ void Material::updateTextureDescriptors()
 
     for (uint32_t i = 0; i < m_maxFramesInFlight; ++i)
     {
+        if (m_descriptorSets[i] == VK_NULL_HANDLE)
+        {
+            auto descriptorPool = core::VulkanContext::getContext()->getPersistentDescriptorPool();
+            m_descriptorSets[i] = DescriptorSetBuilder::begin()
+                                      .addImage(m_albedoTexture->vkImageView(), m_albedoTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                                      .addImage(m_normalTexture->vkImageView(), m_normalTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
+                                      .addImage(m_ormTexture->vkImageView(), m_ormTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
+                                      .addImage(m_emissiveTexture->vkImageView(), m_emissiveTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 3)
+                                      .addBuffer(m_paramBuffers[i], sizeof(GPUParams), 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                                      .build(m_device, descriptorPool, EngineShaderFamilies::materialDescriptorSetLayout->vk());
+            continue;
+        }
+
         DescriptorSetBuilder::begin()
             .addImage(m_albedoTexture->vkImageView(), m_albedoTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
             .addImage(m_normalTexture->vkImageView(), m_normalTexture->vkSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
@@ -236,6 +249,12 @@ const Material::GPUParams &Material::params() const
 void Material::setFlags(uint32_t flags)
 {
     m_params.flags = flags;
+    uploadParams();
+}
+
+void Material::setIor(float ior)
+{
+    m_params.ior = ior;
     uploadParams();
 }
 

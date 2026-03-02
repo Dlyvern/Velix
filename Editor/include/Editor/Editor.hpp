@@ -150,6 +150,11 @@ public:
         return m_gameViewportSizeY;
     }
 
+    bool isGameViewportVisible() const
+    {
+        return m_isGameViewportVisible;
+    }
+
     std::vector<AssetsPreviewSystem::RenderPreviewJob> getRequestedPreviewJobs()
     {
         return m_assetsPreviewSystem.captureRequestedRenderJobsForSubmission();
@@ -306,6 +311,7 @@ private:
     bool m_showTerminal{false};
     bool m_showUITools{false};
     bool m_showRenderSettings{false};
+    bool m_isGameViewportVisible{true};
     bool m_terminalAutoScroll{true};
     bool m_terminalClearInputOnSubmit{true};
     char m_terminalCommandBuffer[512]{};

@@ -7,13 +7,14 @@
 #include "Engine/Builders/GraphicsPipelineKey.hpp"
 
 #include <unordered_map>
+#include <shared_mutex>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class GraphicsPipelineManager
 {
 public:
-    static core::GraphicsPipeline::SharedPtr getOrCreate(GraphicsPipelineKey key);
+    static core::GraphicsPipeline::SharedPtr getOrCreate(const GraphicsPipelineKey &key);
 
     static void init();
     static void reloadShaders();
@@ -26,6 +27,7 @@ private:
     static void destroyPipelines();
 
     static inline std::unordered_map<GraphicsPipelineKey, core::GraphicsPipeline::SharedPtr, GraphicsPipelineKeyHash> m_pipelines;
+    static inline std::shared_mutex m_pipelinesMutex;
 
     static inline core::Shader::SharedPtr shadowStaticShader{nullptr};
     static inline core::Shader::SharedPtr shadowSkinnedShader{nullptr};
@@ -50,11 +52,14 @@ private:
     static inline core::Shader::SharedPtr ssrShader{nullptr};
     static inline core::Shader::SharedPtr ssaoShader{nullptr};
     static inline core::Shader::SharedPtr smaaShader{nullptr};
+    static inline core::Shader::SharedPtr contactShadowShader{nullptr};
+    static inline core::Shader::SharedPtr cinematicEffectsShader{nullptr};
     static inline core::Shader::SharedPtr editorBillboardShader{nullptr};
     static inline core::Shader::SharedPtr billboardShader{nullptr};
     static inline core::Shader::SharedPtr uiTextShader{nullptr};
     static inline core::Shader::SharedPtr uiQuadShader{nullptr};
     static inline core::Shader::SharedPtr particleShader{nullptr};
+    static inline core::Shader::SharedPtr glassShader{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

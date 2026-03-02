@@ -1,6 +1,7 @@
 #include "Editor/AssetsWindow.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Assets/AssetsSerializer.hpp"
+#include "Engine/Runtime/EngineConfig.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -287,6 +288,54 @@ AssetsWindow::AssetsWindow(EditorResourcesStorage *resourcesStorage, AssetsPrevi
 {
 }
 
+AssetsWindow::~AssetsWindow()
+{
+    if (m_asyncImportThread.joinable())
+        m_asyncImportThread.join();
+}
+
+void AssetsWindow::pollAsyncImportJob()
+{
+    if (!m_asyncImportState)
+        return;
+
+    if (!m_asyncImportState->finished.load(std::memory_order_acquire))
+        return;
+
+    if (m_asyncImportThread.joinable())
+        m_asyncImportThread.join();
+
+    const uint32_t importedCount = m_asyncImportState->importedCount.load(std::memory_order_relaxed);
+    const uint32_t failedCount = m_asyncImportState->failedCount.load(std::memory_order_relaxed);
+    const std::filesystem::path destinationDirectory = m_asyncImportState->destinationDirectory;
+    const std::filesystem::path lastImportedOutputPath = m_asyncImportState->lastImportedOutputPath;
+
+    const std::filesystem::path currentProjectRoot = m_currentProject ? std::filesystem::path(m_currentProject->fullPath).lexically_normal() : std::filesystem::path{};
+    const bool sameProject = !m_asyncImportProjectRoot.empty() && !currentProjectRoot.empty() && m_asyncImportProjectRoot == currentProjectRoot;
+
+    if (sameProject && importedCount > 0u)
+    {
+        navigateToDirectory(destinationDirectory);
+        setSelectedAssetPath(lastImportedOutputPath);
+        refreshTree();
+    }
+
+    if (failedCount == 0u)
+    {
+        m_importStatusMessage = "Imported " + std::to_string(importedCount) + " asset(s).";
+        m_importStatusIsError = false;
+        m_importSelectedSourcePaths.clear();
+    }
+    else
+    {
+        m_importStatusMessage = "Imported " + std::to_string(importedCount) + ", failed " + std::to_string(failedCount) + ".";
+        m_importStatusIsError = importedCount == 0u;
+    }
+
+    m_asyncImportState.reset();
+    m_asyncImportProjectRoot.clear();
+}
+
 void AssetsWindow::setProject(Project *project)
 {
     m_currentProject = project;
@@ -317,6 +366,8 @@ void AssetsWindow::setSelectedAssetPath(const std::filesystem::path &path)
 
 void AssetsWindow::draw()
 {
+    pollAsyncImportJob();
+
     if (!m_currentProject)
         return;
 
@@ -377,6 +428,8 @@ void AssetsWindow::refreshCurrentDirectory()
 
 void AssetsWindow::drawSearchBar()
 {
+    auto &engineConfig = engine::EngineConfig::instance();
+
     ImGui::Text("Current: ");
     ImGui::SameLine();
 
@@ -466,6 +519,16 @@ void AssetsWindow::drawSearchBar()
 
     ImGui::SameLine();
 
+    bool showAssetThumbnails = engineConfig.getShowAssetThumbnails();
+    if (ImGui::Checkbox("Thumbnails", &showAssetThumbnails))
+    {
+        engineConfig.setShowAssetThumbnails(showAssetThumbnails);
+        if (!engineConfig.save())
+            VX_EDITOR_WARNING_STREAM("Failed to persist thumbnail setting to engine config\n");
+    }
+
+    ImGui::SameLine();
+
     const float searchWidth = std::max(ImGui::GetContentRegionAvail().x - 100.0f, 120.0f);
 
     ImGui::SetNextItemWidth(searchWidth);
@@ -540,6 +603,7 @@ void AssetsWindow::drawTreeView()
 
 void AssetsWindow::drawAssetGrid()
 {
+    const bool showAssetThumbnails = engine::EngineConfig::instance().getShowAssetThumbnails();
     auto entries = getFilteredEntries();
 
     if (!m_selectedAssetPath.empty() && !std::filesystem::exists(m_selectedAssetPath))
@@ -576,7 +640,7 @@ void AssetsWindow::drawAssetGrid()
 
             ImGui::BeginGroup();
 
-            VkDescriptorSet icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/file.tex.elixasset");
+            VkDescriptorSet icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.tex.elixasset");
             std::string filename = assetPath.filename().string();
             std::string extension = assetPath.extension().string();
             std::string extensionLower = toLowerCopy(extension);
@@ -590,14 +654,21 @@ void AssetsWindow::drawAssetGrid()
             }
             else
             {
-                if (extensionLower == ".elixmat")
-                    icon = m_assetsPreviewSystem.getOrRequestMaterialPreview(assetPath.string());
-                else if (serializedAssetType == engine::Asset::AssetType::TEXTURE)
-                    icon = m_assetsPreviewSystem.getOrRequestTexturePreview(assetPath.string());
-                else if (serializedAssetType == engine::Asset::AssetType::MODEL)
-                    icon = m_assetsPreviewSystem.getOrRequestModelPreview(assetPath.string());
+                if (showAssetThumbnails)
+                {
+                    if (extensionLower == ".elixmat")
+                        icon = m_assetsPreviewSystem.getOrRequestMaterialPreview(assetPath.string());
+                    else if (serializedAssetType == engine::Asset::AssetType::TEXTURE)
+                        icon = m_assetsPreviewSystem.getOrRequestTexturePreview(assetPath.string());
+                    else if (serializedAssetType == engine::Asset::AssetType::MODEL)
+                        icon = m_assetsPreviewSystem.getOrRequestModelPreview(assetPath.string());
+                    else if (m_velixExtensions.find(extensionLower) != m_velixExtensions.end())
+                        icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.tex.elixasset");
+                }
                 else if (m_velixExtensions.find(extensionLower) != m_velixExtensions.end())
+                {
                     icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.tex.elixasset");
+                }
             }
 
             const bool isSelected = !m_selectedAssetPath.empty() && m_selectedAssetPath == assetPath;
@@ -848,6 +919,9 @@ void AssetsWindow::drawAssetGrid()
     {
         const char *importTypes[] = {"Auto Detect", "Model", "Texture", "Audio"};
         const std::filesystem::path projectRoot = m_currentProject ? std::filesystem::path(m_currentProject->fullPath).lexically_normal() : std::filesystem::path{};
+        const bool importRunning = m_asyncImportState && !m_asyncImportState->finished.load(std::memory_order_acquire);
+
+        ImGui::BeginDisabled(importRunning);
 
         ImGui::SetNextItemWidth(640.0f);
         ImGui::InputTextWithHint("Source Root", "/path/to/source/assets", m_importSourceBuffer, sizeof(m_importSourceBuffer));
@@ -1026,12 +1100,30 @@ void AssetsWindow::drawAssetGrid()
         if (!destinationInsideProject)
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "Destination must be inside project root.");
 
+        ImGui::EndDisabled();
+
+        if (m_asyncImportState)
+        {
+            const uint32_t totalCount = m_asyncImportState->totalCount.load(std::memory_order_relaxed);
+            const uint32_t processedCount = std::min(m_asyncImportState->processedCount.load(std::memory_order_relaxed), totalCount);
+            const uint32_t importedCount = m_asyncImportState->importedCount.load(std::memory_order_relaxed);
+            const uint32_t failedCount = m_asyncImportState->failedCount.load(std::memory_order_relaxed);
+
+            const float progress = totalCount > 0u ? static_cast<float>(processedCount) / static_cast<float>(totalCount) : 0.0f;
+            const std::string progressOverlay = std::to_string(processedCount) + " / " + std::to_string(totalCount);
+
+            ImGui::Text("Import Progress");
+            ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f), progressOverlay.c_str());
+            ImGui::Text("Imported: %u    Failed: %u", importedCount, failedCount);
+        }
+
         if (!m_importStatusMessage.empty())
         {
             const ImVec4 color = m_importStatusIsError ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f) : ImVec4(0.55f, 0.9f, 0.55f, 1.0f);
             ImGui::TextColored(color, "%s", m_importStatusMessage.c_str());
         }
 
+        ImGui::BeginDisabled(importRunning);
         if (ImGui::Button("Import Selected"))
         {
             m_importStatusMessage.clear();
@@ -1078,125 +1170,152 @@ void AssetsWindow::drawAssetGrid()
 
                     std::sort(selectedFiles.begin(), selectedFiles.end(), [](const std::filesystem::path &left, const std::filesystem::path &right)
                               { return left.string() < right.string(); });
-
-                    uint32_t importedCount = 0u;
-                    uint32_t failedCount = 0u;
-                    std::filesystem::path lastImportedOutputPath;
-
-                    const bool singleSelection = selectedFiles.size() == 1u;
-                    const std::string customAssetName = trimCopy(m_importNameBuffer);
-                    const bool hasCustomSingleAssetName = singleSelection && !customAssetName.empty();
-
-                    for (const auto &sourcePath : selectedFiles)
+                    if (selectedFiles.empty())
                     {
-                        const std::string extensionLower = toLowerCopy(sourcePath.extension().string());
-                        const bool isModelSource = isSupportedModelSourceExtension(extensionLower);
-                        const bool isTextureSource = isSupportedTextureSourceExtension(extensionLower);
-                        const bool isAudioSource = isSupportedAudioSourceExtension(extensionLower);
-
-                        bool importModel = false;
-                        bool importTexture = false;
-                        bool importAudio = false;
-
-                        if (m_importTypeIndex == 1)
-                            importModel = true;
-                        else if (m_importTypeIndex == 2)
-                            importTexture = true;
-                        else if (m_importTypeIndex == 3)
-                            importAudio = true;
-                        else
-                        {
-                            importModel = isModelSource;
-                            importTexture = isTextureSource;
-                            importAudio = isAudioSource;
-                        }
-
-                        if ((!importModel && !importTexture && !importAudio) ||
-                            (importModel && !isModelSource) ||
-                            (importTexture && !isTextureSource) ||
-                            (importAudio && !isAudioSource))
-                        {
-                            ++failedCount;
-                            continue;
-                        }
-
-                        std::string assetName = hasCustomSingleAssetName ? customAssetName : sourcePath.stem().string();
-                        if (assetName.empty())
-                            assetName = importModel ? "ModelAsset" : (importAudio ? "AudioAsset" : "TextureAsset");
-
-                        if (assetName.find('/') != std::string::npos || assetName.find('\\') != std::string::npos)
-                        {
-                            ++failedCount;
-                            continue;
-                        }
-
-                        const std::string outputExtension = importModel ? ".model.elixasset" : (importAudio ? ".audio.elixasset" : ".tex.elixasset");
-                        const auto outputPath = makeUniquePathWithExtension(destinationDirectory, assetName, outputExtension);
-
-                        bool importSuccess = false;
-                        if (importModel)
-                            importSuccess = engine::AssetsLoader::importModelAsset(sourcePath.string(), outputPath.string());
-                        else if (importAudio)
-                            importSuccess = engine::AssetsLoader::importAudioAsset(sourcePath.string(), outputPath.string());
-                        else
-                            importSuccess = engine::AssetsLoader::importTextureAsset(sourcePath.string(), outputPath.string());
-
-                        if (!importSuccess)
-                        {
-                            ++failedCount;
-                            continue;
-                        }
-
-                        ++importedCount;
-                        lastImportedOutputPath = outputPath;
-
-                        std::error_code absoluteError;
-                        const auto absoluteSourcePath = std::filesystem::absolute(sourcePath, absoluteError).lexically_normal();
-                        absoluteError.clear();
-                        const auto absoluteOutputPath = std::filesystem::absolute(outputPath, absoluteError).lexically_normal();
-
-                        if (!absoluteError &&
-                            absoluteSourcePath != absoluteOutputPath &&
-                            m_currentProject &&
-                            isPathWithinRoot(absoluteSourcePath, std::filesystem::path(m_currentProject->fullPath)))
-                        {
-                            std::error_code removeError;
-                            std::filesystem::remove(absoluteSourcePath, removeError);
-                            if (removeError)
-                                VX_EDITOR_WARNING_STREAM("Imported asset but failed to delete source file: " << absoluteSourcePath << '\n');
-                        }
-                    }
-
-                    if (importedCount > 0u)
-                    {
-                        navigateToDirectory(destinationDirectory);
-                        setSelectedAssetPath(lastImportedOutputPath);
-                        refreshTree();
-                    }
-
-                    if (failedCount == 0u)
-                    {
-                        m_importStatusMessage = "Imported " + std::to_string(importedCount) + " asset(s).";
-                        m_importStatusIsError = false;
-                        m_importSelectedSourcePaths.clear();
+                        m_importStatusMessage = "No valid files selected.";
+                        m_importStatusIsError = true;
                     }
                     else
                     {
-                        m_importStatusMessage = "Imported " + std::to_string(importedCount) + ", failed " + std::to_string(failedCount) + ".";
-                        m_importStatusIsError = importedCount == 0u;
+                        if (m_asyncImportThread.joinable())
+                            m_asyncImportThread.join();
+
+                        auto asyncState = std::make_shared<AsyncImportState>();
+                        asyncState->totalCount.store(static_cast<uint32_t>(selectedFiles.size()), std::memory_order_relaxed);
+                        asyncState->processedCount.store(0u, std::memory_order_relaxed);
+                        asyncState->importedCount.store(0u, std::memory_order_relaxed);
+                        asyncState->failedCount.store(0u, std::memory_order_relaxed);
+                        asyncState->destinationDirectory = destinationDirectory;
+                        asyncState->lastImportedOutputPath.clear();
+                        asyncState->finished.store(false, std::memory_order_relaxed);
+
+                        const int importTypeIndex = m_importTypeIndex;
+                        const std::string customAssetName = trimCopy(m_importNameBuffer);
+                        const bool hasCustomSingleAssetName = selectedFiles.size() == 1u && !customAssetName.empty();
+                        const std::filesystem::path destinationDirectoryCopy = destinationDirectory;
+                        const std::filesystem::path projectRootCopy = projectRoot;
+
+                        m_asyncImportState = asyncState;
+                        m_asyncImportProjectRoot = projectRootCopy;
+                        m_asyncImportThread = std::thread(
+                            [asyncState,
+                             selectedFiles = std::move(selectedFiles),
+                             destinationDirectoryCopy,
+                             projectRootCopy,
+                             importTypeIndex,
+                             customAssetName,
+                             hasCustomSingleAssetName]() mutable
+                            {
+                                for (const auto &sourcePath : selectedFiles)
+                                {
+                                    const std::string extensionLower = toLowerCopy(sourcePath.extension().string());
+                                    const bool isModelSource = isSupportedModelSourceExtension(extensionLower);
+                                    const bool isTextureSource = isSupportedTextureSourceExtension(extensionLower);
+                                    const bool isAudioSource = isSupportedAudioSourceExtension(extensionLower);
+
+                                    bool importModel = false;
+                                    bool importTexture = false;
+                                    bool importAudio = false;
+
+                                    if (importTypeIndex == 1)
+                                        importModel = true;
+                                    else if (importTypeIndex == 2)
+                                        importTexture = true;
+                                    else if (importTypeIndex == 3)
+                                        importAudio = true;
+                                    else
+                                    {
+                                        importModel = isModelSource;
+                                        importTexture = isTextureSource;
+                                        importAudio = isAudioSource;
+                                    }
+
+                                    if ((!importModel && !importTexture && !importAudio) ||
+                                        (importModel && !isModelSource) ||
+                                        (importTexture && !isTextureSource) ||
+                                        (importAudio && !isAudioSource))
+                                    {
+                                        asyncState->failedCount.fetch_add(1u, std::memory_order_relaxed);
+                                        asyncState->processedCount.fetch_add(1u, std::memory_order_relaxed);
+                                        continue;
+                                    }
+
+                                    std::string assetName = hasCustomSingleAssetName ? customAssetName : sourcePath.stem().string();
+                                    if (assetName.empty())
+                                        assetName = importModel ? "ModelAsset" : (importAudio ? "AudioAsset" : "TextureAsset");
+
+                                    if (assetName.find('/') != std::string::npos || assetName.find('\\') != std::string::npos)
+                                    {
+                                        asyncState->failedCount.fetch_add(1u, std::memory_order_relaxed);
+                                        asyncState->processedCount.fetch_add(1u, std::memory_order_relaxed);
+                                        continue;
+                                    }
+
+                                    const std::string outputExtension = importModel ? ".model.elixasset" : (importAudio ? ".audio.elixasset" : ".tex.elixasset");
+                                    const auto outputPath = makeUniquePathWithExtension(destinationDirectoryCopy, assetName, outputExtension);
+
+                                    bool importSuccess = false;
+                                    if (importModel)
+                                        importSuccess = engine::AssetsLoader::importModelAsset(sourcePath.string(), outputPath.string());
+                                    else if (importAudio)
+                                        importSuccess = engine::AssetsLoader::importAudioAsset(sourcePath.string(), outputPath.string());
+                                    else
+                                        importSuccess = engine::AssetsLoader::importTextureAsset(sourcePath.string(), outputPath.string());
+
+                                    if (!importSuccess)
+                                    {
+                                        asyncState->failedCount.fetch_add(1u, std::memory_order_relaxed);
+                                        asyncState->processedCount.fetch_add(1u, std::memory_order_relaxed);
+                                        continue;
+                                    }
+
+                                    asyncState->importedCount.fetch_add(1u, std::memory_order_relaxed);
+                                    asyncState->lastImportedOutputPath = outputPath;
+
+                                    std::error_code absoluteError;
+                                    const auto absoluteSourcePath = std::filesystem::absolute(sourcePath, absoluteError).lexically_normal();
+                                    absoluteError.clear();
+                                    const auto absoluteOutputPath = std::filesystem::absolute(outputPath, absoluteError).lexically_normal();
+
+                                    if (!absoluteError &&
+                                        absoluteSourcePath != absoluteOutputPath &&
+                                        !projectRootCopy.empty() &&
+                                        isPathWithinRoot(absoluteSourcePath, projectRootCopy))
+                                    {
+                                        std::error_code removeError;
+                                        std::filesystem::remove(absoluteSourcePath, removeError);
+                                    }
+
+                                    asyncState->processedCount.fetch_add(1u, std::memory_order_relaxed);
+                                }
+
+                                asyncState->finished.store(true, std::memory_order_release);
+                            });
+
+                        m_importStatusMessage = "Import started...";
+                        m_importStatusIsError = false;
                     }
                 }
             }
         }
+        ImGui::EndDisabled();
 
         ImGui::SameLine();
 
+        ImGui::BeginDisabled(importRunning);
         if (ImGui::Button("Cancel"))
         {
             m_importStatusMessage.clear();
             m_importStatusIsError = false;
             m_importSelectedSourcePaths.clear();
             ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+
+        if (importRunning)
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("Importing...");
         }
 
         ImGui::EndPopup();

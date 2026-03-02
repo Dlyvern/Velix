@@ -40,4 +40,9 @@ set_target_properties(fbx_sdk PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${FBX_SDK_INCLUDE_DIR}"
 )
 
+# FBX SDK is consumed as a shared library in this wrapper.
+# This define is required on MSVC for imported static data members
+# (e.g. FbxSurfaceMaterial::sDiffuse, FbxAnimStack::ClassId).
+target_compile_definitions(fbx_sdk INTERFACE FBXSDK_SHARED)
+
 message(STATUS "FBX SDK: ${FBX_DLL}, includes: ${FBX_SDK_INCLUDE_DIR}")

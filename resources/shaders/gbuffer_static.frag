@@ -11,6 +11,7 @@ layout(location = 0) out vec4 outGBufferNormal;   // normal (encoded)
 layout(location = 1) out vec4 outGBufferAlbedo;   // albedo + alpha
 layout(location = 2) out vec4 outGBufferMaterial; // ao, roughness, metallic, emissiveStrength/flags
 layout(location = 3) out uint outObjectId;
+layout(location = 4) out vec4 outGBufferTangentAniso; // tangent (encoded), aniso mask
 
 layout(set = 1, binding = 0) uniform sampler2D uAlbedoTex;
 layout(set = 1, binding = 1) uniform sampler2D uNormalTex;
@@ -56,6 +57,24 @@ vec3 getNormalView()
     return normalize(TBN * normalTS);
 }
 
+vec3 getTangentView()
+{
+    vec3 N = normalize(fragNormalView);
+    vec3 T = normalize(fragTangentView);
+    vec3 B = normalize(fragBitangentView);
+
+    T = normalize(T - dot(T, N) * N);
+    if (length(T) < 0.001)
+        T = normalize(cross(abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0), N));
+
+    // Preserve handedness from mesh tangent frame.
+    float handedness = dot(cross(N, T), B) < 0.0 ? -1.0 : 1.0;
+    vec3 fixedB = normalize(cross(N, T)) * handedness;
+    T = normalize(cross(fixedB, N));
+
+    return T;
+}
+
 void main()
 {
     outObjectId = fragObjectId;
@@ -80,6 +99,17 @@ void main()
     float roughness = clamp(orm.g * material.roughnessFactor, 0.04, 1.0);
     float metallic  = clamp(orm.b * material.metallicFactor, 0.0, 1.0);
 
+    // Specular AA (Tokuyoshi & Kaplanyan 2019): widen roughness based on
+    // normal-map screen-space variance to suppress specular flickering.
+    {
+        vec3 normalRaw = texture(uNormalTex, uv).xyz * 2.0 - 1.0;
+        vec3 dnx = dFdx(normalRaw);
+        vec3 dny = dFdy(normalRaw);
+        float variance = dot(dnx, dnx) + dot(dny, dny);
+        float kernelRoughness = min(2.0 * variance, 1.0);
+        roughness = sqrt(clamp(roughness * roughness + kernelRoughness, 0.0, 1.0));
+    }
+
     vec3 N = getNormalView();
 
     vec3 encN = N * 0.5 + 0.5;
@@ -87,4 +117,5 @@ void main()
     outGBufferNormal = vec4(encN, 1.0);
     outGBufferAlbedo = vec4(albedo, alpha);
     outGBufferMaterial = vec4(ao, roughness, metallic, emissiveStrength);
+    outGBufferTangentAniso = vec4(getTangentView() * 0.5 + 0.5, 1.0);
 }

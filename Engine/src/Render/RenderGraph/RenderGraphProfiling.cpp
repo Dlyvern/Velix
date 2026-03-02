@@ -1,13 +1,38 @@
 #include "Engine/Render/RenderGraph/RenderGraph.hpp"
 
 #include "Core/VulkanContext.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
+#include "Engine/Runtime/EngineConfig.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <unordered_map>
 #include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
+
+bool RenderGraph::isDetailedProfilingEnabled() const
+{
+    return EngineConfig::instance().getDetailedRenderProfilingEnabled();
+}
+
+void RenderGraph::syncDetailedProfilingMode()
+{
+    if (isDetailedProfilingEnabled())
+    {
+        if (m_timestampQueryPool == VK_NULL_HANDLE)
+            initTimestampQueryPool();
+    }
+    else if (m_timestampQueryPool != VK_NULL_HANDLE || m_isGpuTimingAvailable)
+    {
+        vkDeviceWaitIdle(m_device);
+        destroyTimestampQueryPool();
+        for (auto &framePassProfilingData : m_passExecutionProfilingDataByFrame)
+            framePassProfilingData.clear();
+        m_lastFrameProfilingData = {};
+    }
+}
 
 void RenderGraph::initTimestampQueryPool()
 {
@@ -207,6 +232,143 @@ void RenderGraph::resolveFrameProfilingData(uint32_t frameIndex)
         frameProfilingData.gpuWasteTimeMs = std::max(0.0, frameProfilingData.gpuFrameTimeMs - frameProfilingData.gpuTotalTimeMs);
 
     m_lastFrameProfilingData = std::move(frameProfilingData);
+}
+
+void RenderGraph::initOcclusionQueryPool()
+{
+    destroyOcclusionQueryPool();
+
+    if (m_device == VK_NULL_HANDLE)
+        return;
+
+    m_occlusionQueriesPerFrame = OCCLUSION_QUERIES_PER_FRAME;
+    const uint32_t queryCapacity = m_occlusionQueriesPerFrame * MAX_FRAMES_IN_FLIGHT;
+
+    VkQueryPoolCreateInfo queryPoolCI{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    queryPoolCI.queryType = VK_QUERY_TYPE_OCCLUSION;
+    queryPoolCI.queryCount = queryCapacity;
+
+    if (vkCreateQueryPool(m_device, &queryPoolCI, nullptr, &m_occlusionQueryPool) != VK_SUCCESS)
+    {
+        m_occlusionQueryPool = VK_NULL_HANDLE;
+        m_occlusionQueriesPerFrame = 0u;
+        VX_ENGINE_ERROR_STREAM("Failed to create render graph occlusion query pool\n");
+        return;
+    }
+
+    const VkDeviceSize readbackSize = static_cast<VkDeviceSize>(m_occlusionQueriesPerFrame) * sizeof(OcclusionQueryReadback);
+    for (uint32_t frameIndex = 0u; frameIndex < MAX_FRAMES_IN_FLIGHT; ++frameIndex)
+    {
+        m_occlusionReadbackBuffers[frameIndex] = core::Buffer::createShared(
+            readbackSize,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            core::memory::MemoryUsage::CPU_TO_GPU);
+
+        void *mapped = nullptr;
+        m_occlusionReadbackBuffers[frameIndex]->map(mapped);
+        m_occlusionReadbackMapped[frameIndex] = mapped;
+        std::memset(mapped, 0, static_cast<size_t>(readbackSize));
+
+        m_submittedOcclusionQueryKeys[frameIndex].clear();
+        m_submittedOcclusionQueryCounts[frameIndex] = 0u;
+        m_submittedOcclusionFrameNumbers[frameIndex] = 0u;
+        m_hasPendingOcclusionResolve[frameIndex] = false;
+    }
+}
+
+void RenderGraph::destroyOcclusionQueryPool()
+{
+    for (uint32_t frameIndex = 0u; frameIndex < MAX_FRAMES_IN_FLIGHT; ++frameIndex)
+    {
+        if (m_occlusionReadbackBuffers[frameIndex] && m_occlusionReadbackMapped[frameIndex])
+            m_occlusionReadbackBuffers[frameIndex]->unmap();
+
+        m_occlusionReadbackMapped[frameIndex] = nullptr;
+        m_occlusionReadbackBuffers[frameIndex].reset();
+        m_submittedOcclusionQueryKeys[frameIndex].clear();
+        m_submittedOcclusionQueryCounts[frameIndex] = 0u;
+        m_submittedOcclusionFrameNumbers[frameIndex] = 0u;
+        m_hasPendingOcclusionResolve[frameIndex] = false;
+    }
+
+    if (m_occlusionQueryPool != VK_NULL_HANDLE)
+    {
+        vkDestroyQueryPool(m_device, m_occlusionQueryPool, nullptr);
+        m_occlusionQueryPool = VK_NULL_HANDLE;
+    }
+
+    m_occlusionQueriesPerFrame = 0u;
+    m_usedOcclusionQueriesByFrame.fill(0u);
+    m_occlusionFrameNumbersByFrame.fill(0u);
+    for (auto &frameKeys : m_occlusionQueryKeysByFrame)
+        frameKeys.clear();
+}
+
+void RenderGraph::resolveOcclusionQueries(uint32_t frameIndex)
+{
+    if (m_occlusionQueryPool == VK_NULL_HANDLE || m_occlusionQueriesPerFrame == 0u)
+        return;
+
+    if (!m_hasPendingOcclusionResolve[frameIndex])
+        return;
+
+    uint32_t queryCount = m_submittedOcclusionQueryCounts[frameIndex];
+    if (queryCount == 0u)
+    {
+        m_hasPendingOcclusionResolve[frameIndex] = false;
+        return;
+    }
+
+    const auto &queryKeys = m_submittedOcclusionQueryKeys[frameIndex];
+    if (queryKeys.empty())
+    {
+        m_hasPendingOcclusionResolve[frameIndex] = false;
+        return;
+    }
+
+    queryCount = std::min(queryCount, static_cast<uint32_t>(queryKeys.size()));
+    if (queryCount == 0u)
+    {
+        m_hasPendingOcclusionResolve[frameIndex] = false;
+        return;
+    }
+
+    const auto *queryResults = reinterpret_cast<const OcclusionQueryReadback *>(m_occlusionReadbackMapped[frameIndex]);
+    if (!queryResults)
+    {
+        m_hasPendingOcclusionResolve[frameIndex] = false;
+        return;
+    }
+
+    const uint64_t submittedFrameNumber = m_submittedOcclusionFrameNumbers[frameIndex];
+    const uint8_t occlusionConfirmationQueries = static_cast<uint8_t>(
+        std::clamp(RenderQualitySettings::getInstance().occlusionOccludedConfirmationQueries, 1, 8));
+    for (uint32_t queryIndex = 0u; queryIndex < queryCount; ++queryIndex)
+    {
+        const uint64_t queryKey = queryKeys[queryIndex];
+        auto &state = m_occlusionStates[queryKey];
+        if (queryResults[queryIndex].available == 0ull)
+            continue;
+
+        const bool isOccludedSample = queryResults[queryIndex].samples == 0ull;
+        if (isOccludedSample)
+        {
+            if (state.occludedConsecutiveResults < UINT8_MAX)
+                ++state.occludedConsecutiveResults;
+        }
+        else
+        {
+            state.occludedConsecutiveResults = 0u;
+        }
+
+        state.hasResult = true;
+        state.occluded = state.occludedConsecutiveResults >= occlusionConfirmationQueries;
+        state.lastQueryFrame = submittedFrameNumber;
+    }
+
+    m_submittedOcclusionQueryCounts[frameIndex] = 0u;
+    m_submittedOcclusionQueryKeys[frameIndex].clear();
+    m_hasPendingOcclusionResolve[frameIndex] = false;
 }
 
 ELIX_CUSTOM_NAMESPACE_END

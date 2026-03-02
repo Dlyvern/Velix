@@ -3,6 +3,7 @@
 
 #include "Core/Logger.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -399,6 +400,46 @@ namespace
                 return std::nullopt;
             return texelsCount * 4u * sizeof(float);
         case elix::engine::TextureAsset::PixelEncoding::COMPRESSED_GPU:
+        {
+            const VkFormat format = static_cast<VkFormat>(textureAsset.vkFormat);
+
+            uint64_t blockBytes = 0u;
+            switch (format)
+            {
+            case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
+            case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
+            case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
+            case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
+            case VK_FORMAT_BC4_UNORM_BLOCK:
+            case VK_FORMAT_BC4_SNORM_BLOCK:
+                blockBytes = 8u;
+                break;
+            case VK_FORMAT_BC2_UNORM_BLOCK:
+            case VK_FORMAT_BC2_SRGB_BLOCK:
+            case VK_FORMAT_BC3_UNORM_BLOCK:
+            case VK_FORMAT_BC3_SRGB_BLOCK:
+            case VK_FORMAT_BC5_UNORM_BLOCK:
+            case VK_FORMAT_BC5_SNORM_BLOCK:
+            case VK_FORMAT_BC6H_UFLOAT_BLOCK:
+            case VK_FORMAT_BC6H_SFLOAT_BLOCK:
+            case VK_FORMAT_BC7_UNORM_BLOCK:
+            case VK_FORMAT_BC7_SRGB_BLOCK:
+                blockBytes = 16u;
+                break;
+            default:
+                return std::nullopt;
+            }
+
+            const uint64_t blocksWide = std::max<uint64_t>(1u, (width + 3u) / 4u);
+            const uint64_t blocksHigh = std::max<uint64_t>(1u, (height + 3u) / 4u);
+            if (blocksWide > (std::numeric_limits<uint64_t>::max() / blocksHigh))
+                return std::nullopt;
+            const uint64_t blockCount = blocksWide * blocksHigh;
+            if (blockCount > (std::numeric_limits<uint64_t>::max() / blockBytes))
+                return std::nullopt;
+
+            return blockCount * blockBytes;
+        }
         default:
             return std::nullopt;
         }
@@ -425,10 +466,10 @@ bool AssetsSerializer::writeTexture(const TextureAsset &textureAsset, const std:
     std::vector<uint8_t> storedPixels = textureAsset.pixels;
     uint8_t compressionAlgorithm = static_cast<uint8_t>(Compressor::Algorithm::None);
 
-    if (!textureAsset.pixels.empty() && textureAsset.encoding != TextureAsset::PixelEncoding::COMPRESSED_GPU)
+    if (!textureAsset.pixels.empty())
     {
         std::vector<uint8_t> compressedPixels;
-        if (Compressor::compress(textureAsset.pixels, compressedPixels, Compressor::Algorithm::Deflate, 6))
+        if (Compressor::compress(textureAsset.pixels, compressedPixels, Compressor::Algorithm::Deflate, 7))
         {
             // Keep raw data when compression gain is too small.
             if (compressedPixels.size() + 32u < textureAsset.pixels.size())
@@ -506,6 +547,24 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
         return false;
 
     const std::string payload = payloadStream.str();
+    const std::vector<uint8_t> payloadBytes(payload.begin(), payload.end());
+
+    std::vector<uint8_t> storedPayload = payloadBytes;
+    uint8_t compressionAlgorithm = static_cast<uint8_t>(Compressor::Algorithm::None);
+
+    if (!payloadBytes.empty())
+    {
+        std::vector<uint8_t> compressedPayload;
+        if (Compressor::compress(payloadBytes, compressedPayload, Compressor::Algorithm::Deflate, 7))
+        {
+            // Avoid paying decompression cost when compression gain is minimal.
+            if (compressedPayload.size() + 256u < payloadBytes.size())
+            {
+                storedPayload = std::move(compressedPayload);
+                compressionAlgorithm = static_cast<uint8_t>(Compressor::Algorithm::Deflate);
+            }
+        }
+    }
 
     std::error_code directoryError;
     const auto outputFilesystemPath = std::filesystem::path(outputPath).lexically_normal();
@@ -520,10 +579,23 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
         return false;
     }
 
-    if (!writeHeader(stream, Asset::AssetType::MODEL, static_cast<uint64_t>(payload.size())))
+    uint64_t storedPayloadSize = static_cast<uint64_t>(storedPayload.size());
+    if (compressionAlgorithm != static_cast<uint8_t>(Compressor::Algorithm::None))
+        storedPayloadSize += sizeof(uint64_t);
+
+    if (!writeHeader(stream, Asset::AssetType::MODEL, storedPayloadSize, compressionAlgorithm))
         return false;
 
-    stream.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    if (compressionAlgorithm != static_cast<uint8_t>(Compressor::Algorithm::None))
+    {
+        const uint64_t uncompressedSize = static_cast<uint64_t>(payloadBytes.size());
+        if (!writePOD(stream, uncompressedSize))
+            return false;
+    }
+
+    if (!storedPayload.empty())
+        stream.write(reinterpret_cast<const char *>(storedPayload.data()), static_cast<std::streamsize>(storedPayload.size()));
+
     return stream.good();
 }
 
@@ -595,42 +667,94 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
     if (static_cast<Asset::AssetType>(header.type) != Asset::AssetType::MODEL)
         return std::nullopt;
 
-    ModelAsset modelAsset{{}, std::nullopt, {}};
-    if (!readString(stream, modelAsset.sourcePath) ||
-        !readString(stream, modelAsset.assetPath))
-        return std::nullopt;
-
-    uint32_t meshesCount = 0u;
-    if (!readPOD(stream, meshesCount))
-        return std::nullopt;
-
-    if (meshesCount > (1u << 16))
-        return std::nullopt;
-
-    modelAsset.meshes.resize(meshesCount);
-    for (uint32_t meshIndex = 0; meshIndex < meshesCount; ++meshIndex)
+    auto parseModelPayload = [](std::istream &payloadStream, const std::string &assetPath) -> std::optional<ModelAsset>
     {
-        auto &mesh = modelAsset.meshes[meshIndex];
-        if (!readString(stream, mesh.name) ||
-            !readVector(stream, mesh.vertexData, 1ull << 31) ||
-            !readVector(stream, mesh.indices, 1ull << 31) ||
-            !readPOD(stream, mesh.vertexStride) ||
-            !readPOD(stream, mesh.vertexLayoutHash) ||
-            !readMaterial(stream, mesh.material) ||
-            !readPOD(stream, mesh.localTransform))
+        ModelAsset modelAsset{{}, std::nullopt, {}};
+        if (!readString(payloadStream, modelAsset.sourcePath) ||
+            !readString(payloadStream, modelAsset.assetPath))
+            return std::nullopt;
+
+        uint32_t meshesCount = 0u;
+        if (!readPOD(payloadStream, meshesCount))
+            return std::nullopt;
+
+        if (meshesCount > (1u << 16))
+            return std::nullopt;
+
+        modelAsset.meshes.resize(meshesCount);
+        for (uint32_t meshIndex = 0; meshIndex < meshesCount; ++meshIndex)
+        {
+            auto &mesh = modelAsset.meshes[meshIndex];
+            if (!readString(payloadStream, mesh.name) ||
+                !readVector(payloadStream, mesh.vertexData, 1ull << 31) ||
+                !readVector(payloadStream, mesh.indices, 1ull << 31) ||
+                !readPOD(payloadStream, mesh.vertexStride) ||
+                !readPOD(payloadStream, mesh.vertexLayoutHash) ||
+                !readMaterial(payloadStream, mesh.material) ||
+                !readPOD(payloadStream, mesh.localTransform))
+                return std::nullopt;
+        }
+
+        if (!readSkeleton(payloadStream, modelAsset.skeleton))
+            return std::nullopt;
+
+        if (!readAnimations(payloadStream, modelAsset.animations))
+            return std::nullopt;
+
+        if (modelAsset.assetPath.empty())
+            modelAsset.assetPath = std::filesystem::path(assetPath).lexically_normal().string();
+
+        return modelAsset;
+    };
+
+    const auto compressionAlgorithm = static_cast<Compressor::Algorithm>(header.reserved[0]);
+    if (compressionAlgorithm == Compressor::Algorithm::None)
+        return parseModelPayload(stream, path);
+
+    if (compressionAlgorithm != Compressor::Algorithm::Deflate)
+    {
+        VX_ENGINE_ERROR_STREAM("Unsupported model payload compression algorithm in asset: " << path << '\n');
+        return std::nullopt;
+    }
+
+    uint64_t uncompressedSize = 0u;
+    if (!readPOD(stream, uncompressedSize))
+        return std::nullopt;
+
+    if (uncompressedSize == 0u || uncompressedSize > (1ull << 33))
+    {
+        VX_ENGINE_ERROR_STREAM("Invalid compressed model payload size in asset: " << path << '\n');
+        return std::nullopt;
+    }
+
+    const uint64_t payloadBytesInHeader = header.payloadSize;
+    if (payloadBytesInHeader < sizeof(uint64_t))
+        return std::nullopt;
+
+    const uint64_t compressedSize = payloadBytesInHeader - sizeof(uint64_t);
+    if (compressedSize > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()))
+        return std::nullopt;
+
+    std::vector<uint8_t> compressedPayload(static_cast<size_t>(compressedSize));
+    if (compressedSize > 0u)
+    {
+        stream.read(reinterpret_cast<char *>(compressedPayload.data()), static_cast<std::streamsize>(compressedPayload.size()));
+        if (!stream.good())
             return std::nullopt;
     }
 
-    if (!readSkeleton(stream, modelAsset.skeleton))
+    std::vector<uint8_t> decompressedPayload;
+    if (!Compressor::decompress(compressedPayload, static_cast<size_t>(uncompressedSize), decompressedPayload, compressionAlgorithm))
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to decompress model payload: " << path << '\n');
         return std::nullopt;
+    }
 
-    if (!readAnimations(stream, modelAsset.animations))
-        return std::nullopt;
+    std::istringstream payloadStream(
+        std::string(reinterpret_cast<const char *>(decompressedPayload.data()), decompressedPayload.size()),
+        std::ios::binary);
 
-    if (modelAsset.assetPath.empty())
-        modelAsset.assetPath = std::filesystem::path(path).lexically_normal().string();
-
-    return modelAsset;
+    return parseModelPayload(payloadStream, path);
 }
 
 bool AssetsSerializer::writeAudio(const AudioAsset &audioAsset, const std::string &outputPath) const

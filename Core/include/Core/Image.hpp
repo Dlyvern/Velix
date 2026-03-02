@@ -22,7 +22,7 @@ class Image
 public:
     Image(VkExtent2D extent, VkImageUsageFlags usage, memory::MemoryUsage memFlags, VkFormat format,
           VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0,
-          VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT);
+          VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT, uint32_t mipLevels = 1);
 
     Image(VkImage image);
 
@@ -33,7 +33,7 @@ public:
 
     void createVk(VkExtent2D extent, VkImageUsageFlags usage,
                   memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL, uint32_t arrayLayers = 1,
-                  VkImageCreateFlags flags = 0, VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT);
+                  VkImageCreateFlags flags = 0, VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT, uint32_t mipLevels = 1);
 
     ~Image();
 

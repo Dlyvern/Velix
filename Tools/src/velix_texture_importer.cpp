@@ -2,11 +2,16 @@
 
 #include <array>
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -19,7 +24,26 @@ namespace
         bool recursive{false};
         bool deleteSource{false};
         bool overwrite{false};
-        std::unordered_set<std::string> extensions{".png"};
+        uint32_t jobs{0u};
+        uint32_t maxTextureSize{2048u};
+        std::unordered_set<std::string> extensions{".png", ".jpg", ".dds", ".tga", ".TGA"};
+    };
+
+    enum class ImportStatus : uint8_t
+    {
+        Imported,
+        Skipped,
+        Failed
+    };
+
+    struct ImportResult
+    {
+        std::filesystem::path sourcePath;
+        std::filesystem::path outputPath;
+        ImportStatus status{ImportStatus::Failed};
+        const char *reason{nullptr};
+        bool deletedSource{false};
+        bool deleteFailed{false};
     };
 
     std::string toLowerCopy(std::string value)
@@ -43,8 +67,12 @@ namespace
             << "  --recursive           Recurse when input is a directory.\n"
             << "  --delete-source       Delete source texture after successful conversion.\n"
             << "  --overwrite           Overwrite existing .tex.elixasset files.\n"
+            << "  --jobs <count>        Worker threads for conversion (0 = auto).\n"
+            << "                        Default: 0\n"
+            << "  --max-size <pixels>   Clamp imported texture dimensions (0 = keep original).\n"
+            << "                        Default: 2048\n"
             << "  --ext <extension>     Additional extension to convert (repeatable).\n"
-            << "                        Default: .png\n"
+            << "                        Default: .png, .jpg\n"
             << "  --all-textures        Include common image extensions.\n"
             << "  --help                Show this help.\n\n"
             << "Examples:\n"
@@ -99,6 +127,52 @@ namespace
             if (argument == "--overwrite")
             {
                 outOptions.overwrite = true;
+                continue;
+            }
+
+            if (argument == "--jobs")
+            {
+                if (argumentIndex + 1 >= argc)
+                {
+                    std::cerr << "Missing value for --jobs\n";
+                    return false;
+                }
+
+                const std::string value = argv[++argumentIndex];
+                char *endPointer = nullptr;
+                const unsigned long parsed = std::strtoul(value.c_str(), &endPointer, 10);
+                if (!endPointer || endPointer == value.c_str())
+                {
+                    std::cerr << "Invalid value for --jobs: " << value << '\n';
+                    return false;
+                }
+
+                const unsigned long clamped =
+                    std::min(parsed, static_cast<unsigned long>(std::numeric_limits<uint32_t>::max()));
+                outOptions.jobs = static_cast<uint32_t>(clamped);
+                continue;
+            }
+
+            if (argument == "--max-size")
+            {
+                if (argumentIndex + 1 >= argc)
+                {
+                    std::cerr << "Missing value for --max-size\n";
+                    return false;
+                }
+
+                const std::string value = argv[++argumentIndex];
+                char *endPointer = nullptr;
+                const unsigned long parsed = std::strtoul(value.c_str(), &endPointer, 10);
+                if (!endPointer || endPointer == value.c_str())
+                {
+                    std::cerr << "Invalid value for --max-size: " << value << '\n';
+                    return false;
+                }
+
+                const unsigned long clamped =
+                    std::min(parsed, static_cast<unsigned long>(std::numeric_limits<uint32_t>::max()));
+                outOptions.maxTextureSize = static_cast<uint32_t>(clamped);
                 continue;
             }
 
@@ -215,6 +289,23 @@ namespace
         return files;
     }
 
+    uint32_t resolveJobCount(uint32_t requestedJobs, size_t sourceFileCount)
+    {
+        if (sourceFileCount == 0u)
+            return 0u;
+
+        size_t jobs = requestedJobs;
+        if (jobs == 0u)
+        {
+            jobs = static_cast<size_t>(std::thread::hardware_concurrency());
+            if (jobs == 0u)
+                jobs = 1u;
+        }
+
+        jobs = std::max<size_t>(1u, std::min(jobs, sourceFileCount));
+        return static_cast<uint32_t>(jobs);
+    }
+
     std::filesystem::path resolveOutputPath(const Options &options,
                                             const std::filesystem::path &absoluteInputPath,
                                             const std::filesystem::path &sourceFilePath)
@@ -259,6 +350,8 @@ int main(int argc, char **argv)
     if (!parseArguments(argc, argv, options))
         return 1;
 
+    elix::engine::AssetsLoader::setTextureImportMaxDimension(options.maxTextureSize);
+
     const std::filesystem::path absoluteInputPath = std::filesystem::absolute(options.inputPath).lexically_normal();
 
     std::error_code inputExistsError;
@@ -286,58 +379,116 @@ int main(int argc, char **argv)
         std::cout << "No matching source textures found.\n";
         return 0;
     }
+    const uint32_t jobCount = resolveJobCount(options.jobs, sourceFiles.size());
+    std::cout << "Converting " << sourceFiles.size() << " texture(s) with " << jobCount << " worker(s)...\n";
+
+    std::atomic_size_t nextFileIndex{0u};
+    std::vector<ImportResult> results(sourceFiles.size());
+    std::vector<std::thread> workers;
+    workers.reserve(jobCount);
+
+    const auto processNextFile = [&]()
+    {
+        while (true)
+        {
+            const size_t sourceIndex = nextFileIndex.fetch_add(1u, std::memory_order_relaxed);
+            if (sourceIndex >= sourceFiles.size())
+                return;
+
+            ImportResult &result = results[sourceIndex];
+            result.sourcePath = sourceFiles[sourceIndex];
+            result.outputPath = resolveOutputPath(options, absoluteInputPath, result.sourcePath);
+
+            std::error_code parentDirectoryError;
+            const auto outputParentDirectory = result.outputPath.parent_path();
+            if (!outputParentDirectory.empty())
+                std::filesystem::create_directories(outputParentDirectory, parentDirectoryError);
+
+            if (parentDirectoryError)
+            {
+                result.status = ImportStatus::Failed;
+                result.reason = "cannot create output directory";
+                continue;
+            }
+
+            std::error_code outputExistsError;
+            if (!options.overwrite && std::filesystem::exists(result.outputPath, outputExistsError) && !outputExistsError)
+            {
+                result.status = ImportStatus::Skipped;
+                result.reason = "already exists";
+                continue;
+            }
+
+            const bool imported =
+                elix::engine::AssetsLoader::importTextureAsset(result.sourcePath.string(), result.outputPath.string());
+            if (!imported)
+            {
+                result.status = ImportStatus::Failed;
+                result.reason = nullptr;
+                continue;
+            }
+
+            result.status = ImportStatus::Imported;
+            if (!options.deleteSource)
+                continue;
+
+            std::error_code removeError;
+            std::filesystem::remove(result.sourcePath, removeError);
+            if (!removeError)
+                result.deletedSource = true;
+            else
+                result.deleteFailed = true;
+        }
+    };
+
+    if (jobCount == 1u)
+    {
+        processNextFile();
+    }
+    else
+    {
+        for (uint32_t workerIndex = 0u; workerIndex < jobCount; ++workerIndex)
+            workers.emplace_back(processNextFile);
+
+        for (auto &worker : workers)
+            worker.join();
+    }
 
     uint32_t importedCount = 0u;
     uint32_t skippedCount = 0u;
     uint32_t failedCount = 0u;
     uint32_t deletedCount = 0u;
 
-    std::cout << "Converting " << sourceFiles.size() << " texture(s)...\n";
-
-    for (const auto &sourceFilePath : sourceFiles)
+    for (const auto &result : results)
     {
-        const std::filesystem::path outputPath = resolveOutputPath(options, absoluteInputPath, sourceFilePath);
-
-        std::error_code parentDirectoryError;
-        const auto outputParentDirectory = outputPath.parent_path();
-        if (!outputParentDirectory.empty())
-            std::filesystem::create_directories(outputParentDirectory, parentDirectoryError);
-
-        if (parentDirectoryError)
+        if (result.status == ImportStatus::Imported)
         {
-            std::cerr << "[FAILED] " << sourceFilePath << " -> " << outputPath << " (cannot create output directory)\n";
-            ++failedCount;
-            continue;
-        }
+            ++importedCount;
+            std::cout << "[OK]     " << result.sourcePath << " -> " << result.outputPath << '\n';
 
-        std::error_code outputExistsError;
-        if (!options.overwrite && std::filesystem::exists(outputPath, outputExistsError) && !outputExistsError)
-        {
-            std::cout << "[SKIP]   " << sourceFilePath << " -> " << outputPath << " (already exists)\n";
-            ++skippedCount;
-            continue;
-        }
-
-        const bool imported = elix::engine::AssetsLoader::importTextureAsset(sourceFilePath.string(), outputPath.string());
-        if (!imported)
-        {
-            std::cerr << "[FAILED] " << sourceFilePath << " -> " << outputPath << '\n';
-            ++failedCount;
-            continue;
-        }
-
-        ++importedCount;
-        std::cout << "[OK]     " << sourceFilePath << " -> " << outputPath << '\n';
-
-        if (options.deleteSource)
-        {
-            std::error_code removeError;
-            std::filesystem::remove(sourceFilePath, removeError);
-            if (!removeError)
+            if (result.deletedSource)
                 ++deletedCount;
-            else
-                std::cerr << "[WARN]   Imported but failed to delete source: " << sourceFilePath << '\n';
+            else if (result.deleteFailed)
+                std::cerr << "[WARN]   Imported but failed to delete source: " << result.sourcePath << '\n';
+
+            continue;
         }
+
+        if (result.status == ImportStatus::Skipped)
+        {
+            ++skippedCount;
+            std::cout << "[SKIP]   " << result.sourcePath << " -> " << result.outputPath;
+            if (result.reason)
+                std::cout << " (" << result.reason << ")";
+            std::cout << '\n';
+            continue;
+        }
+
+        ++failedCount;
+        std::cerr << "[FAILED] " << result.sourcePath << " -> " << result.outputPath;
+        if (result.reason)
+            std::cerr << " (" << result.reason << ")";
+        std::cerr << '\n';
     }
 
     std::cout << "\nSummary\n"

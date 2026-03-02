@@ -4,7 +4,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(utilities)
 
 void BufferUtilities::copyBufferToImage(core::Buffer &buffer, core::Image &image, core::CommandBuffer &commandBuffer, VkExtent2D extent, VkImageAspectFlags aspectFlags,
-                                        VkImageLayout dstImageLayout, uint32_t layerCount, uint32_t baseLayer)
+                                        VkImageLayout dstImageLayout, uint32_t layerCount, uint32_t baseLayer, uint32_t mipLevel)
 {
     VkDeviceSize offset = 0;
     std::vector<VkBufferImageCopy> regions;
@@ -17,7 +17,7 @@ void BufferUtilities::copyBufferToImage(core::Buffer &buffer, core::Image &image
         region.bufferRowLength = 0;
         region.bufferImageHeight = 0;
         region.imageSubresource.aspectMask = aspectFlags;
-        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.mipLevel = mipLevel;
         region.imageSubresource.baseArrayLayer = baseLayer + layer;
         region.imageSubresource.layerCount = 1;
         region.imageOffset = {0, 0, 0};

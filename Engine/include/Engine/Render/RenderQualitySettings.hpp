@@ -4,6 +4,7 @@
 #include "Core/Macros.hpp"
 
 #include <cstdint>
+#include <string>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -54,14 +55,17 @@ public:
         NONE = 0,
         FXAA = 1,
         SMAA = 2,
-        TAA  = 3
+        TAA  = 3,
+        CMAA = 4
     };
 
     // Shadow
     ShadowQuality shadowQuality{ShadowQuality::High};
     ShadowCascadeCount shadowCascadeCount{ShadowCascadeCount::X4};
+    float shadowMaxDistance{180.0f}; // world-space cap for directional shadow cascades
 
     // Post-processing toggles
+    bool enableVSync{false};
     bool enablePostProcessing{true};
     bool enableFXAA{true};
     bool enableBloom{true};
@@ -91,7 +95,37 @@ public:
     float ssaoBias{0.025f};
     float ssaoStrength{1.2f};
     int   ssaoSamples{32};
-    bool  enableGTAO{false}; // higher-quality SSAO variant (more expensive)
+    bool  enableGTAO{false};    // higher-quality SSAO variant (more expensive)
+    int   gtaoDirections{4};    // [2, 8] — GTAO horizon directions
+    int   gtaoSteps{4};         // [2, 8] — GTAO steps per direction
+    bool  useBentNormals{false};// requires GTAO; IBL diffuse uses bent normal direction
+
+    // Anisotropic GGX (per-material tangent from GBuffer slot 4)
+    bool  enableAnisotropy{false};
+    float anisotropyStrength{0.3f};  // [-1, 1]
+    float anisotropyRotation{0.0f}; // [0, 360] degrees added on top of per-mesh tangent
+
+    // Shadow on ambient: directional shadow factor scales ambient term
+    float shadowAmbientStrength{0.5f}; // [0, 1]
+    bool  enableShadowOcclusionCulling{false}; // Experimental: can reduce shadow submissions but may introduce temporal instability.
+
+    // Camera-driven occlusion culling (query-based)
+    bool enableOcclusionCulling{true};
+    int  occlusionProbeInterval{4};
+    int  occlusionVisibleRequeryInterval{12};
+    int  occlusionOccludedConfirmationQueries{3};
+    int  occlusionMaxInstancesPerBatch{12};
+    int  occlusionFastMotionProbeInterval{1};
+    int  occlusionFastMotionVisibleRequeryInterval{4};
+    int  occlusionFastMotionStaleRevealFrames{0};
+    float occlusionFastMotionTranslationThreshold{0.08f};
+    float occlusionFastMotionForwardDotThreshold{0.998f};
+    int  shadowOcclusionVisibilityGraceFrames{48};
+
+    // LUT-based color grading (applied in tonemap pass, after ACES + gamma)
+    bool        enableLUTGrading{false};
+    std::string lutGradingPath{};
+    float       lutGradingStrength{1.0f}; // [0, 1]
 
     // TAA (temporal anti-aliasing) — requires velocity buffer
     bool  enableTAA{false};
@@ -99,11 +133,41 @@ public:
 
     // SMAA
     bool  enableSMAA{false}; // replaces FXAA when on
+    bool  enableCMAA{false}; // conservative morphological AA (implemented via CMAA preset)
+
+    // Color grading (applied in Tonemap pass)
+    bool  enableColorGrading{false};
+    float colorGradingSaturation{1.0f};   // 0 = grayscale, 1 = natural, 2 = vivid
+    float colorGradingContrast{1.0f};     // 0 = flat, 1 = natural, 2 = high contrast
+    float colorGradingTemperature{0.0f};  // -1 = cool/blue, +1 = warm/orange
+    float colorGradingTint{0.0f};         // -1 = magenta, +1 = green
+
+    // Contact shadows
+    bool  enableContactShadows{false};
+    float contactShadowLength{0.5f};      // world-space ray march length
+    float contactShadowStrength{0.8f};    // max darkening [0, 1]
+    int   contactShadowSteps{16};
+
+    // Cinematic effects
+    bool  enableVignette{false};
+    float vignetteStrength{0.4f};
+    bool  enableFilmGrain{false};
+    float filmGrainStrength{0.03f};
+    bool  enableChromaticAberration{false};
+    float chromaticAberrationStrength{0.003f};
+
+    // IBL (Image-Based Lighting)
+    bool  enableIBL{false};
+    float iblDiffuseIntensity{1.0f};   // [0, 3]
+    float iblSpecularIntensity{0.5f};  // [0, 3]
 
     AntiAliasingMode getAntiAliasingMode() const
     {
         if (enableTAA)
             return AntiAliasingMode::TAA;
+
+        if (enableCMAA)
+            return AntiAliasingMode::CMAA;
 
         if (enableSMAA)
             return AntiAliasingMode::SMAA;
@@ -119,6 +183,7 @@ public:
         enableFXAA = false;
         enableSMAA = false;
         enableTAA = false;
+        enableCMAA = false;
 
         switch (mode)
         {
@@ -130,6 +195,9 @@ public:
             break;
         case AntiAliasingMode::TAA:
             enableTAA = true;
+            break;
+        case AntiAliasingMode::CMAA:
+            enableCMAA = true;
             break;
         case AntiAliasingMode::NONE:
         default:

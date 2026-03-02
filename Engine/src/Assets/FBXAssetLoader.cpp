@@ -661,6 +661,14 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
 
     processMaterials(node, cpuMesh);
 
+    if (cpuMesh.vertexData.empty() || cpuMesh.indices.empty())
+    {
+        VX_ENGINE_WARNING_STREAM("Skipping empty FBX mesh \"" << cpuMesh.name << "\" from node \""
+                                                               << (node->GetName() ? node->GetName() : "<unnamed>")
+                                                               << "\"\n");
+        return;
+    }
+
     meshData.meshes.push_back(cpuMesh);
 }
 

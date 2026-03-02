@@ -154,6 +154,13 @@ VkSurfaceFormatKHR SwapChain::chooseSwapSurfaceFormat(const std::vector<VkSurfac
 
 VkPresentModeKHR SwapChain::chooseSwapPresentMode(const std::vector<VkPresentModeKHR> &availablePresentModes)
 {
+    if (!m_isVSyncEnabled)
+    {
+        for (const auto &availablePresentMode : availablePresentModes)
+            if (availablePresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR)
+                return availablePresentMode;
+    }
+
     for (const auto &availablePresentMode : availablePresentModes)
         if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
             return availablePresentMode;
@@ -200,6 +207,16 @@ VkExtent2D SwapChain::getExtent() const
 VkFormat SwapChain::getImageFormat() const
 {
     return m_imageFormat;
+}
+
+bool SwapChain::isVSyncEnabled() const
+{
+    return m_isVSyncEnabled;
+}
+
+void SwapChain::setVSyncEnabled(bool enabled)
+{
+    m_isVSyncEnabled = enabled;
 }
 
 SwapChain::~SwapChain()

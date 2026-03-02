@@ -22,6 +22,8 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 Skybox::Skybox(const std::string &hdrPath, VkDescriptorPool descriptorPool)
 {
+    static constexpr uint32_t SKYBOX_CUBEMAP_SIZE = 256u;
+
     m_skyboxTexture = std::make_shared<Texture>();
 
     bool cubemapCreated = false;
@@ -59,7 +61,8 @@ Skybox::Skybox(const std::string &hdrPath, VkDescriptorPool descriptorPool)
 
                         cubemapCreated = m_skyboxTexture->createCubemapFromEquirectangular(rgbData.data(),
                                                                                             static_cast<int>(asset.width),
-                                                                                            static_cast<int>(asset.height));
+                                                                                            static_cast<int>(asset.height),
+                                                                                            SKYBOX_CUBEMAP_SIZE);
                     }
                 }
                 else if (asset.encoding == TextureAsset::PixelEncoding::RGBA8)
@@ -76,18 +79,31 @@ Skybox::Skybox(const std::string &hdrPath, VkDescriptorPool descriptorPool)
 
                         cubemapCreated = m_skyboxTexture->createCubemapFromEquirectangular(rgbData.data(),
                                                                                             static_cast<int>(asset.width),
-                                                                                            static_cast<int>(asset.height));
+                                                                                            static_cast<int>(asset.height),
+                                                                                            SKYBOX_CUBEMAP_SIZE);
                     }
+                }
+                else if (asset.encoding == TextureAsset::PixelEncoding::COMPRESSED_GPU &&
+                         !asset.sourcePath.empty() &&
+                         std::filesystem::exists(asset.sourcePath))
+                {
+                    // Compressed texture assets are not CPU-decodable in this path.
+                    // Fall back to the original source HDR/EXR path.
+                    cubemapCreated = m_skyboxTexture->createCubemapFromHDR(asset.sourcePath, SKYBOX_CUBEMAP_SIZE);
                 }
             }
         }
     }
 
     if (!cubemapCreated)
-        cubemapCreated = m_skyboxTexture->createCubemapFromHDR(hdrPath);
+        cubemapCreated = m_skyboxTexture->createCubemapFromHDR(hdrPath, SKYBOX_CUBEMAP_SIZE);
 
     if (!cubemapCreated)
+    {
         VX_ENGINE_ERROR_STREAM("Failed to create skybox from path: " << hdrPath << '\n');
+        m_skyboxTexture.reset();
+        return;
+    }
 
     createResources(descriptorPool);
 
@@ -103,6 +119,12 @@ Skybox::Skybox(const std::string &hdrPath, VkDescriptorPool descriptorPool)
 
 void Skybox::createResources(VkDescriptorPool descriptorPool)
 {
+    if (!hasTexture())
+    {
+        VX_ENGINE_ERROR_STREAM("Skybox::createResources skipped: cubemap texture is invalid\n");
+        return;
+    }
+
     auto device = core::VulkanContext::getContext()->getDevice();
 
     const std::vector<float> skyboxVertices =
@@ -191,6 +213,16 @@ const GraphicsPipelineKey &Skybox::getGraphicsPipelineKey() const
     return m_graphicsPipelineKey;
 }
 
+VkImageView Skybox::getEnvImageView() const
+{
+    return m_skyboxTexture ? m_skyboxTexture->vkImageView() : VK_NULL_HANDLE;
+}
+
+VkSampler Skybox::getEnvSampler() const
+{
+    return m_skyboxTexture ? m_skyboxTexture->vkSampler() : VK_NULL_HANDLE;
+}
+
 Skybox::Skybox(const std::array<std::string, 6> &cubemaps, VkDescriptorPool descriptorPool)
 {
     m_skyboxTexture = std::make_shared<Texture>();
@@ -210,6 +242,9 @@ Skybox::Skybox(const std::array<std::string, 6> &cubemaps, VkDescriptorPool desc
 
 void Skybox::render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat4 &view, const glm::mat4 &projection, core::GraphicsPipeline::SharedPtr graphicsPipeline)
 {
+    if (!hasTexture() || m_descriptorSet == VK_NULL_HANDLE || !m_vertexBuffer)
+        return;
+
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     glm::mat4 skyboxView = glm::mat4(glm::mat3(view));

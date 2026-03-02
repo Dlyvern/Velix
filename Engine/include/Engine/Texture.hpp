@@ -10,6 +10,7 @@
 #include <array>
 #include <memory>
 #include <cstddef>
+#include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -31,6 +32,12 @@ public:
 
     bool createCubemapFromHDR(const std::string &hdrPath, uint32_t cubemapSize = 512);
     bool createCubemapFromEquirectangular(const float *data, int width, int height, uint32_t cubemapSize = 512);
+
+    // Creates a pre-filtered specular cubemap with multiple mip levels.
+    // mipFaceData[mip][face] = RGBA32F pixels for that mip+face.
+    // mipSizes[mip] = texel width/height for that mip level.
+    bool createPreFilteredCubemap(const std::vector<std::vector<std::vector<float>>> &mipFaceData,
+                                  const std::vector<uint32_t> &mipSizes);
 
     unsigned char *getPixels() const;
     int getWidth() const;

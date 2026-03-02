@@ -53,7 +53,9 @@ private:
 
     std::unique_ptr<SkyLightSystem> m_skyLightSystem{nullptr};
     std::unique_ptr<Skybox> m_skybox{nullptr};
+    std::string m_requestedSkyboxHDRPath;
     std::string m_loadedSkyboxHDRPath;
+    bool m_pendingSkyboxUpdate{true};
 };
 
 ELIX_CUSTOM_NAMESPACE_END

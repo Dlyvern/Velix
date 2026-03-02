@@ -1,5 +1,7 @@
 #include "Engine/Assets/MaterialAssetLoader.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <nlohmann/json.hpp>
 #include <fstream>
 
@@ -33,6 +35,10 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
     }
 
     CPUMaterial material;
+    bool hasMetallic = false;
+    bool hasRoughness = false;
+    bool hasAoStrength = false;
+    bool hasNormalScale = false;
 
     if (json.contains("name") && json["name"].is_string())
         material.name = json["name"].get<std::string>();
@@ -68,16 +74,28 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
     }
 
     if (json.contains("metallic"))
+    {
         material.metallicFactor = json["metallic"].get<float>();
+        hasMetallic = true;
+    }
 
     if (json.contains("roughness"))
+    {
         material.roughnessFactor = json["roughness"].get<float>();
+        hasRoughness = true;
+    }
 
     if (json.contains("ao_strength"))
+    {
         material.aoStrength = json["ao_strength"].get<float>();
+        hasAoStrength = true;
+    }
 
     if (json.contains("normal_scale"))
+    {
         material.normalScale = json["normal_scale"].get<float>();
+        hasNormalScale = true;
+    }
 
     if (json.contains("alpha_cutoff"))
         material.alphaCutoff = json["alpha_cutoff"].get<float>();
@@ -98,6 +116,27 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
         if (uvOffset.is_array() && uvOffset.size() >= 2)
             material.uvOffset = glm::vec2({uvOffset[0], uvOffset[1]});
     }
+
+    auto sanitizeFinite = [](float value, float fallback) -> float
+    {
+        return std::isfinite(value) ? value : fallback;
+    };
+
+    material.metallicFactor = std::clamp(sanitizeFinite(material.metallicFactor, 0.0f), 0.0f, 1.0f);
+    material.roughnessFactor = std::clamp(sanitizeFinite(material.roughnessFactor, 1.0f), 0.04f, 1.0f);
+    material.aoStrength = std::clamp(sanitizeFinite(material.aoStrength, 1.0f), 0.0f, 1.0f);
+    material.normalScale = std::max(0.0f, sanitizeFinite(material.normalScale, 1.0f));
+    material.alphaCutoff = std::clamp(sanitizeFinite(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
+
+    // Keep non-ORM materials dielectric unless author explicitly set values.
+    if (material.ormTexture.empty() && !hasMetallic)
+        material.metallicFactor = 0.0f;
+    if (material.ormTexture.empty() && !hasRoughness)
+        material.roughnessFactor = 1.0f;
+    if (material.ormTexture.empty() && !hasAoStrength)
+        material.aoStrength = 1.0f;
+    if (!hasNormalScale)
+        material.normalScale = 1.0f;
 
     auto materialAsset = std::make_shared<MaterialAsset>(material);
 

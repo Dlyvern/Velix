@@ -24,6 +24,8 @@
 #include <cstdint>
 #include <array>
 
+#include <glm/vec3.hpp>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
@@ -135,6 +137,11 @@ private:
     void initTimestampQueryPool();
     void destroyTimestampQueryPool();
     void resolveFrameProfilingData(uint32_t frameIndex);
+    bool isDetailedProfilingEnabled() const;
+    void syncDetailedProfilingMode();
+    void initOcclusionQueryPool();
+    void destroyOcclusionQueryPool();
+    void resolveOcclusionQueries(uint32_t frameIndex);
 
     void createDescriptorSetPool();
     void createCameraDescriptorSets();
@@ -201,6 +208,8 @@ private:
 
     std::unordered_map<std::size_t, GPUMesh::SharedPtr> m_meshes;
     std::unordered_map<std::size_t, MeshLocalBounds> m_meshLocalBoundsByHash;
+    std::unordered_map<std::string, Texture::SharedPtr> m_texturesByResolvedPath;
+    std::unordered_set<std::string> m_failedTextureResolvedPaths;
     std::unordered_map<std::string, Material::SharedPtr> m_materialsByAlbedoPath;
     std::unordered_set<std::string> m_failedAlbedoTexturePaths;
     std::unordered_map<std::string, Material::SharedPtr> m_materialsByAssetPath;
@@ -224,6 +233,37 @@ private:
     std::array<std::vector<PassExecutionProfilingData>, MAX_FRAMES_IN_FLIGHT> m_passExecutionProfilingDataByFrame;
     std::array<bool, MAX_FRAMES_IN_FLIGHT> m_hasPendingProfilingResolve{};
     RenderGraphFrameProfilingData m_lastFrameProfilingData;
+
+    struct OcclusionState
+    {
+        bool hasResult{false};
+        bool occluded{false};
+        uint8_t occludedConsecutiveResults{0u};
+        uint64_t lastQueryFrame{0};
+    };
+    struct OcclusionQueryReadback
+    {
+        uint64_t samples{0ull};
+        uint64_t available{0ull};
+    };
+    static constexpr uint32_t OCCLUSION_QUERIES_PER_FRAME = 32768u;
+    VkQueryPool m_occlusionQueryPool{VK_NULL_HANDLE};
+    uint32_t m_occlusionQueriesPerFrame{0};
+    std::unordered_map<uint64_t, OcclusionState> m_occlusionStates;
+    std::array<core::Buffer::SharedPtr, MAX_FRAMES_IN_FLIGHT> m_occlusionReadbackBuffers{};
+    std::array<void *, MAX_FRAMES_IN_FLIGHT> m_occlusionReadbackMapped{};
+    std::array<std::vector<uint64_t>, MAX_FRAMES_IN_FLIGHT> m_submittedOcclusionQueryKeys{};
+    std::array<uint32_t, MAX_FRAMES_IN_FLIGHT> m_submittedOcclusionQueryCounts{};
+    std::array<uint64_t, MAX_FRAMES_IN_FLIGHT> m_submittedOcclusionFrameNumbers{};
+    std::array<bool, MAX_FRAMES_IN_FLIGHT> m_hasPendingOcclusionResolve{};
+    std::array<std::vector<uint64_t>, MAX_FRAMES_IN_FLIGHT> m_occlusionQueryKeysByFrame{};
+    std::array<uint32_t, MAX_FRAMES_IN_FLIGHT> m_usedOcclusionQueriesByFrame{};
+    std::array<uint64_t, MAX_FRAMES_IN_FLIGHT> m_occlusionFrameNumbersByFrame{};
+    uint64_t m_occlusionFrameCounter{0};
+    std::unordered_map<uint64_t, uint64_t> m_shadowCasterLastVisibleFrameByKey;
+    glm::vec3 m_lastOcclusionCameraPosition{0.0f};
+    glm::vec3 m_lastOcclusionCameraForward{0.0f, 0.0f, -1.0f};
+    bool m_hasLastOcclusionCameraState{false};
 };
 
 ELIX_CUSTOM_NAMESPACE_END

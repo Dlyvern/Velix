@@ -8,7 +8,6 @@
 
 #include "Engine/Builders/GraphicsPipelineKey.hpp"
 
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -26,6 +25,9 @@ struct DrawItem
     std::vector<GPUMesh::SharedPtr> meshes;
     std::vector<glm::vec3> localMeshBoundsCenters;
     std::vector<float> localMeshBoundsRadii;
+    std::vector<glm::mat4> localMeshTransforms;
+    std::vector<glm::vec3> cachedWorldBoundsCenters;
+    std::vector<float> cachedWorldBoundsRadii;
     glm::mat4 transform;
     std::vector<glm::mat4> finalBones;
     uint32_t bonesOffset{0};
@@ -46,6 +48,8 @@ struct DrawBatch
     bool skinned{false};
     uint32_t firstInstance{0};
     uint32_t instanceCount{0};
+    uint64_t occlusionKey{0};
+    bool runOcclusionQuery{false};
 };
 
 class AdditionalPerFrameData
@@ -57,8 +61,11 @@ public:
 class RenderGraphPassContext
 {
 public:
-    uint32_t currentFrame;
-    uint32_t currentImageIndex;
+    uint32_t currentFrame{0};
+    uint32_t currentImageIndex{0};
+    uint32_t activeDirectionalShadowCount{0};
+    uint32_t activeSpotShadowCount{0};
+    uint32_t activePointShadowCount{0};
 };
 
 struct ShadowConstants
@@ -72,9 +79,11 @@ struct ShadowConstants
 class RenderGraphPassPerFrameData
 {
 public:
-    std::map<Entity::SharedPtr, DrawItem> drawItems;
+    std::unordered_map<Entity*, DrawItem> drawItems;
     std::vector<PerObjectInstanceData> perObjectInstances;
     std::vector<DrawBatch> drawBatches;
+    std::vector<DrawBatch> occlusionProbeBatches;
+    std::vector<uint64_t> occlusionQueryKeys;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_DIRECTIONAL_CASCADES> directionalShadowDrawBatches;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_SPOT_SHADOWS> spotShadowDrawBatches;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES> pointShadowDrawBatches;
@@ -101,6 +110,9 @@ public:
     VkDescriptorSet previewCameraDescriptorSet;
     VkDescriptorSet perObjectDescriptorSet;
     VkDescriptorSet shadowPerObjectDescriptorSet;
+    VkQueryPool occlusionQueryPool{VK_NULL_HANDLE};
+    uint32_t occlusionQueryBase{0};
+    bool enableOcclusionCulling{false};
 
     float deltaTime;
 

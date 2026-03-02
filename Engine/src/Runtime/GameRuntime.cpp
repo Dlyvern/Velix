@@ -6,12 +6,14 @@
 #include "Engine/Components/CameraComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/PluginSystem/PluginLoader.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Engine/Scripting/VelixAPI.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <system_error>
 
@@ -146,6 +148,7 @@ bool GameRuntime::init()
         m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         &m_ssaoRenderGraphPass->getAOHandlers());
 
     m_ssrRenderGraphPass = m_renderGraph->addPass<renderGraph::SSRRenderGraphPass>(
@@ -484,9 +487,12 @@ void GameRuntime::syncViewportExtent()
     if (!swapchain)
         return;
 
-    VkExtent2D extent = swapchain->getExtent();
-    extent.width = std::max(1u, extent.width);
-    extent.height = std::max(1u, extent.height);
+    const VkExtent2D swapchainExtent = swapchain->getExtent();
+    const float renderScale = std::clamp(RenderQualitySettings::getInstance().renderScale, 0.25f, 2.0f);
+
+    const uint32_t scaledWidth = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(std::max(1u, swapchainExtent.width)) * renderScale)));
+    const uint32_t scaledHeight = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(std::max(1u, swapchainExtent.height)) * renderScale)));
+    const VkExtent2D extent{scaledWidth, scaledHeight};
 
     if (extent.width == m_lastExtent.width && extent.height == m_lastExtent.height)
         return;

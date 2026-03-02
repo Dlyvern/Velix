@@ -11,17 +11,24 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(GraphicsPipelineKey key)
+core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(const GraphicsPipelineKey &key)
 {
-    auto it = m_pipelines.find(key);
+    {
+        std::shared_lock lock(m_pipelinesMutex);
+        auto it = m_pipelines.find(key);
 
-    if (it != m_pipelines.end())
-        return it->second;
+        if (it != m_pipelines.end())
+            return it->second;
+    }
 
     VX_ENGINE_INFO_STREAM("Created a new key");
 
-    auto created = createPipeline(key);
+    std::unique_lock lock(m_pipelinesMutex);
+    auto it = m_pipelines.find(key);
+    if (it != m_pipelines.end())
+        return it->second;
 
+    auto created = createPipeline(key);
     m_pipelines[key] = created;
 
     return created;
@@ -77,12 +84,15 @@ void GraphicsPipelineManager::loadShaderModules()
     bloomCompositeShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_composite.frag.spv");
     ssrShader            = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssr.frag.spv");
     ssaoShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssao.frag.spv");
-    smaaShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/smaa.frag.spv");
+    smaaShader              = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/smaa.frag.spv");
+    contactShadowShader     = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/contact_shadow.frag.spv");
+    cinematicEffectsShader  = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/cinematic.frag.spv");
     editorBillboardShader = std::make_shared<core::Shader>("./resources/shaders/editor_billboard.vert.spv", "./resources/shaders/editor_billboard.frag.spv");
     billboardShader       = std::make_shared<core::Shader>("./resources/shaders/billboard.vert.spv", "./resources/shaders/billboard.frag.spv");
     uiTextShader          = std::make_shared<core::Shader>("./resources/shaders/ui_text.vert.spv", "./resources/shaders/ui_text.frag.spv");
     uiQuadShader          = std::make_shared<core::Shader>("./resources/shaders/ui_quad.vert.spv", "./resources/shaders/ui_quad.frag.spv");
     particleShader        = std::make_shared<core::Shader>("./resources/shaders/particle.vert.spv", "./resources/shaders/particle.frag.spv");
+    glassShader           = std::make_shared<core::Shader>("./resources/shaders/glass_mesh.vert.spv", "./resources/shaders/glass.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -114,15 +124,19 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(ssrShader);
     destroyShader(ssaoShader);
     destroyShader(smaaShader);
+    destroyShader(contactShadowShader);
+    destroyShader(cinematicEffectsShader);
     destroyShader(editorBillboardShader);
     destroyShader(billboardShader);
     destroyShader(uiTextShader);
     destroyShader(uiQuadShader);
     destroyShader(particleShader);
+    destroyShader(glassShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
 {
+    std::unique_lock lock(m_pipelinesMutex);
     for (auto &[_, pipeline] : m_pipelines)
     {
         if (pipeline)
@@ -192,6 +206,12 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::SMAA:
         stages = smaaShader->getShaderStages();
         break;
+    case ShaderId::ContactShadow:
+        stages = contactShadowShader->getShaderStages();
+        break;
+    case ShaderId::CinematicEffects:
+        stages = cinematicEffectsShader->getShaderStages();
+        break;
     case ShaderId::EditorBillboard:
         stages = editorBillboardShader->getShaderStages();
         break;
@@ -206,6 +226,9 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         break;
     case ShaderId::Particle:
         stages = particleShader->getShaderStages();
+        break;
+    case ShaderId::Glass:
+        stages = glassShader->getShaderStages();
         break;
     default:
         throw std::runtime_error("Unknown ShaderId");
@@ -270,6 +293,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
              key.shader == ShaderId::FXAA     || key.shader == ShaderId::BloomExtract   ||
              key.shader == ShaderId::BloomComposite || key.shader == ShaderId::SSR      ||
              key.shader == ShaderId::SSAO     || key.shader == ShaderId::SMAA           ||
+             key.shader == ShaderId::ContactShadow || key.shader == ShaderId::CinematicEffects ||
              key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||
              key.shader == ShaderId::Particle)
     {
@@ -319,13 +343,16 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
 
     if (key.shader == ShaderId::GBufferStatic || key.shader == ShaderId::GBufferSkinned)
     {
-        colorBlendAttachments[3].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+        if (colorBlendAttachments.size() >= 4)
+            colorBlendAttachments[3].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
 
         if (key.gbufferOutputMode == GBufferOutputMode::ObjectOnly && colorBlendAttachments.size() >= 4)
         {
             colorBlendAttachments[0].colorWriteMask = 0;
             colorBlendAttachments[1].colorWriteMask = 0;
             colorBlendAttachments[2].colorWriteMask = 0;
+            if (colorBlendAttachments.size() >= 5)
+                colorBlendAttachments[4].colorWriteMask = 0;
         }
     }
 

@@ -11,6 +11,8 @@
 #include "Engine/Utilities/AsyncGpuUpload.hpp"
 #include "Engine/Utilities/BufferUtilities.hpp"
 
+#include "Core/Logger.hpp"
+
 #include <memory>
 #include <cstdint>
 #include <string>
@@ -68,6 +70,13 @@ struct GPUMesh
 
     static std::shared_ptr<GPUMesh> create(const std::vector<uint8_t> &vertexData, std::vector<uint32_t> indices, core::CommandPool::SharedPtr commandPool = nullptr)
     {
+        if (vertexData.empty() || indices.empty())
+        {
+            VX_ENGINE_WARNING_STREAM("Skipping GPUMesh creation for empty geometry. vertexBytes=" << vertexData.size()
+                                                                                                   << ", indices=" << indices.size() << '\n');
+            return nullptr;
+        }
+
         auto gpu = std::make_shared<GPUMesh>();
 
         VkDeviceSize indexSize = sizeof(indices[0]) * indices.size();
@@ -108,6 +117,9 @@ struct GPUMesh
     static std::shared_ptr<GPUMesh> createFromMesh(const CPUMesh &mesh, core::CommandPool::SharedPtr commandPool = nullptr)
     {
         auto gpuMesh = create(mesh.vertexData, mesh.indices, commandPool);
+        if (!gpuMesh)
+            return nullptr;
+
         gpuMesh->vertexStride = mesh.vertexStride;
         gpuMesh->vertexLayoutHash = mesh.vertexLayoutHash;
         return gpuMesh;

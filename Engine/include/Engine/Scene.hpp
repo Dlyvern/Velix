@@ -16,6 +16,7 @@
 #include <memory>
 #include <unordered_map>
 #include <string>
+#include <cstdint>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -72,7 +73,7 @@ private:
     std::vector<Entity::SharedPtr> m_entities;
     std::string m_name;
     PhysicsScene m_physicsScene;
-    uint64_t m_nextEntityId{0}; // TODO fix it
+    uint32_t m_nextEntityId{0};
     std::string m_skyboxHDRPath;
 
     std::vector<std::unique_ptr<ui::UIText>>    m_uiTexts;

@@ -11,6 +11,7 @@
 #include <glm/gtc/constants.hpp>
 #include <random>
 #include <array>
+#include <cstring>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -21,13 +22,9 @@ namespace
     {
         glm::mat4 projection;
         glm::mat4 invProjection;
-        glm::vec2 texelSize;
-        float radius;
-        float bias;
-        float strength;
-        float enabled; // 0 = pass-through (output 1.0)
-        int samples;
-        float _pad;
+        glm::vec4 params0; // x=texelSize.x, y=texelSize.y, z=radius, w=bias
+        glm::vec4 params1; // x=strength, y=enabled, z=samples, w=gtaoEnabled
+        glm::vec4 params2; // x=gtaoDirections, y=gtaoSteps, z=useBentNormals, w=reserved
     };
 
     constexpr int MAX_SSAO_KERNEL = 64;
@@ -73,7 +70,7 @@ SSAORenderGraphPass::SSAORenderGraphPass(RGPResourceHandler &depthHandler,
 
 void SSAORenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 {
-    m_format = VK_FORMAT_R8_UNORM;
+    m_format = VK_FORMAT_R16G16B16A16_SFLOAT;
 
     builder.read(m_depthHandler, RGPTextureUsage::SAMPLED);
 
@@ -203,12 +200,21 @@ void SSAORenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     SSAOpc pc{};
     pc.projection = data.projection;
     pc.invProjection = glm::inverse(data.projection);
-    pc.texelSize = {1.0f / m_extent.width, 1.0f / m_extent.height};
-    pc.radius = settings.ssaoRadius;
-    pc.bias = settings.ssaoBias;
-    pc.strength = settings.ssaoStrength;
-    pc.enabled = (settings.enableSSAO && settings.enablePostProcessing) ? 1.0f : 0.0f;
-    pc.samples = glm::clamp(settings.ssaoSamples, 4, MAX_SSAO_KERNEL);
+    pc.params0 = glm::vec4(
+        1.0f / static_cast<float>(m_extent.width),
+        1.0f / static_cast<float>(m_extent.height),
+        settings.ssaoRadius,
+        settings.ssaoBias);
+    pc.params1 = glm::vec4(
+        settings.ssaoStrength,
+        (settings.enableSSAO && settings.enablePostProcessing) ? 1.0f : 0.0f,
+        static_cast<float>(glm::clamp(settings.ssaoSamples, 4, MAX_SSAO_KERNEL)),
+        settings.enableGTAO ? 1.0f : 0.0f);
+    pc.params2 = glm::vec4(
+        static_cast<float>(glm::clamp(settings.gtaoDirections, 2, 8)),
+        static_cast<float>(glm::clamp(settings.gtaoSteps, 2, 8)),
+        (settings.enableGTAO && settings.useBentNormals) ? 1.0f : 0.0f,
+        0.0f);
 
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(pc), &pc);
@@ -228,7 +234,7 @@ SSAORenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &rende
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue = {.color = {1.0f, 1.0f, 1.0f, 1.0f}}; // white = no occlusion
+    color.clearValue = {.color = {0.5f, 0.5f, 1.0f, 1.0f}}; // bent=+Z, AO=1
 
     exec.colorsRenderingItems = {color};
     exec.useDepth = false;

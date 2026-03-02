@@ -539,6 +539,28 @@ namespace
         return makeAbsoluteNormalized(projectRoot / path).string();
     }
 
+    std::string resolveMaterialPathAgainstProjectRoot(const std::string &materialPath, const std::filesystem::path &projectRoot)
+    {
+        return resolveTexturePathAgainstProjectRoot(materialPath, projectRoot);
+    }
+
+    void sanitizeMaterialCpuData(engine::CPUMaterial &material, bool forceDielectricWithoutOrm)
+    {
+        auto sanitizeFinite = [](float value, float fallback) -> float
+        {
+            return std::isfinite(value) ? value : fallback;
+        };
+
+        material.metallicFactor = std::clamp(sanitizeFinite(material.metallicFactor, 0.0f), 0.0f, 1.0f);
+        material.roughnessFactor = std::clamp(sanitizeFinite(material.roughnessFactor, 1.0f), 0.04f, 1.0f);
+        material.aoStrength = std::clamp(sanitizeFinite(material.aoStrength, 1.0f), 0.0f, 1.0f);
+        material.normalScale = std::max(0.0f, sanitizeFinite(material.normalScale, 1.0f));
+        material.alphaCutoff = std::clamp(sanitizeFinite(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
+
+        if (forceDielectricWithoutOrm && material.ormTexture.empty())
+            material.metallicFactor = 0.0f;
+    }
+
     std::optional<engine::Asset::AssetType> readSerializedAssetType(const std::filesystem::path &path)
     {
         if (toLowerCopy(path.extension().string()) != ".elixasset")
@@ -2777,63 +2799,80 @@ void Editor::drawToolBar()
             float fps = ImGui::GetIO().Framerate;
             ImGui::Text("FPS: %.1f", fps);
             ImGui::Text("Frame time: %.3f ms", 1000.0f / fps);
-            ImGui::Text("VRAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
-            ImGui::Text("RAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
 
-            ImGui::Separator();
-            ImGui::Text("Render Graph (frame #%llu)", static_cast<unsigned long long>(m_renderGraphProfilingData.frameIndex));
-            ImGui::Text("Total draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
-            ImGui::Text("Total CPU frame time: %.3f ms", m_renderGraphProfilingData.cpuFrameTimeMs);
-            ImGui::Text("Total CPU pass time: %.3f ms", m_renderGraphProfilingData.cpuTotalTimeMs);
-            ImGui::Text("CPU wait (fence): %.3f ms", m_renderGraphProfilingData.cpuWaitForFenceMs);
-            ImGui::Text("CPU wait (acquire): %.3f ms", m_renderGraphProfilingData.cpuAcquireImageMs);
-            ImGui::Text("CPU submit: %.3f ms", m_renderGraphProfilingData.cpuSubmitMs);
-            ImGui::Text("CPU wait (present): %.3f ms", m_renderGraphProfilingData.cpuPresentMs);
-            ImGui::Text("CPU sync total: %.3f ms", m_renderGraphProfilingData.cpuSyncTimeMs);
-            ImGui::Text("CPU recompile: %.3f ms", m_renderGraphProfilingData.cpuRecompileMs);
-            ImGui::Text("CPU unaccounted: %.3f ms", m_renderGraphProfilingData.cpuWasteTimeMs);
-
-            if (m_renderGraphProfilingData.gpuTimingAvailable)
+            auto &engineConfig = engine::EngineConfig::instance();
+            bool detailedRenderProfiling = engineConfig.getDetailedRenderProfilingEnabled();
+            if (ImGui::Checkbox("Detailed Render Profiling", &detailedRenderProfiling))
             {
-                ImGui::Text("Total GPU frame time: %.3f ms", m_renderGraphProfilingData.gpuFrameTimeMs);
-                ImGui::Text("Total GPU pass time: %.3f ms", m_renderGraphProfilingData.gpuTotalTimeMs);
-                ImGui::Text("GPU waste (non-pass): %.3f ms", m_renderGraphProfilingData.gpuWasteTimeMs);
+                engineConfig.setDetailedRenderProfilingEnabled(detailedRenderProfiling);
+                if (!engineConfig.save())
+                    VX_EDITOR_WARNING_STREAM("Failed to persist detailed render profiling setting to engine config\n");
+            }
+            ImGui::SetItemTooltip("OFF: minimal benchmark (FPS + frame time). ON: full render-graph CPU/GPU timings.");
+
+            if (!detailedRenderProfiling)
+            {
+                ImGui::TextDisabled("Detailed profiling disabled.");
             }
             else
-                ImGui::TextDisabled("GPU timing unavailable on this GPU/queue");
-
-            if (ImGui::BeginTable("RenderGraphPassStats", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
             {
-                ImGui::TableSetupColumn("Pass");
-                ImGui::TableSetupColumn("Exec");
-                ImGui::TableSetupColumn("Draws");
-                ImGui::TableSetupColumn("CPU (ms)");
-                ImGui::TableSetupColumn("GPU (ms)");
-                ImGui::TableHeadersRow();
+                ImGui::Text("VRAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
+                ImGui::Text("RAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
+                ImGui::Separator();
+                ImGui::Text("Render Graph (frame #%llu)", static_cast<unsigned long long>(m_renderGraphProfilingData.frameIndex));
+                ImGui::Text("Total draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
+                ImGui::Text("Total CPU frame time: %.3f ms", m_renderGraphProfilingData.cpuFrameTimeMs);
+                ImGui::Text("Total CPU pass time: %.3f ms", m_renderGraphProfilingData.cpuTotalTimeMs);
+                ImGui::Text("CPU wait (fence): %.3f ms", m_renderGraphProfilingData.cpuWaitForFenceMs);
+                ImGui::Text("CPU wait (acquire): %.3f ms", m_renderGraphProfilingData.cpuAcquireImageMs);
+                ImGui::Text("CPU submit: %.3f ms", m_renderGraphProfilingData.cpuSubmitMs);
+                ImGui::Text("CPU wait (present): %.3f ms", m_renderGraphProfilingData.cpuPresentMs);
+                ImGui::Text("CPU sync total: %.3f ms", m_renderGraphProfilingData.cpuSyncTimeMs);
+                ImGui::Text("CPU recompile: %.3f ms", m_renderGraphProfilingData.cpuRecompileMs);
+                ImGui::Text("CPU unaccounted: %.3f ms", m_renderGraphProfilingData.cpuWasteTimeMs);
 
-                for (const auto &passData : m_renderGraphProfilingData.passes)
+                if (m_renderGraphProfilingData.gpuTimingAvailable)
                 {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(passData.passName.c_str());
-
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::Text("%u", passData.executions);
-
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::Text("%u", passData.drawCalls);
-
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::Text("%.3f", passData.cpuTimeMs);
-
-                    ImGui::TableSetColumnIndex(4);
-                    if (m_renderGraphProfilingData.gpuTimingAvailable)
-                        ImGui::Text("%.3f", passData.gpuTimeMs);
-                    else
-                        ImGui::TextUnformatted("-");
+                    ImGui::Text("Total GPU frame time: %.3f ms", m_renderGraphProfilingData.gpuFrameTimeMs);
+                    ImGui::Text("Total GPU pass time: %.3f ms", m_renderGraphProfilingData.gpuTotalTimeMs);
+                    ImGui::Text("GPU waste (non-pass): %.3f ms", m_renderGraphProfilingData.gpuWasteTimeMs);
                 }
+                else
+                    ImGui::TextDisabled("GPU timing unavailable on this GPU/queue");
 
-                ImGui::EndTable();
+                if (ImGui::BeginTable("RenderGraphPassStats", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+                {
+                    ImGui::TableSetupColumn("Pass");
+                    ImGui::TableSetupColumn("Exec");
+                    ImGui::TableSetupColumn("Draws");
+                    ImGui::TableSetupColumn("CPU (ms)");
+                    ImGui::TableSetupColumn("GPU (ms)");
+                    ImGui::TableHeadersRow();
+
+                    for (const auto &passData : m_renderGraphProfilingData.passes)
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted(passData.passName.c_str());
+
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::Text("%u", passData.executions);
+
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::Text("%u", passData.drawCalls);
+
+                        ImGui::TableSetColumnIndex(3);
+                        ImGui::Text("%.3f", passData.cpuTimeMs);
+
+                        ImGui::TableSetColumnIndex(4);
+                        if (m_renderGraphProfilingData.gpuTimingAvailable)
+                            ImGui::Text("%.3f", passData.gpuTimeMs);
+                        else
+                            ImGui::TextUnformatted("-");
+                    }
+
+                    ImGui::EndTable();
+                }
             }
 
             ImGui::EndPopup();
@@ -2862,6 +2901,8 @@ void Editor::drawRenderSettings()
     auto &settings = engine::RenderQualitySettings::getInstance();
 
     ImGui::SeparatorText("General");
+    ImGui::Checkbox("VSync", &settings.enableVSync);
+    ImGui::SetItemTooltip("ON = sync to monitor refresh (less tearing). OFF = uncap FPS (may tear).");
     ImGui::Checkbox("Enable Post-Processing", &settings.enablePostProcessing);
 
     ImGui::DragFloat("Render Scale", &settings.renderScale, 0.01f, 0.25f, 2.0f, "%.2f");
@@ -2939,8 +2980,41 @@ void Editor::drawRenderSettings()
             }
         }
 
+        ImGui::DragFloat("Shadow Max Distance", &settings.shadowMaxDistance, 1.0f, 20.0f, 2000.0f, "%.0f");
+        ImGui::SetItemTooltip("Limits directional-shadow cascade range in world units. Lower values reduce shadow draw calls and CPU cost.");
+
+        ImGui::Checkbox("Shadow Occlusion Culling (Experimental)", &settings.enableShadowOcclusionCulling);
+        ImGui::SetItemTooltip("Skips shadow caster submission for objects culled by camera occlusion. Can improve performance, but may cause shadow instability in some scenes.");
+
         ImGui::TextDisabled("More cascades improve distance quality but increase shadow draw calls.");
     }
+
+    ImGui::SeparatorText("Occlusion Culling");
+    ImGui::Checkbox("Enable Occlusion Culling##occlusion_main", &settings.enableOcclusionCulling);
+    ImGui::SetItemTooltip("Master switch for camera occlusion query culling.");
+    if (settings.enableOcclusionCulling)
+    {
+        ImGui::Indent();
+        ImGui::DragInt("Probe Interval##occlusion_probe", &settings.occlusionProbeInterval, 1.0f, 1, 240);
+        ImGui::SetItemTooltip("How often hidden objects are probed again (frames). Lower = less popping, more CPU/GPU.");
+        ImGui::DragInt("Visible Requery Interval##occlusion_visible_requery", &settings.occlusionVisibleRequeryInterval, 1.0f, 1, 480);
+        ImGui::SetItemTooltip("How often visible objects refresh occlusion state (frames).");
+        ImGui::DragInt("Confirm Hidden Queries##occlusion_confirm", &settings.occlusionOccludedConfirmationQueries, 1.0f, 1, 8);
+        ImGui::SetItemTooltip("Consecutive zero-sample query results required before marking occluded.");
+        ImGui::DragInt("Max Instances/Batch##occlusion_batch_limit", &settings.occlusionMaxInstancesPerBatch, 1.0f, 1, 1024);
+        ImGui::SetItemTooltip("Batches larger than this skip occlusion and stay visible.");
+        ImGui::DragInt("Fast Motion Probe Interval##occlusion_fast_probe", &settings.occlusionFastMotionProbeInterval, 1.0f, 1, 240);
+        ImGui::DragInt("Fast Motion Visible Requery##occlusion_fast_visible", &settings.occlusionFastMotionVisibleRequeryInterval, 1.0f, 1, 240);
+        ImGui::DragInt("Fast Motion Reveal Delay##occlusion_fast_reveal", &settings.occlusionFastMotionStaleRevealFrames, 1.0f, 0, 240);
+        ImGui::SetItemTooltip("Extra frames to keep previously hidden objects hidden during fast camera motion.");
+        ImGui::DragFloat("Fast Motion Translation Threshold##occlusion_fast_translate", &settings.occlusionFastMotionTranslationThreshold, 0.001f, 0.0f, 10.0f, "%.3f");
+        ImGui::DragFloat("Fast Motion Forward Dot Threshold##occlusion_fast_dot", &settings.occlusionFastMotionForwardDotThreshold, 0.0001f, -1.0f, 1.0f, "%.4f");
+        ImGui::SetItemTooltip("Lower value = require larger camera direction change before entering fast-motion mode.");
+        ImGui::DragInt("Shadow Grace Frames##occlusion_shadow_grace", &settings.shadowOcclusionVisibilityGraceFrames, 1.0f, 0, 600);
+        ImGui::SetItemTooltip("Frames to keep shadow casters after they become occluded.");
+        ImGui::Unindent();
+    }
+
     ImGui::SeparatorText("Ambient Occlusion");
     ImGui::Checkbox("SSAO", &settings.enableSSAO);
     if (settings.enableSSAO)
@@ -2950,6 +3024,15 @@ void Editor::drawRenderSettings()
         ImGui::DragFloat("Bias##ssao", &settings.ssaoBias, 0.001f, 0.0f, 0.1f, "%.4f");
         ImGui::DragFloat("Strength##ssao", &settings.ssaoStrength, 0.05f, 0.1f, 5.0f, "%.2f");
         ImGui::DragInt("Samples##ssao", &settings.ssaoSamples, 1, 4, 64);
+        ImGui::Checkbox("GTAO Mode##gtao", &settings.enableGTAO);
+        if (settings.enableGTAO)
+        {
+            ImGui::Indent();
+            ImGui::DragInt("Directions##gtao", &settings.gtaoDirections, 1, 2, 8);
+            ImGui::DragInt("Steps##gtao", &settings.gtaoSteps, 1, 2, 8);
+            ImGui::Checkbox("Use Bent Normals##gtao", &settings.useBentNormals);
+            ImGui::Unindent();
+        }
         ImGui::Unindent();
     }
 
@@ -2976,25 +3059,141 @@ void Editor::drawRenderSettings()
         ImGui::Unindent();
     }
 
+    ImGui::SeparatorText("Environment");
+    if (m_scene && m_scene->hasSkyboxHDR())
+    {
+        ImGui::TextWrapped("HDR Skybox: %s", m_scene->getSkyboxHDRPath().c_str());
+        if (ImGui::Button("Remove HDR Skybox##render_settings"))
+        {
+            m_scene->clearSkyboxHDR();
+            m_notificationManager.showInfo("Removed HDR skybox from scene");
+        }
+    }
+    else
+    {
+        ImGui::TextDisabled("HDR Skybox: <None>");
+    }
+
+    ImGui::SeparatorText("Image-Based Lighting (IBL)");
+    ImGui::Checkbox("Enable IBL##ibl", &settings.enableIBL);
+    if (settings.enableIBL)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Diffuse Intensity##ibl",  &settings.iblDiffuseIntensity,  0.01f, 0.0f, 3.0f, "%.2f");
+        ImGui::DragFloat("Specular Intensity##ibl", &settings.iblSpecularIntensity, 0.01f, 0.0f, 3.0f, "%.2f");
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Anisotropic GGX");
+    ImGui::Checkbox("Enable Anisotropy##aniso", &settings.enableAnisotropy);
+    if (settings.enableAnisotropy)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Anisotropy Strength##aniso", &settings.anisotropyStrength, 0.01f, -1.0f, 1.0f, "%.2f");
+        ImGui::DragFloat("Anisotropy Rotation##aniso", &settings.anisotropyRotation, 0.5f, -180.0f, 180.0f, "%.1f deg");
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Ambient Shadowing");
+    ImGui::DragFloat("Shadow on Ambient##ambient_shadow", &settings.shadowAmbientStrength, 0.01f, 0.0f, 1.0f, "%.2f");
+
+    ImGui::SeparatorText("Contact Shadows");
+    ImGui::Checkbox("Contact Shadows##toggle", &settings.enableContactShadows);
+    if (settings.enableContactShadows)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Length##cs",   &settings.contactShadowLength,   0.01f, 0.1f, 5.0f,  "%.2f");
+        ImGui::DragFloat("Strength##cs", &settings.contactShadowStrength, 0.01f, 0.0f, 1.0f,  "%.2f");
+        ImGui::DragInt("Steps##cs",      &settings.contactShadowSteps,    1,     4,    32);
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Color Grading");
+    ImGui::Checkbox("Color Grading##toggle", &settings.enableColorGrading);
+    if (settings.enableColorGrading)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Saturation##cg",   &settings.colorGradingSaturation,  0.01f, 0.0f, 2.0f,  "%.2f");
+        ImGui::DragFloat("Contrast##cg",     &settings.colorGradingContrast,    0.01f, 0.0f, 2.0f,  "%.2f");
+        ImGui::DragFloat("Temperature##cg",  &settings.colorGradingTemperature, 0.01f, -1.0f, 1.0f, "%.2f");
+        ImGui::SetItemTooltip("-1 = cool/blue, +1 = warm/orange");
+        ImGui::DragFloat("Tint##cg",         &settings.colorGradingTint,        0.01f, -1.0f, 1.0f, "%.2f");
+        ImGui::SetItemTooltip("-1 = magenta, +1 = green");
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("LUT Grading");
+    ImGui::Checkbox("Enable LUT Grading##toggle", &settings.enableLUTGrading);
+    if (settings.enableLUTGrading)
+    {
+        ImGui::Indent();
+        static std::array<char, 512> lutPathBuffer{};
+        static bool lutPathInitialized = false;
+
+        if (!lutPathInitialized || settings.lutGradingPath != std::string(lutPathBuffer.data()))
+        {
+            std::snprintf(lutPathBuffer.data(), lutPathBuffer.size(), "%s", settings.lutGradingPath.c_str());
+            lutPathInitialized = true;
+        }
+
+        if (ImGui::InputText("LUT Path##lut_path", lutPathBuffer.data(), lutPathBuffer.size()))
+            settings.lutGradingPath = std::string(lutPathBuffer.data());
+
+        if (ImGui::Button("Clear LUT Path##lut_path"))
+        {
+            settings.lutGradingPath.clear();
+            lutPathBuffer[0] = '\0';
+        }
+
+        ImGui::DragFloat("LUT Strength##lut_strength", &settings.lutGradingStrength, 0.01f, 0.0f, 1.0f, "%.2f");
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Cinematic Effects");
+    ImGui::Checkbox("Vignette##toggle", &settings.enableVignette);
+    if (settings.enableVignette)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Strength##vig", &settings.vignetteStrength, 0.01f, 0.0f, 1.0f, "%.2f");
+        ImGui::Unindent();
+    }
+    ImGui::Checkbox("Film Grain##toggle", &settings.enableFilmGrain);
+    if (settings.enableFilmGrain)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Strength##grain", &settings.filmGrainStrength, 0.001f, 0.0f, 0.2f, "%.3f");
+        ImGui::Unindent();
+    }
+    ImGui::Checkbox("Chromatic Aberration##toggle", &settings.enableChromaticAberration);
+    if (settings.enableChromaticAberration)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Strength##ca", &settings.chromaticAberrationStrength, 0.0001f, 0.0f, 0.02f, "%.4f");
+        ImGui::Unindent();
+    }
+
     ImGui::SeparatorText("Anti-Aliasing");
 
     const char *aaModes[] = {
         "None",
         "FXAA",
         "SMAA",
-        "TAA (Experimental)"};
+        "TAA (Experimental)",
+        "CMAA"};
 
     int aaModeIndex = static_cast<int>(settings.getAntiAliasingMode());
     if (ImGui::Combo("Mode##aa_mode", &aaModeIndex, aaModes, IM_ARRAYSIZE(aaModes)))
         settings.setAntiAliasingMode(static_cast<engine::RenderQualitySettings::AntiAliasingMode>(aaModeIndex));
 
-    ImGui::SetItemTooltip("Choose one AA method. FXAA/SMAA are implemented; TAA is experimental and not fully wired.");
+    ImGui::SetItemTooltip("Choose one AA method. FXAA/SMAA/CMAA are implemented; TAA is experimental and not fully wired.");
 
     const auto aaMode = settings.getAntiAliasingMode();
     if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::FXAA)
         ImGui::TextDisabled("FXAA: fast, cheapest, softer image.");
     else if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::SMAA)
         ImGui::TextDisabled("SMAA: sharper edges than FXAA, slightly heavier.");
+    else if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::CMAA)
+        ImGui::TextDisabled("CMAA: conservative morphological AA, keeps more fine detail than FXAA.");
     else if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::TAA)
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "TAA requires velocity buffer support and is not fully wired yet.");
     else
@@ -3171,6 +3370,7 @@ void Editor::drawMaterialEditors()
     {
         auto &matEditor = *it;
         const std::string matPath = matEditor.path.string();
+        const std::string normalizedMatPath = resolveMaterialPathAgainstProjectRoot(matPath, projectRoot);
 
         std::string title = matEditor.path.filename().string();
         if (matEditor.dirty)
@@ -3185,9 +3385,9 @@ void Editor::drawMaterialEditors()
 
         if (ImGui::Begin(windowName.c_str(), &keepOpen))
         {
-            if (project->cache.materialsByPath.find(matPath) == project->cache.materialsByPath.end())
+            if (project->cache.materialsByPath.find(normalizedMatPath) == project->cache.materialsByPath.end())
             {
-                m_assetsPreviewSystem.getOrRequestMaterialPreview(matPath);
+                m_assetsPreviewSystem.getOrRequestMaterialPreview(normalizedMatPath);
                 ImGui::TextDisabled("Loading material...");
                 ImGui::End();
                 matEditor.open = keepOpen;
@@ -3198,11 +3398,11 @@ void Editor::drawMaterialEditors()
                 continue;
             }
 
-            auto &materialAsset = project->cache.materialsByPath[matPath];
+            auto &materialAsset = project->cache.materialsByPath[normalizedMatPath];
             auto gpuMat = materialAsset.gpu;
             auto &cpuMat = materialAsset.cpuData;
 
-            auto &ui = m_materialEditorUiState[matPath];
+            auto &ui = m_materialEditorUiState[normalizedMatPath];
             const bool isMaterialEditorFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             const bool isCtrlDown = ImGui::GetIO().KeyCtrl;
 
@@ -3212,12 +3412,12 @@ void Editor::drawMaterialEditors()
                 {
                     matEditor.dirty = false;
                     m_notificationManager.showSuccess("Material saved");
-                    VX_EDITOR_INFO_STREAM("Material saved: " << matPath);
+                    VX_EDITOR_INFO_STREAM("Material saved: " << normalizedMatPath);
                 }
                 else
                 {
                     m_notificationManager.showError("Failed to save material");
-                    VX_EDITOR_ERROR_STREAM("Failed to save material: " << matPath);
+                    VX_EDITOR_ERROR_STREAM("Failed to save material: " << normalizedMatPath);
                 }
             };
 
@@ -3233,12 +3433,12 @@ void Editor::drawMaterialEditors()
                 {
                     matEditor.dirty = false;
                     m_notificationManager.showInfo("Material reloaded from disk");
-                    VX_EDITOR_INFO_STREAM("Material reloaded from disk: " << matPath);
+                    VX_EDITOR_INFO_STREAM("Material reloaded from disk: " << normalizedMatPath);
                 }
                 else
                 {
                     m_notificationManager.showError("Failed to reload material from disk");
-                    VX_EDITOR_ERROR_STREAM("Failed to reload material from disk: " << matPath);
+                    VX_EDITOR_ERROR_STREAM("Failed to reload material from disk: " << normalizedMatPath);
                 }
             }
             ImGui::SameLine();
@@ -3252,7 +3452,7 @@ void Editor::drawMaterialEditors()
 
             if (ImGui::CollapsingHeader("Preview", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                auto previewDS = m_assetsPreviewSystem.getOrRequestMaterialPreview(matPath);
+                auto previewDS = m_assetsPreviewSystem.getOrRequestMaterialPreview(normalizedMatPath);
                 ImTextureID previewId = (ImTextureID)(uintptr_t)previewDS;
 
                 ImGui::Image(previewId, ImVec2(160, 160));
@@ -3991,9 +4191,13 @@ void Editor::handleInput()
 
 void Editor::openMaterialEditor(const std::filesystem::path &path)
 {
+    std::filesystem::path normalizedPath = path;
+    if (auto project = m_currentProject.lock(); project)
+        normalizedPath = resolveMaterialPathAgainstProjectRoot(path.string(), std::filesystem::path(project->fullPath));
+
     for (auto &mat : m_openMaterialEditors)
     {
-        if (mat.path == path)
+        if (mat.path == normalizedPath)
         {
             mat.open = true;
             return;
@@ -4001,7 +4205,7 @@ void Editor::openMaterialEditor(const std::filesystem::path &path)
     }
 
     OpenMaterialEditor editor;
-    editor.path = path;
+    editor.path = normalizedPath;
     editor.open = true;
     editor.dirty = false;
     m_openMaterialEditors.push_back(std::move(editor));
@@ -4102,10 +4306,12 @@ bool Editor::reloadMaterialFromDisk(const std::filesystem::path &path)
         cpuMaterial.name = path.stem().string();
 
     const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::string normalizedMaterialPath = resolveMaterialPathAgainstProjectRoot(path.string(), projectRoot);
     normalizeMaterialTexturePaths(cpuMaterial, path, projectRoot);
+    sanitizeMaterialCpuData(cpuMaterial, false);
 
-    auto &record = project->cache.materialsByPath[path.string()];
-    record.path = path.string();
+    auto &record = project->cache.materialsByPath[normalizedMaterialPath];
+    record.path = normalizedMaterialPath;
     record.cpuData = cpuMaterial;
 
     if (!record.gpu)
@@ -4143,13 +4349,16 @@ engine::Material::SharedPtr Editor::ensureMaterialLoaded(const std::string &mate
     if (!project)
         return nullptr;
 
-    auto it = project->cache.materialsByPath.find(materialPath);
+    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::string normalizedMaterialPath = resolveMaterialPathAgainstProjectRoot(materialPath, projectRoot);
+
+    auto it = project->cache.materialsByPath.find(normalizedMaterialPath);
     if (it != project->cache.materialsByPath.end() && it->second.gpu)
         return it->second.gpu;
 
-    m_assetsPreviewSystem.getOrRequestMaterialPreview(materialPath);
+    m_assetsPreviewSystem.getOrRequestMaterialPreview(normalizedMaterialPath);
 
-    it = project->cache.materialsByPath.find(materialPath);
+    it = project->cache.materialsByPath.find(normalizedMaterialPath);
     if (it != project->cache.materialsByPath.end() && it->second.gpu)
         return it->second.gpu;
 
@@ -4235,6 +4444,7 @@ void Editor::rebuildModelDetailsCache(const engine::ModelAsset &modelAsset,
             m_modelDetailsCache.totalVertexCount += mesh.vertexData.size() / mesh.vertexStride;
 
         auto material = mesh.material;
+        sanitizeMaterialCpuData(material, true);
         if (material.name.empty())
             material.name = mesh.name.empty() ? ("Material_" + std::to_string(meshIndex)) : mesh.name;
 
@@ -4309,7 +4519,8 @@ bool Editor::buildPerMeshMaterialPathsFromDirectory(const engine::ModelAsset &mo
         if (!materialAsset.has_value())
             continue;
 
-        const auto &material = materialAsset.value().material;
+        auto material = materialAsset.value().material;
+        sanitizeMaterialCpuData(material, true);
         const std::string signature = buildMaterialSignature(material);
 
         if (!signature.empty() && materialPathBySignature.find(signature) == materialPathBySignature.end())
@@ -4329,6 +4540,7 @@ bool Editor::buildPerMeshMaterialPathsFromDirectory(const engine::ModelAsset &mo
     {
         const auto &mesh = modelAsset.meshes[meshIndex];
         engine::CPUMaterial candidate = mesh.material;
+        sanitizeMaterialCpuData(candidate, true);
         if (candidate.name.empty())
             candidate.name = mesh.name.empty() ? ("Material_" + std::to_string(meshIndex)) : mesh.name;
 
@@ -4370,6 +4582,13 @@ bool Editor::buildPerMeshMaterialPathsFromDirectory(const engine::ModelAsset &mo
 
 bool Editor::applyPerMeshMaterialPathsToSelectedEntity(const std::vector<std::string> &perMeshMaterialPaths)
 {
+    auto project = m_currentProject.lock();
+    if (!project)
+    {
+        VX_EDITOR_WARNING_STREAM("Material auto-apply failed. No active project.");
+        return false;
+    }
+
     if (!m_selectedEntity)
     {
         VX_EDITOR_WARNING_STREAM("Material auto-apply failed. No selected entity.");
@@ -4387,6 +4606,7 @@ bool Editor::applyPerMeshMaterialPathsToSelectedEntity(const std::vector<std::st
 
     const size_t slotCount = staticMeshComponent ? staticMeshComponent->getMaterialSlotCount() : skeletalMeshComponent->getMaterialSlotCount();
     const size_t slotLimit = std::min(slotCount, perMeshMaterialPaths.size());
+    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
 
     if (slotLimit == 0)
         return false;
@@ -4396,7 +4616,7 @@ bool Editor::applyPerMeshMaterialPathsToSelectedEntity(const std::vector<std::st
 
     for (size_t slot = 0; slot < slotLimit; ++slot)
     {
-        const std::string &materialPath = perMeshMaterialPaths[slot];
+        const std::string materialPath = resolveMaterialPathAgainstProjectRoot(perMeshMaterialPaths[slot], projectRoot);
         if (materialPath.empty())
             continue;
 
@@ -4499,6 +4719,7 @@ bool Editor::exportModelMaterials(const std::filesystem::path &modelPath,
     {
         const auto &mesh = model->meshes[meshIndex];
         engine::CPUMaterial candidate = mesh.material;
+        sanitizeMaterialCpuData(candidate, true);
 
         if (candidate.name.empty())
             candidate.name = mesh.name.empty() ? ("Material_" + std::to_string(meshIndex)) : mesh.name;
@@ -5168,6 +5389,13 @@ void Editor::drawAssetDetails()
 
 bool Editor::applyMaterialToSelectedEntity(const std::string &materialPath, std::optional<size_t> slot, bool forceAllSlots)
 {
+    auto project = m_currentProject.lock();
+    if (!project)
+    {
+        VX_EDITOR_WARNING_STREAM("Material apply failed. No active project.");
+        return false;
+    }
+
     if (!m_selectedEntity)
     {
         VX_EDITOR_WARNING_STREAM("Material apply failed. No selected entity.");
@@ -5183,10 +5411,11 @@ bool Editor::applyMaterialToSelectedEntity(const std::string &materialPath, std:
         return false;
     }
 
-    auto material = ensureMaterialLoaded(materialPath);
+    const std::string normalizedMaterialPath = resolveMaterialPathAgainstProjectRoot(materialPath, std::filesystem::path(project->fullPath));
+    auto material = ensureMaterialLoaded(normalizedMaterialPath);
     if (!material)
     {
-        VX_EDITOR_ERROR_STREAM("Material apply failed. Could not load material: " << materialPath);
+        VX_EDITOR_ERROR_STREAM("Material apply failed. Could not load material: " << normalizedMaterialPath);
         return false;
     }
 
@@ -5209,15 +5438,15 @@ bool Editor::applyMaterialToSelectedEntity(const std::string &materialPath, std:
         if (staticMeshComponent)
         {
             staticMeshComponent->setMaterialOverride(resolvedSlot.value(), material);
-            staticMeshComponent->setMaterialOverridePath(resolvedSlot.value(), materialPath);
+            staticMeshComponent->setMaterialOverridePath(resolvedSlot.value(), normalizedMaterialPath);
         }
         else
         {
             skeletalMeshComponent->setMaterialOverride(resolvedSlot.value(), material);
-            skeletalMeshComponent->setMaterialOverridePath(resolvedSlot.value(), materialPath);
+            skeletalMeshComponent->setMaterialOverridePath(resolvedSlot.value(), normalizedMaterialPath);
         }
 
-        VX_EDITOR_INFO_STREAM("Applied material '" << materialPath << "' to entity '" << m_selectedEntity->getName() << "' slot " << resolvedSlot.value());
+        VX_EDITOR_INFO_STREAM("Applied material '" << normalizedMaterialPath << "' to entity '" << m_selectedEntity->getName() << "' slot " << resolvedSlot.value());
         return true;
     }
 
@@ -5226,16 +5455,16 @@ bool Editor::applyMaterialToSelectedEntity(const std::string &materialPath, std:
         if (staticMeshComponent)
         {
             staticMeshComponent->setMaterialOverride(index, material);
-            staticMeshComponent->setMaterialOverridePath(index, materialPath);
+            staticMeshComponent->setMaterialOverridePath(index, normalizedMaterialPath);
         }
         else
         {
             skeletalMeshComponent->setMaterialOverride(index, material);
-            skeletalMeshComponent->setMaterialOverridePath(index, materialPath);
+            skeletalMeshComponent->setMaterialOverridePath(index, normalizedMaterialPath);
         }
     }
 
-    VX_EDITOR_INFO_STREAM("Applied material '" << materialPath << "' to all slots of entity '" << m_selectedEntity->getName() << "'.");
+    VX_EDITOR_INFO_STREAM("Applied material '" << normalizedMaterialPath << "' to all slots of entity '" << m_selectedEntity->getName() << "'.");
     return true;
 }
 
@@ -6241,9 +6470,10 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 
 void Editor::drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGameCamera)
 {
-    ImGui::Begin("Game Viewport", nullptr, ImGuiWindowFlags_None);
+    const bool gameViewportWindowVisible = ImGui::Begin("Game Viewport", nullptr, ImGuiWindowFlags_None);
+    m_isGameViewportVisible = gameViewportWindowVisible && !ImGui::IsWindowCollapsed();
 
-    const ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
+    const ImVec2 viewportPanelSize = gameViewportWindowVisible ? ImGui::GetContentRegionAvail() : ImVec2(0.0f, 0.0f);
     const uint32_t x = static_cast<uint32_t>(std::max(viewportPanelSize.x, 0.0f));
     const uint32_t y = static_cast<uint32_t>(std::max(viewportPanelSize.y, 0.0f));
 
@@ -6258,11 +6488,11 @@ void Editor::drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGam
                 function(m_gameViewportSizeX, m_gameViewportSizeY);
     }
 
-    if (viewportDescriptorSet != VK_NULL_HANDLE && hasGameCamera)
+    if (gameViewportWindowVisible && viewportDescriptorSet != VK_NULL_HANDLE && hasGameCamera)
     {
         ImGui::Image(viewportDescriptorSet, ImVec2(viewportPanelSize.x, viewportPanelSize.y));
     }
-    else
+    else if (gameViewportWindowVisible)
     {
         const char *statusText = hasGameCamera ? "Game viewport is unavailable." : "No camera in scene";
         const ImVec2 textSize = ImGui::CalcTextSize(statusText);

@@ -5,11 +5,13 @@
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Material.hpp"
 #include "Engine/Mesh.hpp"
+#include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Vertex.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -85,6 +87,28 @@ public:
         m_placeholder = ImGui_ImplVulkan_AddTexture(defaultTexture->vkSampler(), defaultTexture->vkImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
         return m_placeholder;
+    }
+
+    VkDescriptorSet getThumbnailDisabledFallback()
+    {
+        if (m_thumbnailDisabledIcon != VK_NULL_HANDLE)
+            return m_thumbnailDisabledIcon;
+
+        if (!m_thumbnailDisabledIconTexture)
+            m_thumbnailDisabledIconTexture = engine::AssetsLoader::loadTextureGPU("./resources/textures/VelixV.tex.elixasset", VK_FORMAT_R8G8B8A8_SRGB);
+
+        if (!m_thumbnailDisabledIconTexture)
+            return getPlaceholder();
+
+        m_thumbnailDisabledIcon = ImGui_ImplVulkan_AddTexture(
+            m_thumbnailDisabledIconTexture->vkSampler(),
+            m_thumbnailDisabledIconTexture->vkImageView(),
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        if (m_thumbnailDisabledIcon == VK_NULL_HANDLE)
+            return getPlaceholder();
+
+        return m_thumbnailDisabledIcon;
     }
 
     bool hasMaterialPreview(const std::string &materialPath) const
@@ -207,11 +231,15 @@ public:
     VkDescriptorSet getOrRequestMaterialPreview(const std::string &materialPath,
                                                 engine::Material::SharedPtr material = nullptr)
     {
+        if (!engine::EngineConfig::instance().getShowAssetThumbnails())
+            return getThumbnailDisabledFallback();
+
         if (materialPath.empty())
             return getPlaceholder();
 
-        auto &entry = m_materialEntries[materialPath];
-        entry.path = materialPath;
+        const std::string normalizedMaterialPath = resolveMaterialPathForProject(materialPath);
+        auto &entry = m_materialEntries[normalizedMaterialPath];
+        entry.path = normalizedMaterialPath;
         entry.kind = PreviewKind::Material;
         entry.lastRequestedFrame = m_frameIndex;
 
@@ -221,10 +249,10 @@ public:
         if (!entry.requestedThisFrame)
         {
             entry.requestedThisFrame = true;
-            m_requestedRenderItemsThisFrame.push_back({PreviewKind::Material, materialPath});
+            m_requestedRenderItemsThisFrame.push_back({PreviewKind::Material, normalizedMaterialPath});
         }
 
-        if (!entry.material && !ensureMaterialLoaded(materialPath, entry.material))
+        if (!entry.material && !ensureMaterialLoaded(normalizedMaterialPath, entry.material))
             return getPlaceholder();
 
         if (entry.imguiDescriptorSet)
@@ -378,12 +406,14 @@ private:
             queueDescriptorRelease(entry.imguiDescriptorSet);
 
         queueDescriptorRelease(m_placeholder);
+        queueDescriptorRelease(m_thumbnailDisabledIcon);
 
         m_materialEntries.clear();
         m_modelEntries.clear();
         m_textureEntries.clear();
         m_previewModelsByPath.clear();
         m_failedTexturePaths.clear();
+        m_thumbnailDisabledIconTexture.reset();
         m_requestedRenderItemsThisFrame.clear();
         m_inFlightRenderItems.clear();
 
@@ -478,6 +508,28 @@ private:
         }
 
         return texturePath;
+    }
+
+    std::string resolveMaterialPathForProject(const std::string &materialPath) const
+    {
+        return resolveTexturePathForProject(materialPath);
+    }
+
+    static void sanitizeMaterialCpuData(engine::CPUMaterial &material, bool forceDielectricWithoutOrm)
+    {
+        auto sanitizeFinite = [](float value, float fallback) -> float
+        {
+            return std::isfinite(value) ? value : fallback;
+        };
+
+        material.metallicFactor = std::clamp(sanitizeFinite(material.metallicFactor, 0.0f), 0.0f, 1.0f);
+        material.roughnessFactor = std::clamp(sanitizeFinite(material.roughnessFactor, 1.0f), 0.04f, 1.0f);
+        material.aoStrength = std::clamp(sanitizeFinite(material.aoStrength, 1.0f), 0.0f, 1.0f);
+        material.normalScale = std::max(0.0f, sanitizeFinite(material.normalScale, 1.0f));
+        material.alphaCutoff = std::clamp(sanitizeFinite(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
+
+        if (forceDielectricWithoutOrm && material.ormTexture.empty())
+            material.metallicFactor = 0.0f;
     }
 
     void normalizeMaterialTexturePaths(engine::CPUMaterial &material, const std::filesystem::path &materialPath) const
@@ -607,22 +659,25 @@ private:
         if (!m_project)
             return false;
 
-        auto it = m_project->cache.materialsByPath.find(materialPath);
+        const std::string normalizedMaterialPath = resolveMaterialPathForProject(materialPath);
+
+        auto it = m_project->cache.materialsByPath.find(normalizedMaterialPath);
         if (it != m_project->cache.materialsByPath.end() && it->second.gpu)
         {
             outMaterial = it->second.gpu;
             return true;
         }
 
-        auto materialAsset = engine::AssetsLoader::loadMaterial(materialPath);
+        auto materialAsset = engine::AssetsLoader::loadMaterial(normalizedMaterialPath);
         if (!materialAsset.has_value())
         {
-            VX_EDITOR_ERROR_STREAM("Failed to load material asset: " << materialPath << '\n');
+            VX_EDITOR_ERROR_STREAM("Failed to load material asset: " << normalizedMaterialPath << '\n');
             return false;
         }
 
         auto materialCPU = materialAsset.value().material;
-        normalizeMaterialTexturePaths(materialCPU, materialPath);
+        normalizeMaterialTexturePaths(materialCPU, normalizedMaterialPath);
+        sanitizeMaterialCpuData(materialCPU, false);
         auto texture = loadOrGetTexture(materialCPU.albedoTexture, TextureUsage::Color);
         auto normalTexture = loadOrGetTexture(materialCPU.normalTexture, TextureUsage::Data);
         auto ormTexture = loadOrGetTexture(materialCPU.ormTexture, TextureUsage::Data);
@@ -647,8 +702,8 @@ private:
         outMaterial->setUVScale(materialCPU.uvScale);
         outMaterial->setUVOffset(materialCPU.uvOffset);
 
-        auto &record = m_project->cache.materialsByPath[materialPath];
-        record.path = materialPath;
+        auto &record = m_project->cache.materialsByPath[normalizedMaterialPath];
+        record.path = normalizedMaterialPath;
         record.cpuData = materialCPU;
         record.gpu = outMaterial;
         record.texture = texture;
@@ -728,6 +783,8 @@ private:
     std::unordered_set<std::string> m_failedTexturePaths;
 
     VkDescriptorSet m_placeholder{VK_NULL_HANDLE};
+    engine::Texture::SharedPtr m_thumbnailDisabledIconTexture{nullptr};
+    VkDescriptorSet m_thumbnailDisabledIcon{VK_NULL_HANDLE};
 };
 
 ELIX_NESTED_NAMESPACE_END

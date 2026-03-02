@@ -29,9 +29,14 @@ public:
     static Texture::SharedPtr loadTextureGPU(const std::string &path, VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB);
     static Texture::SharedPtr createTextureGPU(const TextureAsset &textureAsset, VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB);
     static std::optional<MaterialAsset> loadMaterial(const std::string &path);
+    static void setTextureImportMaxDimension(uint32_t maxDimension);
+    static uint32_t getTextureImportMaxDimension();
 
 public:
     static inline std::vector<std::shared_ptr<IAssetLoader>> s_assetLoaders;
+    static inline uint32_t s_textureImportMaxDimension = 2048u;
+    static inline bool s_textureImportMaxDimensionExplicitlySet = false;
+    static inline bool s_textureImportMaxDimensionInitializedFromEnv = false;
 
 private:
     static std::optional<ModelAsset> importModelFromSource(const std::string &path);

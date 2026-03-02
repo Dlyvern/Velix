@@ -29,6 +29,15 @@ public:
 
     const GraphicsPipelineKey &getGraphicsPipelineKey() const;
 
+    VkImageView getEnvImageView() const;
+    VkSampler   getEnvSampler()   const;
+    bool        hasTexture()      const
+    {
+        return m_skyboxTexture != nullptr &&
+               m_skyboxTexture->vkImageView() != VK_NULL_HANDLE &&
+               m_skyboxTexture->vkSampler() != VK_NULL_HANDLE;
+    }
+
 private:
     void createResources(VkDescriptorPool descriptorPool);
 

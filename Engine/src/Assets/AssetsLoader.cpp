@@ -5,12 +5,17 @@
 #include "Core/Logger.hpp"
 
 #include <stb_image.h>
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include <stb_image_resize2.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <typeinfo>
 #include <unordered_map>
 
@@ -134,6 +139,29 @@ namespace
         return filesystemPath.lexically_normal();
     }
 
+    float sanitizeFiniteFloat(float value, float fallback)
+    {
+        return std::isfinite(value) ? value : fallback;
+    }
+
+    void sanitizeMaterialForRuntime(elix::engine::CPUMaterial &material, bool forceDielectricWithoutOrm)
+    {
+        material.metallicFactor = std::clamp(sanitizeFiniteFloat(material.metallicFactor, 0.0f), 0.0f, 1.0f);
+        material.roughnessFactor = std::clamp(sanitizeFiniteFloat(material.roughnessFactor, 1.0f), 0.04f, 1.0f);
+        material.aoStrength = std::clamp(sanitizeFiniteFloat(material.aoStrength, 1.0f), 0.0f, 1.0f);
+        material.normalScale = std::max(0.0f, sanitizeFiniteFloat(material.normalScale, 1.0f));
+        material.alphaCutoff = std::clamp(sanitizeFiniteFloat(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
+
+        if (forceDielectricWithoutOrm && material.ormTexture.empty())
+            material.metallicFactor = 0.0f;
+    }
+
+    void sanitizeModelMaterialData(elix::engine::ModelAsset &modelAsset)
+    {
+        for (auto &mesh : modelAsset.meshes)
+            sanitizeMaterialForRuntime(mesh.material, true);
+    }
+
     bool isElixAssetFile(const std::filesystem::path &path)
     {
         return toLowerCopy(path.extension().string()) == ".elixasset";
@@ -215,6 +243,105 @@ namespace
         default:
             return 0;
         }
+    }
+
+    bool computeConstrainedDimensions(uint32_t sourceWidth, uint32_t sourceHeight, uint32_t maxDimension,
+                                      uint32_t &outWidth, uint32_t &outHeight)
+    {
+        outWidth = sourceWidth;
+        outHeight = sourceHeight;
+
+        if (maxDimension == 0u || (sourceWidth <= maxDimension && sourceHeight <= maxDimension))
+            return false;
+
+        if (sourceWidth == 0u || sourceHeight == 0u)
+            return false;
+
+        const double dominantAxis = static_cast<double>(std::max(sourceWidth, sourceHeight));
+        const double scale = static_cast<double>(maxDimension) / dominantAxis;
+
+        outWidth = std::max(1u, static_cast<uint32_t>(std::floor(static_cast<double>(sourceWidth) * scale)));
+        outHeight = std::max(1u, static_cast<uint32_t>(std::floor(static_cast<double>(sourceHeight) * scale)));
+        return true;
+    }
+
+    bool downscaleRGBA8(std::vector<uint8_t> &pixels, uint32_t &width, uint32_t &height, uint32_t maxDimension, bool isSrgb)
+    {
+        uint32_t targetWidth = width;
+        uint32_t targetHeight = height;
+        if (!computeConstrainedDimensions(width, height, maxDimension, targetWidth, targetHeight))
+            return true;
+
+        if (targetWidth == width && targetHeight == height)
+            return true;
+
+        const size_t outputSize = static_cast<size_t>(targetWidth) * static_cast<size_t>(targetHeight) * 4u;
+        std::vector<uint8_t> resizedPixels(outputSize);
+
+        unsigned char *resizeResult = nullptr;
+        if (isSrgb)
+        {
+            resizeResult = stbir_resize_uint8_srgb(pixels.data(),
+                                                   static_cast<int>(width),
+                                                   static_cast<int>(height),
+                                                   static_cast<int>(width * 4u),
+                                                   resizedPixels.data(),
+                                                   static_cast<int>(targetWidth),
+                                                   static_cast<int>(targetHeight),
+                                                   static_cast<int>(targetWidth * 4u),
+                                                   STBIR_RGBA);
+        }
+        else
+        {
+            resizeResult = stbir_resize_uint8_linear(pixels.data(),
+                                                     static_cast<int>(width),
+                                                     static_cast<int>(height),
+                                                     static_cast<int>(width * 4u),
+                                                     resizedPixels.data(),
+                                                     static_cast<int>(targetWidth),
+                                                     static_cast<int>(targetHeight),
+                                                     static_cast<int>(targetWidth * 4u),
+                                                     STBIR_RGBA);
+        }
+
+        if (!resizeResult)
+            return false;
+
+        pixels = std::move(resizedPixels);
+        width = targetWidth;
+        height = targetHeight;
+        return true;
+    }
+
+    bool downscaleRGBA32F(std::vector<float> &pixels, uint32_t &width, uint32_t &height, uint32_t maxDimension)
+    {
+        uint32_t targetWidth = width;
+        uint32_t targetHeight = height;
+        if (!computeConstrainedDimensions(width, height, maxDimension, targetWidth, targetHeight))
+            return true;
+
+        if (targetWidth == width && targetHeight == height)
+            return true;
+
+        const size_t outputSize = static_cast<size_t>(targetWidth) * static_cast<size_t>(targetHeight) * 4u;
+        std::vector<float> resizedPixels(outputSize);
+
+        float *resizeResult = stbir_resize_float_linear(pixels.data(),
+                                                        static_cast<int>(width),
+                                                        static_cast<int>(height),
+                                                        static_cast<int>(width * 4u * sizeof(float)),
+                                                        resizedPixels.data(),
+                                                        static_cast<int>(targetWidth),
+                                                        static_cast<int>(targetHeight),
+                                                        static_cast<int>(targetWidth * 4u * sizeof(float)),
+                                                        STBIR_RGBA);
+        if (!resizeResult)
+            return false;
+
+        pixels = std::move(resizedPixels);
+        width = targetWidth;
+        height = targetHeight;
+        return true;
     }
 
     bool mapLegacyDDSFormat(uint32_t fourCC, VkFormat requestedFormat, VkFormat &outFormat)
@@ -300,7 +427,7 @@ namespace
         }
     }
 
-    bool loadDDS(const std::string &path, VkFormat requestedFormat, DDSLoadResult &outResult)
+    bool loadDDS(const std::string &path, VkFormat requestedFormat, uint32_t maxDimension, DDSLoadResult &outResult)
     {
         std::ifstream file(path, std::ios::binary | std::ios::ate);
         if (!file.is_open())
@@ -411,37 +538,75 @@ namespace
         }
 
         const bool compressed = isCompressedDDSFormat(parsedFormat);
-        size_t topLevelSize = 0u;
+        const uint32_t mipCount = std::max(1u, header.mipMapCount);
+        const uint32_t clampedMaxDimension = std::max(1u, maxDimension);
 
-        if (compressed)
+        uint32_t selectedMip = 0u;
+        if (maxDimension > 0u)
         {
-            const uint32_t blockBytes = compressedBlockByteSize(parsedFormat);
-            if (blockBytes == 0u)
+            for (uint32_t mipIndex = 0u; mipIndex < mipCount; ++mipIndex)
             {
-                VX_ENGINE_ERROR_STREAM("Unsupported compressed DDS block format for file: " << path << '\n');
-                return false;
+                const uint32_t mipWidth = std::max(1u, header.width >> mipIndex);
+                const uint32_t mipHeight = std::max(1u, header.height >> mipIndex);
+                if (mipWidth <= clampedMaxDimension && mipHeight <= clampedMaxDimension)
+                {
+                    selectedMip = mipIndex;
+                    break;
+                }
             }
-
-            const uint32_t blocksWide = std::max(1u, (header.width + 3u) / 4u);
-            const uint32_t blocksHigh = std::max(1u, (header.height + 3u) / 4u);
-            topLevelSize = static_cast<size_t>(blocksWide) * static_cast<size_t>(blocksHigh) * static_cast<size_t>(blockBytes);
         }
-        else
-            topLevelSize = static_cast<size_t>(header.width) * static_cast<size_t>(header.height) * 4u;
 
-        if (fileBytes.size() < offset + topLevelSize)
+        size_t mipOffset = offset;
+        size_t selectedMipSize = 0u;
+        uint32_t selectedWidth = header.width;
+        uint32_t selectedHeight = header.height;
+
+        const uint32_t blockBytes = compressed ? compressedBlockByteSize(parsedFormat) : 0u;
+        if (compressed && blockBytes == 0u)
         {
-            VX_ENGINE_ERROR_STREAM("DDS pixel payload is truncated: " << path << '\n');
+            VX_ENGINE_ERROR_STREAM("Unsupported compressed DDS block format for file: " << path << '\n');
             return false;
         }
 
-        outResult.width = header.width;
-        outResult.height = header.height;
+        for (uint32_t mipIndex = 0u; mipIndex < mipCount; ++mipIndex)
+        {
+            const uint32_t mipWidth = std::max(1u, header.width >> mipIndex);
+            const uint32_t mipHeight = std::max(1u, header.height >> mipIndex);
+
+            size_t mipSize = 0u;
+            if (compressed)
+            {
+                const uint32_t blocksWide = std::max(1u, (mipWidth + 3u) / 4u);
+                const uint32_t blocksHigh = std::max(1u, (mipHeight + 3u) / 4u);
+                mipSize = static_cast<size_t>(blocksWide) * static_cast<size_t>(blocksHigh) * static_cast<size_t>(blockBytes);
+            }
+            else
+                mipSize = static_cast<size_t>(mipWidth) * static_cast<size_t>(mipHeight) * 4u;
+
+            if (fileBytes.size() < mipOffset + mipSize)
+            {
+                VX_ENGINE_ERROR_STREAM("DDS pixel payload is truncated: " << path << '\n');
+                return false;
+            }
+
+            if (mipIndex == selectedMip)
+            {
+                selectedMipSize = mipSize;
+                selectedWidth = mipWidth;
+                selectedHeight = mipHeight;
+                break;
+            }
+
+            mipOffset += mipSize;
+        }
+
+        outResult.width = selectedWidth;
+        outResult.height = selectedHeight;
         outResult.format = parsedFormat;
         outResult.packing = pixelPacking;
         outResult.compressed = compressed;
-        outResult.topLevelBytes.assign(fileBytes.begin() + static_cast<std::ptrdiff_t>(offset),
-                                       fileBytes.begin() + static_cast<std::ptrdiff_t>(offset + topLevelSize));
+        outResult.topLevelBytes.assign(fileBytes.begin() + static_cast<std::ptrdiff_t>(mipOffset),
+                                       fileBytes.begin() + static_cast<std::ptrdiff_t>(mipOffset + selectedMipSize));
 
         if (!compressed && outResult.packing == DDSPixelPacking::BGRA8)
         {
@@ -557,6 +722,47 @@ void AssetsLoader::clearAssetLoaders()
     s_assetLoaders.clear();
 }
 
+void AssetsLoader::setTextureImportMaxDimension(uint32_t maxDimension)
+{
+    // 0 disables downscaling.
+    if (maxDimension == 0u)
+    {
+        s_textureImportMaxDimension = 0u;
+        s_textureImportMaxDimensionExplicitlySet = true;
+        return;
+    }
+
+    s_textureImportMaxDimension = std::clamp(maxDimension, 64u, 16384u);
+    s_textureImportMaxDimensionExplicitlySet = true;
+}
+
+uint32_t AssetsLoader::getTextureImportMaxDimension()
+{
+    if (!s_textureImportMaxDimensionExplicitlySet && !s_textureImportMaxDimensionInitializedFromEnv)
+    {
+        s_textureImportMaxDimensionInitializedFromEnv = true;
+        const char *envValue = std::getenv("VELIX_MAX_TEXTURE_SIZE");
+        if (envValue && envValue[0] != '\0')
+        {
+            char *endPointer = nullptr;
+            const unsigned long parsedValue = std::strtoul(envValue, &endPointer, 10);
+            if (endPointer && endPointer != envValue)
+            {
+                if (parsedValue == 0ul)
+                    s_textureImportMaxDimension = 0u;
+                else
+                {
+                    const unsigned long clampedValue =
+                        std::clamp(parsedValue, static_cast<unsigned long>(64u), static_cast<unsigned long>(16384u));
+                    s_textureImportMaxDimension = static_cast<uint32_t>(clampedValue);
+                }
+            }
+        }
+    }
+
+    return s_textureImportMaxDimension;
+}
+
 std::filesystem::path AssetsLoader::toModelAssetPath(const std::filesystem::path &sourcePath)
 {
     if (isElixAssetFile(sourcePath))
@@ -632,6 +838,7 @@ std::optional<TextureAsset> AssetsLoader::importTextureFromSource(const std::str
 {
     const std::filesystem::path normalizedPath = normalizePath(path);
     const std::string extension = extensionLower(normalizedPath.string());
+    const uint32_t maxTextureDimension = getTextureImportMaxDimension();
 
     TextureAsset textureAsset{};
     textureAsset.name = normalizedPath.stem().string();
@@ -641,8 +848,14 @@ std::optional<TextureAsset> AssetsLoader::importTextureFromSource(const std::str
     if (extension == ".dds")
     {
         DDSLoadResult ddsResult{};
-        if (!loadDDS(normalizedPath.string(), VK_FORMAT_R8G8B8A8_SRGB, ddsResult))
+        if (!loadDDS(normalizedPath.string(), VK_FORMAT_R8G8B8A8_SRGB, maxTextureDimension, ddsResult))
             return std::nullopt;
+
+        if (!ddsResult.compressed && !downscaleRGBA8(ddsResult.topLevelBytes, ddsResult.width, ddsResult.height, maxTextureDimension, true))
+        {
+            VX_ENGINE_ERROR_STREAM("Failed to downscale DDS texture: " << normalizedPath.string() << '\n');
+            return std::nullopt;
+        }
 
         textureAsset.width = ddsResult.width;
         textureAsset.height = ddsResult.height;
@@ -677,8 +890,22 @@ std::optional<TextureAsset> AssetsLoader::importTextureFromSource(const std::str
             return std::nullopt;
         }
 
-        textureAsset.width = static_cast<uint32_t>(width);
-        textureAsset.height = static_cast<uint32_t>(height);
+        if (width <= 0 || height <= 0)
+        {
+            VX_ENGINE_ERROR_STREAM("Decoded float texture has invalid dimensions: " << normalizedPath.string() << '\n');
+            return std::nullopt;
+        }
+
+        uint32_t widthU32 = static_cast<uint32_t>(width);
+        uint32_t heightU32 = static_cast<uint32_t>(height);
+        if (!downscaleRGBA32F(pixels, widthU32, heightU32, maxTextureDimension))
+        {
+            VX_ENGINE_ERROR_STREAM("Failed to downscale float texture: " << normalizedPath.string() << '\n');
+            return std::nullopt;
+        }
+
+        textureAsset.width = widthU32;
+        textureAsset.height = heightU32;
         textureAsset.channels = 4u;
         textureAsset.encoding = TextureAsset::PixelEncoding::RGBA32F;
         textureAsset.vkFormat = static_cast<uint32_t>(VK_FORMAT_R32G32B32A32_SFLOAT);
@@ -701,15 +928,31 @@ std::optional<TextureAsset> AssetsLoader::importTextureFromSource(const std::str
         return std::nullopt;
     }
 
+    if (width <= 0 || height <= 0)
+    {
+        stbi_image_free(pixels);
+        VX_ENGINE_ERROR_STREAM("Decoded texture has invalid dimensions: " << normalizedPath.string() << '\n');
+        return std::nullopt;
+    }
+
     const size_t pixelsCount = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
-    textureAsset.width = static_cast<uint32_t>(width);
-    textureAsset.height = static_cast<uint32_t>(height);
+    std::vector<uint8_t> rgbaPixels(pixels, pixels + pixelsCount);
+    stbi_image_free(pixels);
+
+    uint32_t widthU32 = static_cast<uint32_t>(width);
+    uint32_t heightU32 = static_cast<uint32_t>(height);
+    if (!downscaleRGBA8(rgbaPixels, widthU32, heightU32, maxTextureDimension, true))
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to downscale texture: " << normalizedPath.string() << '\n');
+        return std::nullopt;
+    }
+
+    textureAsset.width = widthU32;
+    textureAsset.height = heightU32;
     textureAsset.channels = 4u;
     textureAsset.encoding = TextureAsset::PixelEncoding::RGBA8;
     textureAsset.vkFormat = static_cast<uint32_t>(VK_FORMAT_R8G8B8A8_SRGB);
-    textureAsset.pixels.assign(pixels, pixels + pixelsCount);
-
-    stbi_image_free(pixels);
+    textureAsset.pixels = std::move(rgbaPixels);
 
     return textureAsset;
 }
@@ -868,7 +1111,10 @@ std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
     {
         auto model = serializer.readModel(sourcePath.string());
         if (model.has_value())
+        {
+            sanitizeModelMaterialData(model.value());
             return model;
+        }
 
         VX_ENGINE_ERROR_STREAM("Failed to load serialized model asset: " << sourcePath.string() << '\n');
         return std::nullopt;
@@ -887,6 +1133,7 @@ std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
 
         importedModel->sourcePath = sourcePath.string();
         importedModel->assetPath = serializedPath.string();
+        sanitizeModelMaterialData(importedModel.value());
 
         if (!serializer.writeModel(importedModel.value(), serializedPath.string()))
         {
@@ -896,7 +1143,10 @@ std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
     }
 
     if (auto serializedModel = serializer.readModel(serializedPath.string()); serializedModel.has_value())
+    {
+        sanitizeModelMaterialData(serializedModel.value());
         return serializedModel;
+    }
 
     VX_ENGINE_ERROR_STREAM("Failed to read serialized model asset: " << serializedPath.string() << '\n');
     return std::nullopt;
@@ -947,6 +1197,9 @@ Texture::SharedPtr AssetsLoader::createTextureGPU(const TextureAsset &textureAss
     if (textureAsset.width == 0u || textureAsset.height == 0u || textureAsset.pixels.empty())
         return nullptr;
 
+    TextureAsset uploadAsset{};
+    const TextureAsset *effectiveTextureAsset = &textureAsset;
+
     VkFormat format = preferredLdrFormat;
     switch (textureAsset.encoding)
     {
@@ -980,13 +1233,41 @@ Texture::SharedPtr AssetsLoader::createTextureGPU(const TextureAsset &textureAss
     }
     }
 
+    const uint32_t maxTextureDimension = getTextureImportMaxDimension();
+    if (maxTextureDimension > 0u &&
+        (textureAsset.width > maxTextureDimension || textureAsset.height > maxTextureDimension))
+    {
+        uploadAsset = textureAsset;
+        effectiveTextureAsset = &uploadAsset;
+
+        if (uploadAsset.encoding == TextureAsset::PixelEncoding::RGBA8)
+        {
+            if (!downscaleRGBA8(uploadAsset.pixels, uploadAsset.width, uploadAsset.height, maxTextureDimension, prefersSrgb(format)))
+                return nullptr;
+        }
+        else if (uploadAsset.encoding == TextureAsset::PixelEncoding::RGBA32F)
+        {
+            if ((uploadAsset.pixels.size() % sizeof(float)) != 0u)
+                return nullptr;
+
+            std::vector<float> floatPixels(uploadAsset.pixels.size() / sizeof(float));
+            std::memcpy(floatPixels.data(), uploadAsset.pixels.data(), uploadAsset.pixels.size());
+
+            if (!downscaleRGBA32F(floatPixels, uploadAsset.width, uploadAsset.height, maxTextureDimension))
+                return nullptr;
+
+            uploadAsset.pixels.resize(floatPixels.size() * sizeof(float));
+            std::memcpy(uploadAsset.pixels.data(), floatPixels.data(), uploadAsset.pixels.size());
+        }
+    }
+
     auto texture = std::make_shared<Texture>();
-    if (!texture->createFromMemory(textureAsset.pixels.data(),
-                                   textureAsset.pixels.size(),
-                                   textureAsset.width,
-                                   textureAsset.height,
+    if (!texture->createFromMemory(effectiveTextureAsset->pixels.data(),
+                                   effectiveTextureAsset->pixels.size(),
+                                   effectiveTextureAsset->width,
+                                   effectiveTextureAsset->height,
                                    format,
-                                   textureAsset.channels))
+                                   effectiveTextureAsset->channels))
         return nullptr;
 
     return texture;

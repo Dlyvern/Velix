@@ -120,9 +120,15 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         lastEntitiesSize = entitiesSize;
     }
 
+    std::unordered_set<Entity *> sceneEntitySet;
+    sceneEntitySet.reserve(sceneEntities.size());
+    for (const auto &e : sceneEntities)
+        if (e)
+            sceneEntitySet.insert(e.get());
+
     for (auto it = m_perFrameData.drawItems.begin(); it != m_perFrameData.drawItems.end();)
     {
-        if (std::find(sceneEntities.begin(), sceneEntities.end(), it->first) == sceneEntities.end())
+        if (sceneEntitySet.find(it->first) == sceneEntitySet.end())
             it = m_perFrameData.drawItems.erase(it);
         else
             ++it;
@@ -194,6 +200,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     auto createDrawMeshInstance = [&](const CPUMesh &mesh) -> GPUMesh::SharedPtr
     {
         auto sharedGeometry = getOrCreateSharedGeometryMesh(mesh);
+        if (!sharedGeometry)
+            return nullptr;
 
         auto instance = std::make_shared<GPUMesh>();
         instance->indexBuffer = sharedGeometry->indexBuffer;
@@ -253,15 +261,35 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         if (texturePath.empty())
             return nullptr;
 
+        std::vector<std::string> candidates;
+        candidates.reserve(2u);
+
         const std::string resolvedTexturePath = resolveTexturePathForMaterial(texturePath, materialAssetPath);
         if (!resolvedTexturePath.empty())
-        {
-            if (auto texture = AssetsLoader::loadTextureGPU(resolvedTexturePath, format))
-                return texture;
-        }
+            candidates.push_back(resolvedTexturePath);
 
-        if (resolvedTexturePath != texturePath)
-            return AssetsLoader::loadTextureGPU(texturePath, format);
+        if (candidates.empty() || candidates.front() != texturePath)
+            candidates.push_back(texturePath);
+
+        for (const auto &candidatePath : candidates)
+        {
+            const std::string cacheKey = candidatePath + "|" + std::to_string(static_cast<uint32_t>(format));
+            if (auto textureIt = m_texturesByResolvedPath.find(cacheKey); textureIt != m_texturesByResolvedPath.end())
+                return textureIt->second;
+
+            if (m_failedTextureResolvedPaths.find(cacheKey) != m_failedTextureResolvedPaths.end())
+                continue;
+
+            auto texture = AssetsLoader::loadTextureGPU(candidatePath, format);
+            if (texture)
+            {
+                m_texturesByResolvedPath[cacheKey] = texture;
+                m_failedTextureResolvedPaths.erase(cacheKey);
+                return texture;
+            }
+
+            m_failedTextureResolvedPaths.insert(cacheKey);
+        }
 
         return nullptr;
     };
@@ -449,7 +477,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     {
         if (!entity || !entity->isEnabled())
         {
-            auto drawItemIt = m_perFrameData.drawItems.find(entity);
+            auto drawItemIt = m_perFrameData.drawItems.find(entity.get());
             if (drawItemIt != m_perFrameData.drawItems.end())
                 m_perFrameData.drawItems.erase(drawItemIt);
             continue;
@@ -466,15 +494,15 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
         if (!meshes || meshes->empty())
         {
-            auto drawItemIt = m_perFrameData.drawItems.find(entity);
+            auto drawItemIt = m_perFrameData.drawItems.find(entity.get());
             if (drawItemIt != m_perFrameData.drawItems.end())
                 m_perFrameData.drawItems.erase(drawItemIt);
             continue;
         }
 
-        auto drawItemIt = m_perFrameData.drawItems.find(entity);
+        auto drawItemIt = m_perFrameData.drawItems.find(entity.get());
         if (drawItemIt == m_perFrameData.drawItems.end())
-            drawItemIt = m_perFrameData.drawItems.emplace(entity, DrawItem{}).first;
+            drawItemIt = m_perFrameData.drawItems.emplace(entity.get(), DrawItem{}).first;
 
         auto &drawItem = drawItemIt->second;
         drawItem.transform = entity->hasComponent<Transform3DComponent>() ? entity->getComponent<Transform3DComponent>()->getMatrix() : glm::mat4(1.0f);
@@ -489,10 +517,13 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             drawItem.localMeshBoundsCenters.reserve(meshes->size());
             drawItem.localMeshBoundsRadii.clear();
             drawItem.localMeshBoundsRadii.reserve(meshes->size());
+            drawItem.localMeshTransforms.clear();
+            drawItem.localMeshTransforms.reserve(meshes->size());
 
             for (const auto &mesh : *meshes)
             {
                 drawItem.meshes.push_back(createDrawMeshInstance(mesh));
+                drawItem.localMeshTransforms.push_back(mesh.localTransform);
 
                 const std::size_t hashData = computeMeshGeometryHash(mesh);
                 const auto boundsIt = m_meshLocalBoundsByHash.find(hashData);
@@ -510,20 +541,45 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         }
 
         for (size_t meshIndex = 0; meshIndex < meshes->size() && meshIndex < drawItem.meshes.size(); ++meshIndex)
-            drawItem.meshes[meshIndex]->material = resolveMeshMaterial((*meshes)[meshIndex], staticMeshComponent, skeletalMeshComponent, meshIndex);
+        {
+            if (meshIndex >= drawItem.localMeshTransforms.size())
+                drawItem.localMeshTransforms.resize(meshes->size(), glm::mat4(1.0f));
+
+            drawItem.localMeshTransforms[meshIndex] = (*meshes)[meshIndex].localTransform;
+
+            if (!drawItem.meshes[meshIndex])
+                continue;
+
+            drawItem.meshes[meshIndex]->material =
+                resolveMeshMaterial((*meshes)[meshIndex], staticMeshComponent, skeletalMeshComponent, meshIndex);
+        }
 
         glm::vec3 boundsMin(FLT_MAX);
         glm::vec3 boundsMax(-FLT_MAX);
         bool hasBounds = false;
-        const float scaleX = glm::length(glm::vec3(drawItem.transform[0]));
-        const float scaleY = glm::length(glm::vec3(drawItem.transform[1]));
-        const float scaleZ = glm::length(glm::vec3(drawItem.transform[2]));
-        const float maxScale = std::max({scaleX, scaleY, scaleZ, 1.0f});
 
-        for (size_t meshIndex = 0; meshIndex < drawItem.localMeshBoundsRadii.size(); ++meshIndex)
+        const size_t meshCount = drawItem.localMeshBoundsRadii.size();
+        drawItem.cachedWorldBoundsCenters.resize(meshCount);
+        drawItem.cachedWorldBoundsRadii.resize(meshCount);
+
+        for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
         {
-            const glm::vec3 worldCenter = glm::vec3(drawItem.transform * glm::vec4(drawItem.localMeshBoundsCenters[meshIndex], 1.0f));
+            const glm::mat4 localTransform = meshIndex < drawItem.localMeshTransforms.size()
+                                                 ? drawItem.localMeshTransforms[meshIndex]
+                                                 : glm::mat4(1.0f);
+            const glm::mat4 meshModel = drawItem.transform * localTransform;
+
+            const glm::vec3 worldCenter = glm::vec3(meshModel * glm::vec4(drawItem.localMeshBoundsCenters[meshIndex], 1.0f));
+
+            const float scaleX = glm::length(glm::vec3(meshModel[0]));
+            const float scaleY = glm::length(glm::vec3(meshModel[1]));
+            const float scaleZ = glm::length(glm::vec3(meshModel[2]));
+            const float maxScale = std::max({scaleX, scaleY, scaleZ, 1.0f});
             const float worldRadius = drawItem.localMeshBoundsRadii[meshIndex] * maxScale;
+
+            drawItem.cachedWorldBoundsCenters[meshIndex] = worldCenter;
+            drawItem.cachedWorldBoundsRadii[meshIndex] = worldRadius;
+
             const glm::vec3 extents(worldRadius);
             boundsMin = glm::min(boundsMin, worldCenter - extents);
             boundsMax = glm::max(boundsMax, worldCenter + extents);
@@ -559,14 +615,35 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
     struct MeshDrawReference
     {
-        Entity::SharedPtr entity;
+        Entity *entity{nullptr};
         DrawItem *drawItem{nullptr};
         uint32_t meshIndex{0};
         GPUMesh::SharedPtr mesh{nullptr};
         Material::SharedPtr material{nullptr};
+        uint64_t occlusionKey{0};
         glm::vec3 worldBoundsCenter{0.0f};
         float worldBoundsRadius{0.0f};
         bool skinned{false};
+        glm::mat4 modelMatrix{1.0f};
+    };
+
+    auto appendHash64 = [](uint64_t current, uint64_t value) -> uint64_t
+    {
+        constexpr uint64_t fnvPrime = 1099511628211ull;
+        constexpr uint64_t fnvOffset = 1469598103934665603ull;
+        if (current == 0ull)
+            current = fnvOffset;
+        current ^= value;
+        current *= fnvPrime;
+        return current;
+    };
+
+    auto makeReferenceOcclusionKey = [&](Entity *entity, uint32_t meshIndex) -> uint64_t
+    {
+        uint64_t key = 0ull;
+        key = appendHash64(key, static_cast<uint64_t>(entity ? entity->getId() : 0u));
+        key = appendHash64(key, static_cast<uint64_t>(meshIndex));
+        return key;
     };
 
     std::vector<MeshDrawReference> drawReferences;
@@ -575,10 +652,6 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     for (auto &[entity, drawItem] : m_perFrameData.drawItems)
     {
         const bool isSkinned = !drawItem.finalBones.empty();
-        const float scaleX = glm::length(glm::vec3(drawItem.transform[0]));
-        const float scaleY = glm::length(glm::vec3(drawItem.transform[1]));
-        const float scaleZ = glm::length(glm::vec3(drawItem.transform[2]));
-        const float maxScale = std::max({scaleX, scaleY, scaleZ, 1.0f});
 
         for (uint32_t meshIndex = 0; meshIndex < drawItem.meshes.size(); ++meshIndex)
         {
@@ -586,16 +659,20 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             if (!mesh)
                 continue;
 
+            const glm::mat4 localTransform = meshIndex < drawItem.localMeshTransforms.size()
+                                                 ? drawItem.localMeshTransforms[meshIndex]
+                                                 : glm::mat4(1.0f);
+            const glm::mat4 modelMatrix = drawItem.transform * localTransform;
+
             auto material = mesh->material ? mesh->material : Material::getDefaultMaterial();
             mesh->material = material;
 
             glm::vec3 worldBoundsCenter{0.0f};
             float worldBoundsRadius{0.0f};
-            if (meshIndex < drawItem.localMeshBoundsCenters.size() &&
-                meshIndex < drawItem.localMeshBoundsRadii.size())
+            if (meshIndex < drawItem.cachedWorldBoundsCenters.size())
             {
-                worldBoundsCenter = glm::vec3(drawItem.transform * glm::vec4(drawItem.localMeshBoundsCenters[meshIndex], 1.0f));
-                worldBoundsRadius = drawItem.localMeshBoundsRadii[meshIndex] * maxScale;
+                worldBoundsCenter = drawItem.cachedWorldBoundsCenters[meshIndex];
+                worldBoundsRadius = drawItem.cachedWorldBoundsRadii[meshIndex];
             }
 
             drawReferences.push_back(MeshDrawReference{
@@ -604,9 +681,11 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 .meshIndex = meshIndex,
                 .mesh = mesh,
                 .material = material,
+                .occlusionKey = makeReferenceOcclusionKey(entity, meshIndex),
                 .worldBoundsCenter = worldBoundsCenter,
                 .worldBoundsRadius = worldBoundsRadius,
-                .skinned = isSkinned});
+                .skinned = isSkinned,
+                .modelMatrix = modelMatrix});
         }
     }
 
@@ -625,7 +704,12 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                   if (left.material.get() != right.material.get())
                       return left.material.get() < right.material.get();
 
-                  return left.meshIndex < right.meshIndex;
+                  if (left.meshIndex != right.meshIndex)
+                      return left.meshIndex < right.meshIndex;
+
+                  const uint32_t leftEntityId = left.entity ? left.entity->getId() : 0u;
+                  const uint32_t rightEntityId = right.entity ? right.entity->getId() : 0u;
+                  return leftEntityId < rightEntityId;
               });
 
     m_perFrameData.perObjectInstances.clear();
@@ -656,9 +740,10 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     for (const auto &reference : drawReferences)
     {
         const uint32_t instanceIndex = static_cast<uint32_t>(m_perFrameData.perObjectInstances.size());
+        const uint64_t referenceOcclusionKey = reference.occlusionKey;
 
         PerObjectInstanceData instanceData{};
-        instanceData.model = reference.drawItem->transform;
+        instanceData.model = reference.modelMatrix;
         instanceData.objectInfo = glm::uvec4(
             render::encodeObjectId(reference.entity->getId(), reference.meshIndex),
             reference.drawItem->bonesOffset,
@@ -675,6 +760,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 lastBatch.firstInstance + lastBatch.instanceCount == instanceIndex)
             {
                 ++lastBatch.instanceCount;
+                lastBatch.occlusionKey = appendHash64(lastBatch.occlusionKey, referenceOcclusionKey);
                 continue;
             }
         }
@@ -685,13 +771,240 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         batch.skinned = reference.skinned;
         batch.firstInstance = instanceIndex;
         batch.instanceCount = 1;
+        batch.occlusionKey = referenceOcclusionKey;
         m_perFrameData.drawBatches.push_back(batch);
+    }
+
+    m_perFrameData.occlusionProbeBatches.clear();
+    m_perFrameData.occlusionQueryKeys.clear();
+    m_perFrameData.occlusionQueryPool = VK_NULL_HANDLE;
+    m_perFrameData.occlusionQueryBase = 0u;
+    m_perFrameData.enableOcclusionCulling = false;
+
+    m_usedOcclusionQueriesByFrame[m_currentFrame] = 0u;
+    m_occlusionQueryKeysByFrame[m_currentFrame].clear();
+
+    const auto &qualitySettings = RenderQualitySettings::getInstance();
+    const uint32_t occlusionProbeInterval = static_cast<uint32_t>(std::max(1, qualitySettings.occlusionProbeInterval));
+    const uint32_t occlusionVisibleRequeryInterval = static_cast<uint32_t>(std::max(1, qualitySettings.occlusionVisibleRequeryInterval));
+    const uint32_t occlusionMaxInstancesPerBatch = static_cast<uint32_t>(std::max(1, qualitySettings.occlusionMaxInstancesPerBatch));
+    const uint32_t occlusionFastMotionProbeInterval = static_cast<uint32_t>(std::max(1, qualitySettings.occlusionFastMotionProbeInterval));
+    const uint32_t occlusionFastMotionVisibleRequeryInterval = static_cast<uint32_t>(std::max(1, qualitySettings.occlusionFastMotionVisibleRequeryInterval));
+    const uint32_t occlusionFastMotionStaleRevealFrames = static_cast<uint32_t>(std::max(0, qualitySettings.occlusionFastMotionStaleRevealFrames));
+    const float occlusionFastMotionTranslationThreshold = std::max(0.0f, qualitySettings.occlusionFastMotionTranslationThreshold);
+    const float occlusionFastMotionForwardDotThreshold = std::clamp(qualitySettings.occlusionFastMotionForwardDotThreshold, -1.0f, 1.0f);
+    const uint32_t shadowOcclusionVisibilityGraceFrames = static_cast<uint32_t>(std::max(0, qualitySettings.shadowOcclusionVisibilityGraceFrames));
+    const bool enableOcclusionCulling = qualitySettings.enableOcclusionCulling;
+
+    bool fastCameraMotion = false;
+    if (enableFrustumCulling && enableOcclusionCulling)
+    {
+        const glm::mat4 inverseView = glm::inverse(view);
+        const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
+
+        glm::vec3 cameraForward = -glm::vec3(inverseView[2]);
+        const float cameraForwardLength = glm::length(cameraForward);
+        if (cameraForwardLength > std::numeric_limits<float>::epsilon())
+            cameraForward /= cameraForwardLength;
+        else
+            cameraForward = glm::vec3(0.0f, 0.0f, -1.0f);
+
+        if (m_hasLastOcclusionCameraState)
+        {
+            const float translationDelta = glm::length(cameraPosition - m_lastOcclusionCameraPosition);
+            const float forwardDot = glm::dot(cameraForward, m_lastOcclusionCameraForward);
+            fastCameraMotion =
+                translationDelta >= occlusionFastMotionTranslationThreshold ||
+                forwardDot < occlusionFastMotionForwardDotThreshold;
+        }
+
+        m_lastOcclusionCameraPosition = cameraPosition;
+        m_lastOcclusionCameraForward = cameraForward;
+        m_hasLastOcclusionCameraState = true;
+    }
+    else
+    {
+        m_hasLastOcclusionCameraState = false;
+    }
+
+    if (enableFrustumCulling && enableOcclusionCulling && m_occlusionQueryPool != VK_NULL_HANDLE && m_occlusionQueriesPerFrame > 0u)
+    {
+        if ((m_occlusionFrameCounter & 127u) == 0u)
+        {
+            constexpr uint64_t kOcclusionStateLifetimeFrames = 600u;
+            for (auto it = m_occlusionStates.begin(); it != m_occlusionStates.end();)
+            {
+                const uint64_t age = m_occlusionFrameCounter - it->second.lastQueryFrame;
+                if (it->second.hasResult && age > kOcclusionStateLifetimeFrames)
+                    it = m_occlusionStates.erase(it);
+                else
+                    ++it;
+            }
+
+            for (auto it = m_shadowCasterLastVisibleFrameByKey.begin(); it != m_shadowCasterLastVisibleFrameByKey.end();)
+            {
+                const uint64_t age = m_occlusionFrameCounter - it->second;
+                if (age > kOcclusionStateLifetimeFrames)
+                    it = m_shadowCasterLastVisibleFrameByKey.erase(it);
+                else
+                    ++it;
+            }
+        }
+
+        std::vector<DrawBatch> visibleBatches;
+        std::vector<DrawBatch> probeBatches;
+        std::vector<uint64_t> visibleQueryKeys;
+        std::vector<uint64_t> probeQueryKeys;
+
+        visibleBatches.reserve(m_perFrameData.drawBatches.size());
+        probeBatches.reserve(m_perFrameData.drawBatches.size());
+        visibleQueryKeys.reserve(m_perFrameData.drawBatches.size());
+        probeQueryKeys.reserve(m_perFrameData.drawBatches.size());
+
+        uint32_t queryBudget = m_occlusionQueriesPerFrame;
+
+        for (const auto &batch : m_perFrameData.drawBatches)
+        {
+            if (!batch.mesh || batch.instanceCount == 0u)
+                continue;
+
+            const bool allowBatchOcclusion = batch.instanceCount <= occlusionMaxInstancesPerBatch;
+            if (!allowBatchOcclusion)
+            {
+                DrawBatch visibleBatch = batch;
+                visibleBatch.runOcclusionQuery = false;
+                visibleBatches.push_back(visibleBatch);
+                continue;
+            }
+
+            auto &state = m_occlusionStates[batch.occlusionKey];
+            const bool occluded = state.hasResult && state.occluded;
+            const uint64_t framesSinceLastQuery = m_occlusionFrameCounter - state.lastQueryFrame;
+            const uint32_t probeInterval = fastCameraMotion ? occlusionFastMotionProbeInterval : occlusionProbeInterval;
+            const uint32_t visibleRequeryInterval = fastCameraMotion ? occlusionFastMotionVisibleRequeryInterval : occlusionVisibleRequeryInterval;
+            const bool shouldProbe = !state.hasResult || framesSinceLastQuery >= probeInterval;
+            const bool shouldRequeryVisible = !state.hasResult || framesSinceLastQuery >= visibleRequeryInterval;
+            // During rapid camera motion, prefer conservative visibility to avoid temporal pop-in.
+            const bool shouldRevealDueToFastMotion =
+                fastCameraMotion &&
+                occluded &&
+                state.hasResult &&
+                framesSinceLastQuery >= occlusionFastMotionStaleRevealFrames;
+
+            if (!occluded || shouldRevealDueToFastMotion)
+            {
+                DrawBatch visibleBatch = batch;
+                visibleBatch.runOcclusionQuery = false;
+
+                const bool shouldQueryVisibleBatch =
+                    (!occluded && shouldRequeryVisible) ||
+                    (occluded && shouldProbe);
+
+                if (queryBudget > 0u && shouldQueryVisibleBatch)
+                {
+                    visibleBatch.runOcclusionQuery = true;
+                    visibleQueryKeys.push_back(visibleBatch.occlusionKey);
+                    --queryBudget;
+                }
+
+                visibleBatches.push_back(visibleBatch);
+            }
+            else if (shouldProbe)
+            {
+                if (queryBudget == 0u)
+                    continue;
+
+                DrawBatch probeBatch = batch;
+                probeBatch.runOcclusionQuery = true;
+                probeBatches.push_back(probeBatch);
+                probeQueryKeys.push_back(probeBatch.occlusionKey);
+                --queryBudget;
+            }
+        }
+
+        m_perFrameData.drawBatches = std::move(visibleBatches);
+        m_perFrameData.occlusionProbeBatches = std::move(probeBatches);
+        m_perFrameData.occlusionQueryKeys.clear();
+        m_perFrameData.occlusionQueryKeys.reserve(visibleQueryKeys.size() + probeQueryKeys.size());
+        m_perFrameData.occlusionQueryKeys.insert(m_perFrameData.occlusionQueryKeys.end(), visibleQueryKeys.begin(), visibleQueryKeys.end());
+        m_perFrameData.occlusionQueryKeys.insert(m_perFrameData.occlusionQueryKeys.end(), probeQueryKeys.begin(), probeQueryKeys.end());
+
+        m_perFrameData.occlusionQueryPool = m_occlusionQueryPool;
+        m_perFrameData.occlusionQueryBase = m_currentFrame * m_occlusionQueriesPerFrame;
+        m_perFrameData.enableOcclusionCulling = true;
+
+        m_occlusionQueryKeysByFrame[m_currentFrame] = m_perFrameData.occlusionQueryKeys;
+        m_usedOcclusionQueriesByFrame[m_currentFrame] = static_cast<uint32_t>(m_perFrameData.occlusionQueryKeys.size());
+        m_occlusionFrameNumbersByFrame[m_currentFrame] = m_occlusionFrameCounter;
+    }
+
+    const bool hasDirectionalShadowCascades = m_perFrameData.activeDirectionalCascadeCount > 0u;
+    const bool useShadowOcclusionCulling =
+        enableFrustumCulling &&
+        m_perFrameData.enableOcclusionCulling &&
+        !fastCameraMotion &&
+        !hasDirectionalShadowCascades &&
+        qualitySettings.enableShadowOcclusionCulling;
+
+    std::vector<uint8_t> shadowVisibleInstanceMask;
+    if (useShadowOcclusionCulling)
+    {
+        shadowVisibleInstanceMask.assign(drawReferences.size(), 0u);
+
+        auto markVisibleInstances = [&](const std::vector<DrawBatch> &batches)
+        {
+            for (const auto &batch : batches)
+            {
+                if (batch.instanceCount == 0u)
+                    continue;
+
+                const uint32_t beginIndex = batch.firstInstance;
+                const uint32_t endIndex = batch.firstInstance + batch.instanceCount;
+                for (uint32_t instanceIndex = beginIndex; instanceIndex < endIndex; ++instanceIndex)
+                {
+                    if (instanceIndex < shadowVisibleInstanceMask.size())
+                        shadowVisibleInstanceMask[instanceIndex] = 1u;
+                }
+            }
+        };
+
+        markVisibleInstances(m_perFrameData.drawBatches);
+        markVisibleInstances(m_perFrameData.occlusionProbeBatches);
+
+        for (size_t referenceIndex = 0; referenceIndex < drawReferences.size(); ++referenceIndex)
+        {
+            if (referenceIndex < shadowVisibleInstanceMask.size() && shadowVisibleInstanceMask[referenceIndex] != 0u)
+                m_shadowCasterLastVisibleFrameByKey[drawReferences[referenceIndex].occlusionKey] = m_occlusionFrameCounter;
+        }
     }
 
     std::vector<const MeshDrawReference *> shadowReferences;
     shadowReferences.reserve(drawReferences.size());
-    for (const auto &reference : drawReferences)
-        shadowReferences.push_back(&reference);
+    for (size_t referenceIndex = 0; referenceIndex < drawReferences.size(); ++referenceIndex)
+    {
+        if (useShadowOcclusionCulling)
+        {
+            const bool currentlyVisible =
+                referenceIndex < shadowVisibleInstanceMask.size() &&
+                shadowVisibleInstanceMask[referenceIndex] != 0u;
+
+            if (!currentlyVisible)
+            {
+                bool keepByGracePeriod = false;
+                const auto visibilityIt = m_shadowCasterLastVisibleFrameByKey.find(drawReferences[referenceIndex].occlusionKey);
+                if (visibilityIt != m_shadowCasterLastVisibleFrameByKey.end())
+                {
+                    const uint64_t framesSinceLastVisible = m_occlusionFrameCounter - visibilityIt->second;
+                    keepByGracePeriod = framesSinceLastVisible <= shadowOcclusionVisibilityGraceFrames;
+                }
+
+                if (!keepByGracePeriod)
+                    continue;
+            }
+        }
+
+        shadowReferences.push_back(&drawReferences[referenceIndex]);
+    }
 
     std::sort(shadowReferences.begin(), shadowReferences.end(),
               [](const MeshDrawReference *left, const MeshDrawReference *right)
@@ -705,7 +1018,12 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                   if (left->mesh->indexBuffer.get() != right->mesh->indexBuffer.get())
                       return left->mesh->indexBuffer.get() < right->mesh->indexBuffer.get();
 
-                  return left->meshIndex < right->meshIndex;
+                  if (left->meshIndex != right->meshIndex)
+                      return left->meshIndex < right->meshIndex;
+
+                  const uint32_t leftEntityId = left->entity ? left->entity->getId() : 0u;
+                  const uint32_t rightEntityId = right->entity ? right->entity->getId() : 0u;
+                  return leftEntityId < rightEntityId;
               });
 
     std::vector<PerObjectInstanceData> shadowPerObjectInstances;
@@ -774,7 +1092,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
             const uint32_t instanceIndex = static_cast<uint32_t>(shadowPerObjectInstances.size());
             PerObjectInstanceData instanceData{};
-            instanceData.model = reference->drawItem->transform;
+            instanceData.model = reference->modelMatrix;
             instanceData.objectInfo = glm::uvec4(
                 render::encodeObjectId(reference->entity->getId(), reference->meshIndex),
                 reference->drawItem->bonesOffset,
@@ -857,6 +1175,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
 void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime)
 {
+    ++m_occlusionFrameCounter;
+
     m_perFrameData.swapChainViewport = m_swapchain->getViewport();
     m_perFrameData.swapChainScissor = m_swapchain->getScissor();
     m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
@@ -1004,7 +1324,9 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
             if (directionalLight->castsShadows && !directionalShadowAssigned)
             {
                 const float cameraNear = camera ? std::max(camera->getNear(), 0.01f) : 0.1f;
-                const float cameraFar = camera ? std::max(camera->getFar(), cameraNear + 0.1f) : 1000.0f;
+                const float sceneCameraFar = camera ? std::max(camera->getFar(), cameraNear + 0.1f) : 1000.0f;
+                const float shadowMaxDistance = std::max(RenderQualitySettings::getInstance().shadowMaxDistance, cameraNear + 1.0f);
+                const float cameraFar = std::min(sceneCameraFar, shadowMaxDistance);
                 const float cameraFov = camera ? camera->getFOV() : 60.0f;
                 const float cameraAspect = camera ? std::max(camera->getAspect(), 0.001f)
                                                   : static_cast<float>(m_swapchain->getExtent().width) / std::max(1.0f, static_cast<float>(m_swapchain->getExtent().height));
@@ -1212,9 +1534,11 @@ void RenderGraph::recreateSwapChain()
 bool RenderGraph::begin()
 {
     utilities::AsyncGpuUpload::collectFinished(m_device);
+    syncDetailedProfilingMode();
 
     auto &cpuStageProfilingData = m_cpuStageProfilingByFrame[m_currentFrame];
     cpuStageProfilingData = FrameCpuStageProfilingData{};
+    const bool detailedProfilingEnabled = isDetailedProfilingEnabled();
 
     const auto waitForFenceStart = std::chrono::high_resolution_clock::now();
     if (VkResult result = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX); result != VK_SUCCESS)
@@ -1227,10 +1551,45 @@ bool RenderGraph::begin()
     const auto waitForFenceEnd = std::chrono::high_resolution_clock::now();
     cpuStageProfilingData.waitForFenceMs = std::chrono::duration<double, std::milli>(waitForFenceEnd - waitForFenceStart).count();
 
+    resolveOcclusionQueries(m_currentFrame);
+
+    // Periodically purge occlusion states for objects no longer in the scene
+    // to prevent unbounded map growth.
+    static constexpr uint64_t OCCLUSION_STATE_CLEANUP_INTERVAL = 300u;
+    static constexpr uint64_t OCCLUSION_STATE_STALE_THRESHOLD = 1200u;
+    if (m_occlusionFrameCounter % OCCLUSION_STATE_CLEANUP_INTERVAL == 0u)
+    {
+        for (auto it = m_occlusionStates.begin(); it != m_occlusionStates.end();)
+        {
+            if (m_occlusionFrameCounter - it->second.lastQueryFrame > OCCLUSION_STATE_STALE_THRESHOLD)
+                it = m_occlusionStates.erase(it);
+            else
+                ++it;
+        }
+        for (auto it = m_shadowCasterLastVisibleFrameByKey.begin(); it != m_shadowCasterLastVisibleFrameByKey.end();)
+        {
+            if (m_occlusionFrameCounter - it->second > OCCLUSION_STATE_STALE_THRESHOLD)
+                it = m_shadowCasterLastVisibleFrameByKey.erase(it);
+            else
+                ++it;
+        }
+    }
+
     if (!m_uploadWaitSemaphoresByFrame[m_currentFrame].empty())
     {
         utilities::AsyncGpuUpload::releaseSemaphores(m_device, m_uploadWaitSemaphoresByFrame[m_currentFrame]);
         m_uploadWaitSemaphoresByFrame[m_currentFrame].clear();
+    }
+
+    if (m_presentToSwapchain && m_swapchain)
+    {
+        const bool desiredVSyncState = RenderQualitySettings::getInstance().enableVSync;
+        if (m_swapchain->isVSyncEnabled() != desiredVSyncState)
+        {
+            m_swapchain->setVSyncEnabled(desiredVSyncState);
+            recreateSwapChain();
+            return false;
+        }
     }
 
     if (VkResult result = vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]); result != VK_SUCCESS)
@@ -1239,9 +1598,13 @@ bool RenderGraph::begin()
         return false;
     }
 
-    if (m_hasPendingProfilingResolve[m_currentFrame])
+    if (detailedProfilingEnabled && m_hasPendingProfilingResolve[m_currentFrame])
     {
         resolveFrameProfilingData(m_currentFrame);
+        m_hasPendingProfilingResolve[m_currentFrame] = false;
+    }
+    else if (!detailedProfilingEnabled)
+    {
         m_hasPendingProfilingResolve[m_currentFrame] = false;
     }
 
@@ -1409,7 +1772,7 @@ bool RenderGraph::begin()
     m_timestampQueryBase = m_currentFrame * m_timestampQueriesPerFrame;
     m_frameQueryRangesByFrame[m_currentFrame] = FrameQueryRange{};
 
-    if (m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && m_timestampQueriesPerFrame > 0)
+    if (detailedProfilingEnabled && m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && m_timestampQueriesPerFrame > 0)
     {
         vkCmdResetQueryPool(primaryCommandBuffer->vk(), m_timestampQueryPool, m_timestampQueryBase, m_timestampQueriesPerFrame);
 
@@ -1418,12 +1781,21 @@ bool RenderGraph::begin()
         vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_timestampQueryPool, frameRange.startQueryIndex);
     }
 
+    if (m_occlusionQueryPool != VK_NULL_HANDLE && m_occlusionQueriesPerFrame > 0u)
+    {
+        const uint32_t occlusionQueryBase = m_currentFrame * m_occlusionQueriesPerFrame;
+        vkCmdResetQueryPool(primaryCommandBuffer->vk(), m_occlusionQueryPool, occlusionQueryBase, m_occlusionQueriesPerFrame);
+    }
+
     size_t passIndex = 0;
 
     size_t secIndex = 0;
 
     m_passContextData.currentFrame = m_currentFrame;
     m_passContextData.currentImageIndex = m_imageIndex;
+    m_passContextData.activeDirectionalShadowCount = m_perFrameData.activeDirectionalCascadeCount;
+    m_passContextData.activeSpotShadowCount = m_perFrameData.activeSpotShadowCount;
+    m_passContextData.activePointShadowCount = m_perFrameData.activePointShadowCount;
 
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
     {
@@ -1504,7 +1876,10 @@ bool RenderGraph::begin()
             }
 
             // Keep one query slot for the frame end timestamp.
-            if (m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && (m_usedTimestampQueries + 2) < m_timestampQueriesPerFrame)
+            if (detailedProfilingEnabled &&
+                m_isGpuTimingAvailable &&
+                m_timestampQueryPool != VK_NULL_HANDLE &&
+                (m_usedTimestampQueries + 2) < m_timestampQueriesPerFrame)
             {
                 executionProfilingData.startQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
                 executionProfilingData.endQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
@@ -1512,7 +1887,9 @@ bool RenderGraph::begin()
                 vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_timestampQueryPool, executionProfilingData.startQueryIndex);
             }
 
-            const auto cpuStartTime = std::chrono::high_resolution_clock::now();
+            std::chrono::high_resolution_clock::time_point cpuStartTime{};
+            if (detailedProfilingEnabled)
+                cpuStartTime = std::chrono::high_resolution_clock::now();
 
             VkDependencyInfo firstDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
             firstDep.imageMemoryBarrierCount = static_cast<uint32_t>(firstBarriers.size());
@@ -1524,8 +1901,13 @@ bool RenderGraph::begin()
 
             secCB->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inherit);
 
+            if (detailedProfilingEnabled)
             {
                 profiling::ScopedDrawCallCounter scopedDrawCallCounter(executionProfilingData.drawCalls);
+                renderGraphPass->record(secCB, m_perFrameData, m_passContextData);
+            }
+            else
+            {
                 renderGraphPass->record(secCB, m_perFrameData, m_passContextData);
             }
 
@@ -1544,10 +1926,12 @@ bool RenderGraph::begin()
             if (executionProfilingData.endQueryIndex != UINT32_MAX)
                 vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_timestampQueryPool, executionProfilingData.endQueryIndex);
 
-            const auto cpuEndTime = std::chrono::high_resolution_clock::now();
-            executionProfilingData.cpuTimeMs = std::chrono::duration<double, std::milli>(cpuEndTime - cpuStartTime).count();
-
-            currentFramePassProfilingData.push_back(std::move(executionProfilingData));
+            if (detailedProfilingEnabled)
+            {
+                const auto cpuEndTime = std::chrono::high_resolution_clock::now();
+                executionProfilingData.cpuTimeMs = std::chrono::duration<double, std::milli>(cpuEndTime - cpuStartTime).count();
+                currentFramePassProfilingData.push_back(std::move(executionProfilingData));
+            }
 
             secIndex++;
         }
@@ -1556,13 +1940,39 @@ bool RenderGraph::begin()
     }
 
     auto &frameRange = m_frameQueryRangesByFrame[m_currentFrame];
-    if (m_isGpuTimingAvailable &&
+    if (detailedProfilingEnabled &&
+        m_isGpuTimingAvailable &&
         m_timestampQueryPool != VK_NULL_HANDLE &&
         frameRange.startQueryIndex != UINT32_MAX &&
         m_usedTimestampQueries < m_timestampQueriesPerFrame)
     {
         frameRange.endQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
         vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_timestampQueryPool, frameRange.endQueryIndex);
+    }
+
+    if (m_occlusionQueryPool != VK_NULL_HANDLE &&
+        m_occlusionQueriesPerFrame > 0u &&
+        m_perFrameData.enableOcclusionCulling &&
+        !m_perFrameData.occlusionQueryKeys.empty() &&
+        m_occlusionReadbackBuffers[m_currentFrame])
+    {
+        const uint32_t queryCount = std::min<uint32_t>(
+            static_cast<uint32_t>(m_perFrameData.occlusionQueryKeys.size()),
+            m_occlusionQueriesPerFrame);
+
+        if (queryCount > 0u)
+        {
+            const uint32_t queryBase = m_currentFrame * m_occlusionQueriesPerFrame;
+            vkCmdCopyQueryPoolResults(
+                primaryCommandBuffer->vk(),
+                m_occlusionQueryPool,
+                queryBase,
+                queryCount,
+                m_occlusionReadbackBuffers[m_currentFrame]->vk(),
+                0u,
+                sizeof(OcclusionQueryReadback),
+                VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+        }
     }
 
     primaryCommandBuffer->end();
@@ -1609,8 +2019,31 @@ void RenderGraph::end()
 
     m_uploadWaitSemaphoresByFrame[m_currentFrame] = std::move(uploadWaitSemaphores);
 
-    m_usedTimestampQueriesByFrame[m_currentFrame] = m_usedTimestampQueries;
-    m_hasPendingProfilingResolve[m_currentFrame] = true;
+    if (isDetailedProfilingEnabled())
+    {
+        m_usedTimestampQueriesByFrame[m_currentFrame] = m_usedTimestampQueries;
+        m_hasPendingProfilingResolve[m_currentFrame] = true;
+    }
+    else
+    {
+        m_usedTimestampQueriesByFrame[m_currentFrame] = 0u;
+        m_hasPendingProfilingResolve[m_currentFrame] = false;
+    }
+
+    if (m_occlusionQueryPool != VK_NULL_HANDLE && m_occlusionQueriesPerFrame > 0u)
+    {
+        const uint32_t submittedQueryCount = std::min<uint32_t>(
+            static_cast<uint32_t>(m_perFrameData.occlusionQueryKeys.size()),
+            m_occlusionQueriesPerFrame);
+
+        m_submittedOcclusionQueryCounts[m_currentFrame] = submittedQueryCount;
+        m_submittedOcclusionFrameNumbers[m_currentFrame] = m_occlusionFrameCounter;
+        m_submittedOcclusionQueryKeys[m_currentFrame] = m_perFrameData.occlusionQueryKeys;
+        if (m_submittedOcclusionQueryKeys[m_currentFrame].size() > submittedQueryCount)
+            m_submittedOcclusionQueryKeys[m_currentFrame].resize(submittedQueryCount);
+
+        m_hasPendingOcclusionResolve[m_currentFrame] = submittedQueryCount > 0u;
+    }
 
     if (m_presentToSwapchain)
     {
@@ -1648,7 +2081,10 @@ void RenderGraph::draw()
         end();
 
     const auto frameCpuEndTime = std::chrono::high_resolution_clock::now();
-    m_cpuFrameTimesByFrameMs[m_currentFrame] = std::chrono::duration<double, std::milli>(frameCpuEndTime - frameCpuStartTime).count();
+    if (isDetailedProfilingEnabled())
+        m_cpuFrameTimesByFrameMs[m_currentFrame] = std::chrono::duration<double, std::milli>(frameCpuEndTime - frameCpuStartTime).count();
+    else
+        m_cpuFrameTimesByFrameMs[m_currentFrame] = 0.0;
 
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -1940,7 +2376,8 @@ void RenderGraph::createRenderGraphResources()
     }
 
     sortRenderGraphPasses();
-    initTimestampQueryPool();
+    syncDetailedProfilingMode();
+    initOcclusionQueryPool();
 }
 
 void RenderGraph::cleanResources()
@@ -1997,6 +2434,7 @@ void RenderGraph::cleanResources()
     m_inFlightFences.clear();
 
     destroyTimestampQueryPool();
+    destroyOcclusionQueryPool();
     for (auto &framePassProfilingData : m_passExecutionProfilingDataByFrame)
         framePassProfilingData.clear();
     m_hasPendingProfilingResolve.fill(false);
@@ -2007,9 +2445,37 @@ void RenderGraph::cleanResources()
     m_lastFrameProfilingData = {};
 
     m_perFrameData.drawItems.clear();
+    m_perFrameData.drawBatches.clear();
+    m_perFrameData.occlusionProbeBatches.clear();
+    m_perFrameData.occlusionQueryKeys.clear();
+    m_perFrameData.occlusionQueryPool = VK_NULL_HANDLE;
+    m_perFrameData.occlusionQueryBase = 0u;
+    m_perFrameData.enableOcclusionCulling = false;
     m_meshes.clear();
+    m_texturesByResolvedPath.clear();
+    m_failedTextureResolvedPaths.clear();
     m_materialsByAlbedoPath.clear();
     m_failedAlbedoTexturePaths.clear();
+    m_materialsByAssetPath.clear();
+    m_failedMaterialAssetPaths.clear();
+    m_occlusionStates.clear();
+    for (auto &submittedOcclusionKeys : m_submittedOcclusionQueryKeys)
+        submittedOcclusionKeys.clear();
+    m_submittedOcclusionQueryCounts.fill(0u);
+    m_submittedOcclusionFrameNumbers.fill(0u);
+    m_hasPendingOcclusionResolve.fill(false);
+    m_occlusionReadbackMapped.fill(nullptr);
+    for (auto &readbackBuffer : m_occlusionReadbackBuffers)
+        readbackBuffer.reset();
+    for (auto &frameOcclusionKeys : m_occlusionQueryKeysByFrame)
+        frameOcclusionKeys.clear();
+    m_usedOcclusionQueriesByFrame.fill(0u);
+    m_occlusionFrameNumbersByFrame.fill(0u);
+    m_occlusionFrameCounter = 0u;
+    m_shadowCasterLastVisibleFrameByKey.clear();
+    m_lastOcclusionCameraPosition = glm::vec3(0.0f);
+    m_lastOcclusionCameraForward = glm::vec3(0.0f, 0.0f, -1.0f);
+    m_hasLastOcclusionCameraState = false;
     m_renderGraphPassesStorage.cleanup();
 
     if (m_cleanupSharedShaderFamilies)

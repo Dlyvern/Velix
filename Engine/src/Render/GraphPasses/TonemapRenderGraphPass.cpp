@@ -4,15 +4,64 @@
 #include "Engine/Shaders/PushConstant.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
+#include "Engine/Assets/AssetsLoader.hpp"
+
+#include <glm/glm.hpp>
+#include <algorithm>
+#include <array>
+#include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
+namespace
+{
 struct TonemapPC
 {
-    float exposure;
-    float gamma;
+    glm::vec4 tonemapParams; // x=exposure, y=gamma, z=saturation, w=contrast
+    glm::vec4 gradeParams;   // x=temperature, y=tint, z=colorGradingEnabled, w=lutEnabled
+    glm::vec4 lutParams;     // x=lutStrength
 };
+
+Texture::SharedPtr createIdentityLUTTexture(uint32_t dimension)
+{
+    if (dimension < 2u)
+        dimension = 2u;
+
+    const uint32_t width = dimension * dimension;
+    const uint32_t height = dimension;
+    std::vector<uint8_t> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u, 255u);
+
+    for (uint32_t b = 0; b < dimension; ++b)
+    {
+        for (uint32_t g = 0; g < dimension; ++g)
+        {
+            for (uint32_t r = 0; r < dimension; ++r)
+            {
+                const uint32_t x = b * dimension + r;
+                const uint32_t y = g;
+                const size_t index = (static_cast<size_t>(y) * width + x) * 4u;
+
+                const float rf = static_cast<float>(r) / static_cast<float>(dimension - 1u);
+                const float gf = static_cast<float>(g) / static_cast<float>(dimension - 1u);
+                const float bf = static_cast<float>(b) / static_cast<float>(dimension - 1u);
+
+                pixels[index + 0] = static_cast<uint8_t>(glm::clamp(rf, 0.0f, 1.0f) * 255.0f + 0.5f);
+                pixels[index + 1] = static_cast<uint8_t>(glm::clamp(gf, 0.0f, 1.0f) * 255.0f + 0.5f);
+                pixels[index + 2] = static_cast<uint8_t>(glm::clamp(bf, 0.0f, 1.0f) * 255.0f + 0.5f);
+                pixels[index + 3] = 255u;
+            }
+        }
+    }
+
+    auto lutTexture = std::make_shared<Texture>();
+    if (!lutTexture->createFromMemory(pixels.data(), pixels.size(), width, height, VK_FORMAT_R8G8B8A8_UNORM, 4u))
+        return nullptr;
+
+    return lutTexture;
+}
+} // namespace
 
 TonemapRenderGraphPass::TonemapRenderGraphPass(std::vector<RGPResourceHandler> &hdrInputHandlers) : m_hdrInputHandlers(hdrInputHandlers)
 {
@@ -49,24 +98,68 @@ void TonemapRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binding.descriptorCount = 1;
-    binding.pImmutableSamplers = nullptr;
-    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding hdrBinding{};
+    hdrBinding.binding = 0;
+    hdrBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    hdrBinding.descriptorCount = 1;
+    hdrBinding.pImmutableSamplers = nullptr;
+    hdrBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{binding});
+    VkDescriptorSetLayoutBinding lutBinding{};
+    lutBinding.binding = 1;
+    lutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    lutBinding.descriptorCount = 1;
+    lutBinding.pImmutableSamplers = nullptr;
+    lutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{hdrBinding, lutBinding});
 
     m_pipelineLayout = core::PipelineLayout::createShared(device,
                                                           std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{*m_descriptorSetLayout},
                                                           std::vector<VkPushConstantRange>{PushConstant<TonemapPC>::getRange(VK_SHADER_STAGE_FRAGMENT_BIT)});
     m_defaultSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
+
+    if (!m_identityLUTTexture)
+        m_identityLUTTexture = createIdentityLUTTexture(16u);
+
+    m_lutDescriptorDirty = true;
 }
 
 void TonemapRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                                     const RenderGraphPassContext &renderContext)
 {
+    const auto &settings = RenderQualitySettings::getInstance();
+
+    const std::string desiredLUTPath = settings.enableLUTGrading ? settings.lutGradingPath : std::string{};
+    if (desiredLUTPath != m_lastLUTPath)
+    {
+        m_lastLUTPath = desiredLUTPath;
+        if (!desiredLUTPath.empty())
+            m_lutTexture = AssetsLoader::loadTextureGPU(desiredLUTPath, VK_FORMAT_R8G8B8A8_UNORM);
+        else
+            m_lutTexture.reset();
+
+        m_lutDescriptorDirty = true;
+    }
+
+    Texture::SharedPtr activeLUT = m_lutTexture ? m_lutTexture : m_identityLUTTexture;
+    if (!activeLUT)
+        activeLUT = m_identityLUTTexture = createIdentityLUTTexture(16u);
+
+    if (m_lutDescriptorDirty && m_descriptorSetsInitialized &&
+        m_descriptorSets.size() == m_hdrInputTargets.size() && activeLUT)
+    {
+        auto device = core::VulkanContext::getContext()->getDevice();
+        for (size_t i = 0; i < m_descriptorSets.size(); ++i)
+        {
+            DescriptorSetBuilder::begin()
+                .addImage(m_hdrInputTargets[i]->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                .addImage(activeLUT->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
+                .update(device, m_descriptorSets[i]);
+        }
+        m_lutDescriptorDirty = false;
+    }
+
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);
     vkCmdSetScissor(commandBuffer->vk(), 0, 1, &m_scissor);
 
@@ -86,8 +179,21 @@ void TonemapRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
     vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     TonemapPC pc{};
-    pc.exposure = 1.0f;
-    pc.gamma = 2.2f;
+    pc.tonemapParams = glm::vec4(
+        1.0f,
+        2.2f,
+        settings.colorGradingSaturation,
+        settings.colorGradingContrast);
+    pc.gradeParams = glm::vec4(
+        settings.colorGradingTemperature,
+        settings.colorGradingTint,
+        (settings.enablePostProcessing && settings.enableColorGrading) ? 1.0f : 0.0f,
+        (settings.enablePostProcessing && settings.enableLUTGrading && activeLUT) ? 1.0f : 0.0f);
+    pc.lutParams = glm::vec4(
+        glm::clamp(settings.lutGradingStrength, 0.0f, 1.0f),
+        0.0f,
+        0.0f,
+        0.0f);
 
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSets[renderContext.currentImageIndex], 0, nullptr);
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
@@ -132,30 +238,38 @@ void TonemapRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
     const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
 
     m_colorRenderTargets.resize(imageCount);
+    m_hdrInputTargets.resize(imageCount);
     m_descriptorSets.resize(imageCount);
+
+    Texture::SharedPtr activeLUT = m_lutTexture ? m_lutTexture : m_identityLUTTexture;
+    if (!activeLUT)
+        activeLUT = m_identityLUTTexture = createIdentityLUTTexture(16u);
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
         m_colorRenderTargets[i] = storage.getTexture(m_colorTextureHandler[i]);
-
-        auto texture = storage.getTexture(m_hdrInputHandlers[i]);
+        m_hdrInputTargets[i] = storage.getTexture(m_hdrInputHandlers[i]);
 
         if (!m_descriptorSetsInitialized)
         {
             m_descriptorSets[i] = DescriptorSetBuilder::begin()
-                                      .addImage(texture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                                      .addImage(m_hdrInputTargets[i]->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                                      .addImage(activeLUT->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
                                       .build(core::VulkanContext::getContext()->getDevice(), core::VulkanContext::getContext()->getPersistentDescriptorPool(), m_descriptorSetLayout);
         }
         else
         {
             DescriptorSetBuilder::begin()
-                .addImage(texture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                .addImage(m_hdrInputTargets[i]->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                .addImage(activeLUT->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
                 .update(core::VulkanContext::getContext()->getDevice(), m_descriptorSets[i]);
         }
     }
 
     if (!m_descriptorSetsInitialized)
         m_descriptorSetsInitialized = true;
+
+    m_lutDescriptorDirty = false;
 }
 
 ELIX_NESTED_NAMESPACE_END
