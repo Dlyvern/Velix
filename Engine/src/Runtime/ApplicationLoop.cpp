@@ -180,6 +180,7 @@ bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
     AssetsLoader::registerAssetLoader(std::make_shared<MaterialAssetLoader>());
 
     m_window = platform::Window::create(800, 600, "Velix", platform::Window::WindowFlags::EWINDOW_FLAGS_DEFAULT);
+    m_window->centerizedOnScreen();
     scripting::setActiveWindow(m_window.get());
 
     m_vulkanContext = core::VulkanContext::create(*m_window);
@@ -244,6 +245,8 @@ void ApplicationLoop::shutdown()
     utilities::AsyncGpuUpload::flush(m_vulkanContext->getDevice());
 
     AssetsLoader::clearAssetLoaders();
+
+    EngineShaderFamilies::cleanEngineShaderFamilies();
 
     m_vulkanContext->cleanup();
 }

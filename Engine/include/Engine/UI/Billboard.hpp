@@ -18,6 +18,8 @@ class Billboard
 {
 public:
     bool loadTexture(const std::string &assetPath);
+    bool ensureTextureLoaded();
+    void setTexturePath(const std::string &assetPath);
     void clearTexture();
 
     const std::string  &getTexturePath() const;

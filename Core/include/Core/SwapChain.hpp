@@ -28,7 +28,7 @@ public:
     platform::Window &getWindow() const;
     VkViewport getViewport(float x = 0.0f, float y = 0.0f, float minDepth = 0.0f, float maxDepth = 1.0f);
     VkRect2D getScissor(VkOffset2D offset = {0, 0});
-    const std::vector<VkImage>& getImages() const;
+    const std::vector<VkImage> &getImages() const;
     bool isVSyncEnabled() const;
     void setVSyncEnabled(bool enabled);
 
@@ -37,10 +37,11 @@ public:
     void cleanup();
 
     ~SwapChain();
+
 private:
-    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
-    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
-    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, platform::Window &window);
+    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats);
+    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR> &availablePresentModes);
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities, platform::Window &window);
 
     struct SwapChainSupportDetails
     {
@@ -52,7 +53,7 @@ private:
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface);
 
     void createSwapChain();
-    VkDevice m_device{VK_NULL_HANDLE};  
+    VkDevice m_device{VK_NULL_HANDLE};
     VkSwapchainKHR m_swapChain{VK_NULL_HANDLE};
     VkFormat m_imageFormat{};
     VkExtent2D m_extent{};
@@ -72,4 +73,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_SWAP_CHAIN_HPP
+#endif // ELIX_SWAP_CHAIN_HPP

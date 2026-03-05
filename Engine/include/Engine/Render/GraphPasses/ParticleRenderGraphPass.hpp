@@ -11,11 +11,14 @@
 #include "Engine/Render/RenderTarget.hpp"
 #include "Engine/Scene.hpp"
 #include "Engine/Particles/ParticleTypes.hpp"
+#include "Engine/Texture.hpp"
 
 #include <volk.h>
 #include <glm/glm.hpp>
 
 #include <vector>
+#include <string>
+#include <unordered_map>
 #include <cstdint>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -69,18 +72,27 @@ private:
     std::vector<const RenderTarget *> m_inputRenderTargets;
     std::vector<core::Buffer::SharedPtr> m_particleSSBOs;
 
+    static constexpr uint32_t MAX_PARTICLE_TEXTURES = 8;
+
     std::vector<VkDescriptorSet> m_descriptorSets;
     std::vector<VkDescriptorSet> m_passthroughSets;
+    std::vector<VkDescriptorSet> m_textureSets;
 
     core::DescriptorSetLayout::SharedPtr m_ssboDescriptorSetLayout;
     core::DescriptorSetLayout::SharedPtr m_passthroughDescriptorSetLayout;
+    core::DescriptorSetLayout::SharedPtr m_textureDescriptorSetLayout;
     core::PipelineLayout::SharedPtr m_particlePipelineLayout;
     core::PipelineLayout::SharedPtr m_passthroughPipelineLayout;
     core::Sampler::SharedPtr m_nearestSampler;
+    core::Sampler::SharedPtr m_linearSampler;
+
+    std::unordered_map<std::string, Texture::SharedPtr> m_textureCache;
+    Texture::SharedPtr m_defaultWhiteTexture;
 
     bool m_compiled{false};
 
     void collectParticleData(std::vector<ParticleGPUData> &out,
+                             std::vector<std::string> &outTextureSlots,
                              const glm::vec3 &cameraRight,
                              const glm::vec3 &cameraUp) const;
     void recordPassthrough(core::CommandBuffer::SharedPtr cmd, uint32_t imageIndex);

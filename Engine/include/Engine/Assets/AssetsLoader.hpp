@@ -31,12 +31,15 @@ public:
     static std::optional<MaterialAsset> loadMaterial(const std::string &path);
     static void setTextureImportMaxDimension(uint32_t maxDimension);
     static uint32_t getTextureImportMaxDimension();
+    static void setTextureAssetImportRootDirectory(const std::filesystem::path &rootDirectory);
+    static std::filesystem::path getTextureAssetImportRootDirectory();
 
 public:
     static inline std::vector<std::shared_ptr<IAssetLoader>> s_assetLoaders;
     static inline uint32_t s_textureImportMaxDimension = 2048u;
     static inline bool s_textureImportMaxDimensionExplicitlySet = false;
     static inline bool s_textureImportMaxDimensionInitializedFromEnv = false;
+    static inline std::filesystem::path s_textureAssetImportRootDirectory{};
 
 private:
     static std::optional<ModelAsset> importModelFromSource(const std::string &path);

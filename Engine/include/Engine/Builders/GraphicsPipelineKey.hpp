@@ -117,7 +117,7 @@ struct GraphicsPipelineKeyHash
         hashing::hash(data, static_cast<uint32_t>(k.topology));
         hashing::hash(data, static_cast<uint32_t>(k.rasterizationSamples));
         hashing::hash(data, static_cast<uint8_t>(k.gbufferOutputMode));
-        // hashing::hash(data, static_cast<uint32_t>(k.pipelineLayout));
+        hashing::hash(data, reinterpret_cast<uintptr_t>(k.pipelineLayout));
 
         for (const auto &colorFormat : k.colorFormats)
             hashing::hash(data, static_cast<uint32_t>(colorFormat));

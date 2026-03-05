@@ -57,19 +57,23 @@ struct LightSSBO
 
 struct LightSpaceMatrixUBO
 {
-    glm::mat4 lightSpaceMatrix;
+    glm::mat4 lightSpaceMatrix{1.0f};
     std::array<glm::mat4, elix::engine::ShadowConstants::MAX_DIRECTIONAL_CASCADES> directionalLightSpaceMatrices;
-    glm::vec4 directionalCascadeSplits;
+    glm::vec4 directionalCascadeSplits{glm::vec4(std::numeric_limits<float>::max())};
     std::array<glm::mat4, elix::engine::ShadowConstants::MAX_SPOT_SHADOWS> spotLightSpaceMatrices;
+
+    LightSpaceMatrixUBO()
+    {
+        directionalLightSpaceMatrices.fill(1.0f);
+        spotLightSpaceMatrices.fill(1.0f);
+    }
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-RenderGraph::RenderGraph(bool presentToSwapchain, bool cleanupSharedShaderFamilies)
+RenderGraph::RenderGraph(bool presentToSwapchain) : m_presentToSwapchain(presentToSwapchain)
 {
-    m_presentToSwapchain = presentToSwapchain;
-    m_cleanupSharedShaderFamilies = cleanupSharedShaderFamilies;
     m_device = core::VulkanContext::getContext()->getDevice();
     m_swapchain = core::VulkanContext::getContext()->getSwapchain();
 
@@ -294,6 +298,90 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         return nullptr;
     };
 
+    auto hashFloat = [](float value) -> size_t
+    {
+        if (!std::isfinite(value))
+            return 0u;
+
+        uint32_t bits = 0u;
+        std::memcpy(&bits, &value, sizeof(float));
+        return std::hash<uint32_t>()(bits);
+    };
+
+    auto hashCombine = [](size_t &seed, size_t value)
+    {
+        seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
+    };
+
+    auto buildMaterialCacheKey = [&](const CPUMaterial &materialCPU) -> std::string
+    {
+        size_t seed = 0u;
+        hashCombine(seed, std::hash<std::string>()(materialCPU.name));
+        hashCombine(seed, std::hash<std::string>()(materialCPU.albedoTexture));
+        hashCombine(seed, std::hash<std::string>()(materialCPU.normalTexture));
+        hashCombine(seed, std::hash<std::string>()(materialCPU.ormTexture));
+        hashCombine(seed, std::hash<std::string>()(materialCPU.emissiveTexture));
+        hashCombine(seed, std::hash<uint32_t>()(materialCPU.flags));
+        hashCombine(seed, hashFloat(materialCPU.baseColorFactor.x));
+        hashCombine(seed, hashFloat(materialCPU.baseColorFactor.y));
+        hashCombine(seed, hashFloat(materialCPU.baseColorFactor.z));
+        hashCombine(seed, hashFloat(materialCPU.baseColorFactor.w));
+        hashCombine(seed, hashFloat(materialCPU.emissiveFactor.x));
+        hashCombine(seed, hashFloat(materialCPU.emissiveFactor.y));
+        hashCombine(seed, hashFloat(materialCPU.emissiveFactor.z));
+        hashCombine(seed, hashFloat(materialCPU.metallicFactor));
+        hashCombine(seed, hashFloat(materialCPU.roughnessFactor));
+        hashCombine(seed, hashFloat(materialCPU.aoStrength));
+        hashCombine(seed, hashFloat(materialCPU.normalScale));
+        hashCombine(seed, hashFloat(materialCPU.alphaCutoff));
+        hashCombine(seed, hashFloat(materialCPU.ior));
+        hashCombine(seed, hashFloat(materialCPU.uvScale.x));
+        hashCombine(seed, hashFloat(materialCPU.uvScale.y));
+        hashCombine(seed, hashFloat(materialCPU.uvOffset.x));
+        hashCombine(seed, hashFloat(materialCPU.uvOffset.y));
+        hashCombine(seed, hashFloat(materialCPU.uvRotation));
+        return std::to_string(seed);
+    };
+
+    auto createMaterialFromCpuData = [&](const CPUMaterial &materialCPU, const std::filesystem::path &materialAssetFilePath) -> Material::SharedPtr
+    {
+        auto albedoTexture = loadTextureForMaterial(materialCPU.albedoTexture, VK_FORMAT_R8G8B8A8_SRGB, materialAssetFilePath);
+        auto normalTexture = loadTextureForMaterial(materialCPU.normalTexture, VK_FORMAT_R8G8B8A8_UNORM, materialAssetFilePath);
+        auto ormTexture = loadTextureForMaterial(materialCPU.ormTexture, VK_FORMAT_R8G8B8A8_UNORM, materialAssetFilePath);
+        auto emissiveTexture = loadTextureForMaterial(materialCPU.emissiveTexture, VK_FORMAT_R8G8B8A8_SRGB, materialAssetFilePath);
+
+        if (!albedoTexture)
+            albedoTexture = Texture::getDefaultWhiteTexture();
+        if (!normalTexture)
+            normalTexture = Texture::getDefaultNormalTexture();
+        if (!ormTexture)
+            ormTexture = Texture::getDefaultOrmTexture();
+        if (!emissiveTexture)
+            emissiveTexture = Texture::getDefaultBlackTexture();
+
+        auto material = Material::create(albedoTexture);
+        if (!material)
+            return nullptr;
+
+        material->setAlbedoTexture(albedoTexture);
+        material->setNormalTexture(normalTexture);
+        material->setOrmTexture(ormTexture);
+        material->setEmissiveTexture(emissiveTexture);
+        material->setBaseColorFactor(materialCPU.baseColorFactor);
+        material->setEmissiveFactor(materialCPU.emissiveFactor);
+        material->setMetallic(materialCPU.metallicFactor);
+        material->setRoughness(materialCPU.roughnessFactor);
+        material->setAoStrength(materialCPU.aoStrength);
+        material->setNormalScale(materialCPU.normalScale);
+        material->setAlphaCutoff(materialCPU.alphaCutoff);
+        material->setFlags(materialCPU.flags);
+        material->setUVScale(materialCPU.uvScale);
+        material->setUVOffset(materialCPU.uvOffset);
+        material->setUVRotation(materialCPU.uvRotation);
+        material->setIor(materialCPU.ior);
+        return material;
+    };
+
     auto resolveMaterialOverrideFromPath = [&](const std::string &materialPath) -> Material::SharedPtr
     {
         if (materialPath.empty())
@@ -321,30 +409,9 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
         auto materialCPU = materialAsset.value().material;
         const std::filesystem::path materialAssetFilePath = std::filesystem::path(normalizedMaterialPath);
-
-        auto albedoTexture = loadTextureForMaterial(materialCPU.albedoTexture, VK_FORMAT_R8G8B8A8_SRGB, materialAssetFilePath);
-        auto normalTexture = loadTextureForMaterial(materialCPU.normalTexture, VK_FORMAT_R8G8B8A8_UNORM, materialAssetFilePath);
-        auto ormTexture = loadTextureForMaterial(materialCPU.ormTexture, VK_FORMAT_R8G8B8A8_UNORM, materialAssetFilePath);
-        auto emissiveTexture = loadTextureForMaterial(materialCPU.emissiveTexture, VK_FORMAT_R8G8B8A8_SRGB, materialAssetFilePath);
-
-        auto material = Material::create(albedoTexture);
+        auto material = createMaterialFromCpuData(materialCPU, materialAssetFilePath);
         if (!material)
             return nullptr;
-
-        material->setAlbedoTexture(albedoTexture);
-        material->setNormalTexture(normalTexture);
-        material->setOrmTexture(ormTexture);
-        material->setEmissiveTexture(emissiveTexture);
-        material->setBaseColorFactor(materialCPU.baseColorFactor);
-        material->setEmissiveFactor(materialCPU.emissiveFactor);
-        material->setMetallic(materialCPU.metallicFactor);
-        material->setRoughness(materialCPU.roughnessFactor);
-        material->setAoStrength(materialCPU.aoStrength);
-        material->setNormalScale(materialCPU.normalScale);
-        material->setAlphaCutoff(materialCPU.alphaCutoff);
-        material->setFlags(materialCPU.flags);
-        material->setUVScale(materialCPU.uvScale);
-        material->setUVOffset(materialCPU.uvOffset);
 
         m_failedMaterialAssetPaths.erase(normalizedMaterialPath);
         m_materialsByAssetPath[normalizedMaterialPath] = material;
@@ -391,31 +458,32 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         if (mesh.material.albedoTexture.empty())
             return Material::getDefaultMaterial();
 
-        auto materialIt = m_materialsByAlbedoPath.find(mesh.material.albedoTexture);
+        const std::string materialCacheKey = buildMaterialCacheKey(mesh.material);
+
+        auto materialIt = m_materialsByAlbedoPath.find(materialCacheKey);
         if (materialIt != m_materialsByAlbedoPath.end())
             return materialIt->second;
 
-        if (m_failedAlbedoTexturePaths.find(mesh.material.albedoTexture) != m_failedAlbedoTexturePaths.end())
+        if (m_failedAlbedoTexturePaths.find(materialCacheKey) != m_failedAlbedoTexturePaths.end())
             return Material::getDefaultMaterial();
 
-        auto textureImage = AssetsLoader::loadTextureGPU(mesh.material.albedoTexture, VK_FORMAT_R8G8B8A8_SRGB);
-        if (!textureImage)
+        auto material = createMaterialFromCpuData(mesh.material, {});
+        if (!material)
         {
-            const auto [_, inserted] = m_failedAlbedoTexturePaths.insert(mesh.material.albedoTexture);
+            const auto [_, inserted] = m_failedAlbedoTexturePaths.insert(materialCacheKey);
             if (inserted)
             {
-                VX_ENGINE_ERROR_STREAM("Failed to load mesh albedo texture: " << mesh.material.albedoTexture << '\n');
-                VX_ENGINE_WARNING_STREAM("Using default material for unresolved texture path (cached to avoid per-frame reload attempts)\n");
+                VX_ENGINE_ERROR_STREAM("Failed to create runtime mesh material for mesh: " << mesh.name << '\n');
+                VX_ENGINE_WARNING_STREAM("Using default material for unresolved runtime mesh material (cached to avoid per-frame reload attempts)\n");
             }
 
             auto fallbackMaterial = Material::getDefaultMaterial();
-            m_materialsByAlbedoPath[mesh.material.albedoTexture] = fallbackMaterial;
+            m_materialsByAlbedoPath[materialCacheKey] = fallbackMaterial;
             return fallbackMaterial;
         }
 
-        auto material = Material::create(textureImage);
-        m_failedAlbedoTexturePaths.erase(mesh.material.albedoTexture);
-        m_materialsByAlbedoPath[mesh.material.albedoTexture] = material;
+        m_failedAlbedoTexturePaths.erase(materialCacheKey);
+        m_materialsByAlbedoPath[materialCacheKey] = material;
         return material;
     };
 
@@ -472,6 +540,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
         return true;
     };
+
+    const glm::vec3 cameraPosition = glm::vec3(glm::inverse(view)[3]);
 
     for (const auto &entity : sceneEntities)
     {
@@ -545,7 +615,19 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             if (meshIndex >= drawItem.localMeshTransforms.size())
                 drawItem.localMeshTransforms.resize(meshes->size(), glm::mat4(1.0f));
 
-            drawItem.localMeshTransforms[meshIndex] = (*meshes)[meshIndex].localTransform;
+            const CPUMesh &sourceMesh = (*meshes)[meshIndex];
+            glm::mat4 meshLocalTransform = sourceMesh.localTransform;
+
+            if (skeletalMeshComponent && sourceMesh.attachedBoneId >= 0)
+            {
+                auto &skeleton = skeletalMeshComponent->getSkeleton();
+                if (auto *attachmentBone = skeleton.getBone(sourceMesh.attachedBoneId))
+                {
+                    meshLocalTransform = attachmentBone->finalTransformation * meshLocalTransform;
+                }
+            }
+
+            drawItem.localMeshTransforms[meshIndex] = meshLocalTransform;
 
             if (!drawItem.meshes[meshIndex])
                 continue;
@@ -646,18 +728,22 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         return key;
     };
 
+    const uint64_t skinnedVertexLayoutHash = vertex::VertexTraits<vertex::VertexSkinned>::layout().hash;
+
     std::vector<MeshDrawReference> drawReferences;
     drawReferences.reserve(m_perFrameData.drawItems.size() * 2);
 
     for (auto &[entity, drawItem] : m_perFrameData.drawItems)
     {
-        const bool isSkinned = !drawItem.finalBones.empty();
+        const bool hasSkeletonPalette = !drawItem.finalBones.empty();
 
         for (uint32_t meshIndex = 0; meshIndex < drawItem.meshes.size(); ++meshIndex)
         {
             const auto &mesh = drawItem.meshes[meshIndex];
             if (!mesh)
                 continue;
+
+            const bool meshIsSkinned = hasSkeletonPalette && mesh->vertexLayoutHash == skinnedVertexLayoutHash;
 
             const glm::mat4 localTransform = meshIndex < drawItem.localMeshTransforms.size()
                                                  ? drawItem.localMeshTransforms[meshIndex]
@@ -684,14 +770,38 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 .occlusionKey = makeReferenceOcclusionKey(entity, meshIndex),
                 .worldBoundsCenter = worldBoundsCenter,
                 .worldBoundsRadius = worldBoundsRadius,
-                .skinned = isSkinned,
+                .skinned = meshIsSkinned,
                 .modelMatrix = modelMatrix});
         }
     }
 
+    auto isTranslucentReference = [](const MeshDrawReference &reference) -> bool
+    {
+        if (!reference.material)
+            return false;
+
+        const uint32_t flags = reference.material->params().flags;
+        return (flags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
+    };
+
     std::sort(drawReferences.begin(), drawReferences.end(),
-              [](const MeshDrawReference &left, const MeshDrawReference &right)
+              [cameraPosition, &isTranslucentReference](const MeshDrawReference &left, const MeshDrawReference &right)
               {
+                  const bool leftTranslucent = isTranslucentReference(left);
+                  const bool rightTranslucent = isTranslucentReference(right);
+                  if (leftTranslucent != rightTranslucent)
+                      return !leftTranslucent;
+
+                  if (leftTranslucent && rightTranslucent)
+                  {
+                      const glm::vec3 leftDelta = left.worldBoundsCenter - cameraPosition;
+                      const glm::vec3 rightDelta = right.worldBoundsCenter - cameraPosition;
+                      const float leftDistanceSquared = glm::dot(leftDelta, leftDelta);
+                      const float rightDistanceSquared = glm::dot(rightDelta, rightDelta);
+                      if (std::abs(leftDistanceSquared - rightDistanceSquared) > 1e-6f)
+                          return leftDistanceSquared > rightDistanceSquared; // back-to-front for blending
+                  }
+
                   if (left.skinned != right.skinned)
                       return left.skinned < right.skinned;
 
@@ -793,14 +903,16 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     const uint32_t occlusionFastMotionStaleRevealFrames = static_cast<uint32_t>(std::max(0, qualitySettings.occlusionFastMotionStaleRevealFrames));
     const float occlusionFastMotionTranslationThreshold = std::max(0.0f, qualitySettings.occlusionFastMotionTranslationThreshold);
     const float occlusionFastMotionForwardDotThreshold = std::clamp(qualitySettings.occlusionFastMotionForwardDotThreshold, -1.0f, 1.0f);
-    const uint32_t shadowOcclusionVisibilityGraceFrames = static_cast<uint32_t>(std::max(0, qualitySettings.shadowOcclusionVisibilityGraceFrames));
+    // Reuse the same grace knob for main occlusion and shadow-occlusion stability.
+    const uint32_t occlusionVisibilityGraceFrames = static_cast<uint32_t>(std::max(0, qualitySettings.shadowOcclusionVisibilityGraceFrames));
+    const uint32_t shadowOcclusionVisibilityGraceFrames = occlusionVisibilityGraceFrames;
     const bool enableOcclusionCulling = qualitySettings.enableOcclusionCulling;
 
     bool fastCameraMotion = false;
     if (enableFrustumCulling && enableOcclusionCulling)
     {
         const glm::mat4 inverseView = glm::inverse(view);
-        const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
+        const glm::vec3 cameraPositionCurrent = glm::vec3(inverseView[3]);
 
         glm::vec3 cameraForward = -glm::vec3(inverseView[2]);
         const float cameraForwardLength = glm::length(cameraForward);
@@ -811,14 +923,14 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
         if (m_hasLastOcclusionCameraState)
         {
-            const float translationDelta = glm::length(cameraPosition - m_lastOcclusionCameraPosition);
+            const float translationDelta = glm::length(cameraPositionCurrent - m_lastOcclusionCameraPosition);
             const float forwardDot = glm::dot(cameraForward, m_lastOcclusionCameraForward);
             fastCameraMotion =
                 translationDelta >= occlusionFastMotionTranslationThreshold ||
                 forwardDot < occlusionFastMotionForwardDotThreshold;
         }
 
-        m_lastOcclusionCameraPosition = cameraPosition;
+        m_lastOcclusionCameraPosition = cameraPositionCurrent;
         m_lastOcclusionCameraForward = cameraForward;
         m_hasLastOcclusionCameraState = true;
     }
@@ -863,12 +975,33 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
         uint32_t queryBudget = m_occlusionQueriesPerFrame;
 
+        auto isTranslucentBatch = [](const DrawBatch &batch) -> bool
+        {
+            if (!batch.material)
+                return false;
+
+            const uint32_t flags = batch.material->params().flags;
+            return (flags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
+        };
+
         for (const auto &batch : m_perFrameData.drawBatches)
         {
             if (!batch.mesh || batch.instanceCount == 0u)
                 continue;
 
-            const bool allowBatchOcclusion = batch.instanceCount <= occlusionMaxInstancesPerBatch;
+            if (isTranslucentBatch(batch))
+            {
+                DrawBatch visibleBatch = batch;
+                visibleBatch.runOcclusionQuery = false;
+                visibleBatches.push_back(visibleBatch);
+                continue;
+            }
+
+            // Batch-level occlusion is unstable when many unrelated instances are grouped together.
+            // Keep query-driven culling on single-instance batches to avoid large temporal popping.
+            const bool allowBatchOcclusion =
+                batch.instanceCount == 1u &&
+                batch.instanceCount <= occlusionMaxInstancesPerBatch;
             if (!allowBatchOcclusion)
             {
                 DrawBatch visibleBatch = batch;
@@ -891,7 +1024,18 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 state.hasResult &&
                 framesSinceLastQuery >= occlusionFastMotionStaleRevealFrames;
 
-            if (!occluded || shouldRevealDueToFastMotion)
+            bool shouldRevealByGrace = false;
+            if (occluded && state.hasResult && occlusionVisibilityGraceFrames > 0u)
+            {
+                const auto visibilityIt = m_shadowCasterLastVisibleFrameByKey.find(batch.occlusionKey);
+                if (visibilityIt != m_shadowCasterLastVisibleFrameByKey.end())
+                {
+                    const uint64_t framesSinceLastVisible = m_occlusionFrameCounter - visibilityIt->second;
+                    shouldRevealByGrace = framesSinceLastVisible <= occlusionVisibilityGraceFrames;
+                }
+            }
+
+            if (!occluded || shouldRevealDueToFastMotion || shouldRevealByGrace)
             {
                 DrawBatch visibleBatch = batch;
                 visibleBatch.runOcclusionQuery = false;
@@ -938,6 +1082,12 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         m_occlusionFrameNumbersByFrame[m_currentFrame] = m_occlusionFrameCounter;
     }
 
+    for (const auto &batch : m_perFrameData.drawBatches)
+    {
+        if (batch.instanceCount > 0u)
+            m_shadowCasterLastVisibleFrameByKey[batch.occlusionKey] = m_occlusionFrameCounter;
+    }
+
     const bool hasDirectionalShadowCascades = m_perFrameData.activeDirectionalCascadeCount > 0u;
     const bool useShadowOcclusionCulling =
         enableFrustumCulling &&
@@ -982,6 +1132,11 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     shadowReferences.reserve(drawReferences.size());
     for (size_t referenceIndex = 0; referenceIndex < drawReferences.size(); ++referenceIndex)
     {
+        const uint32_t materialFlags = drawReferences[referenceIndex].material ? drawReferences[referenceIndex].material->params().flags : 0u;
+        const bool isTranslucent = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
+        if (isTranslucent)
+            continue;
+
         if (useShadowOcclusionCulling)
         {
             const bool currentlyVisible =
@@ -1211,37 +1366,6 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
 
     std::memcpy(m_previewCameraMapped[m_currentFrame], &previewCameraUBO, sizeof(CameraUBO));
 
-    // TODO NEEDS TO BE REDESIGNED
-    //  size_t requiredSize = sizeof(LightData) * lights.size();
-
-    // if (requiredSize > m_lightSSBOs[m_currentFrame]->getSize()) {
-    //     m_lightSSBOs[m_currentFrame] = core::Buffer::create(
-    //         requiredSize * 2, // Overallocate by 2x
-    //         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-    //         0,
-    //         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-    //     );
-
-    //     // Update descriptor set with new buffer
-    //     VkDescriptorBufferInfo bufferInfo{};
-    //     bufferInfo.buffer = m_lightSSBOs[frameIndex]->vkBuffer();
-    //     bufferInfo.offset = 0;
-    //     bufferInfo.range = VK_WHOLE_SIZE;
-
-    //     VkWriteDescriptorSet descriptorWrite{};
-    //     descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    //     descriptorWrite.dstSet = m_lightingDescriptorSets[frameIndex];
-    //     descriptorWrite.dstBinding = 0;
-    //     descriptorWrite.dstArrayElement = 0;
-    //     descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    //     descriptorWrite.descriptorCount = 1;
-    //     descriptorWrite.pBufferInfo = &bufferInfo;
-
-    //     vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
-    // }
-
-    // size_t requiredSize = sizeof(LightData) * (lights.size() * sizeof(LightData));
-
     const auto lights = scene->getLights();
 
     void *mapped = nullptr;
@@ -1267,12 +1391,12 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     m_perFrameData.skyLightEnabled = false;
 
     LightSpaceMatrixUBO lightSpaceMatrixUBO{};
-    lightSpaceMatrixUBO.lightSpaceMatrix = glm::mat4(1.0f);
-    for (auto &matrix : lightSpaceMatrixUBO.directionalLightSpaceMatrices)
-        matrix = glm::mat4(1.0f);
-    lightSpaceMatrixUBO.directionalCascadeSplits = glm::vec4(std::numeric_limits<float>::max());
-    for (auto &matrix : lightSpaceMatrixUBO.spotLightSpaceMatrices)
-        matrix = glm::mat4(1.0f);
+    // lightSpaceMatrixUBO.lightSpaceMatrix = glm::mat4(1.0f);
+    // for (auto &matrix : lightSpaceMatrixUBO.directionalLightSpaceMatrices)
+    //     matrix = glm::mat4(1.0f);
+    // lightSpaceMatrixUBO.directionalCascadeSplits = glm::vec4(std::numeric_limits<float>::max());
+    // for (auto &matrix : lightSpaceMatrixUBO.spotLightSpaceMatrices)
+    //     matrix = glm::mat4(1.0f);
 
     const std::array<glm::vec3, ShadowConstants::POINT_SHADOW_FACES> pointFaceDirections{
         glm::vec3(1.0f, 0.0f, 0.0f),
@@ -1529,27 +1653,40 @@ void RenderGraph::recreateSwapChain()
 
     for (const auto &[id, renderPass] : m_renderGraphPasses)
         renderPass.renderGraphPass->compile(m_renderGraphPassesStorage);
+
+    invalidateAllExecutionCaches();
 }
 
 bool RenderGraph::begin()
 {
     utilities::AsyncGpuUpload::collectFinished(m_device);
-    syncDetailedProfilingMode();
+    m_renderGraphProfiling->syncDetailedProfilingMode();
 
-    auto &cpuStageProfilingData = m_cpuStageProfilingByFrame[m_currentFrame];
-    cpuStageProfilingData = FrameCpuStageProfilingData{};
-    const bool detailedProfilingEnabled = isDetailedProfilingEnabled();
+    auto &cpuStageProfilingData = m_renderGraphProfiling->getCpuStageProfilingDataByFrame(m_currentFrame);
+
+    // NOTE: do NOT reset the slot yet — it still holds complete profiling data from the
+    // previous time this frame slot was used (2 frames ago). We resolve it below before
+    // overwriting it, so that all fields (commandPoolResetMs, primaryCbEndMs, submitMs,
+    // presentMs, etc.) are read correctly instead of as zeros.
+    const bool detailedProfilingEnabled = m_renderGraphProfiling->isDetailedProfilingEnabled();
 
     const auto waitForFenceStart = std::chrono::high_resolution_clock::now();
     if (VkResult result = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX); result != VK_SUCCESS)
     {
         const auto waitForFenceEnd = std::chrono::high_resolution_clock::now();
-        cpuStageProfilingData.waitForFenceMs = std::chrono::duration<double, std::milli>(waitForFenceEnd - waitForFenceStart).count();
+        const double fenceWaitMs = std::chrono::duration<double, std::milli>(waitForFenceEnd - waitForFenceStart).count();
+        m_renderGraphProfiling->resetCpuStageProfilingDataByFrame(m_currentFrame);
+        cpuStageProfilingData.waitForFenceMs = fenceWaitMs;
         VX_ENGINE_ERROR_STREAM("Failed to wait for fences: " << core::helpers::vulkanResultToString(result) << '\n');
         return false;
     }
     const auto waitForFenceEnd = std::chrono::high_resolution_clock::now();
-    cpuStageProfilingData.waitForFenceMs = std::chrono::duration<double, std::milli>(waitForFenceEnd - waitForFenceStart).count();
+    const double currentFenceWaitMs = std::chrono::duration<double, std::milli>(waitForFenceEnd - waitForFenceStart).count();
+
+    // Resize/fullscreen events can arrive while UI code is building a frame.
+    // Recreate swapchain only from here, after fence wait, to avoid re-entrant resize work.
+    if (m_presentToSwapchain && m_swapchainResizeRequested.exchange(false, std::memory_order_relaxed))
+        recreateSwapChain();
 
     resolveOcclusionQueries(m_currentFrame);
 
@@ -1598,17 +1735,38 @@ bool RenderGraph::begin()
         return false;
     }
 
-    if (detailedProfilingEnabled && m_hasPendingProfilingResolve[m_currentFrame])
+    // Resolve profiling data BEFORE resetting the slot. At this point the slot still
+    // contains the complete data from 2 frames ago (all fields fully written), so the
+    // resolve sees accurate commandPoolResetMs, primaryCbEndMs, submitMs, presentMs, etc.
+    double currentResolveProfilingMs = 0.0;
+    if (detailedProfilingEnabled && m_renderGraphProfiling->hasPendingProfilingResolveByFrame(m_currentFrame))
     {
-        resolveFrameProfilingData(m_currentFrame);
-        m_hasPendingProfilingResolve[m_currentFrame] = false;
+        const auto resolveProfilingStart = std::chrono::high_resolution_clock::now();
+        m_renderGraphProfiling->resolveFrameProfilingData(m_currentFrame);
+        currentResolveProfilingMs = std::chrono::duration<double, std::milli>(
+                                        std::chrono::high_resolution_clock::now() - resolveProfilingStart)
+                                        .count();
+
+        m_renderGraphProfiling->setPendingProfilingResolveByFrame(m_currentFrame, false);
     }
     else if (!detailedProfilingEnabled)
     {
-        m_hasPendingProfilingResolve[m_currentFrame] = false;
+        m_renderGraphProfiling->setPendingProfilingResolveByFrame(m_currentFrame, false);
     }
 
+    // Reset the slot now that we have read the previous frame's data, then write
+    // the current frame's fence-wait and resolve-profiling timings.
+    m_renderGraphProfiling->resetCpuStageProfilingDataByFrame(m_currentFrame);
+    cpuStageProfilingData = m_renderGraphProfiling->getCpuStageProfilingDataByFrame(m_currentFrame);
+    // cpuStageProfilingData = FrameCpuStageProfilingData{};
+    cpuStageProfilingData.waitForFenceMs = currentFenceWaitMs;
+    cpuStageProfilingData.resolveProfilingMs = currentResolveProfilingMs;
+
+    const auto commandPoolResetStart = std::chrono::high_resolution_clock::now();
     m_commandPools[m_currentFrame]->reset(0);
+    cpuStageProfilingData.commandPoolResetMs = std::chrono::duration<double, std::milli>(
+                                                   std::chrono::high_resolution_clock::now() - commandPoolResetStart)
+                                                   .count();
 
     if (m_presentToSwapchain)
     {
@@ -1758,6 +1916,18 @@ bool RenderGraph::begin()
                 passData->renderGraphPass->recompilationIsDone();
         }
 
+        // Invalidate execution cache for any pass that was recompiled
+        // (its resources/image handles may have changed).
+        if (m_passExecutionCache.size() == m_sortedRenderGraphPasses.size())
+        {
+            for (size_t i = 0; i < m_sortedRenderGraphPasses.size(); ++i)
+            {
+                auto *passData = findPassDataByPtr(m_sortedRenderGraphPasses[i]);
+                if (passData && passesToCompile.contains(passData->id))
+                    m_passExecutionCache[i].valid = false;
+            }
+        }
+
         const auto recompileEnd = std::chrono::high_resolution_clock::now();
         cpuStageProfilingData.recompileMs = std::chrono::duration<double, std::milli>(recompileEnd - recompileStart).count();
     }
@@ -1766,19 +1936,19 @@ bool RenderGraph::begin()
 
     primaryCommandBuffer->begin();
 
-    auto &currentFramePassProfilingData = m_passExecutionProfilingDataByFrame[m_currentFrame];
+    auto &currentFramePassProfilingData = m_renderGraphProfiling->getPassExecutionProfillingDataByFrame(m_currentFrame);
     currentFramePassProfilingData.clear();
-    m_usedTimestampQueries = 0;
-    m_timestampQueryBase = m_currentFrame * m_timestampQueriesPerFrame;
-    m_frameQueryRangesByFrame[m_currentFrame] = FrameQueryRange{};
+    m_renderGraphProfiling->setUsedTimestampQueries(0);
+    m_renderGraphProfiling->setTimestampQueryBase(m_currentFrame * m_renderGraphProfiling->getTimestampQueriesPerFrame());
 
-    if (detailedProfilingEnabled && m_isGpuTimingAvailable && m_timestampQueryPool != VK_NULL_HANDLE && m_timestampQueriesPerFrame > 0)
+    m_renderGraphProfiling->resetFrameQueryRangesByFrame(m_currentFrame);
+
+    if (detailedProfilingEnabled && m_renderGraphProfiling->isGPUTimingAvailable() && m_renderGraphProfiling->getTimestampQueryPool() != VK_NULL_HANDLE && m_renderGraphProfiling->getTimestampQueriesPerFrame() > 0)
     {
-        vkCmdResetQueryPool(primaryCommandBuffer->vk(), m_timestampQueryPool, m_timestampQueryBase, m_timestampQueriesPerFrame);
-
-        auto &frameRange = m_frameQueryRangesByFrame[m_currentFrame];
-        frameRange.startQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
-        vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_timestampQueryPool, frameRange.startQueryIndex);
+        vkCmdResetQueryPool(primaryCommandBuffer->vk(), m_renderGraphProfiling->getTimestampQueryPool(), m_renderGraphProfiling->getTimestampQueryBase(), m_renderGraphProfiling->getTimestampQueriesPerFrame());
+        auto &frameRange = m_renderGraphProfiling->getFrameQueryRangesByFrame(m_currentFrame);
+        frameRange.startQueryIndex = m_renderGraphProfiling->getTimestampQueryBase() + m_renderGraphProfiling->getUsedTimestampQueries()++;
+        vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_renderGraphProfiling->getTimestampQueryPool(), frameRange.startQueryIndex);
     }
 
     if (m_occlusionQueryPool != VK_NULL_HANDLE && m_occlusionQueriesPerFrame > 0u)
@@ -1797,11 +1967,28 @@ bool RenderGraph::begin()
     m_passContextData.activeSpotShadowCount = m_perFrameData.activeSpotShadowCount;
     m_passContextData.activePointShadowCount = m_perFrameData.activePointShadowCount;
 
+    // Ensure the cache is sized to match the current sorted pass list.
+    if (m_passExecutionCache.size() != m_sortedRenderGraphPasses.size())
+        m_passExecutionCache.resize(m_sortedRenderGraphPasses.size());
+
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
     {
-        const auto executions = renderGraphPass->getRenderPassExecutions(m_passContextData);
+        // --- Execution + barrier cache ---
+        // Check whether the cached executions are still valid for the current context.
+        // The context fields that affect getRenderPassExecutions() are imageIndex and
+        // the active shadow counts. If any differ, rebuild the cache for this pass.
+        auto &cachedData = m_passExecutionCache[passIndex];
+        const bool cacheHit = cachedData.valid &&
+                              cachedData.imageIndex == m_passContextData.currentImageIndex &&
+                              cachedData.directionalShadowCount == m_passContextData.activeDirectionalShadowCount &&
+                              cachedData.spotShadowCount == m_passContextData.activeSpotShadowCount &&
+                              cachedData.pointShadowCount == m_passContextData.activePointShadowCount;
+        if (!cacheHit)
+            buildExecutionCacheForPass(passIndex);
 
-        for (int recordingIndex = 0; recordingIndex < executions.size(); ++recordingIndex)
+        const auto &executions = cachedData.executions;
+
+        for (int recordingIndex = 0; recordingIndex < static_cast<int>(executions.size()); ++recordingIndex)
         {
             if (secIndex >= m_secondaryCommandBuffers[m_currentFrame].size())
             {
@@ -1833,63 +2020,30 @@ bool RenderGraph::begin()
             ri.pDepthAttachment = execution.useDepth ? &execution.depthRenderingItem : VK_NULL_HANDLE;
             ri.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
 
-            std::vector<VkImageMemoryBarrier2> firstBarriers;
-            std::vector<VkImageMemoryBarrier2> secondBarriers;
+            // Use pre-computed barriers from cache — no per-frame allocation.
+            const auto &firstBarriers = cachedData.preBarriers[recordingIndex];
+            const auto &secondBarriers = cachedData.postBarriers[recordingIndex];
 
-            PassExecutionProfilingData executionProfilingData{};
+            RenderGraphProfiling::PassExecutionProfilingData executionProfilingData{};
             executionProfilingData.passName = renderGraphPass->getDebugName().empty() ? ("Pass " + std::to_string(passIndex))
                                                                                       : renderGraphPass->getDebugName();
 
-            for (const auto &[id, target] : execution.targets)
-            {
-                auto textureDescription = m_renderGraphPassesBuilder.getTextureDescription(id);
-
-                auto srcInfoInitial = utilities::ImageUtilities::getSrcLayoutInfo(textureDescription->getInitialLayout());
-                auto srcInfoFinal = utilities::ImageUtilities::getSrcLayoutInfo(textureDescription->getFinalLayout());
-
-                auto dstInfoInitial = utilities::ImageUtilities::getDstLayoutInfo(textureDescription->getInitialLayout());
-                auto dstInfoFinal = utilities::ImageUtilities::getDstLayoutInfo(textureDescription->getFinalLayout());
-
-                auto aspect = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription->getFormat());
-                auto preBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
-                    *target->getImage(),
-                    srcInfoFinal.accessMask,
-                    dstInfoInitial.accessMask,
-                    textureDescription->getFinalLayout(),   // old
-                    textureDescription->getInitialLayout(), // new
-                    srcInfoFinal.stageMask,
-                    dstInfoInitial.stageMask,
-                    {aspect, 0, 1, 0, textureDescription->getArrayLayers()});
-
-                auto postBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
-                    *target->getImage(),
-                    srcInfoInitial.accessMask,
-                    dstInfoFinal.accessMask,
-                    textureDescription->getInitialLayout(), // old
-                    textureDescription->getFinalLayout(),   // new
-                    srcInfoInitial.stageMask,
-                    dstInfoFinal.stageMask,
-                    {aspect, 0, 1, 0, textureDescription->getArrayLayers()});
-
-                firstBarriers.push_back(preBarrier);
-                secondBarriers.push_back(postBarrier);
-            }
-
-            // Keep one query slot for the frame end timestamp.
-            if (detailedProfilingEnabled &&
-                m_isGpuTimingAvailable &&
-                m_timestampQueryPool != VK_NULL_HANDLE &&
-                (m_usedTimestampQueries + 2) < m_timestampQueriesPerFrame)
-            {
-                executionProfilingData.startQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
-                executionProfilingData.endQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
-
-                vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_timestampQueryPool, executionProfilingData.startQueryIndex);
-            }
-
+            // Start CPU timing before barrier emit so the per-pass cost is fully captured.
             std::chrono::high_resolution_clock::time_point cpuStartTime{};
             if (detailedProfilingEnabled)
                 cpuStartTime = std::chrono::high_resolution_clock::now();
+
+            // Keep one query slot for the frame end timestamp.
+            if (detailedProfilingEnabled &&
+                m_renderGraphProfiling->isGPUTimingAvailable() &&
+                m_renderGraphProfiling->getTimestampQueryPool() != VK_NULL_HANDLE &&
+                (m_renderGraphProfiling->getUsedTimestampQueries() + 2) < m_renderGraphProfiling->getTimestampQueriesPerFrame())
+            {
+                executionProfilingData.startQueryIndex = m_renderGraphProfiling->getTimestampQueryBase() + m_renderGraphProfiling->getUsedTimestampQueries()++;
+                executionProfilingData.endQueryIndex = m_renderGraphProfiling->getTimestampQueryBase() + m_renderGraphProfiling->getUsedTimestampQueries()++;
+
+                vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_renderGraphProfiling->getTimestampQueryPool(), executionProfilingData.startQueryIndex);
+            }
 
             VkDependencyInfo firstDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
             firstDep.imageMemoryBarrierCount = static_cast<uint32_t>(firstBarriers.size());
@@ -1924,7 +2078,7 @@ bool RenderGraph::begin()
             vkCmdPipelineBarrier2(primaryCommandBuffer, &secondDep);
 
             if (executionProfilingData.endQueryIndex != UINT32_MAX)
-                vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_timestampQueryPool, executionProfilingData.endQueryIndex);
+                vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_renderGraphProfiling->getTimestampQueryPool(), executionProfilingData.endQueryIndex);
 
             if (detailedProfilingEnabled)
             {
@@ -1939,15 +2093,17 @@ bool RenderGraph::begin()
         ++passIndex;
     }
 
-    auto &frameRange = m_frameQueryRangesByFrame[m_currentFrame];
+    // auto &frameRange = m_frameQueryRangesByFrame[m_currentFrame];
+    auto &frameRange = m_renderGraphProfiling->getFrameQueryRangesByFrame(m_currentFrame);
+
     if (detailedProfilingEnabled &&
-        m_isGpuTimingAvailable &&
-        m_timestampQueryPool != VK_NULL_HANDLE &&
+        m_renderGraphProfiling->isGPUTimingAvailable() &&
+        m_renderGraphProfiling->getTimestampQueryPool() != VK_NULL_HANDLE &&
         frameRange.startQueryIndex != UINT32_MAX &&
-        m_usedTimestampQueries < m_timestampQueriesPerFrame)
+        m_renderGraphProfiling->getUsedTimestampQueries() < m_renderGraphProfiling->getTimestampQueriesPerFrame())
     {
-        frameRange.endQueryIndex = m_timestampQueryBase + m_usedTimestampQueries++;
-        vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_timestampQueryPool, frameRange.endQueryIndex);
+        frameRange.endQueryIndex = m_renderGraphProfiling->getTimestampQueryBase() + m_renderGraphProfiling->getUsedTimestampQueries()++;
+        vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_renderGraphProfiling->getTimestampQueryPool(), frameRange.endQueryIndex);
     }
 
     if (m_occlusionQueryPool != VK_NULL_HANDLE &&
@@ -1975,7 +2131,11 @@ bool RenderGraph::begin()
         }
     }
 
+    const auto primaryEndStart = std::chrono::high_resolution_clock::now();
     primaryCommandBuffer->end();
+    cpuStageProfilingData.primaryCbEndMs = std::chrono::duration<double, std::milli>(
+                                               std::chrono::high_resolution_clock::now() - primaryEndStart)
+                                               .count();
 
     return true;
 }
@@ -1995,7 +2155,7 @@ void RenderGraph::end()
         signalSemaphores.push_back(m_renderFinishedSemaphores[m_currentFrame]);
     }
 
-    auto &cpuStageProfilingData = m_cpuStageProfilingByFrame[m_currentFrame];
+    auto &cpuStageProfilingData = m_renderGraphProfiling->getCpuStageProfilingDataByFrame(m_currentFrame);
 
     utilities::AsyncGpuUpload::collectFinished(m_device);
     auto uploadWaitSemaphores = utilities::AsyncGpuUpload::acquireReadySemaphores();
@@ -2019,15 +2179,15 @@ void RenderGraph::end()
 
     m_uploadWaitSemaphoresByFrame[m_currentFrame] = std::move(uploadWaitSemaphores);
 
-    if (isDetailedProfilingEnabled())
+    if (m_renderGraphProfiling->isDetailedProfilingEnabled())
     {
-        m_usedTimestampQueriesByFrame[m_currentFrame] = m_usedTimestampQueries;
-        m_hasPendingProfilingResolve[m_currentFrame] = true;
+        m_renderGraphProfiling->setUsedTimestampQueriesByFrame(m_currentFrame, m_renderGraphProfiling->getUsedTimestampQueries());
+        m_renderGraphProfiling->setPendingProfilingResolveByFrame(m_currentFrame, true);
     }
     else
     {
-        m_usedTimestampQueriesByFrame[m_currentFrame] = 0u;
-        m_hasPendingProfilingResolve[m_currentFrame] = false;
+        m_renderGraphProfiling->setUsedTimestampQueriesByFrame(m_currentFrame, 0u);
+        m_renderGraphProfiling->setPendingProfilingResolveByFrame(m_currentFrame, false);
     }
 
     if (m_occlusionQueryPool != VK_NULL_HANDLE && m_occlusionQueriesPerFrame > 0u)
@@ -2081,10 +2241,8 @@ void RenderGraph::draw()
         end();
 
     const auto frameCpuEndTime = std::chrono::high_resolution_clock::now();
-    if (isDetailedProfilingEnabled())
-        m_cpuFrameTimesByFrameMs[m_currentFrame] = std::chrono::duration<double, std::milli>(frameCpuEndTime - frameCpuStartTime).count();
-    else
-        m_cpuFrameTimesByFrameMs[m_currentFrame] = 0.0;
+
+    m_renderGraphProfiling->setCpuFrameTimesByFrameMs(m_currentFrame, std::chrono::duration<double, std::milli>(frameCpuEndTime - frameCpuStartTime).count());
 
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -2223,8 +2381,81 @@ void RenderGraph::sortRenderGraphPasses()
         m_sortedRenderGraphPasses.push_back(renderGraphPass->renderGraphPass.get());
     }
 
+    // Sorted order changed — execution cache is keyed by sorted position, must be rebuilt.
+    m_passExecutionCache.assign(m_sortedRenderGraphPasses.size(), CachedPassExecutionData{});
+
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
         VX_ENGINE_INFO_STREAM("Node: " << renderGraphPass->getDebugName());
+}
+
+void RenderGraph::invalidateAllExecutionCaches()
+{
+    m_passExecutionCache.assign(m_sortedRenderGraphPasses.size(), CachedPassExecutionData{});
+}
+
+void RenderGraph::buildExecutionCacheForPass(size_t sortedPassIndex)
+{
+    if (sortedPassIndex >= m_sortedRenderGraphPasses.size())
+        return;
+
+    auto &cached = m_passExecutionCache[sortedPassIndex];
+    auto *pass = m_sortedRenderGraphPasses[sortedPassIndex];
+
+    cached.executions = pass->getRenderPassExecutions(m_passContextData);
+    cached.imageIndex = m_passContextData.currentImageIndex;
+    cached.directionalShadowCount = m_passContextData.activeDirectionalShadowCount;
+    cached.spotShadowCount = m_passContextData.activeSpotShadowCount;
+    cached.pointShadowCount = m_passContextData.activePointShadowCount;
+
+    const size_t execCount = cached.executions.size();
+    cached.preBarriers.resize(execCount);
+    cached.postBarriers.resize(execCount);
+
+    for (size_t execIdx = 0; execIdx < execCount; ++execIdx)
+    {
+        const auto &exec = cached.executions[execIdx];
+        auto &pre = cached.preBarriers[execIdx];
+        auto &post = cached.postBarriers[execIdx];
+        pre.clear();
+        post.clear();
+        pre.reserve(exec.targets.size());
+        post.reserve(exec.targets.size());
+
+        for (const auto &[id, target] : exec.targets)
+        {
+            auto textureDescription = m_renderGraphPassesBuilder.getTextureDescription(id);
+            if (!textureDescription || !target)
+                continue;
+
+            auto srcInfoInitial = utilities::ImageUtilities::getSrcLayoutInfo(textureDescription->getInitialLayout());
+            auto srcInfoFinal = utilities::ImageUtilities::getSrcLayoutInfo(textureDescription->getFinalLayout());
+            auto dstInfoInitial = utilities::ImageUtilities::getDstLayoutInfo(textureDescription->getInitialLayout());
+            auto dstInfoFinal = utilities::ImageUtilities::getDstLayoutInfo(textureDescription->getFinalLayout());
+            auto aspect = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription->getFormat());
+
+            pre.push_back(utilities::ImageUtilities::insertImageMemoryBarrier(
+                *target->getImage(),
+                srcInfoFinal.accessMask,
+                dstInfoInitial.accessMask,
+                textureDescription->getFinalLayout(),
+                textureDescription->getInitialLayout(),
+                srcInfoFinal.stageMask,
+                dstInfoInitial.stageMask,
+                {aspect, 0, 1, 0, textureDescription->getArrayLayers()}));
+
+            post.push_back(utilities::ImageUtilities::insertImageMemoryBarrier(
+                *target->getImage(),
+                srcInfoInitial.accessMask,
+                dstInfoFinal.accessMask,
+                textureDescription->getInitialLayout(),
+                textureDescription->getFinalLayout(),
+                srcInfoInitial.stageMask,
+                dstInfoFinal.stageMask,
+                {aspect, 0, 1, 0, textureDescription->getArrayLayers()}));
+        }
+    }
+
+    cached.valid = true;
 }
 
 void RenderGraph::compile()
@@ -2250,10 +2481,15 @@ void RenderGraph::compile()
     for (const auto &[id, pass] : m_renderGraphPasses)
         pass.renderGraphPass->compile(m_renderGraphPassesStorage);
 
-    if (m_presentToSwapchain)
+    // Invalidate execution cache — resources may have been (re)allocated.
+    // It will be lazily rebuilt on the first frame using the new VkImage handles.
+    invalidateAllExecutionCaches();
+
+    if (m_presentToSwapchain && !m_hasWindowResizeCallback)
     {
+        m_hasWindowResizeCallback = true;
         core::VulkanContext::getContext()->getSwapchain()->getWindow().addResizeCallback([this](platform::Window *, int, int)
-                                                                                         { recreateSwapChain(); });
+                                                                                         { m_swapchainResizeRequested.store(true, std::memory_order_relaxed); });
     }
 
     // VX_ENGINE_INFO_STREAM("Memory after render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n');
@@ -2304,8 +2540,8 @@ void RenderGraph::createPerObjectDescriptorSets()
         auto instanceBuffer = m_instanceSSBOs.emplace_back(core::Buffer::createShared(INSTANCES_INITIAL_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                                                       core::memory::MemoryUsage::CPU_TO_GPU));
         auto shadowInstanceBuffer = m_shadowInstanceSSBOs.emplace_back(core::Buffer::createShared(SHADOW_INSTANCES_INITIAL_SIZE,
-                                                                                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                                                                                   core::memory::MemoryUsage::CPU_TO_GPU));
+                                                                                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                                                                  core::memory::MemoryUsage::CPU_TO_GPU));
 
         m_perObjectDescriptorSets[i] = DescriptorSetBuilder::begin()
                                            .addBuffer(bonesBuffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
@@ -2375,8 +2611,10 @@ void RenderGraph::createRenderGraphResources()
             m_secondaryCommandBuffers[frame][job] = core::CommandBuffer::createShared(*commandPool, VK_COMMAND_BUFFER_LEVEL_SECONDARY);
     }
 
+    m_renderGraphProfiling = std::make_unique<RenderGraphProfiling>(static_cast<uint32_t>(m_renderGraphPasses.size()));
+
     sortRenderGraphPasses();
-    syncDetailedProfilingMode();
+    m_renderGraphProfiling->syncDetailedProfilingMode();
     initOcclusionQueryPool();
 }
 
@@ -2432,54 +2670,12 @@ void RenderGraph::cleanResources()
     m_imageAvailableSemaphores.clear();
     m_renderFinishedSemaphores.clear();
     m_inFlightFences.clear();
+    m_swapchainResizeRequested.store(false, std::memory_order_relaxed);
+    m_hasWindowResizeCallback = false;
 
-    destroyTimestampQueryPool();
+    m_renderGraphProfiling->destroyTimestampQueryPool();
     destroyOcclusionQueryPool();
-    for (auto &framePassProfilingData : m_passExecutionProfilingDataByFrame)
-        framePassProfilingData.clear();
-    m_hasPendingProfilingResolve.fill(false);
-    m_usedTimestampQueriesByFrame.fill(0);
-    m_frameQueryRangesByFrame.fill(FrameQueryRange{});
-    m_cpuFrameTimesByFrameMs.fill(0.0);
-    m_cpuStageProfilingByFrame.fill(FrameCpuStageProfilingData{});
-    m_lastFrameProfilingData = {};
-
-    m_perFrameData.drawItems.clear();
-    m_perFrameData.drawBatches.clear();
-    m_perFrameData.occlusionProbeBatches.clear();
-    m_perFrameData.occlusionQueryKeys.clear();
-    m_perFrameData.occlusionQueryPool = VK_NULL_HANDLE;
-    m_perFrameData.occlusionQueryBase = 0u;
-    m_perFrameData.enableOcclusionCulling = false;
-    m_meshes.clear();
-    m_texturesByResolvedPath.clear();
-    m_failedTextureResolvedPaths.clear();
-    m_materialsByAlbedoPath.clear();
-    m_failedAlbedoTexturePaths.clear();
-    m_materialsByAssetPath.clear();
-    m_failedMaterialAssetPaths.clear();
-    m_occlusionStates.clear();
-    for (auto &submittedOcclusionKeys : m_submittedOcclusionQueryKeys)
-        submittedOcclusionKeys.clear();
-    m_submittedOcclusionQueryCounts.fill(0u);
-    m_submittedOcclusionFrameNumbers.fill(0u);
-    m_hasPendingOcclusionResolve.fill(false);
-    m_occlusionReadbackMapped.fill(nullptr);
-    for (auto &readbackBuffer : m_occlusionReadbackBuffers)
-        readbackBuffer.reset();
-    for (auto &frameOcclusionKeys : m_occlusionQueryKeysByFrame)
-        frameOcclusionKeys.clear();
-    m_usedOcclusionQueriesByFrame.fill(0u);
-    m_occlusionFrameNumbersByFrame.fill(0u);
-    m_occlusionFrameCounter = 0u;
-    m_shadowCasterLastVisibleFrameByKey.clear();
-    m_lastOcclusionCameraPosition = glm::vec3(0.0f);
-    m_lastOcclusionCameraForward = glm::vec3(0.0f, 0.0f, -1.0f);
-    m_hasLastOcclusionCameraState = false;
     m_renderGraphPassesStorage.cleanup();
-
-    if (m_cleanupSharedShaderFamilies)
-        EngineShaderFamilies::cleanEngineShaderFamilies();
 }
 
 ELIX_CUSTOM_NAMESPACE_END

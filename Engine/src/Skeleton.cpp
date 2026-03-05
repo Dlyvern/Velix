@@ -1,9 +1,31 @@
 #include "Engine/Skeleton.hpp"
 
 #include <iostream>
+#include <cmath>
+#include <glm/gtc/matrix_inverse.hpp>
 #include "Core/Logger.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+
+namespace
+{
+    bool isNearIdentity(const glm::mat4 &matrix)
+    {
+        constexpr float epsilon = 0.0001f;
+        const glm::mat4 identity(1.0f);
+
+        for (int column = 0; column < 4; ++column)
+        {
+            for (int row = 0; row < 4; ++row)
+            {
+                if (std::fabs(matrix[column][row] - identity[column][row]) > epsilon)
+                    return false;
+            }
+        }
+
+        return true;
+    }
+}
 
 Skeleton::Skeleton()
 {
@@ -25,7 +47,7 @@ unsigned int Skeleton::addBone(const BoneInfo &bone)
     return boneID;
 }
 
-int Skeleton::getBoneId(const std::string &boneName)
+int Skeleton::getBoneId(const std::string &boneName) const
 {
     auto it = m_boneMap.find(boneName);
     return it != m_boneMap.end() ? it->second : -1;
@@ -99,8 +121,21 @@ void Skeleton::calculateBindPoseTransforms()
     {
         BoneInfo &bone = m_bonesInfo[boneID];
         glm::mat4 globalTransform = parentTransform * bone.localBindTransform;
+        const bool globalBindIsIdentity = isNearIdentity(bone.globalBindTransform);
+        const bool localBindIsIdentity = isNearIdentity(bone.localBindTransform);
+        const bool hasImportedGlobalBind = !globalBindIsIdentity ||
+                                          (bone.parentId == -1 && globalBindIsIdentity && localBindIsIdentity);
 
-        bone.globalBindTransform = globalTransform;
+        if (hasImportedGlobalBind)
+        {
+            globalTransform = bone.globalBindTransform;
+            bone.localBindTransform = glm::inverse(parentTransform) * globalTransform;
+        }
+        else
+        {
+            bone.globalBindTransform = globalTransform;
+        }
+
         bone.finalTransformation = globalTransform;
 
         for (int childID : bone.children)

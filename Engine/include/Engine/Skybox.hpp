@@ -30,8 +30,8 @@ public:
     const GraphicsPipelineKey &getGraphicsPipelineKey() const;
 
     VkImageView getEnvImageView() const;
-    VkSampler   getEnvSampler()   const;
-    bool        hasTexture()      const
+    VkSampler getEnvSampler() const;
+    bool hasTexture() const
     {
         return m_skyboxTexture != nullptr &&
                m_skyboxTexture->vkImageView() != VK_NULL_HANDLE &&

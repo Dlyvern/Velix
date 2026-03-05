@@ -40,6 +40,10 @@ add_subdirectory(fbx_sdk)
 # fmod sdk wrapper
 add_subdirectory(fmod)
 
+# PhysX wrapper
+add_subdirectory(physx)
+
+
 # OpenEXR / Imath / OpenJPH
 set(OPENEXR_BUILD_LIBS ON CACHE BOOL "Build OpenEXR libraries" FORCE)
 set(OPENEXR_BUILD_TOOLS OFF CACHE BOOL "Disable OpenEXR tools" FORCE)
@@ -75,9 +79,6 @@ set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "Disable SPIRV-Cross tests" FORCE)
 set(SPIRV_CROSS_CLI OFF CACHE BOOL "Disable SPIRV-Cross CLI" FORCE)
 set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "Disable SPIRV-Cross install target" FORCE)
 add_subdirectory(SPIRV-Cross)
-
-# PhysX wrapper
-add_subdirectory(physx)
 
 # VulkanMemoryAllocator
 set(VMA_ENABLE_INSTALL OFF CACHE BOOL "Disable VMA install target" FORCE)
@@ -167,3 +168,16 @@ target_include_directories(imguizmo PUBLIC
 )
 
 target_link_libraries(imguizmo PUBLIC imgui)
+
+add_library(imgui_node_editor STATIC
+    ${CMAKE_CURRENT_LIST_DIR}/imgui-node-editor/imgui_node_editor.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui-node-editor/imgui_node_editor_api.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui-node-editor/imgui_canvas.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui-node-editor/crude_json.cpp
+)
+
+target_include_directories(imgui_node_editor PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/imgui-node-editor
+)
+
+target_link_libraries(imgui_node_editor PUBLIC imgui)

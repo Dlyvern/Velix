@@ -25,6 +25,24 @@ bool Billboard::loadTexture(const std::string &assetPath)
     return true;
 }
 
+bool Billboard::ensureTextureLoaded()
+{
+    if (m_texture)
+        return true;
+
+    if (m_texturePath.empty())
+        return false;
+
+    return loadTexture(m_texturePath);
+}
+
+void Billboard::setTexturePath(const std::string &assetPath)
+{
+    m_texturePath = assetPath;
+    if (m_texturePath.empty())
+        m_texture.reset();
+}
+
 void Billboard::clearTexture()
 {
     m_texturePath.clear();

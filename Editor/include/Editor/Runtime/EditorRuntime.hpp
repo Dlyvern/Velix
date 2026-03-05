@@ -27,8 +27,11 @@
 #include "Engine/Render/GraphPasses/ParticleRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ContactShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/CinematicEffectsRenderGraphPass.hpp"
-#include "Engine/Render/GraphPasses/GlassRenderGraphPass.hpp"
 #include "Engine/Render/IBLManager.hpp"
+
+#include <chrono>
+#include <future>
+#include <mutex>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -49,6 +52,27 @@ private:
     void applyEditorViewportExtent(uint32_t width, uint32_t height);
     void applyGameViewportExtent(uint32_t width, uint32_t height);
 
+    void addLoadingRenderToImGui();
+    void setLoadingStatus(std::string status);
+    std::string getLoadingStatus() const;
+    void setLoadingWindowDecorationsVisible(bool visible);
+
+    bool m_stillLoadingTheScene{true};
+    std::future<engine::Scene::SharedPtr> m_loadingFuture;
+    std::chrono::steady_clock::time_point m_loadingStartedAt{};
+    std::string m_loadingSceneName;
+    mutable std::mutex m_loadingStatusMutex;
+    std::string m_loadingStatus{"Preparing loading..."};
+    bool m_loadingDecorationsHidden{false};
+    bool m_loadingWindowSizeCaptured{false};
+    int m_loadingPreviousWindowWidth{0};
+    int m_loadingPreviousWindowHeight{0};
+
+    void initGameViewportRenderGraph();
+    void initEditorRenderGraph();
+    void switchActiveScene(const std::shared_ptr<engine::Scene> &scene);
+    void onEditorModeChanged(Editor::EditorMode mode);
+
     std::string m_projectPath;
 
     std::shared_ptr<engine::Camera> m_editorRenderCamera{nullptr};
@@ -65,25 +89,24 @@ private:
     std::unique_ptr<engine::shaders::ShaderHotReloader> m_shaderHotReloader{nullptr};
 
     PreviewAssetsRenderGraphPass *m_previewAssetsRenderGraphPass{nullptr};
-    engine::renderGraph::GBufferRenderGraphPass    *m_gBufferRenderGraphPass{nullptr};
-    engine::renderGraph::ShadowRenderGraphPass     *m_shadowRenderGraphPass{nullptr};
-    engine::renderGraph::LightingRenderGraphPass   *m_lightingRenderGraphPass{nullptr};
-    engine::renderGraph::SSRRenderGraphPass        *m_ssrRenderGraphPass{nullptr};
-    engine::renderGraph::SkyLightRenderGraphPass   *m_skyLightRenderGraphPass{nullptr};
-    engine::renderGraph::BloomRenderGraphPass      *m_bloomRenderGraphPass{nullptr};
-    engine::renderGraph::TonemapRenderGraphPass    *m_tonemapRenderGraphPass{nullptr};
+    engine::renderGraph::GBufferRenderGraphPass *m_gBufferRenderGraphPass{nullptr};
+    engine::renderGraph::ShadowRenderGraphPass *m_shadowRenderGraphPass{nullptr};
+    engine::renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
+    engine::renderGraph::SSRRenderGraphPass *m_ssrRenderGraphPass{nullptr};
+    engine::renderGraph::SkyLightRenderGraphPass *m_skyLightRenderGraphPass{nullptr};
+    engine::renderGraph::BloomRenderGraphPass *m_bloomRenderGraphPass{nullptr};
+    engine::renderGraph::TonemapRenderGraphPass *m_tonemapRenderGraphPass{nullptr};
     engine::renderGraph::BloomCompositeRenderGraphPass *m_bloomCompositeRenderGraphPass{nullptr};
-    engine::renderGraph::FXAARenderGraphPass       *m_fxaaRenderGraphPass{nullptr};
-    engine::renderGraph::SSAORenderGraphPass       *m_ssaoRenderGraphPass{nullptr};
-    engine::renderGraph::SMAAPassRenderGraphPass         *m_smaaRenderGraphPass{nullptr};
-    engine::renderGraph::ContactShadowRenderGraphPass    *m_contactShadowRenderGraphPass{nullptr};
+    engine::renderGraph::FXAARenderGraphPass *m_fxaaRenderGraphPass{nullptr};
+    engine::renderGraph::SSAORenderGraphPass *m_ssaoRenderGraphPass{nullptr};
+    engine::renderGraph::SMAAPassRenderGraphPass *m_smaaRenderGraphPass{nullptr};
+    engine::renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_cinematicEffectsRenderGraphPass{nullptr};
     SelectionOverlayRenderGraphPass *m_selectionOverlayRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_uiRenderGraphPass{nullptr};
     EditorBillboardRenderGraphPass *m_editorBillboardRenderGraphPass{nullptr};
     ImGuiRenderGraphPass *m_imGuiRenderGraphPass{nullptr};
     engine::renderGraph::ParticleRenderGraphPass *m_particleRenderGraphPass{nullptr};
-    engine::renderGraph::GlassRenderGraphPass    *m_glassRenderGraphPass{nullptr};
 
     engine::renderGraph::GBufferRenderGraphPass *m_gameGBufferRenderGraphPass{nullptr};
     engine::renderGraph::ShadowRenderGraphPass *m_gameShadowRenderGraphPass{nullptr};
@@ -96,11 +119,10 @@ private:
     engine::renderGraph::TonemapRenderGraphPass *m_gameTonemapRenderGraphPass{nullptr};
     engine::renderGraph::BloomCompositeRenderGraphPass *m_gameBloomCompositeRenderGraphPass{nullptr};
     engine::renderGraph::FXAARenderGraphPass *m_gameFXAARenderGraphPass{nullptr};
-    engine::renderGraph::SMAAPassRenderGraphPass         *m_gameSMAARenderGraphPass{nullptr};
-    engine::renderGraph::ContactShadowRenderGraphPass    *m_gameContactShadowRenderGraphPass{nullptr};
+    engine::renderGraph::SMAAPassRenderGraphPass *m_gameSMAARenderGraphPass{nullptr};
+    engine::renderGraph::ContactShadowRenderGraphPass *m_gameContactShadowRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_gameCinematicEffectsRenderGraphPass{nullptr};
-    engine::renderGraph::UIRenderGraphPass   *m_gameUIRenderGraphPass{nullptr};
-    engine::renderGraph::GlassRenderGraphPass *m_gameGlassRenderGraphPass{nullptr};
+    engine::renderGraph::UIRenderGraphPass *m_gameUIRenderGraphPass{nullptr};
 
     engine::IBLManager m_iblManager;
 

@@ -10,7 +10,7 @@ layout(set = 1, binding = 4) uniform MaterialParams
 {
     vec4 baseColorFactor;
     vec4 emissiveFactor;
-    vec4 uvTransform;
+    vec4 uvTransform; // xy scale, zw offset
 
     float metallicFactor;
     float roughnessFactor;
@@ -19,12 +19,23 @@ layout(set = 1, binding = 4) uniform MaterialParams
 
     uint flags;
     float alphaCutoff;
-    vec2 _padding;
+    float uvRotation; // degrees
+    float ior;
 } material;
+
+vec2 getUV()
+{
+    vec2 uv = fragTextureCoordinates * material.uvTransform.xy;
+    float rotationRadians = radians(material.uvRotation);
+    float c = cos(rotationRadians);
+    float s = sin(rotationRadians);
+    mat2 rotation = mat2(c, -s, s, c);
+    return (rotation * uv) + material.uvTransform.zw;
+}
 
 void main()
 {
-    vec4 textureSample = texture(uAlbedoTex, fragTextureCoordinates);
+    vec4 textureSample = texture(uAlbedoTex, getUV());
     vec4 baseColor = textureSample * material.baseColorFactor;
     outColor = vec4(baseColor.rgb, 1.0);
 }

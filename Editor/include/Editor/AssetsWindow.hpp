@@ -47,6 +47,11 @@ public:
         m_onAssetSelectionChangedFunction = function;
     }
 
+    [[nodiscard]] bool hasKeyboardFocus() const
+    {
+        return m_hasKeyboardFocus;
+    }
+
 private:
     std::function<void(const std::filesystem::path &)> m_onMaterialOpenRequestFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onTextAssetOpenRequestFunction{nullptr};
@@ -136,6 +141,7 @@ private:
     std::shared_ptr<AsyncImportState> m_asyncImportState{nullptr};
     std::thread m_asyncImportThread;
     std::filesystem::path m_asyncImportProjectRoot;
+    bool m_hasKeyboardFocus{false};
 
     std::unordered_set<std::string> m_textureExtensions = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff", ".psd", ".gif", ".hdr", ".exr", ".dds"};
     std::unordered_set<std::string> m_velixExtensions = {".scene", ".elixproject", ".cc", ".cxx"};

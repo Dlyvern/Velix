@@ -152,9 +152,17 @@ void AnimatorComponent::applyCurrentAnimationPose()
 
     if (m_currentAnimation->skeletonForAnimation)
     {
-        auto *parent = m_currentAnimation->skeletonForAnimation->getParent();
-        if (parent)
-            calculateBoneTransform(parent, glm::mat4(1.0f), m_currentAnimation, m_currentTime);
+        auto *skeleton = m_currentAnimation->skeletonForAnimation;
+        const glm::mat4 identity(1.0f);
+
+        for (size_t boneIndex = 0; boneIndex < skeleton->getBonesCount(); ++boneIndex)
+        {
+            auto *rootBone = skeleton->getBone(static_cast<int>(boneIndex));
+            if (!rootBone || rootBone->parentId != -1)
+                continue;
+
+            calculateBoneTransform(rootBone, identity, m_currentAnimation, m_currentTime);
+        }
     }
     else if (m_currentAnimation->gameObject)
         calculateObjectTransform(m_currentAnimation, m_currentTime);

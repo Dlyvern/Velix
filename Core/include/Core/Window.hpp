@@ -32,8 +32,8 @@ public:
         EWINDOW_FLAGS_MAXIMIZED = 1 << 4
     };
 
-    Window(uint32_t width, uint32_t height, const std::string& title, uint8_t windowFlags = EWINDOW_FLAGS_DEFAULT);
-    static SharedPtr create(uint32_t width, uint32_t height, const std::string& title, uint8_t windowFlags = EWINDOW_FLAGS_DEFAULT);
+    Window(uint32_t width, uint32_t height, const std::string &title, uint8_t windowFlags = EWINDOW_FLAGS_DEFAULT);
+    static SharedPtr create(uint32_t width, uint32_t height, const std::string &title, uint8_t windowFlags = EWINDOW_FLAGS_DEFAULT);
 
     void pollEvents();
     void iconify();
@@ -41,32 +41,47 @@ public:
 
     bool isOpen() const;
 
-    void addResizeCallback(const std::function<void(Window*, int, int)>& function);
+    void addResizeCallback(const std::function<void(Window *, int, int)> &function);
 
-    void setTitle(const std::string& title);
+    void setShowDecorations(bool enable);
+
+    void centerizedOnScreen();
+
+    void setTitle(const std::string &title);
     void setPosition(int x, int y);
     void setSize(int width, int height);
     /*
         will be called on about to close callback. If returns false -> window will not close, true -> window will be closed
     */
-    void setOnWindowAboutToCloseCallback(const std::function<bool(Window* window)>& callback);
+    void setOnWindowAboutToCloseCallback(const std::function<bool(Window *window)> &callback);
 
-    void getSize(int* width, int* height);
-    void getMaxMonitorResolution(int* width, int* height);
-    GLFWwindow* getRawHandler();
+    void getSize(int *width, int *height) const;
+    void getMaxMonitorResolution(int *width, int *height);
+    GLFWwindow *getRawHandler();
 
     virtual ~Window();
+
+    void setFullscreen(bool enable);
+
 private:
-    static void onAboutToClose(GLFWwindow* window);
+    static void onAboutToClose(GLFWwindow *window);
     static void onWindowResize(GLFWwindow *window, int width, int height);
-    std::vector<std::function<void(Window*, int, int)>> m_resizeCallbacks;
+    std::vector<std::function<void(Window *, int, int)>> m_resizeCallbacks;
     int m_width, m_height{0};
     std::string m_title;
-    GLFWwindow* m_window{nullptr};
-    GLFWmonitor* m_monitor{nullptr};
-    std::function<bool(Window* window)> m_onAboutToCloseCallback{nullptr};
+    GLFWwindow *m_window{nullptr};
+    GLFWmonitor *m_monitor{nullptr};
+    std::function<bool(Window *window)> m_onAboutToCloseCallback{nullptr};
+
+    bool m_isFullscreen = false;
+
+    // Saved windowed placement (so we can restore)
+    int m_windowedX = 100;
+    int m_windowedY = 100;
+    int m_windowedW = 1280;
+    int m_windowedH = 720;
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //WINDOW_HPP
+#endif // WINDOW_HPP

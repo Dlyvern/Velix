@@ -10,6 +10,7 @@
 #include "Core/CommandBuffer.hpp"
 #include "Editor/Project.hpp"
 #include "Editor/Notification.hpp"
+#include "Editor/Actions/EditorActionHistory.hpp"
 #include "Engine/Render/RenderTarget.hpp"
 
 #include "TextEditor.h"
@@ -26,6 +27,8 @@
 #include <string>
 #include <cstdint>
 #include <cstddef>
+#include <functional>
+
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
@@ -36,6 +39,14 @@
 #include "Editor/AssetsPreviewSystem.hpp"
 
 #include <filesystem>
+
+namespace ax
+{
+    namespace NodeEditor
+    {
+        struct EditorContext;
+    }
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -50,6 +61,7 @@ public:
     };
 
     Editor();
+    ~Editor();
 
     void initStyle();
 
@@ -63,6 +75,7 @@ public:
         m_selectedMeshSlot.reset();
         m_hasPendingObjectPick = false;
         clearSelectedUIElement();
+        resetSceneActionHistory();
     }
 
     void setProject(const std::shared_ptr<Project> &project)
@@ -104,7 +117,20 @@ public:
 
     void processPendingObjectSelection();
 
-    uint32_t getSelectedEntityIdForBuffer() const
+    using DrawFn = std::function<void(ImDrawList *dl, const ImVec2 &origin, const ImVec2 &size)>;
+
+    void queueViewportDraw(const std::string &windowName, DrawFn fn)
+    {
+        m_drawQueue[windowName].push_back(std::move(fn));
+    }
+
+    ImDrawList *getWindowDrawList()
+    {
+        return ImGui::GetWindowDrawList();
+    }
+
+    uint32_t
+    getSelectedEntityIdForBuffer() const
     {
         if (!m_selectedEntity)
             return 0u;
@@ -175,7 +201,33 @@ public:
         return requested;
     }
 
+    void setRenderViewportOnly(bool value)
+    {
+        m_renderOnlyViewport = value;
+    }
+
+    EditorResourcesStorage &getEditorResourceStorage()
+    {
+        return m_resourceStorage;
+    }
+
+    void setDockingFullscreen(bool value)
+    {
+        m_isDockingWindowFullscreen = value;
+
+        if (value)
+            reinitDocking();
+    }
+
+    void reinitDocking()
+    {
+        m_reinitDocking = true;
+    }
+
 private:
+    std::unordered_map<std::string, std::vector<DrawFn>> m_drawQueue;
+    bool m_renderOnlyViewport{false};
+
     bool saveMaterialToDisk(const std::filesystem::path &path, const engine::CPUMaterial &cpuMaterial);
     bool reloadMaterialFromDisk(const std::filesystem::path &path);
     engine::Texture::SharedPtr ensureProjectTextureLoaded(const std::string &texturePath, TextureUsage usage = TextureUsage::Color);
@@ -214,6 +266,12 @@ private:
     void setDocumentLanguageFromPath(const std::filesystem::path &path);
 
     void drawMaterialEditors();
+    void resetSceneActionHistory();
+    void captureSceneActionSnapshot(const std::string &label);
+    bool performUndoAction();
+    bool performRedoAction();
+    bool performCopyAction();
+    bool performPasteAction();
 
     struct OpenMaterialEditor
     {
@@ -282,6 +340,33 @@ private:
         bool openTexturePopup = false;
         std::string texturePopupSlot; // "Albedo", "Normal", "ORM", "Emissive"
         char textureFilter[128] = "";
+
+        bool nodeEditorInitialized = false;
+        ax::NodeEditor::EditorContext *nodeEditorContext = nullptr;
+
+        int materialNodeId = 1;
+        int textureNodeId = 2;
+        int uvNodeId = 3;
+
+        int materialInAlbedoPinId = 11;
+        int materialInNormalPinId = 12;
+        int materialInOrmPinId = 13;
+        int materialInEmissivePinId = 14;
+
+        int textureOutAlbedoPinId = 21;
+        int textureOutNormalPinId = 22;
+        int textureOutOrmPinId = 23;
+        int textureOutEmissivePinId = 24;
+
+        int linkAlbedoId = 101;
+        int linkNormalId = 102;
+        int linkOrmId = 103;
+        int linkEmissiveId = 104;
+
+        bool linkAlbedoActive = false;
+        bool linkNormalActive = false;
+        bool linkOrmActive = false;
+        bool linkEmissiveActive = false;
     };
 
     std::unordered_map<std::string, MaterialEditorUIState> m_materialEditorUiState;
@@ -311,6 +396,8 @@ private:
     bool m_showTerminal{false};
     bool m_showUITools{false};
     bool m_showRenderSettings{false};
+    bool m_showEditorCameraSettings{false};
+    bool m_showBenchmark{false};
     bool m_isGameViewportVisible{true};
     bool m_terminalAutoScroll{true};
     bool m_terminalClearInputOnSubmit{true};
@@ -342,7 +429,9 @@ private:
 
     void drawBottomPanel();
     void drawToolBar();
+    void drawEditorCameraSettings();
     void drawRenderSettings();
+    void drawBenchmark();
     void drawUITools();
     void showDockSpace();
     void syncAssetsAndTerminalDocking();
@@ -355,6 +444,8 @@ private:
     void drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGameCamera);
     void drawHierarchy();
     void drawHierarchyEntityNode(engine::Entity *entity);
+    actions::EditorSceneHistory m_sceneActionHistory{};
+    actions::EditorEntityClipboard m_entityClipboard{};
     engine::Scene::SharedPtr m_scene{nullptr};
     engine::Entity *m_selectedEntity{nullptr};
     std::optional<uint32_t> m_selectedMeshSlot;
@@ -432,6 +523,7 @@ private:
 
     DetailsContext m_detailsContext{DetailsContext::Entity};
     bool m_isDockingWindowFullscreen{true};
+    bool m_reinitDocking{true};
 
     std::vector<std::function<void(uint32_t width, uint32_t height)>> m_onViewportWindowResized{nullptr};
     std::vector<std::function<void(uint32_t width, uint32_t height)>> m_onGameViewportWindowResized{nullptr};

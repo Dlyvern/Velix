@@ -235,6 +235,12 @@ void Material::setUVOffset(const glm::vec2 &offset)
     uploadParams();
 }
 
+void Material::setUVRotation(float rotationDegrees)
+{
+    m_params.uvRotation = rotationDegrees;
+    uploadParams();
+}
+
 void Material::setAlphaCutoff(float cutoff)
 {
     m_params.alphaCutoff = clamp01(cutoff);

@@ -6,6 +6,7 @@
 #include <glm/mat4x4.hpp>
 
 #include <memory>
+#include <cstdint>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -13,6 +14,13 @@ class Camera
 {
 public:
     using SharedPtr = std::shared_ptr<Camera>;
+
+    enum class ProjectionMode : uint8_t
+    {
+        Perspective = 0,
+        Orthographic = 1
+    };
+
     Camera();
 
     [[nodiscard]] glm::vec3 getPosition() const;
@@ -27,12 +35,18 @@ public:
     [[nodiscard]] float getNear() const;
     [[nodiscard]] float getFar() const;
     [[nodiscard]] float getAspect() const;
+    [[nodiscard]] ProjectionMode getProjectionMode() const;
+    [[nodiscard]] float getOrthographicSize() const;
 
     void setYaw(float yaw);
     void setPitch(float pitch);
     void setPosition(const glm::vec3 &position);
     void setFOV(float fov);
     void setAspect(float aspect);
+    void setNear(float nearPlane);
+    void setFar(float farPlane);
+    void setProjectionMode(ProjectionMode mode);
+    void setOrthographicSize(float size);
 
     void updateCameraVectors();
 
@@ -51,6 +65,8 @@ private:
     float m_aspect{16.0f / 9.0f};
     float m_near{0.1f};
     float m_far{1000.0f};
+    float m_orthographicSize{10.0f};
+    ProjectionMode m_projectionMode{ProjectionMode::Perspective};
 };
 
 ELIX_NESTED_NAMESPACE_END

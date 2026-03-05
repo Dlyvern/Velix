@@ -21,6 +21,7 @@ target_link_libraries(${PROJECT_NAME}
         PUBLIC
         imgui
         imguizmo
+        imgui_node_editor
         imgui_text_edit
         VelixCore
         VelixEngine

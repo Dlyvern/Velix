@@ -367,6 +367,7 @@ void AssetsWindow::setSelectedAssetPath(const std::filesystem::path &path)
 void AssetsWindow::draw()
 {
     pollAsyncImportJob();
+    m_hasKeyboardFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     if (!m_currentProject)
         return;

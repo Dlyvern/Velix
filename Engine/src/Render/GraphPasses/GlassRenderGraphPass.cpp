@@ -210,7 +210,7 @@ void GlassRenderGraphPass::recordGlass(core::CommandBuffer::SharedPtr cmd,
     for (const auto &batch : data.drawBatches)
     {
         if (batch.mesh && batch.material &&
-            (batch.material->params().flags & Material::EMATERIAL_FLAG_GLASS))
+            (batch.material->params().flags & Material::EMATERIAL_FLAG_ALPHA_BLEND))
         {
             anyGlass = true;
             break;
@@ -245,7 +245,7 @@ void GlassRenderGraphPass::recordGlass(core::CommandBuffer::SharedPtr cmd,
     {
         if (!batch.mesh || !batch.material)
             continue;
-        if (!(batch.material->params().flags & Material::EMATERIAL_FLAG_GLASS))
+        if (!(batch.material->params().flags & Material::EMATERIAL_FLAG_ALPHA_BLEND))
             continue;
 
         const auto &p = batch.material->params();

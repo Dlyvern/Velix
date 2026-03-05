@@ -939,16 +939,16 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
 }
 
 bool Texture::createPreFilteredCubemap(const std::vector<std::vector<std::vector<float>>> &mipFaceData,
-                                        const std::vector<uint32_t> &mipSizes)
+                                       const std::vector<uint32_t> &mipSizes)
 {
     if (mipFaceData.empty() || mipSizes.empty())
         return false;
 
-    const uint32_t numMips   = static_cast<uint32_t>(mipFaceData.size());
-    const uint32_t baseSize  = mipSizes[0];
+    const uint32_t numMips = static_cast<uint32_t>(mipFaceData.size());
+    const uint32_t baseSize = mipSizes[0];
 
     m_device = core::VulkanContext::getContext()->getDevice();
-    m_width  = static_cast<int>(baseSize);
+    m_width = static_cast<int>(baseSize);
     m_height = static_cast<int>(baseSize);
 
     if (m_imageView)
@@ -960,17 +960,17 @@ bool Texture::createPreFilteredCubemap(const std::vector<std::vector<std::vector
 
     VkExtent2D extent{baseSize, baseSize};
     m_image = core::Image::createShared(extent,
-                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                         core::memory::MemoryUsage::GPU_ONLY,
-                                         VK_FORMAT_R32G32B32A32_SFLOAT,
-                                         VK_IMAGE_TILING_OPTIMAL,
-                                         6,
-                                         VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-                                         VK_SAMPLE_COUNT_1_BIT,
-                                         numMips);
+                                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                        core::memory::MemoryUsage::GPU_ONLY,
+                                        VK_FORMAT_R32G32B32A32_SFLOAT,
+                                        VK_IMAGE_TILING_OPTIMAL,
+                                        6,
+                                        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+                                        VK_SAMPLE_COUNT_1_BIT,
+                                        numMips);
 
-    auto commandPool   = core::VulkanContext::getContext()->getTransferCommandPool();
-    auto queue         = core::VulkanContext::getContext()->getTransferQueue();
+    auto commandPool = core::VulkanContext::getContext()->getTransferCommandPool();
+    auto queue = core::VulkanContext::getContext()->getTransferQueue();
     auto commandBuffer = core::CommandBuffer::createShared(*commandPool);
     commandBuffer->begin();
 
@@ -983,7 +983,7 @@ bool Texture::createPreFilteredCubemap(const std::vector<std::vector<std::vector
 
     VkDependencyInfo firstDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     firstDep.imageMemoryBarrierCount = 1;
-    firstDep.pImageMemoryBarriers    = &firstBarrier;
+    firstDep.pImageMemoryBarriers = &firstBarrier;
     vkCmdPipelineBarrier2(commandBuffer, &firstDep);
 
     // Upload each mip × face
@@ -992,7 +992,7 @@ bool Texture::createPreFilteredCubemap(const std::vector<std::vector<std::vector
 
     for (uint32_t mip = 0; mip < numMips; ++mip)
     {
-        const uint32_t mipSize    = mipSizes[mip];
+        const uint32_t mipSize = mipSizes[mip];
         const VkDeviceSize faceBytes = static_cast<VkDeviceSize>(mipSize) * mipSize * 4 * sizeof(float);
 
         for (uint32_t face = 0; face < 6; ++face)
@@ -1024,7 +1024,7 @@ bool Texture::createPreFilteredCubemap(const std::vector<std::vector<std::vector
 
     VkDependencyInfo secondDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     secondDep.imageMemoryBarrierCount = 1;
-    secondDep.pImageMemoryBarriers    = &secondBarrier;
+    secondDep.pImageMemoryBarriers = &secondBarrier;
     vkCmdPipelineBarrier2(commandBuffer, &secondDep);
 
     commandBuffer->end();
@@ -1037,14 +1037,14 @@ bool Texture::createPreFilteredCubemap(const std::vector<std::vector<std::vector
 
     // Image view covering all mip levels
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    viewInfo.image    = m_image->vk();
+    viewInfo.image = m_image->vk();
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-    viewInfo.format   = VK_FORMAT_R32G32B32A32_SFLOAT;
-    viewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.baseMipLevel   = 0;
-    viewInfo.subresourceRange.levelCount     = numMips;
+    viewInfo.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = numMips;
     viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount     = 6;
+    viewInfo.subresourceRange.layerCount = 6;
 
     if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView) != VK_SUCCESS)
         throw std::runtime_error("Failed to create pre-filtered cubemap image view!");

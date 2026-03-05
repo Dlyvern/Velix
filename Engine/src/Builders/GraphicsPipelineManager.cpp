@@ -21,8 +21,6 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(const Gra
             return it->second;
     }
 
-    VX_ENGINE_INFO_STREAM("Created a new key");
-
     std::unique_lock lock(m_pipelinesMutex);
     auto it = m_pipelines.find(key);
     if (it != m_pipelines.end())
@@ -30,6 +28,12 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(const Gra
 
     auto created = createPipeline(key);
     m_pipelines[key] = created;
+
+    VX_ENGINE_DEBUG_STREAM("Created graphics pipeline (shader="
+                           << static_cast<uint32_t>(key.shader)
+                           << ", blend=" << static_cast<uint32_t>(key.blend)
+                           << ", cull=" << static_cast<uint32_t>(key.cull)
+                           << ", pipelines_cached=" << m_pipelines.size() << ")");
 
     return created;
 }

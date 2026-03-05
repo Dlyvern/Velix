@@ -6,6 +6,7 @@
 #include "Engine/Render/RenderQualitySettings.hpp"
 
 #include <array>
+#include <unordered_map>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -147,15 +148,14 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
 
         const auto pipelineLayout = EngineShaderFamilies::meshShaderFamily.pipelineLayout;
 
-        // Build one key per skinned variant — hoisted out of the loop to avoid
-        // constructing + heap-copying colorFormats once per draw call.
-        auto makeKey = [&](bool skinned) -> GraphicsPipelineKey
+        auto makeKey = [&](bool skinned, bool alphaBlend, bool twoSided) -> GraphicsPipelineKey
         {
             GraphicsPipelineKey k{};
             k.shader = skinned ? ShaderId::GBufferSkinned : ShaderId::GBufferStatic;
-            k.cull = CullMode::Back;
+            k.blend = alphaBlend ? BlendMode::AlphaBlend : BlendMode::None;
+            k.cull = twoSided ? CullMode::None : CullMode::Back;
             k.depthTest = true;
-            k.depthWrite = !probePass;
+            k.depthWrite = !probePass && !alphaBlend;
             k.depthCompare = probePass ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
             k.polygonMode = VK_POLYGON_MODE_FILL;
             k.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -166,9 +166,25 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             return k;
         };
 
-        // Resolve both pipelines once before the loop.
-        const VkPipeline staticPipeline = GraphicsPipelineManager::getOrCreate(makeKey(false));
-        const VkPipeline skinnedPipeline = GraphicsPipelineManager::getOrCreate(makeKey(true));
+        std::unordered_map<GraphicsPipelineKey, VkPipeline, GraphicsPipelineKeyHash> pipelineCache;
+        pipelineCache.reserve(8u);
+
+        auto getPipelineForBatch = [&](const DrawBatch &batch) -> VkPipeline
+        {
+            const uint32_t materialFlags = batch.material ? batch.material->params().flags : 0u;
+            const bool alphaBlend = !probePass &&
+                                    ((materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u);
+            const bool twoSided = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED) != 0u;
+
+            GraphicsPipelineKey key = makeKey(batch.skinned, alphaBlend, twoSided);
+            auto pipelineIt = pipelineCache.find(key);
+            if (pipelineIt != pipelineCache.end())
+                return pipelineIt->second;
+
+            const VkPipeline pipeline = GraphicsPipelineManager::getOrCreate(key);
+            pipelineCache.emplace(std::move(key), pipeline);
+            return pipeline;
+        };
 
         // Per-draw state cache to skip redundant Vulkan calls.
         VkPipeline       boundPipeline      = VK_NULL_HANDLE;
@@ -181,10 +197,16 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             if (!batch.mesh || !batch.material || batch.instanceCount == 0)
                 continue;
 
+            const uint32_t materialFlags = batch.material->params().flags;
+            const bool isTranslucent = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
+
+            if (probePass && isTranslucent)
+                continue;
+
             if (probePass && (!canRecordOcclusionQueries || !batch.runOcclusionQuery || occlusionQueryCursor >= data.occlusionQueryKeys.size()))
                 continue;
 
-            const VkPipeline batchPipeline = batch.skinned ? skinnedPipeline : staticPipeline;
+            const VkPipeline batchPipeline = getPipelineForBatch(batch);
             if (batchPipeline != boundPipeline)
             {
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, batchPipeline);
@@ -229,6 +251,7 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             const bool beginOcclusionQuery =
                 canRecordOcclusionQueries &&
                 batch.runOcclusionQuery &&
+                !isTranslucent &&
                 occlusionQueryCursor < data.occlusionQueryKeys.size();
             if (beginOcclusionQuery)
                 vkCmdBeginQuery(commandBuffer, data.occlusionQueryPool, data.occlusionQueryBase + occlusionQueryCursor, 0u);

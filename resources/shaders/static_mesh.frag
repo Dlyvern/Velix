@@ -57,13 +57,19 @@ layout(set = 1, binding = 4) uniform MaterialParams
 
     uint flags;
     float alphaCutoff;
-    vec2 _padding;
+    float uvRotation; // degrees
+    float ior;
 } material;
 
 
 vec2 getUV()
 {
-    return fragUV * material.uvTransform.xy + material.uvTransform.zw;
+    vec2 uv = fragUV * material.uvTransform.xy;
+    float rotationRadians = radians(material.uvRotation);
+    float c = cos(rotationRadians);
+    float s = sin(rotationRadians);
+    mat2 rotation = mat2(c, -s, s, c);
+    return (rotation * uv) + material.uvTransform.zw;
 }
 
 vec3 getNormalView()

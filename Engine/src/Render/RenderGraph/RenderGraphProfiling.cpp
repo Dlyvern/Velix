@@ -1,4 +1,5 @@
 #include "Engine/Render/RenderGraph/RenderGraph.hpp"
+#include "Engine/Render/RenderGraph/RenderGraphProfiling.hpp"
 
 #include "Core/VulkanContext.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
@@ -12,12 +13,17 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-bool RenderGraph::isDetailedProfilingEnabled() const
+RenderGraphProfiling::RenderGraphProfiling(uint32_t renderGraphPassSize) : m_renderGraphPassesSize(renderGraphPassSize)
+{
+    m_device = core::VulkanContext::getContext()->getDevice();
+}
+
+bool RenderGraphProfiling::isDetailedProfilingEnabled() const
 {
     return EngineConfig::instance().getDetailedRenderProfilingEnabled();
 }
 
-void RenderGraph::syncDetailedProfilingMode()
+void RenderGraphProfiling::syncDetailedProfilingMode()
 {
     if (isDetailedProfilingEnabled())
     {
@@ -34,7 +40,7 @@ void RenderGraph::syncDetailedProfilingMode()
     }
 }
 
-void RenderGraph::initTimestampQueryPool()
+void RenderGraphProfiling::initTimestampQueryPool()
 {
     destroyTimestampQueryPool();
 
@@ -60,7 +66,7 @@ void RenderGraph::initTimestampQueryPool()
     if (graphicsFamily >= queueFamiliesCount || queueFamilies[graphicsFamily].timestampValidBits == 0)
         return;
 
-    const uint32_t passCount = std::max<uint32_t>(1u, static_cast<uint32_t>(m_renderGraphPasses.size()));
+    const uint32_t passCount = std::max<uint32_t>(1u, m_renderGraphPassesSize);
     const uint32_t maxExecutions = MAX_RENDER_JOBS + passCount + 16u;
     // Two timestamps per pass execution, plus frame start/end timestamps.
     m_timestampQueriesPerFrame = maxExecutions * 2u + 2u;
@@ -84,7 +90,7 @@ void RenderGraph::initTimestampQueryPool()
     }
 }
 
-void RenderGraph::destroyTimestampQueryPool()
+void RenderGraphProfiling::destroyTimestampQueryPool()
 {
     if (m_timestampQueryPool != VK_NULL_HANDLE)
     {
@@ -104,7 +110,7 @@ void RenderGraph::destroyTimestampQueryPool()
     m_isGpuTimingAvailable = false;
 }
 
-void RenderGraph::resolveFrameProfilingData(uint32_t frameIndex)
+void RenderGraphProfiling::resolveFrameProfilingData(uint32_t frameIndex)
 {
     const auto &passExecutionProfilingData = m_passExecutionProfilingDataByFrame[frameIndex];
     const uint32_t usedTimestampQueries = m_usedTimestampQueriesByFrame[frameIndex];
@@ -218,6 +224,9 @@ void RenderGraph::resolveFrameProfilingData(uint32_t frameIndex)
     frameProfilingData.cpuRecompileMs = cpuStageProfilingData.recompileMs;
     frameProfilingData.cpuSubmitMs = cpuStageProfilingData.submitMs;
     frameProfilingData.cpuPresentMs = cpuStageProfilingData.presentMs;
+    frameProfilingData.cpuCommandPoolResetMs = cpuStageProfilingData.commandPoolResetMs;
+    frameProfilingData.cpuPrimaryEndMs = cpuStageProfilingData.primaryCbEndMs;
+    frameProfilingData.cpuResolveProfilingMs = cpuStageProfilingData.resolveProfilingMs;
     frameProfilingData.cpuSyncTimeMs = frameProfilingData.cpuWaitForFenceMs +
                                        frameProfilingData.cpuAcquireImageMs +
                                        frameProfilingData.cpuSubmitMs +
@@ -225,7 +234,10 @@ void RenderGraph::resolveFrameProfilingData(uint32_t frameIndex)
 
     const double accountedCpuFrameTime = frameProfilingData.cpuTotalTimeMs +
                                          frameProfilingData.cpuRecompileMs +
-                                         frameProfilingData.cpuSyncTimeMs;
+                                         frameProfilingData.cpuSyncTimeMs +
+                                         frameProfilingData.cpuCommandPoolResetMs +
+                                         frameProfilingData.cpuPrimaryEndMs +
+                                         frameProfilingData.cpuResolveProfilingMs;
 
     frameProfilingData.cpuWasteTimeMs = std::max(0.0, frameProfilingData.cpuFrameTimeMs - accountedCpuFrameTime);
     if (frameProfilingData.gpuTimingAvailable)
@@ -233,6 +245,8 @@ void RenderGraph::resolveFrameProfilingData(uint32_t frameIndex)
 
     m_lastFrameProfilingData = std::move(frameProfilingData);
 }
+
+///_____________________________________________________________
 
 void RenderGraph::initOcclusionQueryPool()
 {

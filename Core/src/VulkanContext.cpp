@@ -13,6 +13,7 @@
 #include <unordered_map>
 
 #include "Core/Memory/VMAAllocator.hpp"
+#include "Core/VulkanHelpers.hpp"
 
 #include "Core/Logger.hpp"
 
@@ -58,6 +59,9 @@ VulkanContext::VulkanContext(platform::Window &window)
 #else
     m_isValidationLayersEnabled = false;
 #endif
+
+    // TODO FIX ME(Validation layers are way to hungry for FPS)
+    m_isValidationLayersEnabled = false;
 
     initVulkan(window);
 }
@@ -156,6 +160,16 @@ void VulkanContext::createLogicalDevice()
     }
 
     std::vector<const char *> enabledExtensions = m_deviceExtensions;
+    auto addExtensionIfMissing = [&enabledExtensions](const char *extensionName)
+    {
+        if (!extensionName)
+            return;
+
+        if (std::find_if(enabledExtensions.begin(), enabledExtensions.end(), [extensionName](const char *existing)
+                         { return std::strcmp(existing, extensionName) == 0; }) == enabledExtensions.end())
+            enabledExtensions.push_back(extensionName);
+    };
+
     auto availableExtensions = enumerateDeviceExtensions(m_physicalDevice);
 
     const bool hasAS = hasExtension(availableExtensions, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
@@ -172,9 +186,9 @@ void VulkanContext::createLogicalDevice()
         m_rayTracingSupport.rayTracingPipeline = true;
         m_rayTracingMode = RayTracingMode::Pipeline;
 
-        enabledExtensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
-        enabledExtensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
-        enabledExtensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        addExtensionIfMissing(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        addExtensionIfMissing(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        addExtensionIfMissing(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 
         VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: Pipeline");
     }
@@ -185,9 +199,9 @@ void VulkanContext::createLogicalDevice()
         m_rayTracingSupport.rayQuery = true;
         m_rayTracingMode = RayTracingMode::RayQuery;
 
-        enabledExtensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
-        enabledExtensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
-        enabledExtensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        addExtensionIfMissing(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        addExtensionIfMissing(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        addExtensionIfMissing(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 
         VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: RayQuery");
     }
@@ -255,7 +269,33 @@ void VulkanContext::createLogicalDevice()
         createInfo.ppEnabledLayerNames = m_validationLayers.data();
     }
 
-    VX_VK_CHECK(vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_vkDevice));
+    VkResult createDeviceResult = vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_vkDevice);
+    if (createDeviceResult != VK_SUCCESS && m_rayTracingMode != static_cast<RayTracingMode>(0))
+    {
+        VX_CORE_WARNING_STREAM("[Vulkan] vkCreateDevice failed with ray tracing enabled ("
+                               << core::helpers::vulkanResultToString(createDeviceResult)
+                               << "). Retrying without ray tracing extensions/features.\n");
+
+        m_rayTracingMode = static_cast<RayTracingMode>(0);
+        m_rayTracingSupport = {};
+
+        enabledExtensions = m_deviceExtensions;
+        createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
+        createInfo.ppEnabledExtensionNames = enabledExtensions.data();
+
+        v13.pNext = nullptr;
+        asFeatures.pNext = nullptr;
+        rtpFeatures.pNext = nullptr;
+        rqFeatures.pNext = nullptr;
+        asFeatures.accelerationStructure = VK_FALSE;
+        rtpFeatures.rayTracingPipeline = VK_FALSE;
+        rqFeatures.rayQuery = VK_FALSE;
+
+        createDeviceResult = vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_vkDevice);
+    }
+
+    if (createDeviceResult != VK_SUCCESS)
+        throw std::runtime_error("Failed to create logical device: " + core::helpers::vulkanResultToString(createDeviceResult));
 
     vkGetDeviceQueue(m_vkDevice, m_queueFamilyIndices.graphicsFamily.value(), 0, &m_graphicsQueue);
     vkGetDeviceQueue(m_vkDevice, m_queueFamilyIndices.presentFamily.value(), 0, &m_presentQueue);

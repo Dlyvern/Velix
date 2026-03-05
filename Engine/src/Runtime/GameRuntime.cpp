@@ -131,7 +131,7 @@ bool GameRuntime::init()
 
     scripting::setActiveScene(m_scene.get());
 
-    m_renderGraph = std::make_unique<renderGraph::RenderGraph>(true, true);
+    m_renderGraph = std::make_unique<renderGraph::RenderGraph>(true);
 
     m_gBufferRenderGraphPass = m_renderGraph->addPass<renderGraph::GBufferRenderGraphPass>();
     m_shadowRenderGraphPass = m_renderGraph->addPass<renderGraph::ShadowRenderGraphPass>();

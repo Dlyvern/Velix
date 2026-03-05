@@ -96,7 +96,8 @@ struct ParticleGPUData
     glm::vec4 positionAndRotation; // xyz = world pos, w = rotation (rad)
     glm::vec4 color;               // rgba
     glm::vec2 size;                // width, height
-    glm::vec2 _pad;
+    uint32_t  textureIndex{0};     // index into the particle texture array (0 = default white)
+    float     _pad{0.0f};
 };
 
 static_assert(sizeof(ParticleGPUData) == 48, "ParticleGPUData layout changed");

@@ -31,6 +31,7 @@ struct CPUMesh
 
     uint32_t vertexStride;
     uint64_t vertexLayoutHash;
+    int32_t attachedBoneId{-1}; // for rigid meshes parented to skeleton bones
 
     CPUMaterial material;
     glm::mat4 localTransform{1.0f};

@@ -31,6 +31,7 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <imgui_node_editor.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <glm/common.hpp>
@@ -55,6 +56,7 @@
 #include <system_error>
 #include <unordered_map>
 #include <unordered_set>
+#include <functional>
 #include <cstdint>
 #include <cstdlib>
 
@@ -62,6 +64,8 @@
 #include <nlohmann/json.hpp>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
+
+namespace ed = ax::NodeEditor;
 
 namespace
 {
@@ -454,6 +458,7 @@ namespace
                << material.alphaCutoff << '\n'
                << material.uvScale.x << ',' << material.uvScale.y << '\n'
                << material.uvOffset.x << ',' << material.uvOffset.y << '\n'
+               << material.uvRotation << '\n'
                << material.flags;
         return stream.str();
     }
@@ -541,7 +546,55 @@ namespace
 
     std::string resolveMaterialPathAgainstProjectRoot(const std::string &materialPath, const std::filesystem::path &projectRoot)
     {
-        return resolveTexturePathAgainstProjectRoot(materialPath, projectRoot);
+        if (materialPath.empty())
+            return {};
+
+        if (looksLikeWindowsAbsolutePath(materialPath))
+            return materialPath;
+
+        const std::filesystem::path parsedPath(materialPath);
+        if (parsedPath.is_absolute())
+            return makeAbsoluteNormalized(parsedPath).string();
+
+        auto tryResolveExistingPath = [](const std::filesystem::path &candidatePath) -> std::optional<std::string>
+        {
+            if (candidatePath.empty())
+                return std::nullopt;
+
+            const std::filesystem::path normalizedPath = makeAbsoluteNormalized(candidatePath);
+            std::error_code existsError;
+            if (std::filesystem::exists(normalizedPath, existsError) && !existsError)
+                return normalizedPath.string();
+
+            return std::nullopt;
+        };
+
+        if (auto resolvedPath = tryResolveExistingPath(parsedPath); resolvedPath.has_value())
+            return resolvedPath.value();
+
+        if (!projectRoot.empty())
+        {
+            if (auto resolvedPath = tryResolveExistingPath(projectRoot / parsedPath); resolvedPath.has_value())
+                return resolvedPath.value();
+
+            const std::string projectRootName = toLowerCopy(projectRoot.filename().string());
+            auto segmentIterator = parsedPath.begin();
+            if (!projectRootName.empty() && segmentIterator != parsedPath.end() &&
+                toLowerCopy(segmentIterator->string()) == projectRootName)
+            {
+                std::filesystem::path projectRelativePath;
+                ++segmentIterator;
+                for (; segmentIterator != parsedPath.end(); ++segmentIterator)
+                    projectRelativePath /= *segmentIterator;
+
+                if (auto resolvedPath = tryResolveExistingPath(projectRoot / projectRelativePath); resolvedPath.has_value())
+                    return resolvedPath.value();
+            }
+
+            return makeAbsoluteNormalized(projectRoot / parsedPath).string();
+        }
+
+        return parsedPath.lexically_normal().string();
     }
 
     void sanitizeMaterialCpuData(engine::CPUMaterial &material, bool forceDielectricWithoutOrm)
@@ -556,6 +609,24 @@ namespace
         material.aoStrength = std::clamp(sanitizeFinite(material.aoStrength, 1.0f), 0.0f, 1.0f);
         material.normalScale = std::max(0.0f, sanitizeFinite(material.normalScale, 1.0f));
         material.alphaCutoff = std::clamp(sanitizeFinite(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
+        material.uvScale.x = sanitizeFinite(material.uvScale.x, 1.0f);
+        material.uvScale.y = sanitizeFinite(material.uvScale.y, 1.0f);
+        material.uvOffset.x = sanitizeFinite(material.uvOffset.x, 0.0f);
+        material.uvOffset.y = sanitizeFinite(material.uvOffset.y, 0.0f);
+        material.uvRotation = sanitizeFinite(material.uvRotation, 0.0f);
+
+        const uint32_t legacyGlassFlag = engine::Material::MaterialFlags::EMATERIAL_FLAG_LEGACY_GLASS;
+        if ((material.flags & legacyGlassFlag) != 0u)
+        {
+            material.flags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND;
+            material.flags &= ~legacyGlassFlag;
+        }
+
+        const uint32_t supportedFlags =
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK |
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND |
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED;
+        material.flags &= supportedFlags;
 
         if (forceDielectricWithoutOrm && material.ormTexture.empty())
             material.metallicFactor = 0.0f;
@@ -596,6 +667,40 @@ namespace
         return filename;
     }
 
+    std::filesystem::path buildProjectManagedTextureAssetPath(const std::filesystem::path &sourceTexturePath,
+                                                              const std::filesystem::path &projectRoot)
+    {
+        const std::filesystem::path normalizedSourcePath = makeAbsoluteNormalized(sourceTexturePath);
+        if (projectRoot.empty())
+        {
+            auto outputPath = normalizedSourcePath;
+            outputPath.replace_extension(".tex.elixasset");
+            return outputPath.lexically_normal();
+        }
+
+        const std::filesystem::path normalizedProjectRoot = makeAbsoluteNormalized(projectRoot);
+        if (isPathWithinRoot(normalizedSourcePath, normalizedProjectRoot))
+        {
+            std::error_code relativeError;
+            const std::filesystem::path relativePath = std::filesystem::relative(normalizedSourcePath, normalizedProjectRoot, relativeError).lexically_normal();
+            if (!relativeError && !relativePath.empty())
+            {
+                auto outputPath = normalizedProjectRoot / relativePath;
+                outputPath.replace_extension(".tex.elixasset");
+                return outputPath.lexically_normal();
+            }
+        }
+
+        const std::filesystem::path importDirectory = (normalizedProjectRoot / "resources" / "textures" / "imported").lexically_normal();
+        std::string outputBaseName = sanitizeFileStem(normalizedSourcePath.stem().string());
+        if (outputBaseName.empty())
+            outputBaseName = "Texture";
+
+        const uint64_t sourcePathHash = static_cast<uint64_t>(std::hash<std::string>{}(normalizedSourcePath.string()));
+        const std::filesystem::path outputPath = importDirectory / (outputBaseName + "_" + std::to_string(sourcePathHash) + ".tex.elixasset");
+        return outputPath.lexically_normal();
+    }
+
     std::string toMaterialTextureReferencePath(const std::string &texturePath, const std::filesystem::path &projectRoot)
     {
         if (texturePath.empty())
@@ -607,8 +712,7 @@ namespace
         std::string extensionLower = toLowerCopy(resolvedPath.extension().string());
         if (extensionLower != ".elixasset")
         {
-            std::filesystem::path candidateAssetPath = resolvedPath;
-            candidateAssetPath.replace_extension(".tex.elixasset");
+            std::filesystem::path candidateAssetPath = buildProjectManagedTextureAssetPath(resolvedPath, projectRoot);
 
             std::error_code existsError;
             if (std::filesystem::exists(candidateAssetPath, existsError) && !existsError)
@@ -1055,6 +1159,20 @@ namespace
 Editor::Editor()
 {
     m_editorCamera = std::make_shared<engine::Camera>();
+}
+
+Editor::~Editor()
+{
+    for (auto &[materialPath, state] : m_materialEditorUiState)
+    {
+        (void)materialPath;
+        if (state.nodeEditorContext)
+        {
+            ed::DestroyEditor(state.nodeEditorContext);
+            state.nodeEditorContext = nullptr;
+            state.nodeEditorInitialized = false;
+        }
+    }
 }
 
 void Editor::drawGuizmo()
@@ -1538,8 +1656,8 @@ void Editor::initStyle()
     {
         GLFWmonitor *monitor = glfwGetPrimaryMonitor();
         const GLFWvidmode *mode = glfwGetVideoMode(monitor);
-        glfwSetWindowPos(windowHandler, 0, 0);
-        glfwSetWindowSize(windowHandler, mode->width, mode->height);
+        window.setPosition(0, 0);
+        window.setSize(mode->width, mode->height);
     }
 
     m_defaultSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
@@ -1584,11 +1702,9 @@ void Editor::showDockSpace()
 
     ImGui::End();
 
-    static bool first_time = true;
-
-    if (first_time)
+    if (m_reinitDocking)
     {
-        first_time = false;
+        m_reinitDocking = false;
 
         ImGui::DockBuilderRemoveNode(dockspaceId);
         ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
@@ -2046,7 +2162,6 @@ void Editor::drawCustomTitleBar()
 
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y + ImGui::GetItemRectSize().y));
     auto &window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
-    GLFWwindow *windowHandler = window.getRawHandler();
 
     if (ImGui::BeginPopup("FilePopup"))
     {
@@ -2174,8 +2289,10 @@ void Editor::drawCustomTitleBar()
     {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
 
-        ImGui::Button("Undo Ctrl+Z");
-        ImGui::Button("Redo Ctrl+Y");
+        if (ImGui::Button("Undo Ctrl+Z"))
+            performUndoAction();
+        if (ImGui::Button("Redo Ctrl+Y"))
+            performRedoAction();
 
         ImGui::PopStyleColor(1);
         ImGui::EndPopup();
@@ -2191,7 +2308,7 @@ void Editor::drawCustomTitleBar()
     ImGui::SameLine();
 
     if (ImGui::Button("[]", ImVec2(buttonSize, buttonSize * 0.9f)))
-        m_isDockingWindowFullscreen = !m_isDockingWindowFullscreen;
+        setDockingFullscreen(!m_isDockingWindowFullscreen);
 
     ImGui::SameLine();
 
@@ -2360,7 +2477,7 @@ void Editor::exportCurrentProjectPacket()
     const std::filesystem::path packetPath = exportDirectory / (packetBaseName + ".elixpacket");
 
     const std::filesystem::path buildDirectory = project->buildDir.empty() ? makeAbsoluteNormalized(projectRoot / "build")
-                                                                            : makeAbsoluteNormalized(std::filesystem::path(project->buildDir));
+                                                                           : makeAbsoluteNormalized(std::filesystem::path(project->buildDir));
     std::filesystem::path cmakePrefixPath = FileHelper::getExecutablePath();
     if (cmakePrefixPath.filename() == "bin")
         cmakePrefixPath = cmakePrefixPath.parent_path();
@@ -2439,7 +2556,7 @@ void Editor::exportCurrentProjectPacket()
         if (createParentDirectoryError)
         {
             VX_EDITOR_ERROR_STREAM("Game export failed: cannot create target directory for " << assetName << ": " << targetPath.parent_path()
-                                                                                               << " (" << createParentDirectoryError.message() << ")\n");
+                                                                                             << " (" << createParentDirectoryError.message() << ")\n");
             return false;
         }
 
@@ -2448,7 +2565,7 @@ void Editor::exportCurrentProjectPacket()
         if (copyError)
         {
             VX_EDITOR_ERROR_STREAM("Game export failed: cannot copy " << assetName << " from '" << sourcePath << "' to '" << targetPath
-                                                                       << "' (" << copyError.message() << ")\n");
+                                                                      << "' (" << copyError.message() << ")\n");
             return false;
         }
 
@@ -2513,7 +2630,7 @@ void Editor::exportCurrentProjectPacket()
             if (createParentDirectoryError)
             {
                 VX_EDITOR_ERROR_STREAM("Game export failed: cannot create target directory '" << targetPath.parent_path()
-                                                                                               << "': " << createParentDirectoryError.message() << '\n');
+                                                                                              << "': " << createParentDirectoryError.message() << '\n');
                 return false;
             }
 
@@ -2522,7 +2639,7 @@ void Editor::exportCurrentProjectPacket()
             if (copyError)
             {
                 VX_EDITOR_ERROR_STREAM("Game export failed: cannot copy file '" << it->path() << "' to '" << targetPath
-                                                                 << "': " << copyError.message() << '\n');
+                                                                                << "': " << copyError.message() << '\n');
                 return false;
             }
         }
@@ -2782,101 +2899,13 @@ void Editor::drawToolBar()
 
         ImGui::SameLine();
 
+        if (ImGui::Button("Camera Settings"))
+            m_showEditorCameraSettings = !m_showEditorCameraSettings;
+
+        ImGui::SameLine();
+
         if (ImGui::Button("Benchmark"))
-        {
-            if (ImGui::IsPopupOpen("BenchmarkPopup"))
-                ImGui::CloseCurrentPopup();
-            else
-                ImGui::OpenPopup("BenchmarkPopup");
-        }
-
-        ImVec2 buttonPos = ImGui::GetItemRectMin();
-        ImVec2 buttonSize = ImGui::GetItemRectSize();
-        ImGui::SetNextWindowPos(ImVec2(buttonPos.x, buttonPos.y + buttonSize.y));
-
-        if (ImGui::BeginPopup("BenchmarkPopup"))
-        {
-            float fps = ImGui::GetIO().Framerate;
-            ImGui::Text("FPS: %.1f", fps);
-            ImGui::Text("Frame time: %.3f ms", 1000.0f / fps);
-
-            auto &engineConfig = engine::EngineConfig::instance();
-            bool detailedRenderProfiling = engineConfig.getDetailedRenderProfilingEnabled();
-            if (ImGui::Checkbox("Detailed Render Profiling", &detailedRenderProfiling))
-            {
-                engineConfig.setDetailedRenderProfilingEnabled(detailedRenderProfiling);
-                if (!engineConfig.save())
-                    VX_EDITOR_WARNING_STREAM("Failed to persist detailed render profiling setting to engine config\n");
-            }
-            ImGui::SetItemTooltip("OFF: minimal benchmark (FPS + frame time). ON: full render-graph CPU/GPU timings.");
-
-            if (!detailedRenderProfiling)
-            {
-                ImGui::TextDisabled("Detailed profiling disabled.");
-            }
-            else
-            {
-                ImGui::Text("VRAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
-                ImGui::Text("RAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
-                ImGui::Separator();
-                ImGui::Text("Render Graph (frame #%llu)", static_cast<unsigned long long>(m_renderGraphProfilingData.frameIndex));
-                ImGui::Text("Total draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
-                ImGui::Text("Total CPU frame time: %.3f ms", m_renderGraphProfilingData.cpuFrameTimeMs);
-                ImGui::Text("Total CPU pass time: %.3f ms", m_renderGraphProfilingData.cpuTotalTimeMs);
-                ImGui::Text("CPU wait (fence): %.3f ms", m_renderGraphProfilingData.cpuWaitForFenceMs);
-                ImGui::Text("CPU wait (acquire): %.3f ms", m_renderGraphProfilingData.cpuAcquireImageMs);
-                ImGui::Text("CPU submit: %.3f ms", m_renderGraphProfilingData.cpuSubmitMs);
-                ImGui::Text("CPU wait (present): %.3f ms", m_renderGraphProfilingData.cpuPresentMs);
-                ImGui::Text("CPU sync total: %.3f ms", m_renderGraphProfilingData.cpuSyncTimeMs);
-                ImGui::Text("CPU recompile: %.3f ms", m_renderGraphProfilingData.cpuRecompileMs);
-                ImGui::Text("CPU unaccounted: %.3f ms", m_renderGraphProfilingData.cpuWasteTimeMs);
-
-                if (m_renderGraphProfilingData.gpuTimingAvailable)
-                {
-                    ImGui::Text("Total GPU frame time: %.3f ms", m_renderGraphProfilingData.gpuFrameTimeMs);
-                    ImGui::Text("Total GPU pass time: %.3f ms", m_renderGraphProfilingData.gpuTotalTimeMs);
-                    ImGui::Text("GPU waste (non-pass): %.3f ms", m_renderGraphProfilingData.gpuWasteTimeMs);
-                }
-                else
-                    ImGui::TextDisabled("GPU timing unavailable on this GPU/queue");
-
-                if (ImGui::BeginTable("RenderGraphPassStats", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
-                {
-                    ImGui::TableSetupColumn("Pass");
-                    ImGui::TableSetupColumn("Exec");
-                    ImGui::TableSetupColumn("Draws");
-                    ImGui::TableSetupColumn("CPU (ms)");
-                    ImGui::TableSetupColumn("GPU (ms)");
-                    ImGui::TableHeadersRow();
-
-                    for (const auto &passData : m_renderGraphProfilingData.passes)
-                    {
-                        ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted(passData.passName.c_str());
-
-                        ImGui::TableSetColumnIndex(1);
-                        ImGui::Text("%u", passData.executions);
-
-                        ImGui::TableSetColumnIndex(2);
-                        ImGui::Text("%u", passData.drawCalls);
-
-                        ImGui::TableSetColumnIndex(3);
-                        ImGui::Text("%.3f", passData.cpuTimeMs);
-
-                        ImGui::TableSetColumnIndex(4);
-                        if (m_renderGraphProfilingData.gpuTimingAvailable)
-                            ImGui::Text("%.3f", passData.gpuTimeMs);
-                        else
-                            ImGui::TextUnformatted("-");
-                    }
-
-                    ImGui::EndTable();
-                }
-            }
-
-            ImGui::EndPopup();
-        }
+            m_showBenchmark = !m_showBenchmark;
 
         ImGui::EndMenuBar();
     }
@@ -3079,7 +3108,7 @@ void Editor::drawRenderSettings()
     if (settings.enableIBL)
     {
         ImGui::Indent();
-        ImGui::DragFloat("Diffuse Intensity##ibl",  &settings.iblDiffuseIntensity,  0.01f, 0.0f, 3.0f, "%.2f");
+        ImGui::DragFloat("Diffuse Intensity##ibl", &settings.iblDiffuseIntensity, 0.01f, 0.0f, 3.0f, "%.2f");
         ImGui::DragFloat("Specular Intensity##ibl", &settings.iblSpecularIntensity, 0.01f, 0.0f, 3.0f, "%.2f");
         ImGui::Unindent();
     }
@@ -3102,9 +3131,9 @@ void Editor::drawRenderSettings()
     if (settings.enableContactShadows)
     {
         ImGui::Indent();
-        ImGui::DragFloat("Length##cs",   &settings.contactShadowLength,   0.01f, 0.1f, 5.0f,  "%.2f");
-        ImGui::DragFloat("Strength##cs", &settings.contactShadowStrength, 0.01f, 0.0f, 1.0f,  "%.2f");
-        ImGui::DragInt("Steps##cs",      &settings.contactShadowSteps,    1,     4,    32);
+        ImGui::DragFloat("Length##cs", &settings.contactShadowLength, 0.01f, 0.1f, 5.0f, "%.2f");
+        ImGui::DragFloat("Strength##cs", &settings.contactShadowStrength, 0.01f, 0.0f, 1.0f, "%.2f");
+        ImGui::DragInt("Steps##cs", &settings.contactShadowSteps, 1, 4, 32);
         ImGui::Unindent();
     }
 
@@ -3113,11 +3142,11 @@ void Editor::drawRenderSettings()
     if (settings.enableColorGrading)
     {
         ImGui::Indent();
-        ImGui::DragFloat("Saturation##cg",   &settings.colorGradingSaturation,  0.01f, 0.0f, 2.0f,  "%.2f");
-        ImGui::DragFloat("Contrast##cg",     &settings.colorGradingContrast,    0.01f, 0.0f, 2.0f,  "%.2f");
-        ImGui::DragFloat("Temperature##cg",  &settings.colorGradingTemperature, 0.01f, -1.0f, 1.0f, "%.2f");
+        ImGui::DragFloat("Saturation##cg", &settings.colorGradingSaturation, 0.01f, 0.0f, 2.0f, "%.2f");
+        ImGui::DragFloat("Contrast##cg", &settings.colorGradingContrast, 0.01f, 0.0f, 2.0f, "%.2f");
+        ImGui::DragFloat("Temperature##cg", &settings.colorGradingTemperature, 0.01f, -1.0f, 1.0f, "%.2f");
         ImGui::SetItemTooltip("-1 = cool/blue, +1 = warm/orange");
-        ImGui::DragFloat("Tint##cg",         &settings.colorGradingTint,        0.01f, -1.0f, 1.0f, "%.2f");
+        ImGui::DragFloat("Tint##cg", &settings.colorGradingTint, 0.01f, -1.0f, 1.0f, "%.2f");
         ImGui::SetItemTooltip("-1 = magenta, +1 = green");
         ImGui::Unindent();
     }
@@ -3226,6 +3255,80 @@ void Editor::drawRenderSettings()
     ImGui::End();
 }
 
+void Editor::drawEditorCameraSettings()
+{
+    if (!m_showEditorCameraSettings)
+        return;
+
+    ImGui::SetNextWindowSize(ImVec2(420, 360), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(520, 80), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Editor Camera Settings", &m_showEditorCameraSettings))
+    {
+        ImGui::End();
+        return;
+    }
+
+    if (!m_editorCamera)
+    {
+        ImGui::TextDisabled("Editor camera is unavailable.");
+        ImGui::End();
+        return;
+    }
+
+    if (ImGui::DragFloat("Move Speed", &m_movementSpeed, 0.05f, 0.05f, 200.0f, "%.2f"))
+        m_movementSpeed = std::max(m_movementSpeed, 0.05f);
+
+    if (ImGui::DragFloat("Mouse Sensitivity", &m_mouseSensitivity, 0.001f, 0.005f, 2.0f, "%.3f"))
+        m_mouseSensitivity = std::max(m_mouseSensitivity, 0.005f);
+
+    const char *projectionModes[] = {"Perspective", "Orthographic"};
+    int projectionMode = static_cast<int>(m_editorCamera->getProjectionMode());
+    if (ImGui::Combo("Projection", &projectionMode, projectionModes, IM_ARRAYSIZE(projectionModes)))
+        m_editorCamera->setProjectionMode(static_cast<engine::Camera::ProjectionMode>(projectionMode));
+
+    float nearPlane = m_editorCamera->getNear();
+    float farPlane = m_editorCamera->getFar();
+    const bool nearChanged = ImGui::DragFloat("Near Plane", &nearPlane, 0.01f, 0.001f, 1000.0f, "%.3f");
+    const bool farChanged = ImGui::DragFloat("Far Plane", &farPlane, 1.0f, 0.01f, 10000.0f, "%.2f");
+    if (nearChanged || farChanged)
+    {
+        nearPlane = std::max(nearPlane, 0.001f);
+        farPlane = std::max(farPlane, nearPlane + 0.001f);
+        m_editorCamera->setNear(nearPlane);
+        m_editorCamera->setFar(farPlane);
+    }
+
+    if (m_editorCamera->getProjectionMode() == engine::Camera::ProjectionMode::Perspective)
+    {
+        float fov = m_editorCamera->getFOV();
+        if (ImGui::DragFloat("FOV", &fov, 0.1f, 1.0f, 179.0f, "%.1f"))
+            m_editorCamera->setFOV(fov);
+    }
+    else
+    {
+        float orthographicSize = m_editorCamera->getOrthographicSize();
+        if (ImGui::DragFloat("Ortho Size", &orthographicSize, 0.05f, 0.01f, 2000.0f, "%.2f"))
+            m_editorCamera->setOrthographicSize(orthographicSize);
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Reset Editor Camera"))
+    {
+        m_editorCamera->setProjectionMode(engine::Camera::ProjectionMode::Perspective);
+        m_editorCamera->setPosition(glm::vec3(0.0f, 1.0f, 5.0f));
+        m_editorCamera->setYaw(-90.0f);
+        m_editorCamera->setPitch(0.0f);
+        m_editorCamera->setNear(0.1f);
+        m_editorCamera->setFar(1000.0f);
+        m_editorCamera->setFOV(60.0f);
+        m_movementSpeed = 3.0f;
+        m_mouseSensitivity = 0.1f;
+    }
+
+    ImGui::End();
+}
+
 void Editor::drawBottomPanel()
 {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
@@ -3257,6 +3360,12 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
                        VkDescriptorSet gameViewportDescriptorSet,
                        bool hasGameCamera)
 {
+    if (m_renderOnlyViewport && viewportDescriptorSet)
+    {
+        drawViewport(viewportDescriptorSet);
+        return;
+    }
+
     m_assetsPreviewSystem.beginFrame();
 
     handleInput();
@@ -3280,7 +3389,9 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     drawHierarchy();
     drawDetails();
     drawUITools();
+    drawEditorCameraSettings();
     drawRenderSettings();
+    drawBenchmark();
 
     m_notificationManager.render();
 }
@@ -3382,423 +3493,634 @@ void Editor::drawMaterialEditors()
             ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_FirstUseEver);
 
         bool keepOpen = matEditor.open;
+        bool closeRequested = false;
+
+        auto destroyNodeEditorState = [this, &normalizedMatPath]()
+        {
+            auto stateIt = m_materialEditorUiState.find(normalizedMatPath);
+            if (stateIt == m_materialEditorUiState.end())
+                return;
+
+            if (stateIt->second.nodeEditorContext)
+            {
+                ed::DestroyEditor(stateIt->second.nodeEditorContext);
+                stateIt->second.nodeEditorContext = nullptr;
+            }
+
+            m_materialEditorUiState.erase(stateIt);
+        };
 
         if (ImGui::Begin(windowName.c_str(), &keepOpen))
         {
-            if (project->cache.materialsByPath.find(normalizedMatPath) == project->cache.materialsByPath.end())
+            auto materialRecordIt = project->cache.materialsByPath.find(normalizedMatPath);
+            if (materialRecordIt == project->cache.materialsByPath.end())
             {
-                m_assetsPreviewSystem.getOrRequestMaterialPreview(normalizedMatPath);
-                ImGui::TextDisabled("Loading material...");
-                ImGui::End();
-                matEditor.open = keepOpen;
-                if (!matEditor.open)
-                    it = m_openMaterialEditors.erase(it);
-                else
-                    ++it;
-                continue;
-            }
-
-            auto &materialAsset = project->cache.materialsByPath[normalizedMatPath];
-            auto gpuMat = materialAsset.gpu;
-            auto &cpuMat = materialAsset.cpuData;
-
-            auto &ui = m_materialEditorUiState[normalizedMatPath];
-            const bool isMaterialEditorFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-            const bool isCtrlDown = ImGui::GetIO().KeyCtrl;
-
-            auto saveCurrentMaterial = [&]()
-            {
-                if (saveMaterialToDisk(matEditor.path, cpuMat))
+                bool loaded = reloadMaterialFromDisk(matEditor.path);
+                if (!loaded)
                 {
-                    matEditor.dirty = false;
-                    m_notificationManager.showSuccess("Material saved");
-                    VX_EDITOR_INFO_STREAM("Material saved: " << normalizedMatPath);
-                }
-                else
-                {
-                    m_notificationManager.showError("Failed to save material");
-                    VX_EDITOR_ERROR_STREAM("Failed to save material: " << normalizedMatPath);
-                }
-            };
+                    std::error_code fileError;
+                    const bool materialFileExists = std::filesystem::exists(matEditor.path, fileError) && !fileError;
+                    bool materialFileEmpty = false;
 
-            if (ImGui::Button("Save"))
-            {
-                saveCurrentMaterial();
-            }
-            ImGui::SameLine();
-
-            if (ImGui::Button("Revert"))
-            {
-                if (reloadMaterialFromDisk(matEditor.path))
-                {
-                    matEditor.dirty = false;
-                    m_notificationManager.showInfo("Material reloaded from disk");
-                    VX_EDITOR_INFO_STREAM("Material reloaded from disk: " << normalizedMatPath);
-                }
-                else
-                {
-                    m_notificationManager.showError("Failed to reload material from disk");
-                    VX_EDITOR_ERROR_STREAM("Failed to reload material from disk: " << normalizedMatPath);
-                }
-            }
-            ImGui::SameLine();
-
-            ImGui::TextDisabled("%s", matPath.c_str());
-
-            if (isMaterialEditorFocused && isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_S, false))
-                saveCurrentMaterial();
-
-            ImGui::Separator();
-
-            if (ImGui::CollapsingHeader("Preview", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                auto previewDS = m_assetsPreviewSystem.getOrRequestMaterialPreview(normalizedMatPath);
-                ImTextureID previewId = (ImTextureID)(uintptr_t)previewDS;
-
-                ImGui::Image(previewId, ImVec2(160, 160));
-                ImGui::SameLine();
-
-                ImGui::BeginGroup();
-                ImGui::Text("Material Instance");
-                ImGui::Spacing();
-                ImGui::Text("Shader: PBR Forward");
-                ImGui::Text("Blend: %s",
-                            (gpuMat->params().flags & engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK) ? "Alpha Blend" : (gpuMat->params().flags & engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) ? "Masked"
-                                                                                                                                                                                                                           : "Opaque");
-                ImGui::EndGroup();
-            }
-
-            if (ImGui::CollapsingHeader("Surface"))
-            {
-                auto p = gpuMat->params();
-
-                glm::vec4 baseColor = p.baseColorFactor;
-                if (ImGui::ColorEdit4("Base Color", glm::value_ptr(baseColor)))
-                {
-                    gpuMat->setBaseColorFactor(baseColor);
-                    cpuMat.baseColorFactor = baseColor;
-                    matEditor.dirty = true;
-                }
-
-                glm::vec3 emissive = glm::vec3(p.emissiveFactor);
-                if (ImGui::ColorEdit3("Emissive Color", glm::value_ptr(emissive)))
-                {
-                    gpuMat->setEmissiveFactor(emissive);
-                    cpuMat.emissiveFactor = emissive;
-                    matEditor.dirty = true;
-                }
-
-                float metallic = p.metallicFactor;
-                if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f))
-                {
-                    gpuMat->setMetallic(metallic);
-                    cpuMat.metallicFactor = metallic;
-                    matEditor.dirty = true;
-                }
-
-                float roughness = p.roughnessFactor;
-                if (ImGui::SliderFloat("Roughness", &roughness, 0.0f, 1.0f))
-                {
-                    gpuMat->setRoughness(roughness);
-                    cpuMat.roughnessFactor = roughness;
-                    matEditor.dirty = true;
-                }
-
-                float aoStrength = p.aoStrength;
-                if (ImGui::SliderFloat("AO Strength", &aoStrength, 0.0f, 1.0f))
-                {
-                    gpuMat->setAoStrength(aoStrength);
-                    cpuMat.aoStrength = aoStrength;
-                    matEditor.dirty = true;
-                }
-
-                float normalScale = p.normalScale;
-                if (ImGui::SliderFloat("Normal Strength", &normalScale, 0.0f, 4.0f))
-                {
-                    gpuMat->setNormalScale(normalScale);
-                    cpuMat.normalScale = normalScale;
-                    matEditor.dirty = true;
-                }
-            }
-
-            if (ImGui::CollapsingHeader("UV"))
-            {
-                auto p = gpuMat->params();
-
-                glm::vec2 uvScale = {p.uvTransform.x, p.uvTransform.y};
-                glm::vec2 uvOffset = {p.uvTransform.z, p.uvTransform.w};
-
-                if (ImGui::DragFloat2("UV Scale", glm::value_ptr(uvScale), 0.01f, -100.0f, 100.0f))
-                {
-                    gpuMat->setUVScale(uvScale);
-                    cpuMat.uvScale = uvScale;
-                    matEditor.dirty = true;
-                }
-
-                if (ImGui::DragFloat2("UV Offset", glm::value_ptr(uvOffset), 0.01f, -100.0f, 100.0f))
-                {
-                    gpuMat->setUVOffset(uvOffset);
-                    cpuMat.uvOffset = uvOffset;
-                    matEditor.dirty = true;
-                }
-            }
-
-            if (ImGui::CollapsingHeader("Advanced"))
-            {
-                auto p = gpuMat->params();
-                uint32_t flags = p.flags;
-
-                bool alphaMask = (flags & engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK) != 0;
-                bool alphaBlend = (flags & engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0;
-
-                if (ImGui::Checkbox("Masked", &alphaMask))
-                {
-                    if (alphaMask)
-                        alphaBlend = false;
-                    uint32_t newFlags = 0;
-                    if (alphaMask)
-                        newFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK;
-                    if (alphaBlend)
-                        newFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND;
-
-                    gpuMat->setFlags(newFlags);
-                    cpuMat.flags = newFlags;
-                    matEditor.dirty = true;
-                }
-
-                if (ImGui::Checkbox("Translucent", &alphaBlend))
-                {
-                    if (alphaBlend)
-                        alphaMask = false;
-                    uint32_t newFlags = 0;
-                    if (alphaMask)
-                        newFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK;
-                    if (alphaBlend)
-                        newFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND;
-
-                    gpuMat->setFlags(newFlags);
-                    cpuMat.flags = newFlags;
-                    matEditor.dirty = true;
-                }
-
-                float alphaCutoff = p.alphaCutoff;
-                if (ImGui::SliderFloat("Alpha Cutoff", &alphaCutoff, 0.0f, 1.0f))
-                {
-                    gpuMat->setAlphaCutoff(alphaCutoff);
-                    cpuMat.alphaCutoff = alphaCutoff;
-                    matEditor.dirty = true;
-                }
-            }
-
-            if (ImGui::CollapsingHeader("Textures"))
-            {
-                struct TextureSlotRow
-                {
-                    const char *label;
-                    TextureUsage usage;
-                    std::string *cpuPath;
-                    std::function<void(const std::string &)> assignToGpu;
-                };
-
-                TextureSlotRow rows[] =
+                    if (materialFileExists)
                     {
-                        {"Albedo", TextureUsage::Color, &cpuMat.albedoTexture, [&](const std::string &p)
-                         {
-                             if (p.empty())
-                                 gpuMat->setAlbedoTexture(nullptr);
-                             else
-                                 gpuMat->setAlbedoTexture(ensureProjectTextureLoaded(p, TextureUsage::Color));
-                         }},
-                        {"Normal", TextureUsage::Data, &cpuMat.normalTexture, [&](const std::string &p)
-                         {
-                             if (p.empty())
-                                 gpuMat->setNormalTexture(nullptr);
-                             else
-                                 gpuMat->setNormalTexture(ensureProjectTextureLoaded(p, TextureUsage::Data));
-                         }},
-                        {"ORM", TextureUsage::Data, &cpuMat.ormTexture, [&](const std::string &p)
-                         {
-                             if (p.empty())
-                                 gpuMat->setOrmTexture(nullptr);
-                             else
-                                 gpuMat->setOrmTexture(ensureProjectTextureLoaded(p, TextureUsage::Data));
-                         }},
-                        {"Emissive", TextureUsage::Color, &cpuMat.emissiveTexture, [&](const std::string &p)
-                         {
-                             if (p.empty())
-                                 gpuMat->setEmissiveTexture(nullptr);
-                             else
-                                 gpuMat->setEmissiveTexture(ensureProjectTextureLoaded(p, TextureUsage::Color));
-                         }},
-                    };
-
-                for (auto &row : rows)
-                {
-                    ImGui::PushID(row.label);
-
-                    ImGui::BeginGroup();
-
-                    auto slotTexture = ensureProjectTextureLoaded(*row.cpuPath, row.usage);
-                    auto ds = m_assetsPreviewSystem.getOrRequestTexturePreview(*row.cpuPath, slotTexture);
-                    ImTextureID texId = (ImTextureID)(uintptr_t)ds;
-
-                    if (ImGui::ImageButton("##thumb", texId, ImVec2(56, 56)))
-                    {
-                        ui.openTexturePopup = true;
-                        ui.texturePopupSlot = row.label;
-                    }
-
-                    if (ImGui::BeginDragDropTarget())
-                    {
-                        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                        fileError.clear();
+                        if (std::filesystem::is_regular_file(matEditor.path, fileError) && !fileError)
                         {
-                            std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
-                            const std::string normalizedDroppedPath = resolveTexturePathAgainstProjectRoot(droppedPath, projectRoot);
-
-                            if (isTextureAssetPath(std::filesystem::path(normalizedDroppedPath)))
-                            {
-                                const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedDroppedPath, projectRoot);
-                                *row.cpuPath = textureReferencePath;
-                                row.assignToGpu(textureReferencePath);
-                                matEditor.dirty = true;
-                            }
+                            fileError.clear();
+                            const auto fileSize = std::filesystem::file_size(matEditor.path, fileError);
+                            materialFileEmpty = !fileError && fileSize == 0;
                         }
-                        ImGui::EndDragDropTarget();
                     }
 
-                    ImGui::EndGroup();
+                    if (!materialFileExists || materialFileEmpty)
+                    {
+                        engine::CPUMaterial defaultMaterial{};
+                        defaultMaterial.name = matEditor.path.stem().string();
+
+                        if (saveMaterialToDisk(matEditor.path, defaultMaterial))
+                            loaded = reloadMaterialFromDisk(matEditor.path);
+                    }
+                }
+
+                materialRecordIt = project->cache.materialsByPath.find(normalizedMatPath);
+                if (!loaded || materialRecordIt == project->cache.materialsByPath.end())
+                {
+                    ImGui::TextDisabled("Failed to load material.");
+                    ImGui::TextWrapped("%s", matEditor.path.string().c_str());
+                    ImGui::Spacing();
+
+                    if (ImGui::Button("Initialize Default Material"))
+                    {
+                        engine::CPUMaterial defaultMaterial{};
+                        defaultMaterial.name = matEditor.path.stem().string();
+
+                        if (saveMaterialToDisk(matEditor.path, defaultMaterial) && reloadMaterialFromDisk(matEditor.path))
+                            m_notificationManager.showSuccess("Material initialized");
+                        else
+                            m_notificationManager.showError("Failed to initialize material");
+                    }
 
                     ImGui::SameLine();
+                    if (ImGui::Button("Open As Text"))
+                        openTextDocument(matEditor.path);
 
-                    ImGui::BeginGroup();
-                    ImGui::TextUnformatted(row.label);
-
-                    const std::string displayedTextureName = makeTextureAssetDisplayName(*row.cpuPath);
-                    ImGui::TextWrapped("%s", displayedTextureName.c_str());
-
-                    if (ImGui::Button("Use Default"))
+                    ImGui::End();
+                    matEditor.open = keepOpen;
+                    closeRequested = !matEditor.open;
+                    if (!closeRequested)
                     {
-                        row.cpuPath->clear();
-                        row.assignToGpu("");
-                        matEditor.dirty = true;
+                        ++it;
+                        continue;
                     }
 
-                    ImGui::EndGroup();
+                    destroyNodeEditorState();
+                    it = m_openMaterialEditors.erase(it);
+                    continue;
+                }
+            }
+            if (materialRecordIt != project->cache.materialsByPath.end())
+            {
+                auto &ui = m_materialEditorUiState[normalizedMatPath];
+                auto &materialAsset = materialRecordIt->second;
+                auto gpuMat = materialAsset.gpu;
+                auto &cpuMat = materialAsset.cpuData;
 
-                    if (ui.openTexturePopup && ui.texturePopupSlot == row.label)
+                if (!gpuMat)
+                {
+                    ImGui::TextDisabled("Material GPU instance is unavailable.");
+                    ImGui::End();
+                    matEditor.open = keepOpen;
+                    closeRequested = !matEditor.open;
+                    if (!closeRequested)
                     {
-                        std::string popupName = std::string("TexturePicker##") + matPath;
-                        ImGui::OpenPopup(popupName.c_str());
-                        ui.openTexturePopup = false;
+                        ++it;
+                        continue;
                     }
-
-                    std::string popupName = std::string("TexturePicker##") + matPath;
-                    if (ImGui::BeginPopup(popupName.c_str()))
+                }
+                else
+                {
+                    if (!ui.nodeEditorInitialized)
                     {
-                        ImGui::Text("Select Texture for %s", row.label);
-                        ImGui::Separator();
+                        ed::Config config;
+                        config.SettingsFile = nullptr;
+                        ui.nodeEditorContext = ed::CreateEditor(&config);
+                        ui.nodeEditorInitialized = true;
 
-                        ImGui::InputTextWithHint("##Search", "Search textures...", ui.textureFilter, sizeof(ui.textureFilter));
-                        ImGui::SameLine();
-                        if (ImGui::Button("X"))
-                            ui.textureFilter[0] = '\0';
+                        ui.linkAlbedoActive = !cpuMat.albedoTexture.empty();
+                        ui.linkNormalActive = !cpuMat.normalTexture.empty();
+                        ui.linkOrmActive = !cpuMat.ormTexture.empty();
+                        ui.linkEmissiveActive = !cpuMat.emissiveTexture.empty();
 
-                        ImGui::Separator();
-
-                        if (ImGui::Selectable("<Default>"))
+                        if (ui.nodeEditorContext)
                         {
-                            row.cpuPath->clear();
-                            row.assignToGpu("");
-                            matEditor.dirty = true;
-                            ImGui::CloseCurrentPopup();
+                            ed::SetCurrentEditor(ui.nodeEditorContext);
+                            ed::SetNodePosition(ed::NodeId(ui.textureNodeId), ImVec2(20.0f, 80.0f));
+                            ed::SetNodePosition(ed::NodeId(ui.uvNodeId), ImVec2(20.0f, 420.0f));
+                            ed::SetNodePosition(ed::NodeId(ui.materialNodeId), ImVec2(520.0f, 160.0f));
+                            ed::SetCurrentEditor(nullptr);
                         }
+                    }
 
-                        ImGui::BeginChild("TextureScroll", ImVec2(360, 260), true);
-                        const std::string currentTextureReference = toMaterialTextureReferencePath(*row.cpuPath, projectRoot);
-                        const auto textureAssetPaths = gatherProjectTextureAssets(*project, projectRoot);
+                    const bool isMaterialEditorFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+                    const bool isCtrlDown = ImGui::GetIO().KeyCtrl;
 
-                        for (const auto &texturePath : textureAssetPaths)
+                    auto setTexturePathAndGpu = [&](std::string &cpuPath,
+                                                    TextureUsage usage,
+                                                    const std::string &newPath,
+                                                    const std::function<void(engine::Texture::SharedPtr)> &assignTexture,
+                                                    bool &linkState)
+                    {
+                        cpuPath = newPath;
+                        if (newPath.empty())
                         {
-                            const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
-                            const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedTexturePath, projectRoot);
-                            const std::string textureDisplayName = makeTextureAssetDisplayName(textureReferencePath);
+                            assignTexture(nullptr);
+                            linkState = false;
+                        }
+                        else
+                        {
+                            assignTexture(ensureProjectTextureLoaded(newPath, usage));
+                            linkState = true;
+                        }
+                    };
 
-                            if (ui.textureFilter[0] != '\0')
+                    auto saveCurrentMaterial = [&]()
+                    {
+                        if (saveMaterialToDisk(matEditor.path, cpuMat))
+                        {
+                            matEditor.dirty = false;
+                            m_notificationManager.showSuccess("Material saved");
+                            VX_EDITOR_INFO_STREAM("Material saved: " << normalizedMatPath);
+                        }
+                        else
+                        {
+                            m_notificationManager.showError("Failed to save material");
+                            VX_EDITOR_ERROR_STREAM("Failed to save material: " << normalizedMatPath);
+                        }
+                    };
+
+                    if (ImGui::Button("Save"))
+                        saveCurrentMaterial();
+                    ImGui::SameLine();
+
+                    if (ImGui::Button("Revert"))
+                    {
+                        if (reloadMaterialFromDisk(matEditor.path))
+                        {
+                            auto refreshedIt = project->cache.materialsByPath.find(normalizedMatPath);
+                            if (refreshedIt != project->cache.materialsByPath.end())
                             {
-                                std::string pathLower = toLowerCopy(textureReferencePath);
-                                std::string filterLower = ui.textureFilter;
-                                std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
-
-                                if (pathLower.find(filterLower) == std::string::npos &&
-                                    toLowerCopy(textureDisplayName).find(filterLower) == std::string::npos)
-                                    continue;
+                                gpuMat = refreshedIt->second.gpu;
+                                cpuMat = refreshedIt->second.cpuData;
+                                ui.linkAlbedoActive = !cpuMat.albedoTexture.empty();
+                                ui.linkNormalActive = !cpuMat.normalTexture.empty();
+                                ui.linkOrmActive = !cpuMat.ormTexture.empty();
+                                ui.linkEmissiveActive = !cpuMat.emissiveTexture.empty();
                             }
 
-                            ImGui::PushID(textureReferencePath.c_str());
+                            matEditor.dirty = false;
+                            m_notificationManager.showInfo("Material reloaded from disk");
+                            VX_EDITOR_INFO_STREAM("Material reloaded from disk: " << normalizedMatPath);
+                        }
+                        else
+                        {
+                            m_notificationManager.showError("Failed to reload material from disk");
+                            VX_EDITOR_ERROR_STREAM("Failed to reload material from disk: " << normalizedMatPath);
+                        }
+                    }
 
-                            auto slotTexture = ensureProjectTextureLoaded(normalizedTexturePath, row.usage);
-                            auto texDS = m_assetsPreviewSystem.getOrRequestTexturePreview(normalizedTexturePath, slotTexture);
-                            ImTextureID imguiTexId = (ImTextureID)(uintptr_t)texDS;
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", matPath.c_str());
 
-                            bool selected = currentTextureReference == textureReferencePath;
+                    if (isMaterialEditorFocused && isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_S, false))
+                        saveCurrentMaterial();
 
-                            if (selected)
-                                ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 200, 255, 255));
+                    ImGui::Separator();
 
-                            if (ImGui::ImageButton("##pick", imguiTexId, ImVec2(48, 48)))
+                    const float minGraphHeight = 520.0f;
+                    const ImVec2 availableRegion = ImGui::GetContentRegionAvail();
+                    const float graphHeight = std::max(minGraphHeight, availableRegion.y - 10.0f);
+
+                    if (!ui.nodeEditorContext)
+                    {
+                        ImGui::Spacing();
+                        ImGui::TextDisabled("Node editor context creation failed.");
+                        ImGui::TextDisabled("Check imgui-node-editor integration and rebuild.");
+                        ImGui::End();
+                        matEditor.open = keepOpen;
+                        closeRequested = !matEditor.open;
+                        if (!closeRequested)
+                        {
+                            ++it;
+                            continue;
+                        }
+                    }
+
+                    if (ui.nodeEditorContext)
+                        ed::SetCurrentEditor(ui.nodeEditorContext);
+
+                    ed::Begin(("MaterialGraph##" + normalizedMatPath).c_str(), ImVec2(0.0f, graphHeight));
+
+                    ed::BeginNode(ed::NodeId(ui.textureNodeId));
+                    ImGui::TextUnformatted("Texture Inputs");
+                    ImGui::Separator();
+
+                    struct TextureSlotRow
+                    {
+                        const char *label;
+                        TextureUsage usage;
+                        std::string *cpuPath;
+                        int outputPinId;
+                        int inputPinId;
+                        int linkId;
+                        bool *linkState;
+                        std::function<void(engine::Texture::SharedPtr)> assignTexture;
+                    };
+
+                    TextureSlotRow textureRows[] = {
+                        {"Albedo", TextureUsage::Color, &cpuMat.albedoTexture, ui.textureOutAlbedoPinId, ui.materialInAlbedoPinId, ui.linkAlbedoId, &ui.linkAlbedoActive, [&](engine::Texture::SharedPtr texture)
+                         { gpuMat->setAlbedoTexture(texture); }},
+                        {"Normal", TextureUsage::Data, &cpuMat.normalTexture, ui.textureOutNormalPinId, ui.materialInNormalPinId, ui.linkNormalId, &ui.linkNormalActive, [&](engine::Texture::SharedPtr texture)
+                         { gpuMat->setNormalTexture(texture); }},
+                        {"ORM", TextureUsage::Data, &cpuMat.ormTexture, ui.textureOutOrmPinId, ui.materialInOrmPinId, ui.linkOrmId, &ui.linkOrmActive, [&](engine::Texture::SharedPtr texture)
+                         { gpuMat->setOrmTexture(texture); }},
+                        {"Emissive", TextureUsage::Color, &cpuMat.emissiveTexture, ui.textureOutEmissivePinId, ui.materialInEmissivePinId, ui.linkEmissiveId, &ui.linkEmissiveActive, [&](engine::Texture::SharedPtr texture)
+                         { gpuMat->setEmissiveTexture(texture); }},
+                    };
+
+                    for (auto &row : textureRows)
+                    {
+                        ImGui::PushID(row.label);
+
+                        ed::BeginPin(ed::PinId(row.outputPinId), ed::PinKind::Output);
+                        ImGui::Text("%s Out", row.label);
+                        ed::EndPin();
+
+                        ImGui::SameLine();
+                        const auto texture = ensureProjectTextureLoaded(*row.cpuPath, row.usage);
+                        const auto descriptorSet = m_assetsPreviewSystem.getOrRequestTexturePreview(*row.cpuPath, texture);
+                        const ImTextureID textureId = (ImTextureID)(uintptr_t)descriptorSet;
+
+                        if (ImGui::ImageButton("##thumb", textureId, ImVec2(44.0f, 44.0f)))
+                        {
+                            ui.openTexturePopup = true;
+                            ui.texturePopupSlot = row.label;
+                        }
+
+                        if (ImGui::BeginDragDropTarget())
+                        {
+                            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
                             {
-                                *row.cpuPath = textureReferencePath;
-                                row.assignToGpu(textureReferencePath);
+                                std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
+                                const std::string normalizedDroppedPath = resolveTexturePathAgainstProjectRoot(droppedPath, projectRoot);
+                                if (isTextureAssetPath(std::filesystem::path(normalizedDroppedPath)))
+                                {
+                                    const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedDroppedPath, projectRoot);
+                                    setTexturePathAndGpu(*row.cpuPath, row.usage, textureReferencePath, row.assignTexture, *row.linkState);
+                                    matEditor.dirty = true;
+                                }
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
+
+                        ImGui::SameLine();
+                        ImGui::BeginGroup();
+                        ImGui::TextWrapped("%s", makeTextureAssetDisplayName(*row.cpuPath).c_str());
+                        if (ImGui::Button("Default"))
+                        {
+                            setTexturePathAndGpu(*row.cpuPath, row.usage, "", row.assignTexture, *row.linkState);
+                            matEditor.dirty = true;
+                        }
+                        ImGui::EndGroup();
+
+                        std::string popupName = std::string("TexturePicker##") + normalizedMatPath + "_" + row.label;
+                        if (ui.openTexturePopup && ui.texturePopupSlot == row.label)
+                        {
+                            ImGui::OpenPopup(popupName.c_str());
+                            ui.openTexturePopup = false;
+                        }
+
+                        if (ImGui::BeginPopup(popupName.c_str()))
+                        {
+                            ImGui::Text("Select Texture for %s", row.label);
+                            ImGui::Separator();
+                            ImGui::InputTextWithHint("##Search", "Search textures...", ui.textureFilter, sizeof(ui.textureFilter));
+                            ImGui::SameLine();
+                            if (ImGui::Button("X"))
+                                ui.textureFilter[0] = '\0';
+
+                            if (ImGui::Selectable("<Default>"))
+                            {
+                                setTexturePathAndGpu(*row.cpuPath, row.usage, "", row.assignTexture, *row.linkState);
                                 matEditor.dirty = true;
                                 ImGui::CloseCurrentPopup();
                             }
 
-                            if (selected)
-                                ImGui::PopStyleColor();
-
-                            if (ImGui::IsItemHovered())
+                            ImGui::BeginChild("TextureScroll", ImVec2(360, 240), true);
+                            const std::string currentTextureReference = toMaterialTextureReferencePath(*row.cpuPath, projectRoot);
+                            const auto textureAssetPaths = gatherProjectTextureAssets(*project, projectRoot);
+                            for (const auto &texturePath : textureAssetPaths)
                             {
-                                ImGui::BeginTooltip();
-                                ImGui::Text("%s", textureReferencePath.c_str());
-                                ImGui::EndTooltip();
+                                const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
+                                const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedTexturePath, projectRoot);
+                                const std::string textureDisplayName = makeTextureAssetDisplayName(textureReferencePath);
+
+                                if (ui.textureFilter[0] != '\0')
+                                {
+                                    const std::string filterLower = toLowerCopy(std::string(ui.textureFilter));
+                                    if (toLowerCopy(textureReferencePath).find(filterLower) == std::string::npos &&
+                                        toLowerCopy(textureDisplayName).find(filterLower) == std::string::npos)
+                                        continue;
+                                }
+
+                                ImGui::PushID(textureReferencePath.c_str());
+                                const auto previewTexture = ensureProjectTextureLoaded(normalizedTexturePath, row.usage);
+                                const auto previewDS = m_assetsPreviewSystem.getOrRequestTexturePreview(normalizedTexturePath, previewTexture);
+                                const bool selected = currentTextureReference == textureReferencePath;
+                                if (selected)
+                                    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 200, 255, 255));
+
+                                if (ImGui::ImageButton("##pick", (ImTextureID)(uintptr_t)previewDS, ImVec2(44.0f, 44.0f)))
+                                {
+                                    setTexturePathAndGpu(*row.cpuPath, row.usage, textureReferencePath, row.assignTexture, *row.linkState);
+                                    matEditor.dirty = true;
+                                    ImGui::CloseCurrentPopup();
+                                }
+
+                                if (selected)
+                                    ImGui::PopStyleColor();
+
+                                ImGui::SameLine();
+                                ImGui::TextWrapped("%s", textureDisplayName.c_str());
+                                ImGui::Separator();
+                                ImGui::PopID();
                             }
+                            ImGui::EndChild();
 
-                            ImGui::SameLine();
+                            if (ImGui::Button("Close"))
+                                ImGui::CloseCurrentPopup();
 
-                            ImGui::BeginGroup();
-                            ImGui::TextWrapped("%s", textureDisplayName.c_str());
-                            ImGui::EndGroup();
-
-                            ImGui::Separator();
-                            ImGui::PopID();
+                            ImGui::EndPopup();
                         }
 
-                        ImGui::EndChild();
-
-                        if (ImGui::Button("Close"))
-                            ImGui::CloseCurrentPopup();
-
-                        ImGui::EndPopup();
+                        ImGui::Separator();
+                        ImGui::PopID();
                     }
 
-                    ImGui::Separator();
-                    ImGui::PopID();
-                }
-            }
+                    ed::EndNode();
 
-            ImGui::Spacing();
-            if (ImGui::Button("Open Material Graph"))
-            {
-                // TODO: open graph editor asset window (separate system)
-                // openMaterialGraphEditor(matPath);
+                    ed::BeginNode(ed::NodeId(ui.uvNodeId));
+                    ImGui::TextUnformatted("Mapping & Alpha");
+                    ImGui::Separator();
+                    auto p = gpuMat->params();
+                    glm::vec2 uvScale = {p.uvTransform.x, p.uvTransform.y};
+                    glm::vec2 uvLocation = {p.uvTransform.z, p.uvTransform.w};
+                    float uvRotation = p.uvRotation;
+
+                    if (ImGui::DragFloat2("Scale", glm::value_ptr(uvScale), 0.01f, -100.0f, 100.0f))
+                    {
+                        gpuMat->setUVScale(uvScale);
+                        cpuMat.uvScale = uvScale;
+                        matEditor.dirty = true;
+                    }
+
+                    if (ImGui::DragFloat2("Location", glm::value_ptr(uvLocation), 0.01f, -100.0f, 100.0f))
+                    {
+                        gpuMat->setUVOffset(uvLocation);
+                        cpuMat.uvOffset = uvLocation;
+                        matEditor.dirty = true;
+                    }
+
+                    if (ImGui::DragFloat("Rotation (deg)", &uvRotation, 0.1f, -3600.0f, 3600.0f))
+                    {
+                        gpuMat->setUVRotation(uvRotation);
+                        cpuMat.uvRotation = uvRotation;
+                        matEditor.dirty = true;
+                    }
+
+                    float alphaCutoff = p.alphaCutoff;
+                    if (ImGui::SliderFloat("Alpha Cutoff", &alphaCutoff, 0.0f, 1.0f))
+                    {
+                        gpuMat->setAlphaCutoff(alphaCutoff);
+                        cpuMat.alphaCutoff = alphaCutoff;
+                        matEditor.dirty = true;
+                    }
+                    ed::EndNode();
+
+                    ed::BeginNode(ed::NodeId(ui.materialNodeId));
+                    ImGui::TextUnformatted("Principled Material");
+                    ImGui::Separator();
+
+                    auto drawInputPin = [](int pinId, const char *label)
+                    {
+                        ed::BeginPin(ed::PinId(pinId), ed::PinKind::Input);
+                        ImGui::TextUnformatted(label);
+                        ed::EndPin();
+                    };
+
+                    drawInputPin(ui.materialInAlbedoPinId, "Albedo");
+                    drawInputPin(ui.materialInNormalPinId, "Normal");
+                    drawInputPin(ui.materialInOrmPinId, "ORM");
+                    drawInputPin(ui.materialInEmissivePinId, "Emissive");
+
+                    ImGui::Separator();
+
+                    p = gpuMat->params();
+
+                    glm::vec4 baseColor = p.baseColorFactor;
+                    if (ImGui::ColorEdit4("Base Color", glm::value_ptr(baseColor)))
+                    {
+                        gpuMat->setBaseColorFactor(baseColor);
+                        cpuMat.baseColorFactor = baseColor;
+                        matEditor.dirty = true;
+                    }
+
+                    glm::vec3 emissiveColor = glm::vec3(p.emissiveFactor);
+                    if (ImGui::ColorEdit3("Emissive", glm::value_ptr(emissiveColor)))
+                    {
+                        gpuMat->setEmissiveFactor(emissiveColor);
+                        cpuMat.emissiveFactor = emissiveColor;
+                        matEditor.dirty = true;
+                    }
+
+                    float metallic = p.metallicFactor;
+                    if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f))
+                    {
+                        gpuMat->setMetallic(metallic);
+                        cpuMat.metallicFactor = metallic;
+                        matEditor.dirty = true;
+                    }
+
+                    float roughness = p.roughnessFactor;
+                    if (ImGui::SliderFloat("Roughness", &roughness, 0.0f, 1.0f))
+                    {
+                        gpuMat->setRoughness(roughness);
+                        cpuMat.roughnessFactor = roughness;
+                        matEditor.dirty = true;
+                    }
+
+                    float aoStrength = p.aoStrength;
+                    if (ImGui::SliderFloat("AO Strength", &aoStrength, 0.0f, 1.0f))
+                    {
+                        gpuMat->setAoStrength(aoStrength);
+                        cpuMat.aoStrength = aoStrength;
+                        matEditor.dirty = true;
+                    }
+
+                    float normalScale = p.normalScale;
+                    if (ImGui::SliderFloat("Normal Scale", &normalScale, 0.0f, 4.0f))
+                    {
+                        gpuMat->setNormalScale(normalScale);
+                        cpuMat.normalScale = normalScale;
+                        matEditor.dirty = true;
+                    }
+
+                    uint32_t materialFlags = p.flags;
+                    int shadingModeIndex = 0; // Opaque
+                    if ((materialFlags & engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK) != 0u)
+                        shadingModeIndex = 1;
+                    else if ((materialFlags & engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u)
+                        shadingModeIndex = 2;
+
+                    static const char *shadingModes[] = {"Opaque", "Masked", "Translucent"};
+                    ImGui::TextUnformatted("Shading");
+                    bool shadingChanged = false;
+
+                    if (ImGui::RadioButton("Opaque##material_shading", shadingModeIndex == 0))
+                    {
+                        shadingModeIndex = 0;
+                        shadingChanged = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Masked##material_shading", shadingModeIndex == 1))
+                    {
+                        shadingModeIndex = 1;
+                        shadingChanged = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Translucent##material_shading", shadingModeIndex == 2))
+                    {
+                        shadingModeIndex = 2;
+                        shadingChanged = true;
+                    }
+
+                    if (shadingChanged)
+                    {
+                        materialFlags &= ~(engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK |
+                                           engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND);
+                        if (shadingModeIndex == 1)
+                            materialFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK;
+                        else if (shadingModeIndex == 2)
+                            materialFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND;
+
+                        gpuMat->setFlags(materialFlags);
+                        cpuMat.flags = materialFlags;
+                        matEditor.dirty = true;
+                    }
+
+                    bool twoSided = (materialFlags & engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED) != 0u;
+                    if (ImGui::Checkbox("Two Sided", &twoSided))
+                    {
+                        if (twoSided)
+                            materialFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED;
+                        else
+                            materialFlags &= ~engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED;
+
+                        gpuMat->setFlags(materialFlags);
+                        cpuMat.flags = materialFlags;
+                        matEditor.dirty = true;
+                    }
+
+                    ed::EndNode();
+
+                    auto drawTextureLink = [&](bool active, int linkId, int outPinId, int inPinId)
+                    {
+                        if (!active)
+                            return;
+
+                        ed::Link(ed::LinkId(linkId), ed::PinId(outPinId), ed::PinId(inPinId), ImColor(130, 180, 255), 2.0f);
+                    };
+
+                    drawTextureLink(ui.linkAlbedoActive, ui.linkAlbedoId, ui.textureOutAlbedoPinId, ui.materialInAlbedoPinId);
+                    drawTextureLink(ui.linkNormalActive, ui.linkNormalId, ui.textureOutNormalPinId, ui.materialInNormalPinId);
+                    drawTextureLink(ui.linkOrmActive, ui.linkOrmId, ui.textureOutOrmPinId, ui.materialInOrmPinId);
+                    drawTextureLink(ui.linkEmissiveActive, ui.linkEmissiveId, ui.textureOutEmissivePinId, ui.materialInEmissivePinId);
+
+                    const bool isCreateActive = ed::BeginCreate();
+                    if (isCreateActive)
+                    {
+                        ed::PinId startPinId;
+                        ed::PinId endPinId;
+                        if (ed::QueryNewLink(&startPinId, &endPinId))
+                        {
+                            auto acceptTextureLink = [&](TextureSlotRow &row)
+                            {
+                                const bool validDirection =
+                                    (startPinId == ed::PinId(row.outputPinId) && endPinId == ed::PinId(row.inputPinId)) ||
+                                    (startPinId == ed::PinId(row.inputPinId) && endPinId == ed::PinId(row.outputPinId));
+
+                                if (!validDirection)
+                                    return false;
+
+                                if (ed::AcceptNewItem())
+                                {
+                                    *row.linkState = true;
+                                    matEditor.dirty = true;
+                                }
+                                return true;
+                            };
+
+                            for (auto &row : textureRows)
+                            {
+                                if (acceptTextureLink(row))
+                                    break;
+                            }
+                        }
+                    }
+                    ed::EndCreate();
+
+                    const bool isDeleteActive = ed::BeginDelete();
+                    if (isDeleteActive)
+                    {
+                        ed::LinkId deletedLinkId;
+                        while (ed::QueryDeletedLink(&deletedLinkId))
+                        {
+                            auto removeTextureLink = [&](TextureSlotRow &row)
+                            {
+                                if (deletedLinkId != ed::LinkId(row.linkId))
+                                    return false;
+
+                                if (ed::AcceptDeletedItem())
+                                {
+                                    setTexturePathAndGpu(*row.cpuPath, row.usage, "", row.assignTexture, *row.linkState);
+                                    matEditor.dirty = true;
+                                }
+                                return true;
+                            };
+
+                            for (auto &row : textureRows)
+                            {
+                                if (removeTextureLink(row))
+                                    break;
+                            }
+                        }
+                    }
+                    ed::EndDelete();
+
+                    ed::End();
+                    ed::SetCurrentEditor(nullptr);
+                }
             }
         }
 
         ImGui::End();
 
         matEditor.open = keepOpen;
-        if (!matEditor.open)
+        if (!matEditor.open || closeRequested)
+        {
+            destroyNodeEditorState();
             it = m_openMaterialEditors.erase(it);
+        }
         else
             ++it;
     }
@@ -4122,48 +4444,82 @@ void Editor::handleInput()
 {
     ImGuiIO &io = ImGui::GetIO();
 
-    if (!io.WantCaptureKeyboard)
-    {
-    }
-
     const bool isCtrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+    const bool isShiftDown = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
+    const bool assetsWindowConsumesDelete = m_showAssetsWindow && m_assetsWindow && m_assetsWindow->hasKeyboardFocus();
+    const bool shortcutBlockedByTextInput = io.WantTextInput || ImGui::GetActiveID() != 0;
 
-    if (isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_C, false))
+    if (isCtrlDown && !shortcutBlockedByTextInput && ImGui::IsKeyPressed(ImGuiKey_Z, false))
     {
+        if (isShiftDown)
+            performRedoAction();
+        else
+            performUndoAction();
     }
 
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && m_selectedEntity)
+    if (isCtrlDown && !shortcutBlockedByTextInput && ImGui::IsKeyPressed(ImGuiKey_Y, false))
+        performRedoAction();
+
+    if (isCtrlDown && !shortcutBlockedByTextInput && ImGui::IsKeyPressed(ImGuiKey_C, false))
+        performCopyAction();
+
+    if (isCtrlDown && !shortcutBlockedByTextInput && ImGui::IsKeyPressed(ImGuiKey_V, false))
+        performPasteAction();
+
+    bool sceneMutated = false;
+
+    if (!assetsWindowConsumesDelete && ImGui::IsKeyPressed(ImGuiKey_Delete) && m_selectedEntity && m_scene && m_currentMode == EditorMode::EDIT)
     {
-        m_scene->destroyEntity(m_selectedEntity);
-        setSelectedEntity(nullptr);
+        if (m_scene->destroyEntity(m_selectedEntity))
+        {
+            setSelectedEntity(nullptr);
+            sceneMutated = true;
+        }
     }
-    else if (ImGui::IsKeyPressed(ImGuiKey_Delete) && m_hasSelectedUIElement && m_scene)
+    else if (!assetsWindowConsumesDelete && ImGui::IsKeyPressed(ImGuiKey_Delete) && m_hasSelectedUIElement && m_scene && m_currentMode == EditorMode::EDIT)
     {
         const auto &texts = m_scene->getUITexts();
         const auto &buttons = m_scene->getUIButtons();
         const auto &billboards = m_scene->getBillboards();
+        bool removedElement = false;
 
         switch (m_uiSelectionType)
         {
         case UISelectionType::Text:
             if (m_selectedUIElementIndex < texts.size())
+            {
                 m_scene->removeUIText(texts[m_selectedUIElementIndex].get());
+                removedElement = true;
+            }
             break;
         case UISelectionType::Button:
             if (m_selectedUIElementIndex < buttons.size())
+            {
                 m_scene->removeUIButton(buttons[m_selectedUIElementIndex].get());
+                removedElement = true;
+            }
             break;
         case UISelectionType::Billboard:
             if (m_selectedUIElementIndex < billboards.size())
+            {
                 m_scene->removeBillboard(billboards[m_selectedUIElementIndex].get());
+                removedElement = true;
+            }
             break;
         case UISelectionType::None:
         default:
             break;
         }
 
-        clearSelectedUIElement();
+        if (removedElement)
+        {
+            clearSelectedUIElement();
+            sceneMutated = true;
+        }
     }
+
+    if (sceneMutated)
+        captureSceneActionSnapshot("Delete");
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape))
     {
@@ -4187,6 +4543,141 @@ void Editor::handleInput()
     {
         m_currentGuizmoOperation = GuizmoOperation::SCALE;
     }
+}
+
+void Editor::resetSceneActionHistory()
+{
+    if (!m_scene)
+        return;
+
+    if (!m_sceneActionHistory.reset(*m_scene, "Initial state"))
+        VX_EDITOR_WARNING_STREAM("Failed to initialize scene action history.\n");
+}
+
+void Editor::captureSceneActionSnapshot(const std::string &label)
+{
+    if (!m_scene || m_currentMode != EditorMode::EDIT)
+        return;
+
+    if (!m_sceneActionHistory.capture(*m_scene, label))
+        VX_EDITOR_WARNING_STREAM("Failed to capture scene action snapshot: " << label << '\n');
+}
+
+bool Editor::performUndoAction()
+{
+    if (!m_scene)
+        return false;
+    if (m_currentMode != EditorMode::EDIT)
+    {
+        m_notificationManager.showWarning("Undo is available only in Edit mode");
+        return false;
+    }
+
+    if (!m_sceneActionHistory.canUndo())
+    {
+        m_notificationManager.showWarning("Nothing to undo");
+        return false;
+    }
+
+    if (!m_sceneActionHistory.undo(*m_scene))
+    {
+        m_notificationManager.showError("Undo failed");
+        return false;
+    }
+
+    setSelectedEntity(nullptr);
+    m_selectedMeshSlot.reset();
+    clearSelectedUIElement();
+    m_hasPendingObjectPick = false;
+    invalidateModelDetailsCache();
+    m_notificationManager.showInfo("Undo");
+    return true;
+}
+
+bool Editor::performRedoAction()
+{
+    if (!m_scene)
+        return false;
+    if (m_currentMode != EditorMode::EDIT)
+    {
+        m_notificationManager.showWarning("Redo is available only in Edit mode");
+        return false;
+    }
+
+    if (!m_sceneActionHistory.canRedo())
+    {
+        m_notificationManager.showWarning("Nothing to redo");
+        return false;
+    }
+
+    if (!m_sceneActionHistory.redo(*m_scene))
+    {
+        m_notificationManager.showError("Redo failed");
+        return false;
+    }
+
+    setSelectedEntity(nullptr);
+    m_selectedMeshSlot.reset();
+    clearSelectedUIElement();
+    m_hasPendingObjectPick = false;
+    invalidateModelDetailsCache();
+    m_notificationManager.showInfo("Redo");
+    return true;
+}
+
+bool Editor::performCopyAction()
+{
+    if (!m_scene || !m_selectedEntity)
+        return false;
+    if (m_currentMode != EditorMode::EDIT)
+    {
+        m_notificationManager.showWarning("Copy is available only in Edit mode");
+        return false;
+    }
+
+    if (!m_entityClipboard.copySelectedEntity(*m_scene, m_selectedEntity->getId()))
+    {
+        m_notificationManager.showError("Copy failed");
+        return false;
+    }
+
+    m_notificationManager.showInfo("Copied: " + m_selectedEntity->getName());
+    return true;
+}
+
+bool Editor::performPasteAction()
+{
+    if (!m_scene)
+        return false;
+    if (m_currentMode != EditorMode::EDIT)
+    {
+        m_notificationManager.showWarning("Paste is available only in Edit mode");
+        return false;
+    }
+
+    if (!m_entityClipboard.hasEntity())
+    {
+        m_notificationManager.showWarning("Clipboard is empty");
+        return false;
+    }
+
+    std::uint32_t newEntityId = 0u;
+    if (!m_entityClipboard.pasteEntity(*m_scene, &newEntityId))
+    {
+        m_notificationManager.showError("Paste failed");
+        return false;
+    }
+
+    setSelectedEntity(nullptr);
+    clearSelectedUIElement();
+
+    if (engine::Entity *pastedEntity = m_scene->getEntityById(newEntityId))
+        setSelectedEntity(pastedEntity);
+
+    invalidateModelDetailsCache();
+    captureSceneActionSnapshot("Paste entity");
+    m_notificationManager.showSuccess("Pasted entity");
+    return true;
 }
 
 void Editor::openMaterialEditor(const std::filesystem::path &path)
@@ -4268,6 +4759,9 @@ bool Editor::saveMaterialToDisk(const std::filesystem::path &path, const engine:
     json["alpha_cutoff"] = cpuMaterial.alphaCutoff;
     json["flags"] = cpuMaterial.flags;
     json["uv_scale"] = {cpuMaterial.uvScale.x, cpuMaterial.uvScale.y};
+    json["uv_location"] = {cpuMaterial.uvOffset.x, cpuMaterial.uvOffset.y};
+    json["uv_rotation"] = cpuMaterial.uvRotation;
+    // Backward-compat for older loaders/tools.
     json["uv_offset"] = {cpuMaterial.uvOffset.x, cpuMaterial.uvOffset.y};
 
     std::ofstream file(path);
@@ -4334,6 +4828,7 @@ bool Editor::reloadMaterialFromDisk(const std::filesystem::path &path)
     record.gpu->setFlags(cpuMaterial.flags);
     record.gpu->setUVScale(cpuMaterial.uvScale);
     record.gpu->setUVOffset(cpuMaterial.uvOffset);
+    record.gpu->setUVRotation(cpuMaterial.uvRotation);
 
     record.texture = ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color);
 
@@ -4356,7 +4851,54 @@ engine::Material::SharedPtr Editor::ensureMaterialLoaded(const std::string &mate
     if (it != project->cache.materialsByPath.end() && it->second.gpu)
         return it->second.gpu;
 
-    m_assetsPreviewSystem.getOrRequestMaterialPreview(normalizedMaterialPath);
+    auto loadAndCacheMaterial = [&](const std::string &candidatePath) -> engine::Material::SharedPtr
+    {
+        auto materialAsset = engine::AssetsLoader::loadMaterial(candidatePath);
+        if (!materialAsset.has_value())
+            return nullptr;
+
+        auto cpuMaterial = materialAsset.value().material;
+        if (cpuMaterial.name.empty())
+            cpuMaterial.name = std::filesystem::path(candidatePath).stem().string();
+
+        normalizeMaterialTexturePaths(cpuMaterial, std::filesystem::path(candidatePath), projectRoot);
+        sanitizeMaterialCpuData(cpuMaterial, false);
+
+        auto &record = project->cache.materialsByPath[normalizedMaterialPath];
+        record.path = normalizedMaterialPath;
+        record.cpuData = cpuMaterial;
+
+        if (!record.gpu)
+            record.gpu = engine::Material::create(ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color));
+        if (!record.gpu)
+            return nullptr;
+
+        record.gpu->setAlbedoTexture(ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color));
+        record.gpu->setNormalTexture(ensureProjectTextureLoaded(cpuMaterial.normalTexture, TextureUsage::Data));
+        record.gpu->setOrmTexture(ensureProjectTextureLoaded(cpuMaterial.ormTexture, TextureUsage::Data));
+        record.gpu->setEmissiveTexture(ensureProjectTextureLoaded(cpuMaterial.emissiveTexture, TextureUsage::Color));
+        record.gpu->setBaseColorFactor(cpuMaterial.baseColorFactor);
+        record.gpu->setEmissiveFactor(cpuMaterial.emissiveFactor);
+        record.gpu->setMetallic(cpuMaterial.metallicFactor);
+        record.gpu->setRoughness(cpuMaterial.roughnessFactor);
+        record.gpu->setAoStrength(cpuMaterial.aoStrength);
+        record.gpu->setNormalScale(cpuMaterial.normalScale);
+        record.gpu->setAlphaCutoff(cpuMaterial.alphaCutoff);
+        record.gpu->setFlags(cpuMaterial.flags);
+        record.gpu->setUVScale(cpuMaterial.uvScale);
+        record.gpu->setUVOffset(cpuMaterial.uvOffset);
+        record.gpu->setUVRotation(cpuMaterial.uvRotation);
+
+        record.texture = ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color);
+        return record.gpu;
+    };
+
+    if (auto loadedMaterial = loadAndCacheMaterial(normalizedMaterialPath))
+        return loadedMaterial;
+
+    if (materialPath != normalizedMaterialPath)
+        if (auto loadedMaterial = loadAndCacheMaterial(materialPath))
+            return loadedMaterial;
 
     it = project->cache.materialsByPath.find(normalizedMaterialPath);
     if (it != project->cache.materialsByPath.end() && it->second.gpu)
@@ -5487,10 +6029,15 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
     const std::string entityName = path.stem().empty() ? "Model" : path.stem().string();
 
     auto entity = m_scene->addEntity(entityName);
+    std::vector<engine::CPUMesh> spawnedMeshes = model->meshes;
+    // Imported mesh materials are kept in the asset for export workflows, but
+    // editor-spawned entities start without bound materials until explicitly applied.
+    for (auto &mesh : spawnedMeshes)
+        mesh.material = {};
 
     if (model->skeleton.has_value())
     {
-        auto *skeletalMeshComponent = entity->addComponent<engine::SkeletalMeshComponent>(model->meshes, model->skeleton.value());
+        auto *skeletalMeshComponent = entity->addComponent<engine::SkeletalMeshComponent>(spawnedMeshes, model->skeleton.value());
         skeletalMeshComponent->setAssetPath(assetPath);
 
         if (!model->animations.empty())
@@ -5502,7 +6049,7 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
     }
     else
     {
-        auto *staticMeshComponent = entity->addComponent<engine::StaticMeshComponent>(model->meshes);
+        auto *staticMeshComponent = entity->addComponent<engine::StaticMeshComponent>(spawnedMeshes);
         staticMeshComponent->setAssetPath(assetPath);
     }
 
@@ -5517,6 +6064,7 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
     }
 
     setSelectedEntity(entity.get());
+    captureSceneActionSnapshot("Spawn model");
 
     VX_EDITOR_INFO_STREAM("Spawned entity '" << entityName << "' from model: " << assetPath);
     m_notificationManager.showSuccess("Spawned model: " + entityName);
@@ -5567,6 +6115,7 @@ void Editor::addPrimitiveEntity(const std::string &primitiveName)
     }
 
     setSelectedEntity(entity.get());
+    captureSceneActionSnapshot("Add primitive");
 
     VX_EDITOR_INFO_STREAM("Added primitive entity: " << primitiveName);
     m_notificationManager.showSuccess("Added primitive: " + primitiveName);
@@ -5597,6 +6146,7 @@ void Editor::addEmptyEntity(const std::string &name)
     }
 
     setSelectedEntity(entity.get());
+    captureSceneActionSnapshot("Add empty entity");
     VX_EDITOR_INFO_STREAM("Added empty entity: " << entity->getName());
     m_notificationManager.showSuccess("Added empty entity");
 }
@@ -5630,6 +6180,7 @@ void Editor::addDefaultCharacterEntity(const std::string &name)
     entity->addComponent<engine::CharacterMovementComponent>(m_scene.get(), 0.35f, 1.0f);
 
     setSelectedEntity(entity.get());
+    captureSceneActionSnapshot("Add character");
 
     VX_EDITOR_INFO_STREAM("Added default character entity: " << entity->getName());
     m_notificationManager.showSuccess("Added default character");
@@ -5786,6 +6337,106 @@ bool Editor::placeUIElementAtViewportPosition(const ImVec2 &pixelPos, const ImVe
     }
 
     return false;
+}
+
+void Editor::drawBenchmark()
+{
+    if (!m_showBenchmark)
+        return;
+
+    ImGui::SetNextWindowSize(ImVec2(540, 500), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(80, 80), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Benchmark", &m_showBenchmark))
+    {
+        ImGui::End();
+        return;
+    }
+
+    float fps = ImGui::GetIO().Framerate;
+    ImGui::Text("FPS: %.1f", fps);
+    ImGui::Text("Frame time: %.3f ms", 1000.0f / fps);
+
+    auto &engineConfig = engine::EngineConfig::instance();
+    bool detailedRenderProfiling = engineConfig.getDetailedRenderProfilingEnabled();
+    if (ImGui::Checkbox("Detailed Render Profiling", &detailedRenderProfiling))
+    {
+        engineConfig.setDetailedRenderProfilingEnabled(detailedRenderProfiling);
+        if (!engineConfig.save())
+            VX_EDITOR_WARNING_STREAM("Failed to persist detailed render profiling setting to engine config\n");
+    }
+    ImGui::SetItemTooltip("OFF: minimal benchmark (FPS + frame time). ON: full render-graph CPU/GPU timings.");
+
+    if (!detailedRenderProfiling)
+    {
+        ImGui::TextDisabled("Detailed profiling disabled.");
+    }
+    else
+    {
+        ImGui::Text("VRAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
+        ImGui::Text("RAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
+        ImGui::Separator();
+        ImGui::Text("Render Graph (frame #%llu)", static_cast<unsigned long long>(m_renderGraphProfilingData.frameIndex));
+        ImGui::Text("Total draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
+        ImGui::Text("Total CPU frame time: %.3f ms", m_renderGraphProfilingData.cpuFrameTimeMs);
+        ImGui::Text("Total CPU pass time: %.3f ms", m_renderGraphProfilingData.cpuTotalTimeMs);
+        ImGui::Text("CPU wait (fence): %.3f ms", m_renderGraphProfilingData.cpuWaitForFenceMs);
+        ImGui::Text("CPU wait (acquire): %.3f ms", m_renderGraphProfilingData.cpuAcquireImageMs);
+        ImGui::Text("CPU submit: %.3f ms", m_renderGraphProfilingData.cpuSubmitMs);
+        ImGui::Text("CPU wait (present): %.3f ms", m_renderGraphProfilingData.cpuPresentMs);
+        ImGui::Text("CPU sync total: %.3f ms", m_renderGraphProfilingData.cpuSyncTimeMs);
+        ImGui::Text("CPU recompile: %.3f ms", m_renderGraphProfilingData.cpuRecompileMs);
+        ImGui::Text("CPU cmd pool reset: %.3f ms", m_renderGraphProfilingData.cpuCommandPoolResetMs);
+        ImGui::Text("CPU primary CB end: %.3f ms", m_renderGraphProfilingData.cpuPrimaryEndMs);
+        ImGui::Text("CPU resolve profiling: %.3f ms", m_renderGraphProfilingData.cpuResolveProfilingMs);
+        ImGui::Text("CPU unaccounted: %.3f ms", m_renderGraphProfilingData.cpuWasteTimeMs);
+
+        if (m_renderGraphProfilingData.gpuTimingAvailable)
+        {
+            ImGui::Text("Total GPU frame time: %.3f ms", m_renderGraphProfilingData.gpuFrameTimeMs);
+            ImGui::Text("Total GPU pass time: %.3f ms", m_renderGraphProfilingData.gpuTotalTimeMs);
+            ImGui::Text("GPU waste (non-pass): %.3f ms", m_renderGraphProfilingData.gpuWasteTimeMs);
+        }
+        else
+            ImGui::TextDisabled("GPU timing unavailable on this GPU/queue");
+
+        if (ImGui::BeginTable("RenderGraphPassStats", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY))
+        {
+            ImGui::TableSetupColumn("Pass");
+            ImGui::TableSetupColumn("Exec");
+            ImGui::TableSetupColumn("Draws");
+            ImGui::TableSetupColumn("CPU (ms)");
+            ImGui::TableSetupColumn("GPU (ms)");
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableHeadersRow();
+
+            for (const auto &passData : m_renderGraphProfilingData.passes)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(passData.passName.c_str());
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%u", passData.executions);
+
+                ImGui::TableSetColumnIndex(2);
+                ImGui::Text("%u", passData.drawCalls);
+
+                ImGui::TableSetColumnIndex(3);
+                ImGui::Text("%.3f", passData.cpuTimeMs);
+
+                ImGui::TableSetColumnIndex(4);
+                if (m_renderGraphProfilingData.gpuTimingAvailable)
+                    ImGui::Text("%.3f", passData.gpuTimeMs);
+                else
+                    ImGui::TextUnformatted("-");
+            }
+
+            ImGui::EndTable();
+        }
+    }
+
+    ImGui::End();
 }
 
 void Editor::drawUITools()
@@ -6123,26 +6774,40 @@ void Editor::drawUITools()
         ImGui::Separator();
         if (ImGui::Button("Delete Selected UI Element"))
         {
+            bool removedElement = false;
             switch (m_uiSelectionType)
             {
             case UISelectionType::Text:
                 if (m_selectedUIElementIndex < texts.size())
+                {
                     m_scene->removeUIText(texts[m_selectedUIElementIndex].get());
+                    removedElement = true;
+                }
                 break;
             case UISelectionType::Button:
                 if (m_selectedUIElementIndex < buttons.size())
+                {
                     m_scene->removeUIButton(buttons[m_selectedUIElementIndex].get());
+                    removedElement = true;
+                }
                 break;
             case UISelectionType::Billboard:
                 if (m_selectedUIElementIndex < billboards.size())
+                {
                     m_scene->removeBillboard(billboards[m_selectedUIElementIndex].get());
+                    removedElement = true;
+                }
                 break;
             case UISelectionType::None:
             default:
                 break;
             }
 
-            clearSelectedUIElement();
+            if (removedElement)
+            {
+                clearSelectedUIElement();
+                captureSceneActionSnapshot("Delete UI element");
+            }
         }
 
         ImGui::SameLine();
@@ -6155,7 +6820,40 @@ void Editor::drawUITools()
 
 void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 {
-    ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_None);
+    //! This is the biggest dog shit I've ever seen
+    if (m_renderOnlyViewport)
+    {
+        const ImGuiViewport *viewport = ImGui::GetMainViewport();
+
+        ImGui::SetNextWindowPos(viewport->Pos);
+        ImGui::SetNextWindowSize(viewport->Size);
+        ImGui::SetNextWindowViewport(viewport->ID);
+
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize;
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+        ImGui::Begin("##Viewport", nullptr, flags);
+
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        ImVec2 origin = ImGui::GetCursorScreenPos();
+        ImVec2 size = ImGui::GetContentRegionAvail();
+
+        auto it = m_drawQueue.find("Viewport");
+        if (it != m_drawQueue.end())
+        {
+            for (auto &fn : it->second)
+                fn(dl, origin, size);
+
+            it->second.clear();
+        }
+
+        ImGui::PopStyleColor();
+        ImGui::End();
+
+        return;
+    }
+    else
+        ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_None);
 
     ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
     ImGui::Image(viewportDescriptorSet, ImVec2(viewportPanelSize.x, viewportPanelSize.y));

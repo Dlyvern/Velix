@@ -14,6 +14,7 @@
 #include "Engine/Render/RenderGraph/RGPResourcesCompiler.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphProfilingData.hpp"
+#include "Engine/Render/RenderGraph/RenderGraphProfiling.hpp"
 
 #include <typeindex>
 #include <unordered_map>
@@ -23,6 +24,7 @@
 #include <string>
 #include <cstdint>
 #include <array>
+#include <atomic>
 
 #include <glm/vec3.hpp>
 
@@ -41,7 +43,7 @@ class RenderGraph
     };
 
 public:
-    explicit RenderGraph(bool presentToSwapchain = true, bool cleanupSharedShaderFamilies = true);
+    explicit RenderGraph(bool presentToSwapchain = true);
 
     template <typename T, typename... Args>
     T *addPass(Args &&...args)
@@ -75,7 +77,7 @@ public:
 
     const RenderGraphFrameProfilingData &getLastFrameProfilingData() const
     {
-        return m_lastFrameProfilingData;
+        return m_renderGraphProfiling->getLastFrameProfilingData();
     }
 
     uint32_t getCurrentImageIndex() const
@@ -110,35 +112,8 @@ private:
         return nullptr;
     }
 
-    struct PassExecutionProfilingData
-    {
-        std::string passName;
-        uint32_t drawCalls{0};
-        double cpuTimeMs{0.0};
-        uint32_t startQueryIndex{UINT32_MAX};
-        uint32_t endQueryIndex{UINT32_MAX};
-    };
+    std::unique_ptr<RenderGraphProfiling> m_renderGraphProfiling{nullptr};
 
-    struct FrameQueryRange
-    {
-        uint32_t startQueryIndex{UINT32_MAX};
-        uint32_t endQueryIndex{UINT32_MAX};
-    };
-
-    struct FrameCpuStageProfilingData
-    {
-        double waitForFenceMs{0.0};
-        double acquireImageMs{0.0};
-        double recompileMs{0.0};
-        double submitMs{0.0};
-        double presentMs{0.0};
-    };
-
-    void initTimestampQueryPool();
-    void destroyTimestampQueryPool();
-    void resolveFrameProfilingData(uint32_t frameIndex);
-    bool isDetailedProfilingEnabled() const;
-    void syncDetailedProfilingMode();
     void initOcclusionQueryPool();
     void destroyOcclusionQueryPool();
     void resolveOcclusionQueries(uint32_t frameIndex);
@@ -148,7 +123,7 @@ private:
     void createPerObjectDescriptorSets();
     void createPreviewCameraDescriptorSets();
 
-    static constexpr uint32_t MAX_RENDER_JOBS = 255;
+    static constexpr uint32_t MAX_RENDER_JOBS = 64;
 
     void sortRenderGraphPasses();
     void prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling);
@@ -215,24 +190,7 @@ private:
     std::unordered_map<std::string, Material::SharedPtr> m_materialsByAssetPath;
     std::unordered_set<std::string> m_failedMaterialAssetPaths;
 
-    VkQueryPool m_timestampQueryPool{VK_NULL_HANDLE};
-    uint32_t m_timestampQueryCapacity{0};
-    uint32_t m_timestampQueriesPerFrame{0};
-    uint32_t m_timestampQueryBase{0};
-    uint32_t m_usedTimestampQueries{0};
-    std::array<uint32_t, MAX_FRAMES_IN_FLIGHT> m_usedTimestampQueriesByFrame{};
-    std::array<FrameQueryRange, MAX_FRAMES_IN_FLIGHT> m_frameQueryRangesByFrame{};
-    std::array<double, MAX_FRAMES_IN_FLIGHT> m_cpuFrameTimesByFrameMs{};
-    std::array<FrameCpuStageProfilingData, MAX_FRAMES_IN_FLIGHT> m_cpuStageProfilingByFrame{};
-    float m_timestampPeriodNs{0.0f};
-    bool m_isGpuTimingAvailable{false};
-    uint64_t m_profiledFrameIndex{0};
     bool m_presentToSwapchain{true};
-    bool m_cleanupSharedShaderFamilies{true};
-
-    std::array<std::vector<PassExecutionProfilingData>, MAX_FRAMES_IN_FLIGHT> m_passExecutionProfilingDataByFrame;
-    std::array<bool, MAX_FRAMES_IN_FLIGHT> m_hasPendingProfilingResolve{};
-    RenderGraphFrameProfilingData m_lastFrameProfilingData;
 
     struct OcclusionState
     {
@@ -264,6 +222,26 @@ private:
     glm::vec3 m_lastOcclusionCameraPosition{0.0f};
     glm::vec3 m_lastOcclusionCameraForward{0.0f, 0.0f, -1.0f};
     bool m_hasLastOcclusionCameraState{false};
+
+    // Per-pass execution and barrier cache to avoid per-frame heap allocations.
+    // Keyed by pass index in m_sortedRenderGraphPasses. Invalidated on recompile.
+    struct CachedPassExecutionData
+    {
+        uint32_t imageIndex{UINT32_MAX};
+        uint32_t directionalShadowCount{UINT32_MAX};
+        uint32_t spotShadowCount{UINT32_MAX};
+        uint32_t pointShadowCount{UINT32_MAX};
+        bool valid{false};
+        std::vector<IRenderGraphPass::RenderPassExecution> executions;
+        std::vector<std::vector<VkImageMemoryBarrier2>> preBarriers;  // [executionIdx]
+        std::vector<std::vector<VkImageMemoryBarrier2>> postBarriers; // [executionIdx]
+    };
+    std::vector<CachedPassExecutionData> m_passExecutionCache;
+    void invalidateAllExecutionCaches();
+    void buildExecutionCacheForPass(size_t sortedPassIndex);
+
+    std::atomic<bool> m_swapchainResizeRequested{false};
+    bool m_hasWindowResizeCallback{false};
 };
 
 ELIX_CUSTOM_NAMESPACE_END

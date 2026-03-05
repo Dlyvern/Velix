@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <string>
 #include <cstdint>
+#include <functional>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -24,6 +25,7 @@ class Scene
 {
 public:
     using SharedPtr = std::shared_ptr<Scene>;
+    using LoadStatusCallback = std::function<void(const std::string &)>;
     Scene();
     ~Scene();
 
@@ -43,7 +45,7 @@ public:
 
     bool destroyEntity(Entity *entity);
 
-    bool loadSceneFromFile(const std::string &filePath);
+    bool loadSceneFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback = {});
     void saveSceneToFile(const std::string &filePath);
 
     void setSkyboxHDRPath(const std::string &path);

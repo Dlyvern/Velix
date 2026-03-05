@@ -32,6 +32,10 @@ struct RenderGraphFrameProfilingData
     double cpuPresentMs{0.0};
     double cpuSyncTimeMs{0.0};
     double cpuWasteTimeMs{0.0};
+    // Breakdown of the unaccounted time — sum of these is subtracted from cpuWasteTimeMs.
+    double cpuCommandPoolResetMs{0.0};
+    double cpuPrimaryEndMs{0.0};
+    double cpuResolveProfilingMs{0.0};
     double gpuFrameTimeMs{0.0};
     double gpuTotalTimeMs{0.0};
     double gpuWasteTimeMs{0.0};

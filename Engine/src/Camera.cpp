@@ -62,8 +62,25 @@ float Camera::getAspect() const
     return m_aspect;
 }
 
+Camera::ProjectionMode Camera::getProjectionMode() const
+{
+    return m_projectionMode;
+}
+
+float Camera::getOrthographicSize() const
+{
+    return m_orthographicSize;
+}
+
 glm::mat4 Camera::getProjectionMatrix() const
 {
+    if (m_projectionMode == ProjectionMode::Orthographic)
+    {
+        const float halfHeight = std::max(m_orthographicSize * 0.5f, 0.001f);
+        const float halfWidth = std::max(halfHeight * m_aspect, 0.001f);
+        return glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, m_near, m_far);
+    }
+
     return glm::perspective(glm::radians(m_fov), m_aspect, m_near, m_far);
 }
 
@@ -75,12 +92,34 @@ void Camera::setYaw(float yaw)
 
 void Camera::setFOV(float fov)
 {
-    m_fov = fov;
+    m_fov = glm::clamp(fov, 1.0f, 179.0f);
 }
 
 void Camera::setAspect(float aspect)
 {
     m_aspect = std::max(aspect, 0.001f);
+}
+
+void Camera::setNear(float nearPlane)
+{
+    m_near = std::max(nearPlane, 0.001f);
+    if (m_far <= m_near)
+        m_far = m_near + 0.001f;
+}
+
+void Camera::setFar(float farPlane)
+{
+    m_far = std::max(farPlane, m_near + 0.001f);
+}
+
+void Camera::setProjectionMode(ProjectionMode mode)
+{
+    m_projectionMode = mode;
+}
+
+void Camera::setOrthographicSize(float size)
+{
+    m_orthographicSize = std::max(size, 0.001f);
 }
 
 void Camera::setPosition(const glm::vec3 &position)

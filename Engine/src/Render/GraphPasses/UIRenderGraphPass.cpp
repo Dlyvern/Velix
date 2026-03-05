@@ -216,7 +216,12 @@ void UIRenderGraphPass::recordBillboards(core::CommandBuffer::SharedPtr commandB
 
     for (const auto *billboard : m_renderData.billboards)
     {
-        if (!billboard || !billboard->isEnabled() || !billboard->getTexture())
+        if (!billboard || !billboard->isEnabled())
+            continue;
+
+        if (auto *mutableBillboard = const_cast<ui::Billboard *>(billboard))
+            mutableBillboard->ensureTextureLoaded();
+        if (!billboard->getTexture())
             continue;
 
         VkDescriptorSet ds = getTextureDescriptorSet(

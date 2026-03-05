@@ -100,15 +100,15 @@ namespace
         return readVector<uint8_t>(stream, outBytes, 1ull << 31);
     }
 
-    bool writeHeader(std::ostream &stream, elix::engine::Asset::AssetType type, uint64_t payloadSize, uint8_t reserved0 = 0u)
+    bool writeHeader(std::ostream &stream, elix::engine::Asset::AssetType type, uint64_t payloadSize, uint8_t reserved0 = 0u, uint8_t reserved1 = 0u, uint8_t reserved2 = 0u)
     {
         elix::engine::Asset::BinaryHeader header{};
         std::memcpy(header.magic, elix::engine::Asset::MAGIC.data(), elix::engine::Asset::MAGIC.size());
         header.version = elix::engine::Asset::VERSION;
         header.type = static_cast<uint8_t>(type);
         header.reserved[0] = reserved0;
-        header.reserved[1] = 0u;
-        header.reserved[2] = 0u;
+        header.reserved[1] = reserved1;
+        header.reserved[2] = reserved2;
         header.payloadSize = payloadSize;
 
         return writePOD(stream, header);
@@ -519,6 +519,8 @@ bool AssetsSerializer::writeTexture(const TextureAsset &textureAsset, const std:
 
 bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::string &outputPath) const
 {
+    constexpr uint8_t kModelPayloadVersionWithBoneAttachments = 2u;
+
     std::ostringstream payloadStream(std::ios::binary);
     if (!writeString(payloadStream, modelAsset.sourcePath) ||
         !writeString(payloadStream, modelAsset.assetPath))
@@ -536,7 +538,8 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
             !writePOD(payloadStream, mesh.vertexStride) ||
             !writePOD(payloadStream, mesh.vertexLayoutHash) ||
             !writeMaterial(payloadStream, mesh.material) ||
-            !writePOD(payloadStream, mesh.localTransform))
+            !writePOD(payloadStream, mesh.localTransform) ||
+            !writePOD(payloadStream, mesh.attachedBoneId))
             return false;
     }
 
@@ -583,7 +586,7 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
     if (compressionAlgorithm != static_cast<uint8_t>(Compressor::Algorithm::None))
         storedPayloadSize += sizeof(uint64_t);
 
-    if (!writeHeader(stream, Asset::AssetType::MODEL, storedPayloadSize, compressionAlgorithm))
+    if (!writeHeader(stream, Asset::AssetType::MODEL, storedPayloadSize, compressionAlgorithm, kModelPayloadVersionWithBoneAttachments))
         return false;
 
     if (compressionAlgorithm != static_cast<uint8_t>(Compressor::Algorithm::None))
@@ -667,8 +670,13 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
     if (static_cast<Asset::AssetType>(header.type) != Asset::AssetType::MODEL)
         return std::nullopt;
 
-    auto parseModelPayload = [](std::istream &payloadStream, const std::string &assetPath) -> std::optional<ModelAsset>
+    constexpr uint8_t kLegacyModelPayloadVersion = 1u;
+    const uint8_t modelPayloadVersion = header.reserved[1] == 0u ? kLegacyModelPayloadVersion : header.reserved[1];
+
+    auto parseModelPayload = [](std::istream &payloadStream, const std::string &assetPath, uint8_t modelPayloadVersion) -> std::optional<ModelAsset>
     {
+        constexpr uint8_t kModelPayloadVersionWithBoneAttachments = 2u;
+
         ModelAsset modelAsset{{}, std::nullopt, {}};
         if (!readString(payloadStream, modelAsset.sourcePath) ||
             !readString(payloadStream, modelAsset.assetPath))
@@ -693,6 +701,11 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
                 !readMaterial(payloadStream, mesh.material) ||
                 !readPOD(payloadStream, mesh.localTransform))
                 return std::nullopt;
+
+            mesh.attachedBoneId = -1;
+            if (modelPayloadVersion >= kModelPayloadVersionWithBoneAttachments &&
+                !readPOD(payloadStream, mesh.attachedBoneId))
+                return std::nullopt;
         }
 
         if (!readSkeleton(payloadStream, modelAsset.skeleton))
@@ -709,7 +722,7 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
 
     const auto compressionAlgorithm = static_cast<Compressor::Algorithm>(header.reserved[0]);
     if (compressionAlgorithm == Compressor::Algorithm::None)
-        return parseModelPayload(stream, path);
+        return parseModelPayload(stream, path, modelPayloadVersion);
 
     if (compressionAlgorithm != Compressor::Algorithm::Deflate)
     {
@@ -754,7 +767,7 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
         std::string(reinterpret_cast<const char *>(decompressedPayload.data()), decompressedPayload.size()),
         std::ios::binary);
 
-    return parseModelPayload(payloadStream, path);
+    return parseModelPayload(payloadStream, path, modelPayloadVersion);
 }
 
 bool AssetsSerializer::writeAudio(const AudioAsset &audioAsset, const std::string &outputPath) const

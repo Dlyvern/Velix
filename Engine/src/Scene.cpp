@@ -435,8 +435,16 @@ Entity::SharedPtr Scene::addEntity(const std::string &name)
     return entity;
 }
 
-bool Scene::loadSceneFromFile(const std::string &filePath)
+bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback)
 {
+    auto reportStatus = [&](const std::string &status)
+    {
+        if (statusCallback)
+            statusCallback(status);
+    };
+
+    reportStatus("Resetting scene state...");
+
     m_entities.clear();
     m_uiTexts.clear();
     m_uiButtons.clear();
@@ -444,16 +452,21 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
     m_nextEntityId = 0;
     m_skyboxHDRPath.clear();
 
+    reportStatus("Opening scene file...");
+
     std::ifstream file(filePath);
 
     if (!file.is_open())
     {
         VX_ENGINE_ERROR_STREAM("Failed to open file: " << filePath << std::endl);
         ;
+        reportStatus("Failed to open scene file");
         return false;
     }
 
     nlohmann::json json;
+
+    reportStatus("Parsing scene data...");
 
     try
     {
@@ -462,6 +475,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
     catch (const nlohmann::json::parse_error &e)
     {
         VX_ENGINE_ERROR_STREAM("Failed to parse scene file " << e.what() << std::endl);
+        reportStatus("Failed to parse scene JSON");
         return false;
     }
 
@@ -485,11 +499,13 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
 
     if (json.contains("environment") && json["environment"].is_object())
     {
+        reportStatus("Loading environment...");
         const std::string skyboxHDR = json["environment"].value("skybox_hdr", std::string{});
         m_skyboxHDRPath = resolveScenePath(skyboxHDR);
     }
     else if (json.contains("enviroment"))
     {
+        reportStatus("Loading environment...");
         for (const auto &environmentObject : json["enviroment"])
         {
             if (!environmentObject.is_object())
@@ -511,6 +527,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
 
     if (json.contains("render_settings") && json["render_settings"].is_object())
     {
+        reportStatus("Applying render settings...");
         auto &settings = RenderQualitySettings::getInstance();
         const auto &renderSettingsJson = json["render_settings"];
 
@@ -660,6 +677,10 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
 
     if (json.contains("ui_objects") && json["ui_objects"].is_array())
     {
+        const size_t uiObjectCount = json["ui_objects"].size();
+        if (uiObjectCount > 0)
+            reportStatus("Loading UI objects (0/" + std::to_string(uiObjectCount) + ")...");
+
         auto parseVec2 = [](const nlohmann::json &arrayJson, const glm::vec2 &fallback) -> glm::vec2
         {
             if (!arrayJson.is_array() || arrayJson.size() != 2 || !arrayJson[0].is_number() || !arrayJson[1].is_number())
@@ -686,8 +707,13 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
             return glm::vec4(arrayJson[0].get<float>(), arrayJson[1].get<float>(), arrayJson[2].get<float>(), arrayJson[3].get<float>());
         };
 
+        size_t uiObjectIndex = 0;
         for (const auto &uiObjectJson : json["ui_objects"])
         {
+            ++uiObjectIndex;
+            if ((uiObjectIndex == uiObjectCount) || ((uiObjectIndex % 16u) == 0u))
+                reportStatus("Loading UI objects (" + std::to_string(uiObjectIndex) + "/" + std::to_string(uiObjectCount) + ")...");
+
             if (!uiObjectJson.is_object())
                 continue;
 
@@ -745,7 +771,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
 
                 const std::string texturePath = resolveScenePath(uiObjectJson.value("texture_path", std::string{}));
                 if (!texturePath.empty())
-                    billboard->loadTexture(texturePath);
+                    billboard->setTexturePath(texturePath);
             }
         }
     }
@@ -770,6 +796,10 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
 
     if (json.contains("game_objects"))
     {
+        const size_t gameObjectCount = json["game_objects"].size();
+        if (gameObjectCount > 0)
+            reportStatus("Loading game objects (0/" + std::to_string(gameObjectCount) + ")...");
+
         std::unordered_map<uint32_t, Entity *> entitiesById;
         std::vector<std::pair<Entity *, uint32_t>> pendingParents;
         std::vector<std::pair<Entity *, glm::vec3>> pendingLightDirections;
@@ -784,8 +814,13 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
         };
         std::vector<AnimatorState> pendingAnimatorStates;
 
+        size_t gameObjectIndex = 0;
         for (const auto &objectJson : json["game_objects"])
         {
+            ++gameObjectIndex;
+            if ((gameObjectIndex == gameObjectCount) || ((gameObjectIndex % 8u) == 0u))
+                reportStatus("Loading game objects (" + std::to_string(gameObjectIndex) + "/" + std::to_string(gameObjectCount) + ")...");
+
             const std::string &name = objectJson.value("name", "undefined");
 
             auto gameObject = addEntity(name);
@@ -1357,6 +1392,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
             }
         }
 
+        reportStatus("Resolving entity hierarchy...");
+
         for (const auto &[child, parentId] : pendingParents)
         {
             auto it = entitiesById.find(parentId);
@@ -1370,6 +1407,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
                 VX_ENGINE_WARNING_STREAM("Failed to set parent for entity '" << child->getName() << "' while loading scene.\n");
         }
 
+        reportStatus("Finalizing light transforms...");
+
         for (const auto &[entity, direction] : pendingLightDirections)
         {
             if (!entity)
@@ -1381,6 +1420,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
             if (auto *lightComponent = entity->getComponent<LightComponent>())
                 lightComponent->syncFromOwnerTransform();
         }
+
+        reportStatus("Finalizing animator states...");
 
         for (const auto &state : pendingAnimatorStates)
         {
@@ -1397,7 +1438,11 @@ bool Scene::loadSceneFromFile(const std::string &filePath)
         }
     }
 
+    reportStatus("Finalizing scene...");
+
     file.close();
+
+    reportStatus("Scene loaded");
 
     return true;
 }

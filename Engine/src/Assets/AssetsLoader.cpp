@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <typeinfo>
 #include <unordered_map>
@@ -152,6 +153,19 @@ namespace
         material.normalScale = std::max(0.0f, sanitizeFiniteFloat(material.normalScale, 1.0f));
         material.alphaCutoff = std::clamp(sanitizeFiniteFloat(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
 
+        const uint32_t legacyGlassFlag = elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_LEGACY_GLASS;
+        if ((material.flags & legacyGlassFlag) != 0u)
+        {
+            material.flags |= elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND;
+            material.flags &= ~legacyGlassFlag;
+        }
+
+        const uint32_t supportedFlags =
+            elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK |
+            elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND |
+            elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED;
+        material.flags &= supportedFlags;
+
         if (forceDielectricWithoutOrm && material.ormTexture.empty())
             material.metallicFactor = 0.0f;
     }
@@ -165,6 +179,48 @@ namespace
     bool isElixAssetFile(const std::filesystem::path &path)
     {
         return toLowerCopy(path.extension().string()) == ".elixasset";
+    }
+
+    bool isPathWithinRoot(const std::filesystem::path &path, const std::filesystem::path &root)
+    {
+        if (path.empty() || root.empty())
+            return false;
+
+        std::error_code relativeError;
+        const std::filesystem::path relativePath = std::filesystem::relative(path, root, relativeError).lexically_normal();
+        if (relativeError || relativePath.empty())
+            return false;
+
+        const std::string relativePathString = relativePath.string();
+        if (relativePathString == ".")
+            return true;
+
+        return relativePathString.rfind("..", 0) != 0;
+    }
+
+    std::filesystem::path makeImportedTextureAssetPath(const std::filesystem::path &normalizedSourcePath,
+                                                       const std::filesystem::path &normalizedImportRoot)
+    {
+        if (isPathWithinRoot(normalizedSourcePath, normalizedImportRoot))
+        {
+            std::error_code relativeError;
+            const std::filesystem::path relativePath = std::filesystem::relative(normalizedSourcePath, normalizedImportRoot, relativeError).lexically_normal();
+            if (!relativeError && !relativePath.empty())
+            {
+                auto outputPath = normalizedImportRoot / relativePath;
+                outputPath.replace_extension(".tex.elixasset");
+                return outputPath.lexically_normal();
+            }
+        }
+
+        const std::filesystem::path outputDirectory = (normalizedImportRoot / "resources" / "textures" / "imported").lexically_normal();
+        std::string outputBaseName = normalizedSourcePath.stem().string();
+        if (outputBaseName.empty())
+            outputBaseName = "Texture";
+
+        const uint64_t sourcePathHash = static_cast<uint64_t>(std::hash<std::string>{}(normalizedSourcePath.string()));
+        const std::filesystem::path outputPath = outputDirectory / (outputBaseName + "_" + std::to_string(sourcePathHash) + ".tex.elixasset");
+        return outputPath.lexically_normal();
     }
 
     bool prefersSrgb(VkFormat format)
@@ -763,6 +819,22 @@ uint32_t AssetsLoader::getTextureImportMaxDimension()
     return s_textureImportMaxDimension;
 }
 
+void AssetsLoader::setTextureAssetImportRootDirectory(const std::filesystem::path &rootDirectory)
+{
+    if (rootDirectory.empty())
+    {
+        s_textureAssetImportRootDirectory.clear();
+        return;
+    }
+
+    s_textureAssetImportRootDirectory = normalizePath(rootDirectory.string());
+}
+
+std::filesystem::path AssetsLoader::getTextureAssetImportRootDirectory()
+{
+    return s_textureAssetImportRootDirectory;
+}
+
 std::filesystem::path AssetsLoader::toModelAssetPath(const std::filesystem::path &sourcePath)
 {
     if (isElixAssetFile(sourcePath))
@@ -778,7 +850,16 @@ std::filesystem::path AssetsLoader::toTextureAssetPath(const std::filesystem::pa
     if (isElixAssetFile(sourcePath))
         return sourcePath;
 
-    auto outputPath = sourcePath;
+    const std::filesystem::path normalizedSourcePath = normalizePath(sourcePath.string());
+    const std::filesystem::path importRoot = getTextureAssetImportRootDirectory();
+    if (!importRoot.empty())
+    {
+        const std::filesystem::path normalizedImportRoot = normalizePath(importRoot.string());
+        if (!normalizedImportRoot.empty())
+            return makeImportedTextureAssetPath(normalizedSourcePath, normalizedImportRoot);
+    }
+
+    auto outputPath = normalizedSourcePath;
     outputPath.replace_extension(".tex.elixasset");
     return outputPath.lexically_normal();
 }

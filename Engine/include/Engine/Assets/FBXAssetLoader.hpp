@@ -29,6 +29,7 @@ private:
         std::string albedoTexture;
         std::string normalTexture;
         std::string emissiveTexture;
+        std::string uvSetName;
     };
 
     struct ProceedingMeshData
@@ -40,13 +41,13 @@ private:
     std::shared_ptr<IAsset> loadInternal(const std::string &filePath);
     void processNode(FbxNode *node, ProceedingMeshData &meshData);
     void processNodeAttribute(FbxNodeAttribute *nodeAttribute, FbxNode *node, ProceedingMeshData &meshData);
-    void processMaterials(FbxNode *node, CPUMesh &mesh);
-    std::optional<Skeleton> processSkeleton(FbxMesh *mesh);
+    void processMaterials(FbxNode *node, CPUMesh &mesh, int materialSlot = -1);
+    std::optional<Skeleton> processSkeleton(FbxNode *node, FbxMesh *mesh);
     void processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshData &meshData);
-    void processFbxSkeleton(FbxNode *node, FbxSkeleton *skeleton);
+    void processFbxSkeleton(FbxNode *node, FbxSkeleton *skeleton, ProceedingMeshData &meshData);
     std::vector<Animation> processAnimations(FbxScene *scene, std::optional<Skeleton> &skeleton);
     ImportedMaterialData parseMaterial(FbxSurfaceMaterial *material);
-    std::string extractTexturePathFromProperty(FbxProperty property);
+    std::string extractTexturePathFromProperty(FbxProperty property, std::string *outUvSetName = nullptr);
     std::string normalizeTexturePath(const std::string &rawPath);
     void resetImportCaches();
 

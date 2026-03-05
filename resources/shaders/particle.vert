@@ -5,7 +5,8 @@ struct ParticleData
     vec4 positionAndRotation; // xyz = world pos,  w = rotation (radians)
     vec4 color;               // rgba
     vec2 size;                // width, height  (world units)
-    vec2 _pad;
+    uint textureIndex;        // index into the texture array (0 = default white)
+    float _pad;
 };
 
 layout(set = 0, binding = 0, std430) readonly buffer ParticleBuffer
@@ -24,6 +25,7 @@ layout(push_constant) uniform PC
 
 layout(location = 0) out vec2      vUV;
 layout(location = 1) out flat vec4 vColor;
+layout(location = 2) out flat uint vTextureIndex;
 
 const vec2 kOffsets[6] = vec2[](
     vec2(-0.5,  0.5),   // top-left
@@ -68,8 +70,8 @@ void main()
                       + pc.right * rotated.x
                       + pc.up    * rotated.y;
 
-    gl_Position = pc.viewProj * vec4(billboardPos, 1.0);
-
-    vUV    = kUVs[vertIdx];
-    vColor = p.color;
+    gl_Position    = pc.viewProj * vec4(billboardPos, 1.0);
+    vUV            = kUVs[vertIdx];
+    vColor         = p.color;
+    vTextureIndex  = p.textureIndex;
 }

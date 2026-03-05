@@ -739,7 +739,9 @@ void Editor::drawDetails()
                         if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
                         {
                             std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
-                            const std::string extension = std::filesystem::path(droppedPath).extension().string();
+                            std::string extension = std::filesystem::path(droppedPath).extension().string();
+                            std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character)
+                                           { return static_cast<char>(std::tolower(character)); });
 
                             if (extension == ".elixmat")
                             {
@@ -866,7 +868,9 @@ void Editor::drawDetails()
                         if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
                         {
                             std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
-                            const std::string extension = std::filesystem::path(droppedPath).extension().string();
+                            std::string extension = std::filesystem::path(droppedPath).extension().string();
+                            std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character)
+                                           { return static_cast<char>(std::tolower(character)); });
 
                             if (extension == ".elixmat")
                             {

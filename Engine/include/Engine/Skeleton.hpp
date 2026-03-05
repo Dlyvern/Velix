@@ -39,7 +39,7 @@ public:
     Skeleton();
 
     unsigned int addBone(const BoneInfo &bone);
-    int getBoneId(const std::string &boneName);
+    int getBoneId(const std::string &boneName) const;
 
     void printBonesHierarchy();
 

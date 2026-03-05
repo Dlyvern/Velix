@@ -4,7 +4,9 @@
 #include "Editor/ImGuiRenderGraphPass.hpp"
 #include "Editor/Project.hpp"
 #include "Editor/ProjectLoader.hpp"
+#include "Editor/EditorResourcesStorage.hpp"
 
+#include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Components/CameraComponent.hpp"
 #include "Engine/Components/ParticleSystemComponent.hpp"
@@ -14,10 +16,15 @@
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Engine/Scripting/VelixAPI.hpp"
 
+#include "Core/VulkanContext.hpp"
+
 #include "Core/Logger.hpp"
+
+#include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <limits>
@@ -215,6 +222,62 @@ EditorRuntime::EditorRuntime(const engine::ApplicationConfig &config)
     m_projectPath = std::filesystem::absolute(config.getArgs()[1]).string();
 }
 
+void EditorRuntime::setLoadingStatus(std::string status)
+{
+    std::scoped_lock lock(m_loadingStatusMutex);
+    m_loadingStatus = std::move(status);
+}
+
+std::string EditorRuntime::getLoadingStatus() const
+{
+    std::scoped_lock lock(m_loadingStatusMutex);
+    return m_loadingStatus;
+}
+
+void EditorRuntime::setLoadingWindowDecorationsVisible(bool visible)
+{
+    const auto vulkanContext = core::VulkanContext::getContext();
+    if (!vulkanContext)
+        return;
+
+    const auto swapchain = vulkanContext->getSwapchain();
+    if (!swapchain)
+        return;
+
+    auto &window = swapchain->getWindow();
+    GLFWwindow *windowHandle = window.getRawHandler();
+
+    if (!visible)
+    {
+        window.setFullscreen(false);
+
+        if (windowHandle)
+            glfwRestoreWindow(windowHandle);
+
+        int currentWidth = 0;
+        int currentHeight = 0;
+        window.getSize(&currentWidth, &currentHeight);
+
+        if (currentWidth > 0 && currentHeight > 0)
+        {
+            m_loadingPreviousWindowWidth = currentWidth;
+            m_loadingPreviousWindowHeight = currentHeight;
+            m_loadingWindowSizeCaptured = true;
+        }
+
+        window.setShowDecorations(false);
+        window.setSize(800, 600);
+        window.centerizedOnScreen();
+    }
+    else
+    {
+        window.setShowDecorations(true);
+        m_loadingWindowSizeCaptured = false;
+    }
+
+    m_loadingDecorationsHidden = !visible;
+}
+
 bool EditorRuntime::init()
 {
     m_project = ProjectLoader::loadProject(m_projectPath);
@@ -225,24 +288,176 @@ bool EditorRuntime::init()
         return false;
     }
 
+    engine::AssetsLoader::setTextureAssetImportRootDirectory(std::filesystem::path(m_project->fullPath));
+
     engine::ScriptsRegister *startupScriptsRegister = nullptr;
     std::string startupModulePath;
     tryLoadProjectScriptsModule(*m_project, startupScriptsRegister, startupModulePath);
 
     m_editorScene = std::make_shared<engine::Scene>();
-    if (!m_editorScene->loadSceneFromFile(m_project->entryScene))
-        throw std::runtime_error("Failed to load scene");
-
     m_activeScene = m_editorScene;
-    engine::scripting::setActiveScene(m_activeScene.get());
+    m_stillLoadingTheScene = true;
+
+    const std::string entryScenePath = m_project->entryScene;
+    m_loadingStartedAt = std::chrono::steady_clock::now();
+    m_loadingSceneName = std::filesystem::path(entryScenePath).filename().string();
+    if (m_loadingSceneName.empty())
+        m_loadingSceneName = entryScenePath;
+    setLoadingStatus("Preparing async scene loading...");
+
+    m_loadingFuture = std::async(std::launch::async, [this, entryScenePath]() -> engine::Scene::SharedPtr
+                                 {
+                                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                                     auto scene = std::make_shared<engine::Scene>();
+                                     if (!scene->loadSceneFromFile(entryScenePath,
+                                                                   [this](const std::string &status)
+                                                                   { setLoadingStatus(status); }))
+                                     {
+                                         setLoadingStatus("Failed to load scene");
+                                         VX_EDITOR_ERROR_STREAM("Failed to load scene asynchronously: " << entryScenePath << '\n');
+                                         return nullptr;
+                                     }
+                                     setLoadingStatus("Scene is ready");
+                                     return scene; });
 
     m_shaderHotReloader = std::make_unique<engine::shaders::ShaderHotReloader>("./resources/shaders");
     m_shaderHotReloader->setPollIntervalSeconds(0.35);
     m_shaderHotReloader->prime();
 
     m_editor = std::make_shared<Editor>();
+    m_editor->setDockingFullscreen(true);
 
-    m_renderGraph = std::make_unique<engine::renderGraph::RenderGraph>(true, true);
+    initEditorRenderGraph();
+    initGameViewportRenderGraph();
+
+    m_iblManager.createFallback();
+    m_lightingRenderGraphPass->setIBLManager(&m_iblManager);
+    m_gameLightingRenderGraphPass->setIBLManager(&m_iblManager);
+
+    m_editor->addOnViewportChangedCallback(std::bind(&EditorRuntime::applyEditorViewportExtent, this, std::placeholders::_1,
+                                                     std::placeholders::_2));
+
+    m_editor->addOnGameViewportChangedCallback(std::bind(&EditorRuntime::applyGameViewportExtent, this, std::placeholders::_1,
+                                                         std::placeholders::_2));
+
+    applyEditorViewportExtent(m_editor->getViewportX(), m_editor->getViewportY());
+    applyGameViewportExtent(m_editor->getGameViewportX(), m_editor->getGameViewportY());
+
+    m_editor->setScene(m_activeScene);
+    m_editor->setProject(m_project);
+    m_editor->setProjectScriptsRegister(startupScriptsRegister, startupModulePath);
+    m_editor->setRenderViewportOnly(true);
+
+    m_editorRenderCamera = m_editor->getCurrentCamera();
+    if (m_editorRenderCamera)
+        m_editorRenderCamera->setPosition({0.0f, 1.0f, 5.0f});
+
+    switchActiveScene(m_editorScene);
+
+    m_editor->addOnModeChangedCallback(std::bind(&EditorRuntime::onEditorModeChanged, this, std::placeholders::_1));
+
+    return true;
+}
+
+void EditorRuntime::onEditorModeChanged(Editor::EditorMode mode)
+{
+    auto forEachScriptComponent = [](const std::shared_ptr<engine::Scene> &scene, auto &&function)
+    {
+        if (!scene)
+            return;
+
+        std::vector<engine::Entity::SharedPtr> entitiesSnapshot;
+        entitiesSnapshot.reserve(scene->getEntities().size());
+        for (const auto &entity : scene->getEntities())
+            entitiesSnapshot.push_back(entity);
+
+        for (const auto &entity : entitiesSnapshot)
+        {
+            if (!entity)
+                continue;
+
+            for (auto *scriptComponent : entity->getComponents<engine::ScriptComponent>())
+                function(scriptComponent);
+        }
+    };
+
+    if (mode == Editor::EditorMode::PLAY)
+    {
+        if (!m_isPlaySessionActive)
+        {
+            m_playScene = m_editorScene ? m_editorScene->copy() : nullptr;
+            if (!m_playScene)
+            {
+                VX_EDITOR_ERROR_STREAM("Failed to create play scene copy.\n");
+                m_shouldUpdate = false;
+                return;
+            }
+
+            switchActiveScene(m_playScene);
+            forEachScriptComponent(m_activeScene, [](engine::ScriptComponent *scriptComponent)
+                                   {
+                                                                              if (scriptComponent)
+                                                                                  scriptComponent->onAttach(); });
+            m_isPlaySessionActive = true;
+        }
+
+        m_shouldUpdate = true;
+    }
+    else if (mode == Editor::EditorMode::PAUSE)
+    {
+        m_shouldUpdate = false;
+    }
+    else if (mode == Editor::EditorMode::EDIT)
+    {
+        if (m_isPlaySessionActive)
+        {
+            forEachScriptComponent(m_activeScene, [](engine::ScriptComponent *scriptComponent)
+                                   {
+                                                                              if (scriptComponent)
+                                                                                  scriptComponent->onDetach(); });
+
+            m_playScene.reset();
+            m_isPlaySessionActive = false;
+        }
+
+        switchActiveScene(m_editorScene);
+        m_shouldUpdate = false;
+    }
+}
+
+void EditorRuntime::switchActiveScene(const std::shared_ptr<engine::Scene> &scene)
+{
+    if (!scene)
+        return;
+
+    m_activeScene = scene;
+    engine::scripting::setActiveScene(m_activeScene.get());
+    m_editor->setScene(m_activeScene);
+
+    if (m_particleRenderGraphPass)
+        m_particleRenderGraphPass->setScene(m_activeScene.get());
+    if (m_gameParticleRenderGraphPass)
+        m_gameParticleRenderGraphPass->setScene(m_activeScene.get());
+    if (m_editorBillboardRenderGraphPass)
+        m_editorBillboardRenderGraphPass->setScene(m_activeScene);
+
+    m_gameRenderCamera = nullptr;
+    for (const auto &entity : m_activeScene->getEntities())
+    {
+        if (!entity || !entity->isEnabled())
+            continue;
+
+        if (auto *cameraComponent = entity->getComponent<engine::CameraComponent>())
+        {
+            m_gameRenderCamera = cameraComponent->getCamera();
+            break;
+        }
+    }
+}
+
+void EditorRuntime::initEditorRenderGraph()
+{
+    m_renderGraph = std::make_unique<engine::renderGraph::RenderGraph>(true);
 
     m_gBufferRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::GBufferRenderGraphPass>();
     m_shadowRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ShadowRenderGraphPass>();
@@ -277,13 +492,8 @@ bool EditorRuntime::init()
         m_ssrRenderGraphPass->getOutput(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
-    m_glassRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::GlassRenderGraphPass>(
-        m_skyLightRenderGraphPass->getOutput(),
-        m_gBufferRenderGraphPass->getDepthTextureHandler());
-    m_glassRenderGraphPass->setScene(m_activeScene.get());
-
     m_particleRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
-        m_glassRenderGraphPass->getHandlers(),
+        m_skyLightRenderGraphPass->getOutput(),
         &m_gBufferRenderGraphPass->getDepthTextureHandler());
     m_particleRenderGraphPass->setScene(m_activeScene.get());
 
@@ -331,8 +541,11 @@ bool EditorRuntime::init()
 
     m_renderGraph->setup();
     m_renderGraph->createRenderGraphResources();
+}
 
-    m_gameViewportRenderGraph = std::make_unique<engine::renderGraph::RenderGraph>(false, false);
+void EditorRuntime::initGameViewportRenderGraph()
+{
+    m_gameViewportRenderGraph = std::make_unique<engine::renderGraph::RenderGraph>(false);
 
     m_gameGBufferRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::GBufferRenderGraphPass>();
     m_gameShadowRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ShadowRenderGraphPass>();
@@ -367,13 +580,8 @@ bool EditorRuntime::init()
         m_gameSSRRenderGraphPass->getOutput(),
         m_gameGBufferRenderGraphPass->getDepthTextureHandler());
 
-    m_gameGlassRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::GlassRenderGraphPass>(
-        m_gameSkyLightRenderGraphPass->getOutput(),
-        m_gameGBufferRenderGraphPass->getDepthTextureHandler());
-    m_gameGlassRenderGraphPass->setScene(m_activeScene.get());
-
     m_gameParticleRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
-        m_gameGlassRenderGraphPass->getHandlers(),
+        m_gameSkyLightRenderGraphPass->getOutput(),
         &m_gameGBufferRenderGraphPass->getDepthTextureHandler());
     m_gameParticleRenderGraphPass->setScene(m_activeScene.get());
 
@@ -401,137 +609,120 @@ bool EditorRuntime::init()
 
     m_gameViewportRenderGraph->setup();
     m_gameViewportRenderGraph->createRenderGraphResources();
+}
 
-    m_iblManager.createFallback();
-    m_lightingRenderGraphPass->setIBLManager(&m_iblManager);
-    m_gameLightingRenderGraphPass->setIBLManager(&m_iblManager);
+void EditorRuntime::addLoadingRenderToImGui()
+{
+    m_editor->queueViewportDraw("Viewport",
+                                [this](ImDrawList *dl, const ImVec2 &origin, const ImVec2 &size)
+                                {
+                                    ImVec2 center = ImVec2(
+                                        origin.x + size.x * 0.5f,
+                                        origin.y + size.y * 0.5f);
 
-    m_editor->addOnViewportChangedCallback([this](uint32_t width, uint32_t height)
-                                           { applyEditorViewportExtent(width, height); });
-    m_editor->addOnGameViewportChangedCallback([this](uint32_t width, uint32_t height)
-                                               { applyGameViewportExtent(width, height); });
+                                    auto ds = m_editor->getEditorResourceStorage()
+                                                  .getTextureDescriptorSet("./resources/textures/VelixV.tex.elixasset");
 
-    applyEditorViewportExtent(m_editor->getViewportX(), m_editor->getViewportY());
-    applyGameViewportExtent(m_editor->getGameViewportX(), m_editor->getGameViewportY());
+                                    ImTextureID texId = (ImTextureID)(uintptr_t)ds;
 
-    m_editor->setScene(m_activeScene);
-    m_editor->setProject(m_project);
-    m_editor->setProjectScriptsRegister(startupScriptsRegister, startupModulePath);
+                                    float logoSize = 256.0f;
+                                    float spacing = 20.0f;
 
-    m_editorRenderCamera = m_editor->getCurrentCamera();
-    if (m_editorRenderCamera)
-        m_editorRenderCamera->setPosition({0.0f, 1.0f, 5.0f});
+                                    ImVec2 logoMin = ImVec2(
+                                        center.x - logoSize * 0.5f,
+                                        center.y - logoSize * 0.5f - 30.0f);
 
-    auto forEachScriptComponent = [](const std::shared_ptr<engine::Scene> &scene, auto &&function)
-    {
-        if (!scene)
-            return;
+                                    ImVec2 logoMax = ImVec2(
+                                        logoMin.x + logoSize,
+                                        logoMin.y + logoSize);
 
-        std::vector<engine::Entity::SharedPtr> entitiesSnapshot;
-        entitiesSnapshot.reserve(scene->getEntities().size());
-        for (const auto &entity : scene->getEntities())
-            entitiesSnapshot.push_back(entity);
+                                    dl->AddImage(
+                                        texId,
+                                        logoMin,
+                                        logoMax,
+                                        ImVec2(0, 0),
+                                        ImVec2(1, 1),
+                                        IM_COL32(255, 255, 255, 255));
 
-        for (const auto &entity : entitiesSnapshot)
-        {
-            if (!entity)
-                continue;
+                                    const float elapsedSeconds = std::chrono::duration<float>(
+                                                                     std::chrono::steady_clock::now() - m_loadingStartedAt)
+                                                                     .count();
+                                    const int dotCount = static_cast<int>(std::fmod(std::max(elapsedSeconds, 0.0f) * 2.0f, 4.0f));
+                                    std::string loadingText = "Loading";
+                                    loadingText.append(static_cast<size_t>(dotCount), '.');
 
-            for (auto *scriptComponent : entity->getComponents<engine::ScriptComponent>())
-                function(scriptComponent);
-        }
-    };
+                                    if (!m_loadingSceneName.empty())
+                                        loadingText += " " + m_loadingSceneName;
 
-    auto switchActiveScene = [this](const std::shared_ptr<engine::Scene> &scene)
-    {
-        if (!scene)
-            return;
+                                    const std::string statusText = getLoadingStatus();
 
-        m_activeScene = scene;
-        engine::scripting::setActiveScene(m_activeScene.get());
-        m_editor->setScene(m_activeScene);
+                                    ImVec2 textSize = ImGui::CalcTextSize(loadingText.c_str());
 
-        if (m_particleRenderGraphPass)
-            m_particleRenderGraphPass->setScene(m_activeScene.get());
-        if (m_glassRenderGraphPass)
-            m_glassRenderGraphPass->setScene(m_activeScene.get());
-        if (m_gameGlassRenderGraphPass)
-            m_gameGlassRenderGraphPass->setScene(m_activeScene.get());
-        if (m_gameParticleRenderGraphPass)
-            m_gameParticleRenderGraphPass->setScene(m_activeScene.get());
-        if (m_editorBillboardRenderGraphPass)
-            m_editorBillboardRenderGraphPass->setScene(m_activeScene);
+                                    ImVec2 textPos = ImVec2(
+                                        center.x - textSize.x * 0.5f,
+                                        logoMax.y + spacing);
 
-        m_gameRenderCamera = nullptr;
-        for (const auto &entity : m_activeScene->getEntities())
-        {
-            if (!entity || !entity->isEnabled())
-                continue;
+                                    dl->AddText(
+                                        ImGui::GetFont(),
+                                        ImGui::GetFontSize(),
+                                        textPos,
+                                        IM_COL32(255, 255, 255, 255),
+                                        loadingText.c_str());
 
-            if (auto *cameraComponent = entity->getComponent<engine::CameraComponent>())
-            {
-                m_gameRenderCamera = cameraComponent->getCamera();
-                break;
-            }
-        }
-    };
+                                    const std::string elapsedText = "Elapsed: " + std::to_string(elapsedSeconds).substr(0, 4) + "s";
+                                    const ImVec2 statusSize = ImGui::CalcTextSize(statusText.c_str());
+                                    const ImVec2 elapsedSize = ImGui::CalcTextSize(elapsedText.c_str());
 
-    switchActiveScene(m_editorScene);
+                                    const ImVec2 statusPos(
+                                        center.x - statusSize.x * 0.5f,
+                                        textPos.y + ImGui::GetFontSize() + 8.0f);
+                                    const ImVec2 elapsedPos(
+                                        center.x - elapsedSize.x * 0.5f,
+                                        statusPos.y + ImGui::GetFontSize() + 6.0f);
 
-    m_editor->addOnModeChangedCallback([this, switchActiveScene, forEachScriptComponent](Editor::EditorMode mode)
-                                       {
-                                           if (mode == Editor::EditorMode::PLAY)
-                                           {
-                                               if (!m_isPlaySessionActive)
-                                               {
-                                                   m_playScene = m_editorScene ? m_editorScene->copy() : nullptr;
-                                                   if (!m_playScene)
-                                                   {
-                                                       VX_EDITOR_ERROR_STREAM("Failed to create play scene copy.\n");
-                                                       m_shouldUpdate = false;
-                                                       return;
-                                                   }
+                                    dl->AddText(
+                                        ImGui::GetFont(),
+                                        ImGui::GetFontSize(),
+                                        statusPos,
+                                        IM_COL32(210, 210, 210, 255),
+                                        statusText.c_str());
 
-                                                   switchActiveScene(m_playScene);
-                                                   forEachScriptComponent(m_activeScene, [](engine::ScriptComponent *scriptComponent)
-                                                                          {
-                                                                              if (scriptComponent)
-                                                                                  scriptComponent->onAttach();
-                                                                          });
-                                                   m_isPlaySessionActive = true;
-                                               }
-
-                                               m_shouldUpdate = true;
-                                           }
-                                           else if (mode == Editor::EditorMode::PAUSE)
-                                           {
-                                               m_shouldUpdate = false;
-                                           }
-                                           else if (mode == Editor::EditorMode::EDIT)
-                                           {
-                                               if (m_isPlaySessionActive)
-                                               {
-                                                   forEachScriptComponent(m_activeScene, [](engine::ScriptComponent *scriptComponent)
-                                                                          {
-                                                                              if (scriptComponent)
-                                                                                  scriptComponent->onDetach();
-                                                                          });
-
-                                                   m_playScene.reset();
-                                                   m_isPlaySessionActive = false;
-                                               }
-
-                                               switchActiveScene(m_editorScene);
-                                               m_shouldUpdate = false;
-                                           } });
-
-    return true;
+                                    dl->AddText(
+                                        ImGui::GetFont(),
+                                        ImGui::GetFontSize(),
+                                        elapsedPos,
+                                        IM_COL32(170, 170, 170, 255),
+                                        elapsedText.c_str());
+                                });
 }
 
 void EditorRuntime::tick(float deltaTime)
 {
     if (!m_activeScene || !m_editor || !m_renderGraph)
         return;
+
+    if (m_stillLoadingTheScene && m_loadingFuture.valid())
+    {
+        const auto state = m_loadingFuture.wait_for(std::chrono::milliseconds(0));
+        if (state == std::future_status::ready)
+        {
+            auto loadedScene = m_loadingFuture.get();
+            if (loadedScene)
+            {
+                m_editorScene = loadedScene;
+                switchActiveScene(m_editorScene);
+                VX_EDITOR_INFO_STREAM("Scene loading completed: " << m_project->entryScene << '\n');
+            }
+            else
+            {
+                VX_EDITOR_ERROR_STREAM("Scene loading failed, keeping empty editor scene.\n");
+            }
+
+            m_stillLoadingTheScene = false;
+            m_editor->setRenderViewportOnly(false);
+            m_editor->setDockingFullscreen(true);
+        }
+    }
 
     if (m_shouldUpdate)
         m_activeScene->update(deltaTime);
@@ -631,6 +822,9 @@ void EditorRuntime::tick(float deltaTime)
         m_imGuiRenderGraphPass->setGameViewportImages({}, m_gameRenderCamera != nullptr, 0u);
     }
 
+    if (m_stillLoadingTheScene)
+        addLoadingRenderToImGui();
+
     m_renderGraph->prepareFrame(m_editorRenderCamera, m_activeScene.get(), deltaTime);
     m_editor->setRenderGraphProfilingData(m_renderGraph->getLastFrameProfilingData());
     m_renderGraph->draw();
@@ -661,7 +855,6 @@ void EditorRuntime::applyEditorViewportExtent(uint32_t width, uint32_t height)
     m_uiRenderGraphPass->setExtent(extent);
     m_editorBillboardRenderGraphPass->setExtent(extent);
     m_particleRenderGraphPass->setExtent(extent);
-    m_glassRenderGraphPass->setExtent(extent);
 
     m_lastEditorRenderExtent = extent;
 }
@@ -686,13 +879,15 @@ void EditorRuntime::applyGameViewportExtent(uint32_t width, uint32_t height)
     m_gameCinematicEffectsRenderGraphPass->setExtent(extent);
     m_gameUIRenderGraphPass->setExtent(extent);
     m_gameParticleRenderGraphPass->setExtent(extent);
-    m_gameGlassRenderGraphPass->setExtent(extent);
 
     m_lastGameRenderExtent = extent;
 }
 
 void EditorRuntime::shutdown()
 {
+    if (m_loadingFuture.valid())
+        m_loadingFuture.wait();
+
     engine::ScriptsRegister::setActiveRegister(nullptr);
 
     if (m_renderGraph)
@@ -712,6 +907,8 @@ void EditorRuntime::shutdown()
 
     if (m_project)
         m_project->clearCache();
+
+    engine::AssetsLoader::setTextureAssetImportRootDirectory({});
 }
 
 ELIX_NESTED_NAMESPACE_END

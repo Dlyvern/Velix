@@ -79,7 +79,7 @@ struct ShadowConstants
 class RenderGraphPassPerFrameData
 {
 public:
-    std::unordered_map<Entity*, DrawItem> drawItems;
+    std::unordered_map<Entity *, DrawItem> drawItems;
     std::vector<PerObjectInstanceData> perObjectInstances;
     std::vector<DrawBatch> drawBatches;
     std::vector<DrawBatch> occlusionProbeBatches;
