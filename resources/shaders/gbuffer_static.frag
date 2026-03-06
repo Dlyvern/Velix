@@ -9,9 +9,19 @@ layout(location = 5) in flat uint fragObjectId;
 
 layout(location = 0) out vec4 outGBufferNormal;   // normal (encoded)
 layout(location = 1) out vec4 outGBufferAlbedo;   // albedo + alpha
-layout(location = 2) out vec4 outGBufferMaterial; // ao, roughness, metallic, emissiveStrength/flags
+layout(location = 2) out vec4 outGBufferMaterial; // ao, roughness, metallic, reserved
 layout(location = 3) out uint outObjectId;
 layout(location = 4) out vec4 outGBufferTangentAniso; // tangent (encoded), aniso mask
+layout(location = 5) out vec4 outGBufferEmissive; // emissive rgb
+
+layout(set = 0, binding = 0) uniform CameraUniformObject
+{
+    mat4 view;
+    mat4 projection;
+    mat4 invView;
+    mat4 invProjection;
+    vec4 textureLodParams; // x=startDistance, y=endDistance, z=maxDistanceBias, w=globalBias
+} cameraUniformObject;
 
 layout(set = 1, binding = 0) uniform sampler2D uAlbedoTex;
 layout(set = 1, binding = 1) uniform sampler2D uNormalTex;
@@ -35,17 +45,43 @@ layout(set = 1, binding = 4) uniform MaterialParams
     float ior;
 } material;
 
+const uint MATERIAL_FLAG_FLIP_V = 1u << 4;
+const uint MATERIAL_FLAG_FLIP_U = 1u << 5;
+const uint MATERIAL_FLAG_CLAMP_UV = 1u << 6;
+
 vec2 getUV()
 {
-    vec2 uv = fragUV * material.uvTransform.xy;
+    vec2 uv = fragUV;
+    if ((material.flags & MATERIAL_FLAG_FLIP_U) != 0u)
+        uv.x = 1.0 - uv.x;
+    if ((material.flags & MATERIAL_FLAG_FLIP_V) != 0u)
+        uv.y = 1.0 - uv.y;
+
+    uv *= material.uvTransform.xy;
     float rotationRadians = radians(material.uvRotation);
     float c = cos(rotationRadians);
     float s = sin(rotationRadians);
     mat2 rotation = mat2(c, -s, s, c);
-    return (rotation * uv) + material.uvTransform.zw;
+    uv = (rotation * uv) + material.uvTransform.zw;
+
+    if ((material.flags & MATERIAL_FLAG_CLAMP_UV) != 0u)
+        uv = clamp(uv, vec2(0.0), vec2(1.0));
+
+    return uv;
 }
 
-vec3 getNormalView()
+float computeTextureLodBias()
+{
+    float startDistance = max(cameraUniformObject.textureLodParams.x, 0.0);
+    float endDistance = max(cameraUniformObject.textureLodParams.y, startDistance + 0.0001);
+    float maxDistanceBias = max(cameraUniformObject.textureLodParams.z, 0.0);
+    float globalBias = cameraUniformObject.textureLodParams.w;
+    float distanceToCamera = length(fragPositionView);
+    float t = clamp((distanceToCamera - startDistance) / max(endDistance - startDistance, 0.0001), 0.0, 1.0);
+    return globalBias + t * maxDistanceBias;
+}
+
+vec3 getNormalView(vec2 uv, float lodBias)
 {
     vec3 N = normalize(fragNormalView);
     vec3 T = normalize(fragTangentView);
@@ -56,7 +92,7 @@ vec3 getNormalView()
 
     mat3 TBN = mat3(T, B, N);
 
-    vec3 normalTS = texture(uNormalTex, getUV()).xyz * 2.0 - 1.0;
+    vec3 normalTS = texture(uNormalTex, uv, lodBias).xyz * 2.0 - 1.0;
     normalTS.xy *= material.normalScale;
     normalTS = normalize(normalTS);
 
@@ -86,8 +122,9 @@ void main()
     outObjectId = fragObjectId;
 
     vec2 uv = getUV();
+    float textureLodBias = computeTextureLodBias();
 
-    vec4 albedoTex = texture(uAlbedoTex, uv);
+    vec4 albedoTex = texture(uAlbedoTex, uv, textureLodBias);
     vec3 albedo = albedoTex.rgb * material.baseColorFactor.rgb;
     float alpha = albedoTex.a * material.baseColorFactor.a;
 
@@ -97,10 +134,9 @@ void main()
             discard;
     }
 
-    vec3 emissive = texture(uEmissiveTex, uv).rgb * material.emissiveFactor.rgb;
-    float emissiveStrength = max(max(emissive.r, emissive.g), emissive.b);
+    vec3 emissive = texture(uEmissiveTex, uv, textureLodBias).rgb * material.emissiveFactor.rgb;
 
-    vec3 orm = texture(uOrmTex, uv).rgb;
+    vec3 orm = texture(uOrmTex, uv, textureLodBias).rgb;
     float ao        = mix(1.0, orm.r, material.aoStrength);
     float roughness = clamp(orm.g * material.roughnessFactor, 0.04, 1.0);
     float metallic  = clamp(orm.b * material.metallicFactor, 0.0, 1.0);
@@ -108,7 +144,7 @@ void main()
     // Specular AA (Tokuyoshi & Kaplanyan 2019): widen roughness based on
     // normal-map screen-space variance to suppress specular flickering.
     {
-        vec3 normalRaw = texture(uNormalTex, uv).xyz * 2.0 - 1.0;
+        vec3 normalRaw = texture(uNormalTex, uv, textureLodBias).xyz * 2.0 - 1.0;
         vec3 dnx = dFdx(normalRaw);
         vec3 dny = dFdy(normalRaw);
         float variance = dot(dnx, dnx) + dot(dny, dny);
@@ -116,12 +152,13 @@ void main()
         roughness = sqrt(clamp(roughness * roughness + kernelRoughness, 0.0, 1.0));
     }
 
-    vec3 N = getNormalView();
+    vec3 N = getNormalView(uv, textureLodBias);
 
     vec3 encN = N * 0.5 + 0.5;
 
     outGBufferNormal = vec4(encN, 1.0);
     outGBufferAlbedo = vec4(albedo, alpha);
-    outGBufferMaterial = vec4(ao, roughness, metallic, emissiveStrength);
+    outGBufferMaterial = vec4(ao, roughness, metallic, 0.0);
     outGBufferTangentAniso = vec4(getTangentView() * 0.5 + 0.5, 1.0);
+    outGBufferEmissive = vec4(emissive, 1.0);
 }

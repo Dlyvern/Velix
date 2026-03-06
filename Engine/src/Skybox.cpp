@@ -174,7 +174,7 @@ void Skybox::createResources(VkDescriptorPool descriptorPool)
     VkDeviceSize skyboxSize = sizeof(skyboxVertices[0]) * skyboxVertices.size();
     m_vertexCount = static_cast<uint32_t>(skyboxVertices.size()) / 3;
 
-    auto commandBuffer = core::CommandBuffer::createShared(*core::VulkanContext::getContext()->getTransferCommandPool());
+    auto commandBuffer = core::CommandBuffer::createShared(*core::VulkanContext::getContext()->getGraphicsCommandPool());
     commandBuffer->begin();
 
     auto vertexStaging = core::Buffer::createShared(skyboxSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
@@ -185,7 +185,7 @@ void Skybox::createResources(VkDescriptorPool descriptorPool)
     utilities::BufferUtilities::copyBuffer(*vertexStaging, *m_vertexBuffer, *commandBuffer, skyboxSize);
     commandBuffer->end();
 
-    if (!utilities::AsyncGpuUpload::submit(commandBuffer, core::VulkanContext::getContext()->getTransferQueue(), {vertexStaging}))
+    if (!utilities::AsyncGpuUpload::submit(commandBuffer, core::VulkanContext::getContext()->getGraphicsQueue(), {vertexStaging}))
         VX_ENGINE_ERROR_STREAM("Failed to submit skybox vertex upload\n");
 
     VkDescriptorSetLayoutBinding cubemapBinding{};

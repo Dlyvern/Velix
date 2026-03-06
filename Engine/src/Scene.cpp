@@ -3,6 +3,7 @@
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Components/LightComponent.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
+#include "Engine/Components/TerrainComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/CameraComponent.hpp"
@@ -22,7 +23,6 @@
 #include "Engine/Particles/Modules/RendererModule.hpp"
 
 #include "Engine/Assets/AssetsLoader.hpp"
-#include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
 
 #include "Engine/Mesh.hpp"
@@ -525,156 +525,6 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
         }
     }
 
-    if (json.contains("render_settings") && json["render_settings"].is_object())
-    {
-        reportStatus("Applying render settings...");
-        auto &settings = RenderQualitySettings::getInstance();
-        const auto &renderSettingsJson = json["render_settings"];
-
-        if (renderSettingsJson.contains("shadow_quality") && renderSettingsJson["shadow_quality"].is_number_unsigned())
-        {
-            const uint32_t shadowQuality = renderSettingsJson["shadow_quality"].get<uint32_t>();
-            switch (shadowQuality)
-            {
-            case static_cast<uint32_t>(RenderQualitySettings::ShadowQuality::Low):
-                settings.shadowQuality = RenderQualitySettings::ShadowQuality::Low;
-                break;
-            case static_cast<uint32_t>(RenderQualitySettings::ShadowQuality::Medium):
-                settings.shadowQuality = RenderQualitySettings::ShadowQuality::Medium;
-                break;
-            case static_cast<uint32_t>(RenderQualitySettings::ShadowQuality::High):
-                settings.shadowQuality = RenderQualitySettings::ShadowQuality::High;
-                break;
-            case static_cast<uint32_t>(RenderQualitySettings::ShadowQuality::Ultra):
-                settings.shadowQuality = RenderQualitySettings::ShadowQuality::Ultra;
-                break;
-            default:
-                break;
-            }
-        }
-
-        if (renderSettingsJson.contains("shadow_cascade_count") && renderSettingsJson["shadow_cascade_count"].is_number_unsigned())
-        {
-            const uint32_t cascadeCount = renderSettingsJson["shadow_cascade_count"].get<uint32_t>();
-            switch (cascadeCount)
-            {
-            case 1u:
-                settings.shadowCascadeCount = RenderQualitySettings::ShadowCascadeCount::X1;
-                break;
-            case 2u:
-                settings.shadowCascadeCount = RenderQualitySettings::ShadowCascadeCount::X2;
-                break;
-            case 4u:
-                settings.shadowCascadeCount = RenderQualitySettings::ShadowCascadeCount::X4;
-                break;
-            default:
-                break;
-            }
-        }
-
-        if (renderSettingsJson.contains("shadow_max_distance") && renderSettingsJson["shadow_max_distance"].is_number())
-            settings.shadowMaxDistance = std::max(renderSettingsJson["shadow_max_distance"].get<float>(), 20.0f);
-
-        if (renderSettingsJson.contains("anti_aliasing_mode") && renderSettingsJson["anti_aliasing_mode"].is_number_integer())
-        {
-            const int mode = std::clamp(renderSettingsJson["anti_aliasing_mode"].get<int>(), 0, 4);
-            settings.setAntiAliasingMode(static_cast<RenderQualitySettings::AntiAliasingMode>(mode));
-        }
-
-        if (renderSettingsJson.contains("msaa_mode") && renderSettingsJson["msaa_mode"].is_number_integer())
-        {
-            const int mode = std::clamp(renderSettingsJson["msaa_mode"].get<int>(), 0, 4);
-            settings.msaaMode = static_cast<RenderQualitySettings::MSAAMode>(mode);
-        }
-
-        if (renderSettingsJson.contains("anisotropy_mode") && renderSettingsJson["anisotropy_mode"].is_number_integer())
-        {
-            const int mode = std::clamp(renderSettingsJson["anisotropy_mode"].get<int>(), 0, 4);
-            settings.anisotropyMode = static_cast<RenderQualitySettings::AnisotropyMode>(mode);
-        }
-
-        if (renderSettingsJson.contains("enable_post_processing") && renderSettingsJson["enable_post_processing"].is_boolean())
-            settings.enablePostProcessing = renderSettingsJson["enable_post_processing"].get<bool>();
-        if (renderSettingsJson.contains("enable_vsync") && renderSettingsJson["enable_vsync"].is_boolean())
-            settings.enableVSync = renderSettingsJson["enable_vsync"].get<bool>();
-
-        if (renderSettingsJson.contains("enable_ssao") && renderSettingsJson["enable_ssao"].is_boolean())
-            settings.enableSSAO = renderSettingsJson["enable_ssao"].get<bool>();
-
-        if (renderSettingsJson.contains("ssao_radius") && renderSettingsJson["ssao_radius"].is_number())
-            settings.ssaoRadius = renderSettingsJson["ssao_radius"].get<float>();
-        if (renderSettingsJson.contains("ssao_bias") && renderSettingsJson["ssao_bias"].is_number())
-            settings.ssaoBias = renderSettingsJson["ssao_bias"].get<float>();
-        if (renderSettingsJson.contains("ssao_strength") && renderSettingsJson["ssao_strength"].is_number())
-            settings.ssaoStrength = renderSettingsJson["ssao_strength"].get<float>();
-        if (renderSettingsJson.contains("ssao_samples") && renderSettingsJson["ssao_samples"].is_number_integer())
-            settings.ssaoSamples = std::clamp(renderSettingsJson["ssao_samples"].get<int>(), 4, 64);
-        if (renderSettingsJson.contains("enable_gtao") && renderSettingsJson["enable_gtao"].is_boolean())
-            settings.enableGTAO = renderSettingsJson["enable_gtao"].get<bool>();
-        if (renderSettingsJson.contains("gtao_directions") && renderSettingsJson["gtao_directions"].is_number_integer())
-            settings.gtaoDirections = std::clamp(renderSettingsJson["gtao_directions"].get<int>(), 2, 8);
-        if (renderSettingsJson.contains("gtao_steps") && renderSettingsJson["gtao_steps"].is_number_integer())
-            settings.gtaoSteps = std::clamp(renderSettingsJson["gtao_steps"].get<int>(), 2, 8);
-        if (renderSettingsJson.contains("use_bent_normals") && renderSettingsJson["use_bent_normals"].is_boolean())
-            settings.useBentNormals = renderSettingsJson["use_bent_normals"].get<bool>();
-
-        if (renderSettingsJson.contains("enable_anisotropy") && renderSettingsJson["enable_anisotropy"].is_boolean())
-            settings.enableAnisotropy = renderSettingsJson["enable_anisotropy"].get<bool>();
-        if (renderSettingsJson.contains("anisotropy_strength") && renderSettingsJson["anisotropy_strength"].is_number())
-            settings.anisotropyStrength = renderSettingsJson["anisotropy_strength"].get<float>();
-        if (renderSettingsJson.contains("anisotropy_rotation") && renderSettingsJson["anisotropy_rotation"].is_number())
-            settings.anisotropyRotation = renderSettingsJson["anisotropy_rotation"].get<float>();
-        if (renderSettingsJson.contains("shadow_ambient_strength") && renderSettingsJson["shadow_ambient_strength"].is_number())
-            settings.shadowAmbientStrength = renderSettingsJson["shadow_ambient_strength"].get<float>();
-        if (renderSettingsJson.contains("enable_shadow_occlusion_culling") && renderSettingsJson["enable_shadow_occlusion_culling"].is_boolean())
-            settings.enableShadowOcclusionCulling = renderSettingsJson["enable_shadow_occlusion_culling"].get<bool>();
-        if (renderSettingsJson.contains("enable_occlusion_culling") && renderSettingsJson["enable_occlusion_culling"].is_boolean())
-            settings.enableOcclusionCulling = renderSettingsJson["enable_occlusion_culling"].get<bool>();
-        if (renderSettingsJson.contains("occlusion_probe_interval") && renderSettingsJson["occlusion_probe_interval"].is_number_integer())
-            settings.occlusionProbeInterval = std::clamp(renderSettingsJson["occlusion_probe_interval"].get<int>(), 1, 240);
-        if (renderSettingsJson.contains("occlusion_visible_requery_interval") && renderSettingsJson["occlusion_visible_requery_interval"].is_number_integer())
-            settings.occlusionVisibleRequeryInterval = std::clamp(renderSettingsJson["occlusion_visible_requery_interval"].get<int>(), 1, 480);
-        if (renderSettingsJson.contains("occlusion_occluded_confirmation_queries") && renderSettingsJson["occlusion_occluded_confirmation_queries"].is_number_integer())
-            settings.occlusionOccludedConfirmationQueries = std::clamp(renderSettingsJson["occlusion_occluded_confirmation_queries"].get<int>(), 1, 8);
-        if (renderSettingsJson.contains("occlusion_max_instances_per_batch") && renderSettingsJson["occlusion_max_instances_per_batch"].is_number_integer())
-            settings.occlusionMaxInstancesPerBatch = std::clamp(renderSettingsJson["occlusion_max_instances_per_batch"].get<int>(), 1, 1024);
-        if (renderSettingsJson.contains("occlusion_fast_motion_probe_interval") && renderSettingsJson["occlusion_fast_motion_probe_interval"].is_number_integer())
-            settings.occlusionFastMotionProbeInterval = std::clamp(renderSettingsJson["occlusion_fast_motion_probe_interval"].get<int>(), 1, 240);
-        if (renderSettingsJson.contains("occlusion_fast_motion_visible_requery_interval") && renderSettingsJson["occlusion_fast_motion_visible_requery_interval"].is_number_integer())
-            settings.occlusionFastMotionVisibleRequeryInterval = std::clamp(renderSettingsJson["occlusion_fast_motion_visible_requery_interval"].get<int>(), 1, 240);
-        if (renderSettingsJson.contains("occlusion_fast_motion_stale_reveal_frames") && renderSettingsJson["occlusion_fast_motion_stale_reveal_frames"].is_number_integer())
-            settings.occlusionFastMotionStaleRevealFrames = std::clamp(renderSettingsJson["occlusion_fast_motion_stale_reveal_frames"].get<int>(), 0, 240);
-        if (renderSettingsJson.contains("occlusion_fast_motion_translation_threshold") && renderSettingsJson["occlusion_fast_motion_translation_threshold"].is_number())
-            settings.occlusionFastMotionTranslationThreshold = std::clamp(renderSettingsJson["occlusion_fast_motion_translation_threshold"].get<float>(), 0.0f, 10.0f);
-        if (renderSettingsJson.contains("occlusion_fast_motion_forward_dot_threshold") && renderSettingsJson["occlusion_fast_motion_forward_dot_threshold"].is_number())
-            settings.occlusionFastMotionForwardDotThreshold = std::clamp(renderSettingsJson["occlusion_fast_motion_forward_dot_threshold"].get<float>(), -1.0f, 1.0f);
-        if (renderSettingsJson.contains("shadow_occlusion_visibility_grace_frames") && renderSettingsJson["shadow_occlusion_visibility_grace_frames"].is_number_integer())
-            settings.shadowOcclusionVisibilityGraceFrames = std::clamp(renderSettingsJson["shadow_occlusion_visibility_grace_frames"].get<int>(), 0, 600);
-
-        if (renderSettingsJson.contains("enable_lut_grading") && renderSettingsJson["enable_lut_grading"].is_boolean())
-            settings.enableLUTGrading = renderSettingsJson["enable_lut_grading"].get<bool>();
-        if (renderSettingsJson.contains("lut_grading_path") && renderSettingsJson["lut_grading_path"].is_string())
-            settings.lutGradingPath = resolveScenePath(renderSettingsJson["lut_grading_path"].get<std::string>());
-        if (renderSettingsJson.contains("lut_grading_strength") && renderSettingsJson["lut_grading_strength"].is_number())
-            settings.lutGradingStrength = renderSettingsJson["lut_grading_strength"].get<float>();
-
-        if (renderSettingsJson.contains("enable_bloom") && renderSettingsJson["enable_bloom"].is_boolean())
-            settings.enableBloom = renderSettingsJson["enable_bloom"].get<bool>();
-
-        if (renderSettingsJson.contains("enable_ssr") && renderSettingsJson["enable_ssr"].is_boolean())
-            settings.enableSSR = renderSettingsJson["enable_ssr"].get<bool>();
-
-        if (renderSettingsJson.contains("enable_ibl") && renderSettingsJson["enable_ibl"].is_boolean())
-            settings.enableIBL = renderSettingsJson["enable_ibl"].get<bool>();
-        if (renderSettingsJson.contains("ibl_diffuse_intensity") && renderSettingsJson["ibl_diffuse_intensity"].is_number())
-            settings.iblDiffuseIntensity = std::clamp(renderSettingsJson["ibl_diffuse_intensity"].get<float>(), 0.0f, 3.0f);
-        if (renderSettingsJson.contains("ibl_specular_intensity") && renderSettingsJson["ibl_specular_intensity"].is_number())
-            settings.iblSpecularIntensity = std::clamp(renderSettingsJson["ibl_specular_intensity"].get<float>(), 0.0f, 3.0f);
-
-        if (renderSettingsJson.contains("render_scale") && renderSettingsJson["render_scale"].is_number())
-            settings.renderScale = std::clamp(renderSettingsJson["render_scale"].get<float>(), 0.25f, 2.0f);
-    }
-
     if (json.contains("ui_objects") && json["ui_objects"].is_array())
     {
         const size_t uiObjectCount = json["ui_objects"].size();
@@ -949,6 +799,25 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                         auto *sm = gameObject->addComponent<StaticMeshComponent>(meshes);
                         sm->setAssetPath(assetPath);
                         restoreMaterialOverrides(sm, componentJson.value("material_overrides", nlohmann::json::array()));
+                    }
+                }
+                else if (type == "terrain")
+                {
+                    const std::string assetPath = resolveScenePath(componentJson.value("asset_path", std::string{}));
+                    auto *terrainComponent = gameObject->addComponent<TerrainComponent>();
+                    terrainComponent->setTerrainAssetPath(assetPath);
+                    terrainComponent->setQuadsPerChunk(std::clamp(componentJson.value("quads_per_chunk", 63u), 1u, 512u));
+
+                    if (componentJson.contains("material_override_path") && componentJson["material_override_path"].is_string())
+                        terrainComponent->setMaterialOverridePath(resolveScenePath(componentJson["material_override_path"].get<std::string>()));
+
+                    if (!assetPath.empty())
+                    {
+                        auto terrainAsset = AssetsLoader::loadTerrain(assetPath);
+                        if (terrainAsset.has_value())
+                            terrainComponent->setTerrainAsset(std::make_shared<TerrainAsset>(std::move(terrainAsset.value())));
+                        else
+                            VX_ENGINE_WARNING_STREAM("Failed to load terrain asset: " << assetPath << '\n');
                     }
                 }
                 else if (type == "skeletal_mesh")
@@ -1492,53 +1361,6 @@ void Scene::saveSceneToFile(const std::string &filePath)
     if (!m_skyboxHDRPath.empty())
         json["environment"] = {{"skybox_hdr", toRelativePath(m_skyboxHDRPath)}};
 
-    {
-        const auto &settings = RenderQualitySettings::getInstance();
-        json["render_settings"] = {
-            {"shadow_quality", settings.getShadowResolution()},
-            {"shadow_cascade_count", settings.getShadowCascadeCount()},
-            {"shadow_max_distance", settings.shadowMaxDistance},
-            {"anti_aliasing_mode", static_cast<int>(settings.getAntiAliasingMode())},
-            {"msaa_mode", static_cast<int>(settings.msaaMode)},
-            {"anisotropy_mode", static_cast<int>(settings.anisotropyMode)},
-            {"enable_post_processing", settings.enablePostProcessing},
-            {"enable_vsync", settings.enableVSync},
-            {"enable_ssao", settings.enableSSAO},
-            {"ssao_radius", settings.ssaoRadius},
-            {"ssao_bias", settings.ssaoBias},
-            {"ssao_strength", settings.ssaoStrength},
-            {"ssao_samples", settings.ssaoSamples},
-            {"enable_gtao", settings.enableGTAO},
-            {"gtao_directions", settings.gtaoDirections},
-            {"gtao_steps", settings.gtaoSteps},
-            {"use_bent_normals", settings.useBentNormals},
-            {"enable_anisotropy", settings.enableAnisotropy},
-            {"anisotropy_strength", settings.anisotropyStrength},
-            {"anisotropy_rotation", settings.anisotropyRotation},
-            {"shadow_ambient_strength", settings.shadowAmbientStrength},
-            {"enable_shadow_occlusion_culling", settings.enableShadowOcclusionCulling},
-            {"enable_occlusion_culling", settings.enableOcclusionCulling},
-            {"occlusion_probe_interval", settings.occlusionProbeInterval},
-            {"occlusion_visible_requery_interval", settings.occlusionVisibleRequeryInterval},
-            {"occlusion_occluded_confirmation_queries", settings.occlusionOccludedConfirmationQueries},
-            {"occlusion_max_instances_per_batch", settings.occlusionMaxInstancesPerBatch},
-            {"occlusion_fast_motion_probe_interval", settings.occlusionFastMotionProbeInterval},
-            {"occlusion_fast_motion_visible_requery_interval", settings.occlusionFastMotionVisibleRequeryInterval},
-            {"occlusion_fast_motion_stale_reveal_frames", settings.occlusionFastMotionStaleRevealFrames},
-            {"occlusion_fast_motion_translation_threshold", settings.occlusionFastMotionTranslationThreshold},
-            {"occlusion_fast_motion_forward_dot_threshold", settings.occlusionFastMotionForwardDotThreshold},
-            {"shadow_occlusion_visibility_grace_frames", settings.shadowOcclusionVisibilityGraceFrames},
-            {"enable_lut_grading", settings.enableLUTGrading},
-            {"lut_grading_path", toRelativePath(settings.lutGradingPath)},
-            {"lut_grading_strength", settings.lutGradingStrength},
-            {"enable_bloom", settings.enableBloom},
-            {"enable_ssr", settings.enableSSR},
-            {"enable_ibl", settings.enableIBL},
-            {"ibl_diffuse_intensity", settings.iblDiffuseIntensity},
-            {"ibl_specular_intensity", settings.iblSpecularIntensity},
-            {"render_scale", settings.renderScale}};
-    }
-
     const auto &objects = getEntities();
 
     for (const auto &object : objects)
@@ -1616,6 +1438,19 @@ void Scene::saveSceneToFile(const std::string &filePath)
                     overridesJson.push_back({{"slot", slot}, {"path", toRelativePath(matPath)}});
             }
             j["material_overrides"] = overridesJson;
+
+            componentsJson.push_back(j);
+        }
+
+        if (const auto *terrainComponent = object->getComponent<TerrainComponent>())
+        {
+            nlohmann::json j;
+            j["type"] = "terrain";
+            j["asset_path"] = toRelativePath(terrainComponent->getTerrainAssetPath());
+            j["quads_per_chunk"] = terrainComponent->getQuadsPerChunk();
+
+            if (!terrainComponent->getMaterialOverridePath().empty())
+                j["material_override_path"] = toRelativePath(terrainComponent->getMaterialOverridePath());
 
             componentsJson.push_back(j);
         }

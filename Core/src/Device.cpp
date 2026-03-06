@@ -31,7 +31,7 @@ size_t Device::getTotalUsedRAM() const
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS info;
     if (GetProcessMemoryInfo(GetCurrentProcess(), &info, sizeof(info)))
-        return (size_t)info.WorkingSetSize;
+        return static_cast<size_t>(info.WorkingSetSize / (1024ull * 1024ull));
     return 0L;
 #else
     long rss = 0L;

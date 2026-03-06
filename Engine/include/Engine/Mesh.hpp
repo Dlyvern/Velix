@@ -83,7 +83,7 @@ struct GPUMesh
         VkDeviceSize indexSize = sizeof(indices[0]) * indices.size();
         VkDeviceSize vertexSize = sizeof(vertexData[0]) * vertexData.size();
 
-        auto commandBuffer = core::CommandBuffer::createShared(*core::VulkanContext::getContext()->getTransferCommandPool());
+        auto commandBuffer = core::CommandBuffer::createShared(*core::VulkanContext::getContext()->getGraphicsCommandPool());
         commandBuffer->begin();
 
         // Vertex
@@ -104,7 +104,7 @@ struct GPUMesh
 
         commandBuffer->end();
 
-        if (!utilities::AsyncGpuUpload::submit(commandBuffer, core::VulkanContext::getContext()->getTransferQueue(), {vertexStaging, staging}))
+        if (!utilities::AsyncGpuUpload::submit(commandBuffer, core::VulkanContext::getContext()->getGraphicsQueue(), {vertexStaging, staging}))
             return nullptr;
 
         gpu->vertexBuffer = vertexGPUBuffer;

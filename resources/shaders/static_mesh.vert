@@ -10,6 +10,9 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
 {
     mat4 view;
     mat4 projection;
+    mat4 invView;
+    mat4 invProjection;
+    vec4 textureLodParams;
 } cameraUniformObject;
 
 layout(set = 0, binding = 1) uniform LightSpaceMatrixUniformObject

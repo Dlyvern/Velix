@@ -2,6 +2,7 @@
 
 #include "Core/Logger.hpp"
 #include "Core/VulkanContext.hpp"
+#include "Core/VulkanHelpers.hpp"
 
 #include <mutex>
 #include <vector>
@@ -92,7 +93,8 @@ void AsyncGpuUpload::collectFinished(VkDevice device)
         }
         else
         {
-            VX_ENGINE_ERROR_STREAM("Failed to poll upload fence status\n");
+            VX_ENGINE_ERROR_STREAM("Failed to poll upload fence status: "
+                                   << core::helpers::vulkanResultToString(status) << '\n');
             if (pendingUpload.completionSemaphore != VK_NULL_HANDLE)
                 vkDestroySemaphore(device, pendingUpload.completionSemaphore, nullptr);
         }

@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <cstddef>
 #include <unordered_map>
 
 #include <glm/glm.hpp>
@@ -23,6 +24,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 struct DrawItem
 {
     std::vector<GPUMesh::SharedPtr> meshes;
+    std::vector<size_t> localMeshGeometryHashes;
     std::vector<glm::vec3> localMeshBoundsCenters;
     std::vector<float> localMeshBoundsRadii;
     std::vector<glm::mat4> localMeshTransforms;

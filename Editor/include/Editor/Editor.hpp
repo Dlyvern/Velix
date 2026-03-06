@@ -37,6 +37,7 @@
 #include <backends/imgui_impl_vulkan.h>
 
 #include "Editor/AssetsPreviewSystem.hpp"
+#include "Editor/Terrain/TerrainTools.hpp"
 
 #include <filesystem>
 
@@ -68,15 +69,7 @@ public:
     engine::Camera::SharedPtr getCurrentCamera();
 
     //! Maybe we can do something better here
-    void setScene(engine::Scene::SharedPtr scene)
-    {
-        m_scene = scene;
-        m_selectedEntity = nullptr;
-        m_selectedMeshSlot.reset();
-        m_hasPendingObjectPick = false;
-        clearSelectedUIElement();
-        resetSceneActionHistory();
-    }
+    void setScene(engine::Scene::SharedPtr scene);
 
     void setProject(const std::shared_ptr<Project> &project)
     {
@@ -93,9 +86,12 @@ public:
         m_currentProject = project;
         invalidateModelDetailsCache();
         m_assetsPreviewSystem.setProject(project.get());
+        m_terrainTools.setProjectRootPath(project ? std::filesystem::path(project->fullPath) : std::filesystem::path{});
 
         if (m_assetsWindow)
             m_assetsWindow->setProject(project.get());
+
+        restoreSceneMaterialOverrides();
     }
 
     void setProjectScriptsRegister(engine::ScriptsRegister *scriptsRegister, const std::string &modulePath = {})
@@ -231,6 +227,7 @@ private:
     bool saveMaterialToDisk(const std::filesystem::path &path, const engine::CPUMaterial &cpuMaterial);
     bool reloadMaterialFromDisk(const std::filesystem::path &path);
     engine::Texture::SharedPtr ensureProjectTextureLoaded(const std::string &texturePath, TextureUsage usage = TextureUsage::Color);
+    engine::Texture::SharedPtr ensureProjectTextureLoadedPreview(const std::string &texturePath, TextureUsage usage = TextureUsage::Color);
     const engine::ModelAsset *ensureModelAssetLoaded(const std::string &modelPath);
     void invalidateModelDetailsCache();
     void rebuildModelDetailsCache(const engine::ModelAsset &modelAsset,
@@ -250,6 +247,7 @@ private:
         std::vector<std::string> *outPerMeshMaterialPaths = nullptr);
 
     engine::Material::SharedPtr ensureMaterialLoaded(const std::string &materialPath);
+    void restoreSceneMaterialOverrides();
     bool applyMaterialToSelectedEntity(
         const std::string &materialPath,
         std::optional<size_t> slot = std::nullopt,
@@ -266,6 +264,9 @@ private:
     void setDocumentLanguageFromPath(const std::filesystem::path &path);
 
     void drawMaterialEditors();
+    void saveRenderSettingsToEngineConfig();
+    void saveEditorCameraSettingsToEngineConfig();
+    void loadEditorCameraSettingsFromEngineConfig();
     void resetSceneActionHistory();
     void captureSceneActionSnapshot(const std::string &label);
     bool performUndoAction();
@@ -290,6 +291,7 @@ private:
     NotificationManager m_notificationManager;
 
     AssetsPreviewSystem m_assetsPreviewSystem;
+    TerrainTools m_terrainTools;
 
     void drawDocument();
 
@@ -337,36 +339,74 @@ private:
 
     struct MaterialEditorUIState
     {
+        struct DynamicColorNode
+        {
+            int nodeId = 0;
+            int outputPinId = 0;
+            int linkId = 0;
+            bool linkToEmissiveActive = false;
+            glm::vec3 color{1.0f, 1.0f, 1.0f};
+            float strength{1.0f};
+            glm::vec2 spawnPosition{0.0f, 0.0f};
+            bool pendingPlacement = false;
+            bool removeRequested = false;
+        };
+
         bool openTexturePopup = false;
         std::string texturePopupSlot; // "Albedo", "Normal", "ORM", "Emissive"
         char textureFilter[128] = "";
+        bool openColorPopup = false;
+        int colorPopupSlot = 0; // 0-none, 1-baseColor, 2-emissive
 
         bool nodeEditorInitialized = false;
         ax::NodeEditor::EditorContext *nodeEditorContext = nullptr;
 
-        int materialNodeId = 1;
-        int textureNodeId = 2;
-        int uvNodeId = 3;
+        int mappingNodeId = 1;
+        int texturesNodeId = 2;
+        int principledNodeId = 3;
+        int outputNodeId = 4;
+        int colorNodeId = 5;
 
-        int materialInAlbedoPinId = 11;
-        int materialInNormalPinId = 12;
-        int materialInOrmPinId = 13;
-        int materialInEmissivePinId = 14;
+        int mappingOutVectorPinId = 11;
+        int texturesInVectorPinId = 12;
 
-        int textureOutAlbedoPinId = 21;
-        int textureOutNormalPinId = 22;
-        int textureOutOrmPinId = 23;
-        int textureOutEmissivePinId = 24;
+        int texturesOutAlbedoPinId = 21;
+        int texturesOutNormalPinId = 22;
+        int texturesOutOrmPinId = 23;
+        int texturesOutEmissivePinId = 24;
 
-        int linkAlbedoId = 101;
-        int linkNormalId = 102;
-        int linkOrmId = 103;
-        int linkEmissiveId = 104;
+        int principledInAlbedoPinId = 31;
+        int principledInNormalPinId = 32;
+        int principledInOrmPinId = 33;
+        int principledInEmissivePinId = 34;
+        int principledOutBsdfPinId = 35;
 
+        int outputInSurfacePinId = 41;
+        int colorOutPinId = 51;
+
+        int linkMappingId = 101;
+        int linkAlbedoId = 102;
+        int linkNormalId = 103;
+        int linkOrmId = 104;
+        int linkEmissiveId = 105;
+        int linkOutputId = 106;
+        int linkColorToEmissiveId = 107;
+
+        bool linkMappingActive = true;
         bool linkAlbedoActive = false;
         bool linkNormalActive = false;
         bool linkOrmActive = false;
         bool linkEmissiveActive = false;
+        bool linkOutputActive = true;
+        bool linkColorToEmissiveActive = false;
+
+        glm::vec3 colorNodeValue{1.0f, 1.0f, 1.0f};
+        float colorNodeStrength{1.0f};
+
+        int nextDynamicColorNodeId = 5000;
+        int nextDynamicColorPinId = 6000;
+        int nextDynamicColorLinkId = 7000;
+        std::vector<DynamicColorNode> dynamicColorNodes;
     };
 
     std::unordered_map<std::string, MaterialEditorUIState> m_materialEditorUiState;
@@ -395,10 +435,13 @@ private:
     bool m_showAssetsWindow{false};
     bool m_showTerminal{false};
     bool m_showUITools{false};
+    bool m_showTerrainTools{false};
     bool m_showRenderSettings{false};
     bool m_showEditorCameraSettings{false};
     bool m_showBenchmark{false};
-    bool m_isGameViewportVisible{true};
+    bool m_textureMemoryWarningPopupPendingOpen{false};
+    std::string m_textureMemoryWarningPopupMessage{};
+    bool m_isGameViewportVisible{false};
     bool m_terminalAutoScroll{true};
     bool m_terminalClearInputOnSubmit{true};
     char m_terminalCommandBuffer[512]{};
@@ -432,7 +475,9 @@ private:
     void drawEditorCameraSettings();
     void drawRenderSettings();
     void drawBenchmark();
+    void drawTextureMemoryWarningPopup();
     void drawUITools();
+    void drawTerrainTools();
     void showDockSpace();
     void syncAssetsAndTerminalDocking();
     void drawCustomTitleBar();

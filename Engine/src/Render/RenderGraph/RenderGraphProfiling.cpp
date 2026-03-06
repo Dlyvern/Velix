@@ -6,6 +6,7 @@
 #include "Engine/Runtime/EngineConfig.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -244,6 +245,162 @@ void RenderGraphProfiling::resolveFrameProfilingData(uint32_t frameIndex)
         frameProfilingData.gpuWasteTimeMs = std::max(0.0, frameProfilingData.gpuFrameTimeMs - frameProfilingData.gpuTotalTimeMs);
 
     m_lastFrameProfilingData = std::move(frameProfilingData);
+}
+
+void RenderGraphProfiling::beginFrameCpuProfiling(uint32_t frameIndex, double waitForFenceMs)
+{
+    double resolveProfilingMs = 0.0;
+    const bool detailedProfilingEnabled = isDetailedProfilingEnabled();
+
+    if (detailedProfilingEnabled && hasPendingProfilingResolveByFrame(frameIndex))
+    {
+        const auto resolveStart = std::chrono::high_resolution_clock::now();
+        resolveFrameProfilingData(frameIndex);
+        resolveProfilingMs = std::chrono::duration<double, std::milli>(
+                                 std::chrono::high_resolution_clock::now() - resolveStart)
+                                 .count();
+        setPendingProfilingResolveByFrame(frameIndex, false);
+    }
+    else if (!detailedProfilingEnabled)
+    {
+        setPendingProfilingResolveByFrame(frameIndex, false);
+    }
+
+    resetCpuStageProfilingDataByFrame(frameIndex);
+    auto &cpuStageProfilingData = getCpuStageProfilingDataByFrame(frameIndex);
+    cpuStageProfilingData.waitForFenceMs = waitForFenceMs;
+    cpuStageProfilingData.resolveProfilingMs = resolveProfilingMs;
+}
+
+void RenderGraphProfiling::onFenceWaitFailure(uint32_t frameIndex, double waitForFenceMs)
+{
+    resetCpuStageProfilingDataByFrame(frameIndex);
+    auto &cpuStageProfilingData = getCpuStageProfilingDataByFrame(frameIndex);
+    cpuStageProfilingData.waitForFenceMs = waitForFenceMs;
+}
+
+void RenderGraphProfiling::recordCpuStage(uint32_t frameIndex, CpuStage stage, double milliseconds)
+{
+    auto &cpuStageProfilingData = getCpuStageProfilingDataByFrame(frameIndex);
+
+    switch (stage)
+    {
+    case CpuStage::WaitForFence:
+        cpuStageProfilingData.waitForFenceMs = milliseconds;
+        break;
+    case CpuStage::AcquireImage:
+        cpuStageProfilingData.acquireImageMs = milliseconds;
+        break;
+    case CpuStage::Recompile:
+        cpuStageProfilingData.recompileMs = milliseconds;
+        break;
+    case CpuStage::Submit:
+        cpuStageProfilingData.submitMs = milliseconds;
+        break;
+    case CpuStage::Present:
+        cpuStageProfilingData.presentMs = milliseconds;
+        break;
+    case CpuStage::CommandPoolReset:
+        cpuStageProfilingData.commandPoolResetMs = milliseconds;
+        break;
+    case CpuStage::PrimaryCommandBufferEnd:
+        cpuStageProfilingData.primaryCbEndMs = milliseconds;
+        break;
+    case CpuStage::ResolveProfiling:
+        cpuStageProfilingData.resolveProfilingMs = milliseconds;
+        break;
+    default:
+        break;
+    }
+}
+
+void RenderGraphProfiling::beginFrameGpuProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t frameIndex)
+{
+    auto &currentFramePassProfilingData = getPassExecutionProfillingDataByFrame(frameIndex);
+    currentFramePassProfilingData.clear();
+
+    setUsedTimestampQueries(0u);
+    setTimestampQueryBase(frameIndex * getTimestampQueriesPerFrame());
+    resetFrameQueryRangesByFrame(frameIndex);
+
+    if (!isDetailedProfilingEnabled() ||
+        !isGPUTimingAvailable() ||
+        getTimestampQueryPool() == VK_NULL_HANDLE ||
+        getTimestampQueriesPerFrame() == 0u)
+        return;
+
+    vkCmdResetQueryPool(primaryCommandBuffer, getTimestampQueryPool(), getTimestampQueryBase(), getTimestampQueriesPerFrame());
+
+    auto &frameRange = getFrameQueryRangesByFrame(frameIndex);
+    frameRange.startQueryIndex = getTimestampQueryBase() + getUsedTimestampQueries()++;
+
+    vkCmdWriteTimestamp(primaryCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, getTimestampQueryPool(), frameRange.startQueryIndex);
+}
+
+void RenderGraphProfiling::beginPassProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t,
+                                              PassExecutionProfilingData &executionProfilingData, std::string_view passName)
+{
+    executionProfilingData = {};
+    executionProfilingData.passName = passName.empty() ? "Unnamed pass" : std::string(passName);
+
+    if (!isDetailedProfilingEnabled() ||
+        !isGPUTimingAvailable() ||
+        getTimestampQueryPool() == VK_NULL_HANDLE ||
+        (getUsedTimestampQueries() + 2u) >= getTimestampQueriesPerFrame())
+        return;
+
+    executionProfilingData.startQueryIndex = getTimestampQueryBase() + getUsedTimestampQueries()++;
+    executionProfilingData.endQueryIndex = getTimestampQueryBase() + getUsedTimestampQueries()++;
+
+    vkCmdWriteTimestamp(primaryCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, getTimestampQueryPool(),
+                        executionProfilingData.startQueryIndex);
+}
+
+void RenderGraphProfiling::endPassProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t frameIndex,
+                                            PassExecutionProfilingData &&executionProfilingData)
+{
+    if (!isDetailedProfilingEnabled())
+        return;
+
+    if (executionProfilingData.endQueryIndex != UINT32_MAX && getTimestampQueryPool() != VK_NULL_HANDLE)
+    {
+        vkCmdWriteTimestamp(primaryCommandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, getTimestampQueryPool(),
+                            executionProfilingData.endQueryIndex);
+    }
+
+    auto &currentFramePassProfilingData = getPassExecutionProfillingDataByFrame(frameIndex);
+    currentFramePassProfilingData.push_back(std::move(executionProfilingData));
+}
+
+void RenderGraphProfiling::endFrameGpuProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t frameIndex)
+{
+    if (!isDetailedProfilingEnabled() ||
+        !isGPUTimingAvailable() ||
+        getTimestampQueryPool() == VK_NULL_HANDLE)
+        return;
+
+    auto &frameRange = getFrameQueryRangesByFrame(frameIndex);
+
+    if (frameRange.startQueryIndex == UINT32_MAX || getUsedTimestampQueries() >= getTimestampQueriesPerFrame())
+        return;
+
+    frameRange.endQueryIndex = getTimestampQueryBase() + getUsedTimestampQueries()++;
+    vkCmdWriteTimestamp(primaryCommandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, getTimestampQueryPool(),
+                        frameRange.endQueryIndex);
+}
+
+void RenderGraphProfiling::markFrameSubmitted(uint32_t frameIndex)
+{
+    if (isDetailedProfilingEnabled())
+    {
+        setUsedTimestampQueriesByFrame(frameIndex, getUsedTimestampQueries());
+        setPendingProfilingResolveByFrame(frameIndex, true);
+    }
+    else
+    {
+        setUsedTimestampQueriesByFrame(frameIndex, 0u);
+        setPendingProfilingResolveByFrame(frameIndex, false);
+    }
 }
 
 ///_____________________________________________________________

@@ -29,6 +29,7 @@ void ShaderHotReloader::setShadersRootPath(const std::filesystem::path &path)
 void ShaderHotReloader::prime()
 {
     m_fileWriteTimes.clear();
+    m_reloadRequested = false;
 
     if (!std::filesystem::exists(m_shadersRootPath) || !std::filesystem::is_directory(m_shadersRootPath))
         return;
@@ -43,7 +44,30 @@ void ShaderHotReloader::prime()
         if (!shouldTrackSourceFile(path))
             continue;
 
-        m_fileWriteTimes[path.string()] = std::filesystem::last_write_time(path);
+        const std::string sourcePathString = path.string();
+        const auto sourceWriteTime = std::filesystem::last_write_time(path);
+        m_fileWriteTimes[sourcePathString] = sourceWriteTime;
+
+        const std::filesystem::path spvPath = std::filesystem::path(sourcePathString + ".spv");
+        const bool spvMissing = !std::filesystem::exists(spvPath);
+        bool spvOutdated = false;
+        if (!spvMissing)
+        {
+            const auto spvWriteTime = std::filesystem::last_write_time(spvPath);
+            spvOutdated = sourceWriteTime > spvWriteTime;
+        }
+
+        if (!spvMissing && !spvOutdated)
+            continue;
+
+        std::string compileError;
+        if (ShaderCompiler::compileFileToSpv(path, &compileError))
+        {
+            m_reloadRequested = true;
+            VX_ENGINE_INFO_STREAM("Compiled stale shader source on prime: " << sourcePathString);
+        }
+        else
+            VX_ENGINE_ERROR_STREAM("Shader prime compile failed: " << compileError);
     }
 }
 

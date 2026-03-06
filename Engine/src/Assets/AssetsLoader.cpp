@@ -151,6 +151,7 @@ namespace
         material.roughnessFactor = std::clamp(sanitizeFiniteFloat(material.roughnessFactor, 1.0f), 0.04f, 1.0f);
         material.aoStrength = std::clamp(sanitizeFiniteFloat(material.aoStrength, 1.0f), 0.0f, 1.0f);
         material.normalScale = std::max(0.0f, sanitizeFiniteFloat(material.normalScale, 1.0f));
+        material.ior = std::clamp(sanitizeFiniteFloat(material.ior, 1.5f), 1.0f, 2.6f);
         material.alphaCutoff = std::clamp(sanitizeFiniteFloat(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
 
         const uint32_t legacyGlassFlag = elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_LEGACY_GLASS;
@@ -163,7 +164,10 @@ namespace
         const uint32_t supportedFlags =
             elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK |
             elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND |
-            elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED;
+            elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED |
+            elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_V |
+            elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_U |
+            elix::engine::Material::MaterialFlags::EMATERIAL_FLAG_CLAMP_UV;
         material.flags &= supportedFlags;
 
         if (forceDielectricWithoutOrm && material.ormTexture.empty())
@@ -1180,6 +1184,25 @@ std::optional<MaterialAsset> AssetsLoader::loadMaterial(const std::string &path)
     return std::nullopt;
 }
 
+std::optional<TerrainAsset> AssetsLoader::loadTerrain(const std::string &path)
+{
+    const std::string extension = extensionLower(path);
+
+    for (const auto &assetLoader : s_assetLoaders)
+    {
+        if (!assetLoader || !assetLoader->canLoad(extension))
+            continue;
+
+        auto terrainAsset = assetLoader->load(path);
+        auto terrain = dynamic_cast<TerrainAsset *>(terrainAsset.get());
+        if (terrain)
+            return *terrain;
+    }
+
+    VX_ENGINE_ERROR_STREAM("Failed to load terrain asset: " << path << '\n');
+    return std::nullopt;
+}
+
 std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
 {
     const std::filesystem::path sourcePath = normalizePath(path);
@@ -1273,7 +1296,9 @@ std::optional<TextureAsset> AssetsLoader::loadTexture(const std::string &path)
     return importTextureFromSource(sourcePath.string());
 }
 
-Texture::SharedPtr AssetsLoader::createTextureGPU(const TextureAsset &textureAsset, VkFormat preferredLdrFormat)
+Texture::SharedPtr AssetsLoader::createTextureGPU(const TextureAsset &textureAsset,
+                                                  VkFormat preferredLdrFormat,
+                                                  std::optional<uint32_t> maxDimensionOverride)
 {
     if (textureAsset.width == 0u || textureAsset.height == 0u || textureAsset.pixels.empty())
         return nullptr;
@@ -1314,7 +1339,15 @@ Texture::SharedPtr AssetsLoader::createTextureGPU(const TextureAsset &textureAss
     }
     }
 
-    const uint32_t maxTextureDimension = getTextureImportMaxDimension();
+    uint32_t maxTextureDimension = getTextureImportMaxDimension();
+    if (maxDimensionOverride.has_value())
+    {
+        if (maxDimensionOverride.value() == 0u)
+            maxTextureDimension = 0u;
+        else
+            maxTextureDimension = std::clamp(maxDimensionOverride.value(), 1u, 16384u);
+    }
+
     if (maxTextureDimension > 0u &&
         (textureAsset.width > maxTextureDimension || textureAsset.height > maxTextureDimension))
     {
@@ -1354,13 +1387,15 @@ Texture::SharedPtr AssetsLoader::createTextureGPU(const TextureAsset &textureAss
     return texture;
 }
 
-Texture::SharedPtr AssetsLoader::loadTextureGPU(const std::string &path, VkFormat preferredLdrFormat)
+Texture::SharedPtr AssetsLoader::loadTextureGPU(const std::string &path,
+                                                VkFormat preferredLdrFormat,
+                                                std::optional<uint32_t> maxDimensionOverride)
 {
     auto textureAsset = loadTexture(path);
     if (!textureAsset.has_value())
         return nullptr;
 
-    return createTextureGPU(textureAsset.value(), preferredLdrFormat);
+    return createTextureGPU(textureAsset.value(), preferredLdrFormat, maxDimensionOverride);
 }
 
 ELIX_NESTED_NAMESPACE_END

@@ -81,7 +81,8 @@ GBufferRenderGraphPass::GBufferRenderGraphPass()
     m_clearValues[2].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
     m_clearValues[3].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
     m_clearValues[4].color = {{0.5f, 0.5f, 0.5f, 0.0f}}; // encoded tangent + optional aniso
-    m_clearValues[5].depthStencil = {1.0f, 0};
+    m_clearValues[5].color = {{0.0f, 0.0f, 0.0f, 0.0f}}; // emissive rgb
+    m_clearValues[6].depthStencil = {1.0f, 0};
 
     this->setDebugName("GBuffer render graph pass");
 
@@ -115,6 +116,7 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             updateDescriptionSampleCount(m_albedoMsaaTextureHandlers[index], m_requestedMsaaSamples);
             updateDescriptionSampleCount(m_materialMsaaTextureHandlers[index], m_requestedMsaaSamples);
             updateDescriptionSampleCount(m_tangentAnisoMsaaTextureHandlers[index], m_requestedMsaaSamples);
+            updateDescriptionSampleCount(m_emissiveMsaaTextureHandlers[index], m_requestedMsaaSamples);
         }
 
         requestRecompilation();
@@ -288,6 +290,7 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     const RenderTarget *albedoTarget = resolveMsaa ? m_albedoMsaaRenderTargets[renderContext.currentImageIndex] : m_albedoRenderTargets[renderContext.currentImageIndex];
     const RenderTarget *materialTarget = resolveMsaa ? m_materialMsaaRenderTargets[renderContext.currentImageIndex] : m_materialRenderTargets[renderContext.currentImageIndex];
     const RenderTarget *tangentAnisoTarget = resolveMsaa ? m_tangentAnisoMsaaRenderTargets[renderContext.currentImageIndex] : m_tangentAnisoRenderTargets[renderContext.currentImageIndex];
+    const RenderTarget *emissiveTarget = resolveMsaa ? m_emissiveMsaaRenderTargets[renderContext.currentImageIndex] : m_emissiveRenderTargets[renderContext.currentImageIndex];
     const RenderTarget *objectTarget = resolveMsaa ? m_objectIdMsaaRenderTarget : m_objectIdRenderTarget;
     const RenderTarget *depthTarget = resolveMsaa ? m_depthMsaaRenderTarget : m_depthRenderTarget;
 
@@ -350,14 +353,27 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
         tangentAnisoColor.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
 
+    VkRenderingAttachmentInfo emissiveColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    emissiveColor.imageView = emissiveTarget->vkImageView();
+    emissiveColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    emissiveColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    emissiveColor.storeOp = resolveMsaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+    emissiveColor.clearValue = m_clearValues[5];
+    if (resolveMsaa)
+    {
+        emissiveColor.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+        emissiveColor.resolveImageView = m_emissiveRenderTargets[renderContext.currentImageIndex]->vkImageView();
+        emissiveColor.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+
     VkRenderingAttachmentInfo depthAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     depthAtt.imageView = depthTarget->vkImageView();
     depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAtt.storeOp = resolveMsaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
-    depthAtt.clearValue = m_clearValues[5];
+    depthAtt.clearValue = m_clearValues[6];
 
-    mainExecution.colorsRenderingItems = {normalColor, albedoColor, materialColor, objectColor, tangentAnisoColor};
+    mainExecution.colorsRenderingItems = {normalColor, albedoColor, materialColor, objectColor, tangentAnisoColor, emissiveColor};
     mainExecution.depthRenderingItem = depthAtt;
     mainExecution.rasterizationSamples = resolveMsaa ? m_activeMsaaSamples : VK_SAMPLE_COUNT_1_BIT;
 
@@ -365,6 +381,7 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     mainExecution.targets[m_albedoTextureHandlers[renderContext.currentImageIndex]] = m_albedoRenderTargets[renderContext.currentImageIndex];
     mainExecution.targets[m_materialTextureHandlers[renderContext.currentImageIndex]] = m_materialRenderTargets[renderContext.currentImageIndex];
     mainExecution.targets[m_tangentAnisoTextureHandlers[renderContext.currentImageIndex]] = m_tangentAnisoRenderTargets[renderContext.currentImageIndex];
+    mainExecution.targets[m_emissiveTextureHandlers[renderContext.currentImageIndex]] = m_emissiveRenderTargets[renderContext.currentImageIndex];
 
     if (resolveMsaa)
     {
@@ -372,6 +389,7 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
         mainExecution.targets[m_albedoMsaaTextureHandlers[renderContext.currentImageIndex]] = m_albedoMsaaRenderTargets[renderContext.currentImageIndex];
         mainExecution.targets[m_materialMsaaTextureHandlers[renderContext.currentImageIndex]] = m_materialMsaaRenderTargets[renderContext.currentImageIndex];
         mainExecution.targets[m_tangentAnisoMsaaTextureHandlers[renderContext.currentImageIndex]] = m_tangentAnisoMsaaRenderTargets[renderContext.currentImageIndex];
+        mainExecution.targets[m_emissiveMsaaTextureHandlers[renderContext.currentImageIndex]] = m_emissiveMsaaRenderTargets[renderContext.currentImageIndex];
         mainExecution.targets[m_objectIdMsaaTextureHandler] = m_objectIdMsaaRenderTarget;
         mainExecution.targets[m_depthMsaaTextureHandler] = m_depthMsaaRenderTarget;
     }
@@ -422,19 +440,26 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     objectPassTangentAniso.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     objectPassTangentAniso.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
+    VkRenderingAttachmentInfo objectPassEmissive{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    objectPassEmissive.imageView = m_emissiveRenderTargets[renderContext.currentImageIndex]->vkImageView();
+    objectPassEmissive.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    objectPassEmissive.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    objectPassEmissive.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
     VkRenderingAttachmentInfo objectPassDepth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     objectPassDepth.imageView = m_depthRenderTarget->vkImageView();
     objectPassDepth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     objectPassDepth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     objectPassDepth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    objectPassDepth.clearValue = m_clearValues[5];
+    objectPassDepth.clearValue = m_clearValues[6];
 
-    objectExecution.colorsRenderingItems = {objectPassNormal, objectPassAlbedo, objectPassMaterial, objectPassColor, objectPassTangentAniso};
+    objectExecution.colorsRenderingItems = {objectPassNormal, objectPassAlbedo, objectPassMaterial, objectPassColor, objectPassTangentAniso, objectPassEmissive};
     objectExecution.depthRenderingItem = objectPassDepth;
     objectExecution.targets[m_normalTextureHandlers[renderContext.currentImageIndex]] = m_normalRenderTargets[renderContext.currentImageIndex];
     objectExecution.targets[m_albedoTextureHandlers[renderContext.currentImageIndex]] = m_albedoRenderTargets[renderContext.currentImageIndex];
     objectExecution.targets[m_materialTextureHandlers[renderContext.currentImageIndex]] = m_materialRenderTargets[renderContext.currentImageIndex];
     objectExecution.targets[m_tangentAnisoTextureHandlers[renderContext.currentImageIndex]] = m_tangentAnisoRenderTargets[renderContext.currentImageIndex];
+    objectExecution.targets[m_emissiveTextureHandlers[renderContext.currentImageIndex]] = m_emissiveRenderTargets[renderContext.currentImageIndex];
     objectExecution.targets[m_objectIdTextureHandler] = m_objectIdRenderTarget;
     objectExecution.targets[m_depthTextureHandler] = m_depthRenderTarget;
 
@@ -465,10 +490,12 @@ void GBufferRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
     m_albedoRenderTargets.resize(imageCount);
     m_materialRenderTargets.resize(imageCount);
     m_tangentAnisoRenderTargets.resize(imageCount);
+    m_emissiveRenderTargets.resize(imageCount);
     m_normalMsaaRenderTargets.resize(imageCount);
     m_albedoMsaaRenderTargets.resize(imageCount);
     m_materialMsaaRenderTargets.resize(imageCount);
     m_tangentAnisoMsaaRenderTargets.resize(imageCount);
+    m_emissiveMsaaRenderTargets.resize(imageCount);
 
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
     {
@@ -476,11 +503,13 @@ void GBufferRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         m_albedoRenderTargets[imageIndex] = storage.getTexture(m_albedoTextureHandlers[imageIndex]);
         m_materialRenderTargets[imageIndex] = storage.getTexture(m_materialTextureHandlers[imageIndex]);
         m_tangentAnisoRenderTargets[imageIndex] = storage.getTexture(m_tangentAnisoTextureHandlers[imageIndex]);
+        m_emissiveRenderTargets[imageIndex] = storage.getTexture(m_emissiveTextureHandlers[imageIndex]);
 
         m_normalMsaaRenderTargets[imageIndex] = storage.getTexture(m_normalMsaaTextureHandlers[imageIndex]);
         m_albedoMsaaRenderTargets[imageIndex] = storage.getTexture(m_albedoMsaaTextureHandlers[imageIndex]);
         m_materialMsaaRenderTargets[imageIndex] = storage.getTexture(m_materialMsaaTextureHandlers[imageIndex]);
         m_tangentAnisoMsaaRenderTargets[imageIndex] = storage.getTexture(m_tangentAnisoMsaaTextureHandlers[imageIndex]);
+        m_emissiveMsaaRenderTargets[imageIndex] = storage.getTexture(m_emissiveMsaaTextureHandlers[imageIndex]);
     }
 }
 
@@ -493,13 +522,14 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 
     auto hdrImageFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     auto tangentAnisoFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-    m_colorFormats = {hdrImageFormat, hdrImageFormat, hdrImageFormat, VK_FORMAT_R32_UINT, tangentAnisoFormat};
+    m_colorFormats = {hdrImageFormat, hdrImageFormat, hdrImageFormat, VK_FORMAT_R32_UINT, tangentAnisoFormat, hdrImageFormat};
     m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
 
     RGPTextureDescription normalTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription albedoTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription materialTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription tangentAnisoTextureDescription{tangentAnisoFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    RGPTextureDescription emissiveTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription objectIdTextureDescription{VK_FORMAT_R32_UINT, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription depthTextureDescription{m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
 
@@ -507,6 +537,7 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     RGPTextureDescription albedoMsaaTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     RGPTextureDescription materialMsaaTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     RGPTextureDescription tangentAnisoMsaaTextureDescription{tangentAnisoFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    RGPTextureDescription emissiveMsaaTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     RGPTextureDescription objectIdMsaaTextureDescription{VK_FORMAT_R32_UINT, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     RGPTextureDescription depthMsaaTextureDescription{m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
@@ -518,6 +549,8 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
                                                        { return m_extent; });
     tangentAnisoTextureDescription.setCustomExtentFunction([this]
                                                            { return m_extent; });
+    emissiveTextureDescription.setCustomExtentFunction([this]
+                                                       { return m_extent; });
     normalMsaaTextureDescription.setCustomExtentFunction([this]
                                                          { return m_extent; });
     albedoMsaaTextureDescription.setCustomExtentFunction([this]
@@ -526,6 +559,8 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
                                                            { return m_extent; });
     tangentAnisoMsaaTextureDescription.setCustomExtentFunction([this]
                                                                { return m_extent; });
+    emissiveMsaaTextureDescription.setCustomExtentFunction([this]
+                                                           { return m_extent; });
 
     objectIdTextureDescription.setDebugName("__ELIX_OBJECT_ID_GBUFFER_TEXTURE__");
     objectIdTextureDescription.setCustomExtentFunction([this]
@@ -559,41 +594,50 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         albedoTextureDescription.setDebugName("__ELIX_ALBEDO_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         materialTextureDescription.setDebugName("__ELIX_MATERIAL_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         tangentAnisoTextureDescription.setDebugName("__ELIX_TANGENT_ANISO_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
+        emissiveTextureDescription.setDebugName("__ELIX_EMISSIVE_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         normalMsaaTextureDescription.setDebugName("__ELIX_NORMAL_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
         albedoMsaaTextureDescription.setDebugName("__ELIX_ALBEDO_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
         materialMsaaTextureDescription.setDebugName("__ELIX_MATERIAL_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
         tangentAnisoMsaaTextureDescription.setDebugName("__ELIX_TANGENT_ANISO_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
+        emissiveMsaaTextureDescription.setDebugName("__ELIX_EMISSIVE_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
         normalMsaaTextureDescription.setSampleCount(m_requestedMsaaSamples);
         albedoMsaaTextureDescription.setSampleCount(m_requestedMsaaSamples);
         materialMsaaTextureDescription.setSampleCount(m_requestedMsaaSamples);
         tangentAnisoMsaaTextureDescription.setSampleCount(m_requestedMsaaSamples);
+        emissiveMsaaTextureDescription.setSampleCount(m_requestedMsaaSamples);
 
         auto normalTexture = builder.createTexture(normalTextureDescription);
         auto albedoTexture = builder.createTexture(albedoTextureDescription);
         auto materialTexture = builder.createTexture(materialTextureDescription);
         auto tangentAnisoTexture = builder.createTexture(tangentAnisoTextureDescription);
+        auto emissiveTexture = builder.createTexture(emissiveTextureDescription);
         auto normalMsaaTexture = builder.createTexture(normalMsaaTextureDescription);
         auto albedoMsaaTexture = builder.createTexture(albedoMsaaTextureDescription);
         auto materialMsaaTexture = builder.createTexture(materialMsaaTextureDescription);
         auto tangentAnisoMsaaTexture = builder.createTexture(tangentAnisoMsaaTextureDescription);
+        auto emissiveMsaaTexture = builder.createTexture(emissiveMsaaTextureDescription);
 
         m_normalTextureHandlers.push_back(normalTexture);
         m_albedoTextureHandlers.push_back(albedoTexture);
         m_materialTextureHandlers.push_back(materialTexture);
         m_tangentAnisoTextureHandlers.push_back(tangentAnisoTexture);
+        m_emissiveTextureHandlers.push_back(emissiveTexture);
         m_normalMsaaTextureHandlers.push_back(normalMsaaTexture);
         m_albedoMsaaTextureHandlers.push_back(albedoMsaaTexture);
         m_materialMsaaTextureHandlers.push_back(materialMsaaTexture);
         m_tangentAnisoMsaaTextureHandlers.push_back(tangentAnisoMsaaTexture);
+        m_emissiveMsaaTextureHandlers.push_back(emissiveMsaaTexture);
 
         builder.write(normalTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(albedoTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(materialTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(tangentAnisoTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
+        builder.write(emissiveTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(normalMsaaTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(albedoMsaaTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(materialMsaaTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(tangentAnisoMsaaTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
+        builder.write(emissiveMsaaTexture, renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
     }
 }
 

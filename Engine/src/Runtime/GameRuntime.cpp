@@ -148,6 +148,7 @@ bool GameRuntime::init()
         m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gBufferRenderGraphPass->getEmissiveTextureHandlers(),
         m_gBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         &m_ssaoRenderGraphPass->getAOHandlers());
 

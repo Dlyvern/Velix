@@ -19,7 +19,9 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 enum class TextureUsage : uint8_t
 {
     Color = 0,
-    Data = 1
+    Data = 1,
+    PreviewColor = 2,
+    PreviewData = 3
 };
 
 struct TextureAssetRecord

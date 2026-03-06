@@ -5,6 +5,7 @@
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Material.hpp"
 #include "Engine/Mesh.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Vertex.hpp"
 
@@ -213,7 +214,7 @@ public:
 
         if (!entry.texture && m_project)
         {
-            entry.texture = loadOrGetTexture(normalizedTexturePath, TextureUsage::Color);
+            entry.texture = loadOrGetTexture(normalizedTexturePath, TextureUsage::PreviewColor);
         }
 
         if (!entry.texture)
@@ -526,6 +527,7 @@ private:
         material.roughnessFactor = std::clamp(sanitizeFinite(material.roughnessFactor, 1.0f), 0.04f, 1.0f);
         material.aoStrength = std::clamp(sanitizeFinite(material.aoStrength, 1.0f), 0.0f, 1.0f);
         material.normalScale = std::max(0.0f, sanitizeFinite(material.normalScale, 1.0f));
+        material.ior = std::clamp(sanitizeFinite(material.ior, 1.5f), 1.0f, 2.6f);
         material.alphaCutoff = std::clamp(sanitizeFinite(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
         material.uvScale.x = sanitizeFinite(material.uvScale.x, 1.0f);
         material.uvScale.y = sanitizeFinite(material.uvScale.y, 1.0f);
@@ -543,7 +545,10 @@ private:
         const uint32_t supportedFlags =
             engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK |
             engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND |
-            engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED;
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED |
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_V |
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_U |
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_CLAMP_UV;
         material.flags &= supportedFlags;
 
         if (forceDielectricWithoutOrm && material.ormTexture.empty())
@@ -560,7 +565,9 @@ private:
 
     static VkFormat getLdrTextureFormat(TextureUsage usage)
     {
-        return usage == TextureUsage::Data ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R8G8B8A8_SRGB;
+        return (usage == TextureUsage::Data || usage == TextureUsage::PreviewData)
+                   ? VK_FORMAT_R8G8B8A8_UNORM
+                   : VK_FORMAT_R8G8B8A8_SRGB;
     }
 
     engine::Texture::SharedPtr loadOrGetTexture(const std::string &texturePath, TextureUsage usage)
@@ -583,7 +590,10 @@ private:
                     return cached;
         }
 
-        auto texture = engine::AssetsLoader::loadTextureGPU(normalizedTexturePath, getLdrTextureFormat(usage));
+        const uint32_t previewMaxDimension = std::clamp(
+            engine::RenderQualitySettings::getInstance().texturePreviewMaxDimension,
+            64u, 2048u);
+        auto texture = engine::AssetsLoader::loadTextureGPU(normalizedTexturePath, getLdrTextureFormat(usage), previewMaxDimension);
         if (!texture)
         {
             const auto [_, inserted] = m_failedTexturePaths.insert(normalizedTexturePath);
@@ -696,10 +706,10 @@ private:
         auto materialCPU = materialAsset.value().material;
         normalizeMaterialTexturePaths(materialCPU, normalizedMaterialPath);
         sanitizeMaterialCpuData(materialCPU, false);
-        auto texture = loadOrGetTexture(materialCPU.albedoTexture, TextureUsage::Color);
-        auto normalTexture = loadOrGetTexture(materialCPU.normalTexture, TextureUsage::Data);
-        auto ormTexture = loadOrGetTexture(materialCPU.ormTexture, TextureUsage::Data);
-        auto emissiveTexture = loadOrGetTexture(materialCPU.emissiveTexture, TextureUsage::Color);
+        auto texture = loadOrGetTexture(materialCPU.albedoTexture, TextureUsage::PreviewColor);
+        auto normalTexture = loadOrGetTexture(materialCPU.normalTexture, TextureUsage::PreviewData);
+        auto ormTexture = loadOrGetTexture(materialCPU.ormTexture, TextureUsage::PreviewData);
+        auto emissiveTexture = loadOrGetTexture(materialCPU.emissiveTexture, TextureUsage::PreviewColor);
         outMaterial = engine::Material::create(texture);
 
         if (!outMaterial)
@@ -715,6 +725,7 @@ private:
         outMaterial->setRoughness(materialCPU.roughnessFactor);
         outMaterial->setAoStrength(materialCPU.aoStrength);
         outMaterial->setNormalScale(materialCPU.normalScale);
+        outMaterial->setIor(materialCPU.ior);
         outMaterial->setAlphaCutoff(materialCPU.alphaCutoff);
         outMaterial->setFlags(materialCPU.flags);
         outMaterial->setUVScale(materialCPU.uvScale);

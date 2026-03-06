@@ -89,6 +89,18 @@ public:
     MSAAMode msaaMode{MSAAMode::OFF};
     AnisotropyMode anisotropyMode{AnisotropyMode::X16};
 
+    // Textures / mipmapping
+    bool  enableTextureMipmaps{true};
+    int   textureMipLevelLimit{0};              // 0 = full mip chain
+    float textureLodBias{0.0f};                 // sampler bias, higher = blurrier/faster
+    float textureLodDistanceStart{8.0f};        // world/view distance where distance mip bias starts
+    float textureLodDistanceEnd{60.0f};         // world/view distance where max distance mip bias is reached
+    float textureLodDistanceBias{2.0f};         // extra mip bias at far distance
+    uint32_t texturePreviewMaxDimension{512u};  // editor preview texture cap (longest side)
+    uint32_t textureImportMaxDimension{2048u};  // imported/runtime texture cap (longest side), 0 = unlimited
+    bool  enableTextureOomFallback{true};       // fallback to tiny texture when GPU memory allocation fails
+    uint32_t textureOomFallbackDimension{10u};  // tiny fallback texture size
+
     // SSAO / GTAO
     bool  enableSSAO{true};
     float ssaoRadius{0.5f};

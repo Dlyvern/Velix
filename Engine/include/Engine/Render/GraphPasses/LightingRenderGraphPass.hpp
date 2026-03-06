@@ -18,6 +18,7 @@ public:
                             std::vector<RGPResourceHandler> &albedoTextureHandlers,
                             std::vector<RGPResourceHandler> &normalTextureHandlers,
                             std::vector<RGPResourceHandler> &materialTextureHandlers,
+                            std::vector<RGPResourceHandler> &emissiveTextureHandlers,
                             std::vector<RGPResourceHandler> &tangentAnisoTextureHandlers,
                             std::vector<RGPResourceHandler> *aoTextureHandlers = nullptr);
 
@@ -59,6 +60,7 @@ private:
     std::vector<RGPResourceHandler> &m_albedoTextureHandlers;
     std::vector<RGPResourceHandler> &m_normalTextureHandlers;
     std::vector<RGPResourceHandler> &m_materialTextureHandlers;
+    std::vector<RGPResourceHandler> &m_emissiveTextureHandlers;
     std::vector<RGPResourceHandler> &m_tangentAnisoTextureHandlers;
 
     std::vector<RGPResourceHandler> *m_aoTextureHandlers{nullptr}; // optional, binding 7

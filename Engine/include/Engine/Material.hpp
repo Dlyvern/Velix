@@ -30,6 +30,12 @@ public:
         // New shading flow maps this to ALPHA_BLEND during material sanitization.
         EMATERIAL_FLAG_LEGACY_GLASS = 1 << 2,
         EMATERIAL_FLAG_DOUBLE_SIDED = 1 << 3,
+        // Flip texture V coordinate (Blender/OpenGL-style UV orientation).
+        EMATERIAL_FLAG_FLIP_V = 1 << 4,
+        // Flip texture U coordinate (horizontal mirror fix).
+        EMATERIAL_FLAG_FLIP_U = 1 << 5,
+        // Clamp UV coordinates to [0..1] to avoid tiling/repeat.
+        EMATERIAL_FLAG_CLAMP_UV = 1 << 6,
     };
 
     struct GPUParams

@@ -107,6 +107,98 @@ namespace
         return joinedNames;
     }
 
+    template <typename TValue>
+    void hashCombine(size_t &seed, const TValue &value)
+    {
+        seed ^= std::hash<TValue>{}(value) + 0x9e3779b97f4a7c15ULL + (seed << 6u) + (seed >> 2u);
+    }
+
+    size_t hashRenderQualitySettings(const elix::engine::RenderQualitySettings &settings)
+    {
+        size_t seed = 0;
+
+        hashCombine(seed, static_cast<uint32_t>(settings.shadowQuality));
+        hashCombine(seed, static_cast<uint32_t>(settings.shadowCascadeCount));
+        hashCombine(seed, settings.shadowMaxDistance);
+        hashCombine(seed, settings.enableVSync);
+        hashCombine(seed, settings.enablePostProcessing);
+        hashCombine(seed, settings.enableFXAA);
+        hashCombine(seed, settings.enableBloom);
+        hashCombine(seed, settings.enableSSR);
+        hashCombine(seed, settings.bloomThreshold);
+        hashCombine(seed, settings.bloomKnee);
+        hashCombine(seed, settings.bloomStrength);
+        hashCombine(seed, settings.ssrMaxDistance);
+        hashCombine(seed, settings.ssrThickness);
+        hashCombine(seed, settings.ssrStrength);
+        hashCombine(seed, settings.ssrSteps);
+        hashCombine(seed, settings.renderScale);
+        hashCombine(seed, static_cast<uint32_t>(settings.msaaMode));
+        hashCombine(seed, static_cast<uint32_t>(settings.anisotropyMode));
+        hashCombine(seed, settings.enableTextureMipmaps);
+        hashCombine(seed, settings.textureMipLevelLimit);
+        hashCombine(seed, settings.textureLodBias);
+        hashCombine(seed, settings.textureLodDistanceStart);
+        hashCombine(seed, settings.textureLodDistanceEnd);
+        hashCombine(seed, settings.textureLodDistanceBias);
+        hashCombine(seed, settings.texturePreviewMaxDimension);
+        hashCombine(seed, settings.textureImportMaxDimension);
+        hashCombine(seed, settings.enableTextureOomFallback);
+        hashCombine(seed, settings.textureOomFallbackDimension);
+        hashCombine(seed, settings.enableSSAO);
+        hashCombine(seed, settings.ssaoRadius);
+        hashCombine(seed, settings.ssaoBias);
+        hashCombine(seed, settings.ssaoStrength);
+        hashCombine(seed, settings.ssaoSamples);
+        hashCombine(seed, settings.enableGTAO);
+        hashCombine(seed, settings.gtaoDirections);
+        hashCombine(seed, settings.gtaoSteps);
+        hashCombine(seed, settings.useBentNormals);
+        hashCombine(seed, settings.enableAnisotropy);
+        hashCombine(seed, settings.anisotropyStrength);
+        hashCombine(seed, settings.anisotropyRotation);
+        hashCombine(seed, settings.shadowAmbientStrength);
+        hashCombine(seed, settings.enableShadowOcclusionCulling);
+        hashCombine(seed, settings.enableOcclusionCulling);
+        hashCombine(seed, settings.occlusionProbeInterval);
+        hashCombine(seed, settings.occlusionVisibleRequeryInterval);
+        hashCombine(seed, settings.occlusionOccludedConfirmationQueries);
+        hashCombine(seed, settings.occlusionMaxInstancesPerBatch);
+        hashCombine(seed, settings.occlusionFastMotionProbeInterval);
+        hashCombine(seed, settings.occlusionFastMotionVisibleRequeryInterval);
+        hashCombine(seed, settings.occlusionFastMotionStaleRevealFrames);
+        hashCombine(seed, settings.occlusionFastMotionTranslationThreshold);
+        hashCombine(seed, settings.occlusionFastMotionForwardDotThreshold);
+        hashCombine(seed, settings.shadowOcclusionVisibilityGraceFrames);
+        hashCombine(seed, settings.enableLUTGrading);
+        hashCombine(seed, settings.lutGradingPath);
+        hashCombine(seed, settings.lutGradingStrength);
+        hashCombine(seed, settings.enableTAA);
+        hashCombine(seed, settings.taaHistoryWeight);
+        hashCombine(seed, settings.enableSMAA);
+        hashCombine(seed, settings.enableCMAA);
+        hashCombine(seed, settings.enableColorGrading);
+        hashCombine(seed, settings.colorGradingSaturation);
+        hashCombine(seed, settings.colorGradingContrast);
+        hashCombine(seed, settings.colorGradingTemperature);
+        hashCombine(seed, settings.colorGradingTint);
+        hashCombine(seed, settings.enableContactShadows);
+        hashCombine(seed, settings.contactShadowLength);
+        hashCombine(seed, settings.contactShadowStrength);
+        hashCombine(seed, settings.contactShadowSteps);
+        hashCombine(seed, settings.enableVignette);
+        hashCombine(seed, settings.vignetteStrength);
+        hashCombine(seed, settings.enableFilmGrain);
+        hashCombine(seed, settings.filmGrainStrength);
+        hashCombine(seed, settings.enableChromaticAberration);
+        hashCombine(seed, settings.chromaticAberrationStrength);
+        hashCombine(seed, settings.enableIBL);
+        hashCombine(seed, settings.iblDiffuseIntensity);
+        hashCombine(seed, settings.iblSpecularIntensity);
+
+        return seed;
+    }
+
     bool syncProjectCompileCommands(const elix::editor::Project &project)
     {
         const std::filesystem::path projectRoot = project.fullPath;
@@ -352,9 +444,14 @@ namespace
         return toLowerCopy(std::filesystem::path(path).extension().string());
     }
 
+    bool isDataTextureUsage(TextureUsage usage)
+    {
+        return usage == TextureUsage::Data || usage == TextureUsage::PreviewData;
+    }
+
     VkFormat getLdrTextureFormat(TextureUsage usage)
     {
-        return usage == TextureUsage::Data ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R8G8B8A8_SRGB;
+        return isDataTextureUsage(usage) ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R8G8B8A8_SRGB;
     }
 
     bool isEditableTextPath(const std::filesystem::path &path)
@@ -514,6 +611,10 @@ namespace
         if (!std::filesystem::exists(candidatePath, existsError) || existsError)
             return false;
 
+        std::error_code regularFileError;
+        if (!std::filesystem::is_regular_file(candidatePath, regularFileError) || regularFileError)
+            return false;
+
         outResolvedPath = makeAbsoluteNormalized(candidatePath).string();
         return true;
     }
@@ -609,6 +710,7 @@ namespace
         material.aoStrength = std::clamp(sanitizeFinite(material.aoStrength, 1.0f), 0.0f, 1.0f);
         material.normalScale = std::max(0.0f, sanitizeFinite(material.normalScale, 1.0f));
         material.alphaCutoff = std::clamp(sanitizeFinite(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
+        material.ior = std::clamp(sanitizeFinite(material.ior, 1.5f), 1.0f, 2.6f);
         material.uvScale.x = sanitizeFinite(material.uvScale.x, 1.0f);
         material.uvScale.y = sanitizeFinite(material.uvScale.y, 1.0f);
         material.uvOffset.x = sanitizeFinite(material.uvOffset.x, 0.0f);
@@ -625,7 +727,10 @@ namespace
         const uint32_t supportedFlags =
             engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK |
             engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND |
-            engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED;
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED |
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_V |
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_U |
+            engine::Material::MaterialFlags::EMATERIAL_FLAG_CLAMP_UV;
         material.flags &= supportedFlags;
 
         if (forceDielectricWithoutOrm && material.ormTexture.empty())
@@ -668,9 +773,27 @@ namespace
     }
 
     std::filesystem::path buildProjectManagedTextureAssetPath(const std::filesystem::path &sourceTexturePath,
-                                                              const std::filesystem::path &projectRoot)
+                                                              const std::filesystem::path &projectRoot,
+                                                              const std::filesystem::path &preferredDirectory = {})
     {
         const std::filesystem::path normalizedSourcePath = makeAbsoluteNormalized(sourceTexturePath);
+        if (!preferredDirectory.empty())
+        {
+            std::filesystem::path targetDirectory = preferredDirectory;
+            if (targetDirectory.is_relative() && !projectRoot.empty())
+                targetDirectory = makeAbsoluteNormalized(projectRoot / targetDirectory);
+            else
+                targetDirectory = makeAbsoluteNormalized(targetDirectory);
+
+            std::string outputBaseName = sanitizeFileStem(normalizedSourcePath.stem().string());
+            if (outputBaseName.empty())
+                outputBaseName = "Texture";
+
+            const uint64_t sourcePathHash = static_cast<uint64_t>(std::hash<std::string>{}(normalizedSourcePath.string()));
+            const std::filesystem::path outputPath = targetDirectory / (outputBaseName + "_" + std::to_string(sourcePathHash) + ".tex.elixasset");
+            return outputPath.lexically_normal();
+        }
+
         if (projectRoot.empty())
         {
             auto outputPath = normalizedSourcePath;
@@ -701,7 +824,10 @@ namespace
         return outputPath.lexically_normal();
     }
 
-    std::string toMaterialTextureReferencePath(const std::string &texturePath, const std::filesystem::path &projectRoot)
+    std::string toMaterialTextureReferencePath(const std::string &texturePath,
+                                               const std::filesystem::path &projectRoot,
+                                               const std::filesystem::path &preferredImportDirectory = {},
+                                               bool allowImportFromSource = true)
     {
         if (texturePath.empty())
             return {};
@@ -712,12 +838,12 @@ namespace
         std::string extensionLower = toLowerCopy(resolvedPath.extension().string());
         if (extensionLower != ".elixasset")
         {
-            std::filesystem::path candidateAssetPath = buildProjectManagedTextureAssetPath(resolvedPath, projectRoot);
+            std::filesystem::path candidateAssetPath = buildProjectManagedTextureAssetPath(resolvedPath, projectRoot, preferredImportDirectory);
 
             std::error_code existsError;
             if (std::filesystem::exists(candidateAssetPath, existsError) && !existsError)
                 resolvedPath = candidateAssetPath.lexically_normal();
-            else
+            else if (allowImportFromSource)
             {
                 std::error_code sourceExistsError;
                 if (std::filesystem::exists(resolvedPath, sourceExistsError) && !sourceExistsError &&
@@ -789,15 +915,59 @@ namespace
         if (texturePath.empty())
             return {};
 
+        std::error_code errorCode;
+        const std::filesystem::path materialDirectory = materialFilePath.parent_path();
+        auto tryResolveByPortableFileName = [&](const std::string &rawPath) -> std::optional<std::string>
+        {
+            if (rawPath.empty())
+                return std::nullopt;
+
+            std::string portablePath = rawPath;
+            std::replace(portablePath.begin(), portablePath.end(), '\\', '/');
+            const size_t lastSlashPosition = portablePath.find_last_of('/');
+            const std::string fileName = (lastSlashPosition == std::string::npos)
+                                             ? portablePath
+                                             : portablePath.substr(lastSlashPosition + 1u);
+            if (fileName.empty())
+                return std::nullopt;
+
+            if (!materialDirectory.empty())
+            {
+                const std::filesystem::path directCandidate = makeAbsoluteNormalized(materialDirectory / fileName);
+                errorCode.clear();
+                if (std::filesystem::exists(directCandidate, errorCode) && !errorCode)
+                    return directCandidate.string();
+
+                const std::filesystem::path textureAssetCandidate =
+                    makeAbsoluteNormalized(materialDirectory / (std::filesystem::path(fileName).stem().string() + ".tex.elixasset"));
+                errorCode.clear();
+                if (std::filesystem::exists(textureAssetCandidate, errorCode) && !errorCode)
+                    return textureAssetCandidate.string();
+            }
+
+            return std::nullopt;
+        };
+
         if (looksLikeWindowsAbsolutePath(texturePath))
+        {
+            if (auto remappedPath = tryResolveByPortableFileName(texturePath); remappedPath.has_value())
+                return remappedPath.value();
             return texturePath;
+        }
 
         const std::filesystem::path path(texturePath);
         if (path.is_absolute())
-            return makeAbsoluteNormalized(path).string();
+        {
+            const std::filesystem::path normalizedAbsolutePath = makeAbsoluteNormalized(path);
+            if (std::filesystem::exists(normalizedAbsolutePath, errorCode) && !errorCode)
+                return normalizedAbsolutePath.string();
 
-        std::error_code errorCode;
-        const std::filesystem::path materialDirectory = materialFilePath.parent_path();
+            if (auto remappedPath = tryResolveByPortableFileName(texturePath); remappedPath.has_value())
+                return remappedPath.value();
+
+            return normalizedAbsolutePath.string();
+        }
+
         if (!materialDirectory.empty())
         {
             const std::filesystem::path materialRelativePath = makeAbsoluteNormalized(materialDirectory / path);
@@ -821,10 +991,11 @@ namespace
                                        const std::filesystem::path &materialFilePath,
                                        const std::filesystem::path &projectRoot)
     {
-        material.albedoTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.albedoTexture, materialFilePath, projectRoot), projectRoot);
-        material.normalTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.normalTexture, materialFilePath, projectRoot), projectRoot);
-        material.ormTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.ormTexture, materialFilePath, projectRoot), projectRoot);
-        material.emissiveTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.emissiveTexture, materialFilePath, projectRoot), projectRoot);
+        const std::filesystem::path materialDirectory = materialFilePath.parent_path();
+        material.albedoTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.albedoTexture, materialFilePath, projectRoot), projectRoot, materialDirectory);
+        material.normalTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.normalTexture, materialFilePath, projectRoot), projectRoot, materialDirectory);
+        material.ormTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.ormTexture, materialFilePath, projectRoot), projectRoot, materialDirectory);
+        material.emissiveTexture = toMaterialTextureReferencePath(resolveTexturePathForMaterialFile(material.emissiveTexture, materialFilePath, projectRoot), projectRoot, materialDirectory);
     }
 
     std::optional<std::filesystem::path> findCaseInsensitiveFileInDirectory(const std::filesystem::path &directory,
@@ -876,13 +1047,18 @@ namespace
 
     bool tryResolveCandidateTextureAssetPath(const std::filesystem::path &candidatePath,
                                              const std::filesystem::path &projectRoot,
+                                             const std::filesystem::path &preferredImportDirectory,
+                                             bool allowImportFromSource,
                                              std::string &outResolvedPath)
     {
         std::string resolvedSourcePath;
         if (!tryResolveCandidateTexturePath(candidatePath, resolvedSourcePath))
             return false;
 
-        const std::string textureReferencePath = toMaterialTextureReferencePath(resolvedSourcePath, projectRoot);
+        const std::string textureReferencePath = toMaterialTextureReferencePath(resolvedSourcePath,
+                                                                                projectRoot,
+                                                                                preferredImportDirectory,
+                                                                                allowImportFromSource);
         if (textureReferencePath.empty())
             return false;
 
@@ -900,7 +1076,9 @@ namespace
                                                     const std::filesystem::path &projectRoot,
                                                     const std::filesystem::path &textureSearchDirectory,
                                                     const std::unordered_map<std::string, std::string> &textureOverrides,
-                                                    bool &resolved)
+                                                    bool &resolved,
+                                                    const std::filesystem::path &preferredImportDirectory = {},
+                                                    bool allowImportFromSource = false)
     {
         resolved = true;
         if (rawTexturePath.empty())
@@ -916,7 +1094,11 @@ namespace
 
         if (texturePath.is_absolute())
         {
-            if (tryResolveCandidateTextureAssetPath(texturePath, projectRoot, resolvedPath))
+            if (tryResolveCandidateTextureAssetPath(texturePath,
+                                                    projectRoot,
+                                                    preferredImportDirectory,
+                                                    allowImportFromSource,
+                                                    resolvedPath))
                 return resolvedPath;
 
             resolved = false;
@@ -925,12 +1107,16 @@ namespace
 
         if (!texturePath.empty() && tryResolveCandidateTextureAssetPath(makeAbsoluteNormalized(modelDirectory / texturePath),
                                                                         projectRoot,
+                                                                        preferredImportDirectory,
+                                                                        allowImportFromSource,
                                                                         resolvedPath))
             return resolvedPath;
 
         if (!projectRoot.empty() && !texturePath.empty() &&
             tryResolveCandidateTextureAssetPath(makeAbsoluteNormalized(projectRoot / texturePath),
                                                 projectRoot,
+                                                preferredImportDirectory,
+                                                allowImportFromSource,
                                                 resolvedPath))
             return resolvedPath;
 
@@ -952,7 +1138,11 @@ namespace
                     caseInsensitiveMatch.has_value())
                     remappedPath = caseInsensitiveMatch.value();
 
-                if (tryResolveCandidateTextureAssetPath(remappedPath, projectRoot, resolvedPath))
+                if (tryResolveCandidateTextureAssetPath(remappedPath,
+                                                        projectRoot,
+                                                        preferredImportDirectory,
+                                                        allowImportFromSource,
+                                                        resolvedPath))
                     return resolvedPath;
             }
         }
@@ -1159,6 +1349,7 @@ namespace
 Editor::Editor()
 {
     m_editorCamera = std::make_shared<engine::Camera>();
+    loadEditorCameraSettingsFromEngineConfig();
 }
 
 Editor::~Editor()
@@ -1171,6 +1362,70 @@ Editor::~Editor()
             ed::DestroyEditor(state.nodeEditorContext);
             state.nodeEditorContext = nullptr;
             state.nodeEditorInitialized = false;
+        }
+    }
+}
+
+void Editor::setScene(engine::Scene::SharedPtr scene)
+{
+    m_scene = std::move(scene);
+    m_terrainTools.setScene(m_scene);
+    m_selectedEntity = nullptr;
+    m_selectedMeshSlot.reset();
+    m_hasPendingObjectPick = false;
+    clearSelectedUIElement();
+    resetSceneActionHistory();
+    restoreSceneMaterialOverrides();
+}
+
+void Editor::restoreSceneMaterialOverrides()
+{
+    if (!m_scene)
+        return;
+
+    auto project = m_currentProject.lock();
+    if (!project)
+        return;
+
+    for (const auto &entity : m_scene->getEntities())
+    {
+        if (!entity)
+            continue;
+
+        if (auto *staticMeshComponent = entity->getComponent<engine::StaticMeshComponent>())
+        {
+            const size_t slotCount = staticMeshComponent->getMaterialSlotCount();
+            for (size_t slot = 0; slot < slotCount; ++slot)
+            {
+                if (staticMeshComponent->getMaterialOverride(slot))
+                    continue;
+
+                const std::string &overridePath = staticMeshComponent->getMaterialOverridePath(slot);
+                if (overridePath.empty())
+                    continue;
+
+                auto material = ensureMaterialLoaded(overridePath);
+                if (material)
+                    staticMeshComponent->setMaterialOverride(slot, material);
+            }
+        }
+
+        if (auto *skeletalMeshComponent = entity->getComponent<engine::SkeletalMeshComponent>())
+        {
+            const size_t slotCount = skeletalMeshComponent->getMaterialSlotCount();
+            for (size_t slot = 0; slot < slotCount; ++slot)
+            {
+                if (skeletalMeshComponent->getMaterialOverride(slot))
+                    continue;
+
+                const std::string &overridePath = skeletalMeshComponent->getMaterialOverridePath(slot);
+                if (overridePath.empty())
+                    continue;
+
+                auto material = ensureMaterialLoaded(overridePath);
+                if (material)
+                    skeletalMeshComponent->setMaterialOverride(slot, material);
+            }
         }
     }
 }
@@ -2928,6 +3183,7 @@ void Editor::drawRenderSettings()
     }
 
     auto &settings = engine::RenderQualitySettings::getInstance();
+    const size_t settingsHashBefore = hashRenderQualitySettings(settings);
 
     ImGui::SeparatorText("General");
     ImGui::Checkbox("VSync", &settings.enableVSync);
@@ -2936,6 +3192,42 @@ void Editor::drawRenderSettings()
 
     ImGui::DragFloat("Render Scale", &settings.renderScale, 0.01f, 0.25f, 2.0f, "%.2f");
     ImGui::SetItemTooltip("1.0 = native resolution. Values below 1 reduce quality but improve performance.");
+
+    ImGui::SeparatorText("Textures / Mipmapping");
+    ImGui::Checkbox("Generate Mipmaps", &settings.enableTextureMipmaps);
+    ImGui::SetItemTooltip("Generates full mip chain for non-compressed textures at upload time.");
+    ImGui::DragInt("Mip Levels Limit (0=Full)", &settings.textureMipLevelLimit, 1.0f, 0, 16);
+    ImGui::SetItemTooltip("Limits generated mip count. Lower values reduce VRAM usage.");
+    ImGui::DragFloat("Texture LOD Bias", &settings.textureLodBias, 0.05f, -2.0f, 8.0f, "%.2f");
+    ImGui::SetItemTooltip("Higher values force blurrier (lower mip) sampling to reduce shimmer and memory bandwidth.");
+    ImGui::DragFloat("LOD Distance Start", &settings.textureLodDistanceStart, 0.25f, 0.0f, 10000.0f, "%.2f m");
+    ImGui::DragFloat("LOD Distance End", &settings.textureLodDistanceEnd, 0.25f, 0.0f, 10000.0f, "%.2f m");
+    ImGui::DragFloat("Max Distance Bias", &settings.textureLodDistanceBias, 0.05f, 0.0f, 8.0f, "%.2f");
+    if (settings.textureLodDistanceEnd < settings.textureLodDistanceStart)
+        settings.textureLodDistanceEnd = settings.textureLodDistanceStart;
+    {
+        int previewMaxDimension = static_cast<int>(settings.texturePreviewMaxDimension);
+        if (ImGui::DragInt("Preview Max Dimension", &previewMaxDimension, 1.0f, 64, 2048))
+            settings.texturePreviewMaxDimension = static_cast<uint32_t>(std::clamp(previewMaxDimension, 64, 2048));
+    }
+    {
+        int importMaxDimension = static_cast<int>(settings.textureImportMaxDimension);
+        if (ImGui::DragInt("Runtime Max Dimension", &importMaxDimension, 1.0f, 0, 16384))
+        {
+            if (importMaxDimension != 0 && importMaxDimension < 64)
+                importMaxDimension = 64;
+
+            settings.textureImportMaxDimension = static_cast<uint32_t>(std::clamp(importMaxDimension, 0, 16384));
+            engine::AssetsLoader::setTextureImportMaxDimension(settings.textureImportMaxDimension);
+            settings.textureImportMaxDimension = engine::AssetsLoader::getTextureImportMaxDimension();
+        }
+    }
+    ImGui::Checkbox("OOM Fallback Texture", &settings.enableTextureOomFallback);
+    {
+        int fallbackDimension = static_cast<int>(settings.textureOomFallbackDimension);
+        if (ImGui::DragInt("OOM Fallback Size", &fallbackDimension, 1.0f, 4, 64))
+            settings.textureOomFallbackDimension = static_cast<uint32_t>(std::clamp(fallbackDimension, 4, 64));
+    }
 
     ImGui::SeparatorText("Shadows");
     {
@@ -3252,7 +3544,54 @@ void Editor::drawRenderSettings()
 
     ImGui::TextDisabled("Applies to texture sampling. Unsupported levels are clamped by GPU capabilities.");
 
+    if (settingsHashBefore != hashRenderQualitySettings(settings))
+        saveRenderSettingsToEngineConfig();
+
     ImGui::End();
+}
+
+void Editor::saveRenderSettingsToEngineConfig()
+{
+    auto &engineConfig = engine::EngineConfig::instance();
+    if (!engineConfig.save())
+        VX_EDITOR_WARNING_STREAM("Failed to persist render settings to engine config\n");
+}
+
+void Editor::saveEditorCameraSettingsToEngineConfig()
+{
+    if (!m_editorCamera)
+        return;
+
+    engine::EngineConfig::EditorCameraSettings cameraSettings{};
+    cameraSettings.moveSpeed = std::max(m_movementSpeed, 0.05f);
+    cameraSettings.mouseSensitivity = std::max(m_mouseSensitivity, 0.005f);
+    cameraSettings.projectionMode = static_cast<uint8_t>(m_editorCamera->getProjectionMode());
+    cameraSettings.nearPlane = std::max(m_editorCamera->getNear(), 0.001f);
+    cameraSettings.farPlane = std::max(m_editorCamera->getFar(), cameraSettings.nearPlane + 0.001f);
+    cameraSettings.fov = std::clamp(m_editorCamera->getFOV(), 1.0f, 179.0f);
+    cameraSettings.orthographicSize = std::max(m_editorCamera->getOrthographicSize(), 0.01f);
+
+    auto &engineConfig = engine::EngineConfig::instance();
+    engineConfig.setEditorCameraSettings(cameraSettings);
+    if (!engineConfig.save())
+        VX_EDITOR_WARNING_STREAM("Failed to persist editor camera settings to engine config\n");
+}
+
+void Editor::loadEditorCameraSettingsFromEngineConfig()
+{
+    if (!m_editorCamera)
+        return;
+
+    const auto &cameraSettings = engine::EngineConfig::instance().getEditorCameraSettings();
+
+    m_movementSpeed = std::max(cameraSettings.moveSpeed, 0.05f);
+    m_mouseSensitivity = std::max(cameraSettings.mouseSensitivity, 0.005f);
+
+    m_editorCamera->setProjectionMode(static_cast<engine::Camera::ProjectionMode>(std::clamp(static_cast<int>(cameraSettings.projectionMode), 0, 1)));
+    m_editorCamera->setNear(std::max(cameraSettings.nearPlane, 0.001f));
+    m_editorCamera->setFar(std::max(cameraSettings.farPlane, m_editorCamera->getNear() + 0.001f));
+    m_editorCamera->setFOV(std::clamp(cameraSettings.fov, 1.0f, 179.0f));
+    m_editorCamera->setOrthographicSize(std::max(cameraSettings.orthographicSize, 0.01f));
 }
 
 void Editor::drawEditorCameraSettings()
@@ -3276,16 +3615,27 @@ void Editor::drawEditorCameraSettings()
         return;
     }
 
+    bool cameraSettingsChanged = false;
+
     if (ImGui::DragFloat("Move Speed", &m_movementSpeed, 0.05f, 0.05f, 200.0f, "%.2f"))
+    {
         m_movementSpeed = std::max(m_movementSpeed, 0.05f);
+        cameraSettingsChanged = true;
+    }
 
     if (ImGui::DragFloat("Mouse Sensitivity", &m_mouseSensitivity, 0.001f, 0.005f, 2.0f, "%.3f"))
+    {
         m_mouseSensitivity = std::max(m_mouseSensitivity, 0.005f);
+        cameraSettingsChanged = true;
+    }
 
     const char *projectionModes[] = {"Perspective", "Orthographic"};
     int projectionMode = static_cast<int>(m_editorCamera->getProjectionMode());
     if (ImGui::Combo("Projection", &projectionMode, projectionModes, IM_ARRAYSIZE(projectionModes)))
+    {
         m_editorCamera->setProjectionMode(static_cast<engine::Camera::ProjectionMode>(projectionMode));
+        cameraSettingsChanged = true;
+    }
 
     float nearPlane = m_editorCamera->getNear();
     float farPlane = m_editorCamera->getFar();
@@ -3297,19 +3647,26 @@ void Editor::drawEditorCameraSettings()
         farPlane = std::max(farPlane, nearPlane + 0.001f);
         m_editorCamera->setNear(nearPlane);
         m_editorCamera->setFar(farPlane);
+        cameraSettingsChanged = true;
     }
 
     if (m_editorCamera->getProjectionMode() == engine::Camera::ProjectionMode::Perspective)
     {
         float fov = m_editorCamera->getFOV();
         if (ImGui::DragFloat("FOV", &fov, 0.1f, 1.0f, 179.0f, "%.1f"))
+        {
             m_editorCamera->setFOV(fov);
+            cameraSettingsChanged = true;
+        }
     }
     else
     {
         float orthographicSize = m_editorCamera->getOrthographicSize();
         if (ImGui::DragFloat("Ortho Size", &orthographicSize, 0.05f, 0.01f, 2000.0f, "%.2f"))
+        {
             m_editorCamera->setOrthographicSize(orthographicSize);
+            cameraSettingsChanged = true;
+        }
     }
 
     ImGui::Separator();
@@ -3324,7 +3681,11 @@ void Editor::drawEditorCameraSettings()
         m_editorCamera->setFOV(60.0f);
         m_movementSpeed = 3.0f;
         m_mouseSensitivity = 0.1f;
+        cameraSettingsChanged = true;
     }
+
+    if (cameraSettingsChanged)
+        saveEditorCameraSettingsToEngineConfig();
 
     ImGui::End();
 }
@@ -3353,6 +3714,11 @@ void Editor::drawBottomPanel()
     if (ImGui::Button("UI Tools"))
         m_showUITools = !m_showUITools;
 
+    ImGui::SameLine();
+
+    if (ImGui::Button("Terrain Tools"))
+        m_showTerrainTools = !m_showTerrainTools;
+
     ImGui::End();
 }
 
@@ -3360,6 +3726,14 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
                        VkDescriptorSet gameViewportDescriptorSet,
                        bool hasGameCamera)
 {
+    std::string textureMemoryWarningMessage;
+    if (engine::Texture::consumeMemoryWarning(textureMemoryWarningMessage))
+    {
+        m_textureMemoryWarningPopupMessage = std::move(textureMemoryWarningMessage);
+        m_textureMemoryWarningPopupPendingOpen = true;
+        m_notificationManager.showWarning(m_textureMemoryWarningPopupMessage, 6.0f);
+    }
+
     if (m_renderOnlyViewport && viewportDescriptorSet)
     {
         drawViewport(viewportDescriptorSet);
@@ -3389,11 +3763,41 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     drawHierarchy();
     drawDetails();
     drawUITools();
+    drawTerrainTools();
     drawEditorCameraSettings();
     drawRenderSettings();
     drawBenchmark();
+    drawTextureMemoryWarningPopup();
 
     m_notificationManager.render();
+}
+
+void Editor::drawTextureMemoryWarningPopup()
+{
+    if (m_textureMemoryWarningPopupPendingOpen)
+    {
+        ImGui::OpenPopup("Texture Memory Warning");
+        m_textureMemoryWarningPopupPendingOpen = false;
+    }
+
+    if (!ImGui::BeginPopupModal("Texture Memory Warning", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    const char *message = m_textureMemoryWarningPopupMessage.empty()
+                              ? "GPU memory is low. Some textures were replaced with emergency low-resolution placeholders."
+                              : m_textureMemoryWarningPopupMessage.c_str();
+
+    ImGui::TextWrapped("%s", message);
+    ImGui::Separator();
+    ImGui::TextWrapped("Recommendations:");
+    ImGui::BulletText("Lower Runtime Max Dimension in Render Settings.");
+    ImGui::BulletText("Lower Mip Levels Limit / increase Texture LOD Bias.");
+    ImGui::BulletText("Close heavy scenes or disable expensive effects.");
+
+    if (ImGui::Button("OK", ImVec2(120.0f, 0.0f)))
+        ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
 }
 
 void Editor::updateAnimationPreview(float deltaTime)
@@ -3487,7 +3891,7 @@ void Editor::drawMaterialEditors()
         if (matEditor.dirty)
             title += "*";
 
-        std::string windowName = title + "###MaterialEditor_" + matPath;
+        std::string windowName = title + "###MaterialEditorMain";
 
         if (m_centerDockId != 0)
             ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_FirstUseEver);
@@ -3607,17 +4011,36 @@ void Editor::drawMaterialEditors()
                         ui.nodeEditorContext = ed::CreateEditor(&config);
                         ui.nodeEditorInitialized = true;
 
+                        ui.linkMappingActive = true;
                         ui.linkAlbedoActive = !cpuMat.albedoTexture.empty();
                         ui.linkNormalActive = !cpuMat.normalTexture.empty();
                         ui.linkOrmActive = !cpuMat.ormTexture.empty();
                         ui.linkEmissiveActive = !cpuMat.emissiveTexture.empty();
+                        ui.linkOutputActive = true;
+                        ui.linkColorToEmissiveActive = false;
+
+                        const float emissiveMaxChannel = std::max({cpuMat.emissiveFactor.r, cpuMat.emissiveFactor.g, cpuMat.emissiveFactor.b});
+                        if (emissiveMaxChannel > 0.0001f)
+                        {
+                            ui.colorNodeValue = cpuMat.emissiveFactor / emissiveMaxChannel;
+                            ui.colorNodeStrength = emissiveMaxChannel;
+                            if (cpuMat.emissiveTexture.empty())
+                                ui.linkColorToEmissiveActive = true;
+                        }
+                        else
+                        {
+                            ui.colorNodeValue = glm::vec3(1.0f, 1.0f, 1.0f);
+                            ui.colorNodeStrength = 1.0f;
+                        }
 
                         if (ui.nodeEditorContext)
                         {
                             ed::SetCurrentEditor(ui.nodeEditorContext);
-                            ed::SetNodePosition(ed::NodeId(ui.textureNodeId), ImVec2(20.0f, 80.0f));
-                            ed::SetNodePosition(ed::NodeId(ui.uvNodeId), ImVec2(20.0f, 420.0f));
-                            ed::SetNodePosition(ed::NodeId(ui.materialNodeId), ImVec2(520.0f, 160.0f));
+                            ed::SetNodePosition(ed::NodeId(ui.mappingNodeId), ImVec2(20.0f, 130.0f));
+                            ed::SetNodePosition(ed::NodeId(ui.texturesNodeId), ImVec2(420.0f, 70.0f));
+                            ed::SetNodePosition(ed::NodeId(ui.colorNodeId), ImVec2(760.0f, 330.0f));
+                            ed::SetNodePosition(ed::NodeId(ui.principledNodeId), ImVec2(920.0f, 90.0f));
+                            ed::SetNodePosition(ed::NodeId(ui.outputNodeId), ImVec2(1320.0f, 120.0f));
                             ed::SetCurrentEditor(nullptr);
                         }
                     }
@@ -3672,10 +4095,27 @@ void Editor::drawMaterialEditors()
                             {
                                 gpuMat = refreshedIt->second.gpu;
                                 cpuMat = refreshedIt->second.cpuData;
+                                ui.linkMappingActive = true;
                                 ui.linkAlbedoActive = !cpuMat.albedoTexture.empty();
                                 ui.linkNormalActive = !cpuMat.normalTexture.empty();
                                 ui.linkOrmActive = !cpuMat.ormTexture.empty();
                                 ui.linkEmissiveActive = !cpuMat.emissiveTexture.empty();
+                                ui.linkOutputActive = true;
+                                ui.linkColorToEmissiveActive = false;
+
+                                const float emissiveMaxChannel = std::max({cpuMat.emissiveFactor.r, cpuMat.emissiveFactor.g, cpuMat.emissiveFactor.b});
+                                if (emissiveMaxChannel > 0.0001f)
+                                {
+                                    ui.colorNodeValue = cpuMat.emissiveFactor / emissiveMaxChannel;
+                                    ui.colorNodeStrength = emissiveMaxChannel;
+                                    if (cpuMat.emissiveTexture.empty())
+                                        ui.linkColorToEmissiveActive = true;
+                                }
+                                else
+                                {
+                                    ui.colorNodeValue = glm::vec3(1.0f, 1.0f, 1.0f);
+                                    ui.colorNodeStrength = 1.0f;
+                                }
                             }
 
                             matEditor.dirty = false;
@@ -3721,156 +4161,50 @@ void Editor::drawMaterialEditors()
 
                     ed::Begin(("MaterialGraph##" + normalizedMatPath).c_str(), ImVec2(0.0f, graphHeight));
 
-                    ed::BeginNode(ed::NodeId(ui.textureNodeId));
-                    ImGui::TextUnformatted("Texture Inputs");
-                    ImGui::Separator();
-
                     struct TextureSlotRow
                     {
                         const char *label;
                         TextureUsage usage;
                         std::string *cpuPath;
-                        int outputPinId;
-                        int inputPinId;
+                        int textureOutputPinId;
+                        int principledInputPinId;
                         int linkId;
                         bool *linkState;
                         std::function<void(engine::Texture::SharedPtr)> assignTexture;
                     };
 
                     TextureSlotRow textureRows[] = {
-                        {"Albedo", TextureUsage::Color, &cpuMat.albedoTexture, ui.textureOutAlbedoPinId, ui.materialInAlbedoPinId, ui.linkAlbedoId, &ui.linkAlbedoActive, [&](engine::Texture::SharedPtr texture)
+                        {"Base Color", TextureUsage::Color, &cpuMat.albedoTexture, ui.texturesOutAlbedoPinId, ui.principledInAlbedoPinId, ui.linkAlbedoId, &ui.linkAlbedoActive, [&](engine::Texture::SharedPtr texture)
                          { gpuMat->setAlbedoTexture(texture); }},
-                        {"Normal", TextureUsage::Data, &cpuMat.normalTexture, ui.textureOutNormalPinId, ui.materialInNormalPinId, ui.linkNormalId, &ui.linkNormalActive, [&](engine::Texture::SharedPtr texture)
+                        {"Normal", TextureUsage::Data, &cpuMat.normalTexture, ui.texturesOutNormalPinId, ui.principledInNormalPinId, ui.linkNormalId, &ui.linkNormalActive, [&](engine::Texture::SharedPtr texture)
                          { gpuMat->setNormalTexture(texture); }},
-                        {"ORM", TextureUsage::Data, &cpuMat.ormTexture, ui.textureOutOrmPinId, ui.materialInOrmPinId, ui.linkOrmId, &ui.linkOrmActive, [&](engine::Texture::SharedPtr texture)
+                        {"Roughness/AO (ORM)", TextureUsage::Data, &cpuMat.ormTexture, ui.texturesOutOrmPinId, ui.principledInOrmPinId, ui.linkOrmId, &ui.linkOrmActive, [&](engine::Texture::SharedPtr texture)
                          { gpuMat->setOrmTexture(texture); }},
-                        {"Emissive", TextureUsage::Color, &cpuMat.emissiveTexture, ui.textureOutEmissivePinId, ui.materialInEmissivePinId, ui.linkEmissiveId, &ui.linkEmissiveActive, [&](engine::Texture::SharedPtr texture)
+                        {"Emissive", TextureUsage::Color, &cpuMat.emissiveTexture, ui.texturesOutEmissivePinId, ui.principledInEmissivePinId, ui.linkEmissiveId, &ui.linkEmissiveActive, [&](engine::Texture::SharedPtr texture)
                          { gpuMat->setEmissiveTexture(texture); }},
                     };
-
-                    for (auto &row : textureRows)
+                    auto disableAllColorEmissionLinks = [&]()
                     {
-                        ImGui::PushID(row.label);
+                        ui.linkColorToEmissiveActive = false;
+                        for (auto &dynamicColorNode : ui.dynamicColorNodes)
+                            dynamicColorNode.linkToEmissiveActive = false;
+                    };
+                    auto applyTextureSlotChange = [&](TextureSlotRow &row, const std::string &newPath)
+                    {
+                        setTexturePathAndGpu(*row.cpuPath, row.usage, newPath, row.assignTexture, *row.linkState);
+                        if (row.principledInputPinId == ui.principledInEmissivePinId && !newPath.empty())
+                            disableAllColorEmissionLinks();
+                    };
+                    struct DeferredTexturePopup
+                    {
+                        TextureSlotRow *row{nullptr};
+                        std::string popupName;
+                    };
+                    std::vector<DeferredTexturePopup> deferredTexturePopups;
+                    deferredTexturePopups.reserve(std::size(textureRows));
 
-                        ed::BeginPin(ed::PinId(row.outputPinId), ed::PinKind::Output);
-                        ImGui::Text("%s Out", row.label);
-                        ed::EndPin();
-
-                        ImGui::SameLine();
-                        const auto texture = ensureProjectTextureLoaded(*row.cpuPath, row.usage);
-                        const auto descriptorSet = m_assetsPreviewSystem.getOrRequestTexturePreview(*row.cpuPath, texture);
-                        const ImTextureID textureId = (ImTextureID)(uintptr_t)descriptorSet;
-
-                        if (ImGui::ImageButton("##thumb", textureId, ImVec2(44.0f, 44.0f)))
-                        {
-                            ui.openTexturePopup = true;
-                            ui.texturePopupSlot = row.label;
-                        }
-
-                        if (ImGui::BeginDragDropTarget())
-                        {
-                            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
-                            {
-                                std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
-                                const std::string normalizedDroppedPath = resolveTexturePathAgainstProjectRoot(droppedPath, projectRoot);
-                                if (isTextureAssetPath(std::filesystem::path(normalizedDroppedPath)))
-                                {
-                                    const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedDroppedPath, projectRoot);
-                                    setTexturePathAndGpu(*row.cpuPath, row.usage, textureReferencePath, row.assignTexture, *row.linkState);
-                                    matEditor.dirty = true;
-                                }
-                            }
-                            ImGui::EndDragDropTarget();
-                        }
-
-                        ImGui::SameLine();
-                        ImGui::BeginGroup();
-                        ImGui::TextWrapped("%s", makeTextureAssetDisplayName(*row.cpuPath).c_str());
-                        if (ImGui::Button("Default"))
-                        {
-                            setTexturePathAndGpu(*row.cpuPath, row.usage, "", row.assignTexture, *row.linkState);
-                            matEditor.dirty = true;
-                        }
-                        ImGui::EndGroup();
-
-                        std::string popupName = std::string("TexturePicker##") + normalizedMatPath + "_" + row.label;
-                        if (ui.openTexturePopup && ui.texturePopupSlot == row.label)
-                        {
-                            ImGui::OpenPopup(popupName.c_str());
-                            ui.openTexturePopup = false;
-                        }
-
-                        if (ImGui::BeginPopup(popupName.c_str()))
-                        {
-                            ImGui::Text("Select Texture for %s", row.label);
-                            ImGui::Separator();
-                            ImGui::InputTextWithHint("##Search", "Search textures...", ui.textureFilter, sizeof(ui.textureFilter));
-                            ImGui::SameLine();
-                            if (ImGui::Button("X"))
-                                ui.textureFilter[0] = '\0';
-
-                            if (ImGui::Selectable("<Default>"))
-                            {
-                                setTexturePathAndGpu(*row.cpuPath, row.usage, "", row.assignTexture, *row.linkState);
-                                matEditor.dirty = true;
-                                ImGui::CloseCurrentPopup();
-                            }
-
-                            ImGui::BeginChild("TextureScroll", ImVec2(360, 240), true);
-                            const std::string currentTextureReference = toMaterialTextureReferencePath(*row.cpuPath, projectRoot);
-                            const auto textureAssetPaths = gatherProjectTextureAssets(*project, projectRoot);
-                            for (const auto &texturePath : textureAssetPaths)
-                            {
-                                const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
-                                const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedTexturePath, projectRoot);
-                                const std::string textureDisplayName = makeTextureAssetDisplayName(textureReferencePath);
-
-                                if (ui.textureFilter[0] != '\0')
-                                {
-                                    const std::string filterLower = toLowerCopy(std::string(ui.textureFilter));
-                                    if (toLowerCopy(textureReferencePath).find(filterLower) == std::string::npos &&
-                                        toLowerCopy(textureDisplayName).find(filterLower) == std::string::npos)
-                                        continue;
-                                }
-
-                                ImGui::PushID(textureReferencePath.c_str());
-                                const auto previewTexture = ensureProjectTextureLoaded(normalizedTexturePath, row.usage);
-                                const auto previewDS = m_assetsPreviewSystem.getOrRequestTexturePreview(normalizedTexturePath, previewTexture);
-                                const bool selected = currentTextureReference == textureReferencePath;
-                                if (selected)
-                                    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 200, 255, 255));
-
-                                if (ImGui::ImageButton("##pick", (ImTextureID)(uintptr_t)previewDS, ImVec2(44.0f, 44.0f)))
-                                {
-                                    setTexturePathAndGpu(*row.cpuPath, row.usage, textureReferencePath, row.assignTexture, *row.linkState);
-                                    matEditor.dirty = true;
-                                    ImGui::CloseCurrentPopup();
-                                }
-
-                                if (selected)
-                                    ImGui::PopStyleColor();
-
-                                ImGui::SameLine();
-                                ImGui::TextWrapped("%s", textureDisplayName.c_str());
-                                ImGui::Separator();
-                                ImGui::PopID();
-                            }
-                            ImGui::EndChild();
-
-                            if (ImGui::Button("Close"))
-                                ImGui::CloseCurrentPopup();
-
-                            ImGui::EndPopup();
-                        }
-
-                        ImGui::Separator();
-                        ImGui::PopID();
-                    }
-
-                    ed::EndNode();
-
-                    ed::BeginNode(ed::NodeId(ui.uvNodeId));
-                    ImGui::TextUnformatted("Mapping & Alpha");
+                    ed::BeginNode(ed::NodeId(ui.mappingNodeId));
+                    ImGui::TextUnformatted("Mapping");
                     ImGui::Separator();
                     auto p = gpuMat->params();
                     glm::vec2 uvScale = {p.uvTransform.x, p.uvTransform.y};
@@ -3905,10 +4239,172 @@ void Editor::drawMaterialEditors()
                         cpuMat.alphaCutoff = alphaCutoff;
                         matEditor.dirty = true;
                     }
+
+                    ed::BeginPin(ed::PinId(ui.mappingOutVectorPinId), ed::PinKind::Output);
+                    ImGui::TextUnformatted("Vector");
+                    ed::EndPin();
                     ed::EndNode();
 
-                    ed::BeginNode(ed::NodeId(ui.materialNodeId));
-                    ImGui::TextUnformatted("Principled Material");
+                    ed::BeginNode(ed::NodeId(ui.texturesNodeId));
+                    ImGui::TextUnformatted("Textures");
+                    ImGui::Separator();
+
+                    ed::BeginPin(ed::PinId(ui.texturesInVectorPinId), ed::PinKind::Input);
+                    ImGui::TextUnformatted("Vector");
+                    ed::EndPin();
+                    ImGui::Separator();
+
+                    for (auto &row : textureRows)
+                    {
+                        ImGui::PushID(row.label);
+
+                        ed::BeginPin(ed::PinId(row.textureOutputPinId), ed::PinKind::Output);
+                        ImGui::TextUnformatted(row.label);
+                        ed::EndPin();
+
+                        ImGui::SameLine();
+                        const auto texture = ensureProjectTextureLoadedPreview(*row.cpuPath, row.usage);
+                        const auto descriptorSet = m_assetsPreviewSystem.getOrRequestTexturePreview(*row.cpuPath, texture);
+                        const ImTextureID textureId = (ImTextureID)(uintptr_t)descriptorSet;
+
+                        if (ImGui::ImageButton("##thumb", textureId, ImVec2(44.0f, 44.0f)))
+                        {
+                            ui.openTexturePopup = true;
+                            ui.texturePopupSlot = row.label;
+                        }
+
+                        if (ImGui::BeginDragDropTarget())
+                        {
+                            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                            {
+                                std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
+                                const std::string normalizedDroppedPath = resolveTexturePathAgainstProjectRoot(droppedPath, projectRoot);
+                                if (isTextureAssetPath(std::filesystem::path(normalizedDroppedPath)))
+                                {
+                                    const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedDroppedPath, projectRoot);
+                                    applyTextureSlotChange(row, textureReferencePath);
+                                    matEditor.dirty = true;
+                                }
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
+
+                        ImGui::SameLine();
+                        ImGui::BeginGroup();
+                        ImGui::TextWrapped("%s", makeTextureAssetDisplayName(*row.cpuPath).c_str());
+                        if (ImGui::Button("Default"))
+                        {
+                            applyTextureSlotChange(row, "");
+                            matEditor.dirty = true;
+                        }
+                        ImGui::EndGroup();
+
+                        std::string popupName = std::string("TexturePicker##") + normalizedMatPath + "_" + row.label;
+                        deferredTexturePopups.push_back(DeferredTexturePopup{&row, std::move(popupName)});
+
+                        ImGui::Separator();
+                        ImGui::PopID();
+                    }
+                    ed::EndNode();
+
+                    ed::BeginNode(ed::NodeId(ui.colorNodeId));
+                    ImGui::TextUnformatted("Color");
+                    ImGui::Separator();
+
+                    if (ImGui::ColorEdit3("Color##ColorNode",
+                                          glm::value_ptr(ui.colorNodeValue),
+                                          ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR))
+                    {
+                        if (ui.linkColorToEmissiveActive)
+                        {
+                            const glm::vec3 emissiveValue = ui.colorNodeValue * ui.colorNodeStrength;
+                            gpuMat->setEmissiveFactor(emissiveValue);
+                            cpuMat.emissiveFactor = emissiveValue;
+                            matEditor.dirty = true;
+                        }
+                    }
+
+                    if (ImGui::DragFloat("Strength##ColorNode", &ui.colorNodeStrength, 0.05f, 0.0f, 64.0f, "%.3f"))
+                    {
+                        ui.colorNodeStrength = std::max(0.0f, ui.colorNodeStrength);
+                        if (ui.linkColorToEmissiveActive)
+                        {
+                            const glm::vec3 emissiveValue = ui.colorNodeValue * ui.colorNodeStrength;
+                            gpuMat->setEmissiveFactor(emissiveValue);
+                            cpuMat.emissiveFactor = emissiveValue;
+                            matEditor.dirty = true;
+                        }
+                    }
+
+                    ed::BeginPin(ed::PinId(ui.colorOutPinId), ed::PinKind::Output);
+                    ImGui::TextUnformatted("Color");
+                    ed::EndPin();
+                    ed::EndNode();
+
+                    for (auto &dynamicColorNode : ui.dynamicColorNodes)
+                    {
+                        if (dynamicColorNode.pendingPlacement)
+                        {
+                            ed::SetNodePosition(ed::NodeId(dynamicColorNode.nodeId),
+                                                ImVec2(dynamicColorNode.spawnPosition.x, dynamicColorNode.spawnPosition.y));
+                            dynamicColorNode.pendingPlacement = false;
+                        }
+
+                        ImGui::PushID(dynamicColorNode.nodeId);
+                        ed::BeginNode(ed::NodeId(dynamicColorNode.nodeId));
+                        ImGui::TextUnformatted("Color");
+                        ImGui::Separator();
+
+                        if (ImGui::ColorEdit3("Color",
+                                              glm::value_ptr(dynamicColorNode.color),
+                                              ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR))
+                        {
+                            if (dynamicColorNode.linkToEmissiveActive)
+                            {
+                                const glm::vec3 emissiveValue = dynamicColorNode.color * dynamicColorNode.strength;
+                                gpuMat->setEmissiveFactor(emissiveValue);
+                                cpuMat.emissiveFactor = emissiveValue;
+                                matEditor.dirty = true;
+                            }
+                        }
+
+                        if (ImGui::DragFloat("Strength", &dynamicColorNode.strength, 0.05f, 0.0f, 64.0f, "%.3f"))
+                        {
+                            dynamicColorNode.strength = std::max(0.0f, dynamicColorNode.strength);
+                            if (dynamicColorNode.linkToEmissiveActive)
+                            {
+                                const glm::vec3 emissiveValue = dynamicColorNode.color * dynamicColorNode.strength;
+                                gpuMat->setEmissiveFactor(emissiveValue);
+                                cpuMat.emissiveFactor = emissiveValue;
+                                matEditor.dirty = true;
+                            }
+                        }
+
+                        if (ImGui::SmallButton("Delete Node"))
+                            dynamicColorNode.removeRequested = true;
+
+                        ed::BeginPin(ed::PinId(dynamicColorNode.outputPinId), ed::PinKind::Output);
+                        ImGui::TextUnformatted("Color");
+                        ed::EndPin();
+                        ed::EndNode();
+                        ImGui::PopID();
+                    }
+
+                    for (size_t dynamicNodeIndex = 0; dynamicNodeIndex < ui.dynamicColorNodes.size();)
+                    {
+                        const bool removeNode = ui.dynamicColorNodes[dynamicNodeIndex].removeRequested;
+                        if (!removeNode)
+                        {
+                            ++dynamicNodeIndex;
+                            continue;
+                        }
+
+                        ui.dynamicColorNodes.erase(ui.dynamicColorNodes.begin() + dynamicNodeIndex);
+                        matEditor.dirty = true;
+                    }
+
+                    ed::BeginNode(ed::NodeId(ui.principledNodeId));
+                    ImGui::TextUnformatted("Principled BSDF");
                     ImGui::Separator();
 
                     auto drawInputPin = [](int pinId, const char *label)
@@ -3918,29 +4414,61 @@ void Editor::drawMaterialEditors()
                         ed::EndPin();
                     };
 
-                    drawInputPin(ui.materialInAlbedoPinId, "Albedo");
-                    drawInputPin(ui.materialInNormalPinId, "Normal");
-                    drawInputPin(ui.materialInOrmPinId, "ORM");
-                    drawInputPin(ui.materialInEmissivePinId, "Emissive");
-
+                    drawInputPin(ui.principledInAlbedoPinId, "Base Color");
+                    drawInputPin(ui.principledInNormalPinId, "Normal");
+                    drawInputPin(ui.principledInOrmPinId, "Roughness/AO");
+                    drawInputPin(ui.principledInEmissivePinId, "Emission");
                     ImGui::Separator();
 
                     p = gpuMat->params();
 
                     glm::vec4 baseColor = p.baseColorFactor;
-                    if (ImGui::ColorEdit4("Base Color", glm::value_ptr(baseColor)))
+                    if (ImGui::ColorEdit4("Base Color",
+                                          glm::value_ptr(baseColor),
+                                          ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_AlphaBar))
                     {
                         gpuMat->setBaseColorFactor(baseColor);
                         cpuMat.baseColorFactor = baseColor;
                         matEditor.dirty = true;
                     }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Pick##BaseColor"))
+                    {
+                        ui.openColorPopup = true;
+                        ui.colorPopupSlot = 1;
+                    }
 
                     glm::vec3 emissiveColor = glm::vec3(p.emissiveFactor);
-                    if (ImGui::ColorEdit3("Emissive", glm::value_ptr(emissiveColor)))
+                    bool emissiveDrivenByColorNode = ui.linkColorToEmissiveActive;
+                    for (const auto &dynamicColorNode : ui.dynamicColorNodes)
+                    {
+                        if (dynamicColorNode.linkToEmissiveActive)
+                        {
+                            emissiveDrivenByColorNode = true;
+                            break;
+                        }
+                    }
+
+                    if (emissiveDrivenByColorNode)
+                        ImGui::BeginDisabled();
+                    if (ImGui::ColorEdit3("Emission",
+                                          glm::value_ptr(emissiveColor),
+                                          ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR))
                     {
                         gpuMat->setEmissiveFactor(emissiveColor);
                         cpuMat.emissiveFactor = emissiveColor;
                         matEditor.dirty = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Pick##EmissiveColor"))
+                    {
+                        ui.openColorPopup = true;
+                        ui.colorPopupSlot = 2;
+                    }
+                    if (emissiveDrivenByColorNode)
+                    {
+                        ImGui::EndDisabled();
+                        ImGui::TextDisabled("Emission controlled by Color node link");
                     }
 
                     float metallic = p.metallicFactor;
@@ -3975,17 +4503,23 @@ void Editor::drawMaterialEditors()
                         matEditor.dirty = true;
                     }
 
+                    float ior = p.ior;
+                    if (ImGui::SliderFloat("IOR", &ior, 1.0f, 2.6f))
+                    {
+                        gpuMat->setIor(ior);
+                        cpuMat.ior = ior;
+                        matEditor.dirty = true;
+                    }
+
                     uint32_t materialFlags = p.flags;
-                    int shadingModeIndex = 0; // Opaque
+                    int shadingModeIndex = 0;
                     if ((materialFlags & engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK) != 0u)
                         shadingModeIndex = 1;
                     else if ((materialFlags & engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u)
                         shadingModeIndex = 2;
 
-                    static const char *shadingModes[] = {"Opaque", "Masked", "Translucent"};
                     ImGui::TextUnformatted("Shading");
                     bool shadingChanged = false;
-
                     if (ImGui::RadioButton("Opaque##material_shading", shadingModeIndex == 0))
                     {
                         shadingModeIndex = 0;
@@ -4031,6 +4565,57 @@ void Editor::drawMaterialEditors()
                         matEditor.dirty = true;
                     }
 
+                    bool flipV = (materialFlags & engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_V) != 0u;
+                    if (ImGui::Checkbox("Flip V (Blender)", &flipV))
+                    {
+                        if (flipV)
+                            materialFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_V;
+                        else
+                            materialFlags &= ~engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_V;
+
+                        gpuMat->setFlags(materialFlags);
+                        cpuMat.flags = materialFlags;
+                        matEditor.dirty = true;
+                    }
+
+                    bool flipU = (materialFlags & engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_U) != 0u;
+                    if (ImGui::Checkbox("Flip U (X)", &flipU))
+                    {
+                        if (flipU)
+                            materialFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_U;
+                        else
+                            materialFlags &= ~engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_U;
+
+                        gpuMat->setFlags(materialFlags);
+                        cpuMat.flags = materialFlags;
+                        matEditor.dirty = true;
+                    }
+
+                    bool repeatUV = (materialFlags & engine::Material::MaterialFlags::EMATERIAL_FLAG_CLAMP_UV) == 0u;
+                    if (ImGui::Checkbox("Repeat UV", &repeatUV))
+                    {
+                        if (repeatUV)
+                            materialFlags &= ~engine::Material::MaterialFlags::EMATERIAL_FLAG_CLAMP_UV;
+                        else
+                            materialFlags |= engine::Material::MaterialFlags::EMATERIAL_FLAG_CLAMP_UV;
+
+                        gpuMat->setFlags(materialFlags);
+                        cpuMat.flags = materialFlags;
+                        matEditor.dirty = true;
+                    }
+
+                    ed::BeginPin(ed::PinId(ui.principledOutBsdfPinId), ed::PinKind::Output);
+                    ImGui::TextUnformatted("BSDF");
+                    ed::EndPin();
+                    ed::EndNode();
+
+                    ed::BeginNode(ed::NodeId(ui.outputNodeId));
+                    ImGui::TextUnformatted("Material Output");
+                    ImGui::Separator();
+                    ed::BeginPin(ed::PinId(ui.outputInSurfacePinId), ed::PinKind::Input);
+                    ImGui::TextUnformatted("Surface");
+                    ed::EndPin();
+                    ImGui::TextDisabled("Displacement: use normal map (runtime)");
                     ed::EndNode();
 
                     auto drawTextureLink = [&](bool active, int linkId, int outPinId, int inPinId)
@@ -4041,10 +4626,15 @@ void Editor::drawMaterialEditors()
                         ed::Link(ed::LinkId(linkId), ed::PinId(outPinId), ed::PinId(inPinId), ImColor(130, 180, 255), 2.0f);
                     };
 
-                    drawTextureLink(ui.linkAlbedoActive, ui.linkAlbedoId, ui.textureOutAlbedoPinId, ui.materialInAlbedoPinId);
-                    drawTextureLink(ui.linkNormalActive, ui.linkNormalId, ui.textureOutNormalPinId, ui.materialInNormalPinId);
-                    drawTextureLink(ui.linkOrmActive, ui.linkOrmId, ui.textureOutOrmPinId, ui.materialInOrmPinId);
-                    drawTextureLink(ui.linkEmissiveActive, ui.linkEmissiveId, ui.textureOutEmissivePinId, ui.materialInEmissivePinId);
+                    drawTextureLink(ui.linkMappingActive, ui.linkMappingId, ui.mappingOutVectorPinId, ui.texturesInVectorPinId);
+                    drawTextureLink(ui.linkAlbedoActive, ui.linkAlbedoId, ui.texturesOutAlbedoPinId, ui.principledInAlbedoPinId);
+                    drawTextureLink(ui.linkNormalActive, ui.linkNormalId, ui.texturesOutNormalPinId, ui.principledInNormalPinId);
+                    drawTextureLink(ui.linkOrmActive, ui.linkOrmId, ui.texturesOutOrmPinId, ui.principledInOrmPinId);
+                    drawTextureLink(ui.linkEmissiveActive, ui.linkEmissiveId, ui.texturesOutEmissivePinId, ui.principledInEmissivePinId);
+                    drawTextureLink(ui.linkColorToEmissiveActive, ui.linkColorToEmissiveId, ui.colorOutPinId, ui.principledInEmissivePinId);
+                    for (const auto &dynamicColorNode : ui.dynamicColorNodes)
+                        drawTextureLink(dynamicColorNode.linkToEmissiveActive, dynamicColorNode.linkId, dynamicColorNode.outputPinId, ui.principledInEmissivePinId);
+                    drawTextureLink(ui.linkOutputActive, ui.linkOutputId, ui.principledOutBsdfPinId, ui.outputInSurfacePinId);
 
                     const bool isCreateActive = ed::BeginCreate();
                     if (isCreateActive)
@@ -4053,27 +4643,85 @@ void Editor::drawMaterialEditors()
                         ed::PinId endPinId;
                         if (ed::QueryNewLink(&startPinId, &endPinId))
                         {
-                            auto acceptTextureLink = [&](TextureSlotRow &row)
+                            auto acceptLinkState = [&](int fromPinId, int toPinId, bool &state, bool markDirty) -> bool
                             {
                                 const bool validDirection =
-                                    (startPinId == ed::PinId(row.outputPinId) && endPinId == ed::PinId(row.inputPinId)) ||
-                                    (startPinId == ed::PinId(row.inputPinId) && endPinId == ed::PinId(row.outputPinId));
-
+                                    (startPinId == ed::PinId(fromPinId) && endPinId == ed::PinId(toPinId)) ||
+                                    (startPinId == ed::PinId(toPinId) && endPinId == ed::PinId(fromPinId));
                                 if (!validDirection)
                                     return false;
 
                                 if (ed::AcceptNewItem())
                                 {
-                                    *row.linkState = true;
-                                    matEditor.dirty = true;
+                                    state = true;
+                                    if (markDirty)
+                                        matEditor.dirty = true;
                                 }
                                 return true;
                             };
 
-                            for (auto &row : textureRows)
+                            if (acceptLinkState(ui.mappingOutVectorPinId, ui.texturesInVectorPinId, ui.linkMappingActive, false))
                             {
-                                if (acceptTextureLink(row))
+                            }
+                            else if (acceptLinkState(ui.principledOutBsdfPinId, ui.outputInSurfacePinId, ui.linkOutputActive, false))
+                            {
+                            }
+                            else if (acceptLinkState(ui.colorOutPinId, ui.principledInEmissivePinId, ui.linkColorToEmissiveActive, true))
+                            {
+                                ui.linkEmissiveActive = false;
+                                for (auto &dynamicColorNode : ui.dynamicColorNodes)
+                                    dynamicColorNode.linkToEmissiveActive = false;
+                                const glm::vec3 emissiveValue = ui.colorNodeValue * ui.colorNodeStrength;
+                                gpuMat->setEmissiveFactor(emissiveValue);
+                                cpuMat.emissiveFactor = emissiveValue;
+                            }
+                            else
+                            {
+                                bool acceptedDynamicColorLink = false;
+                                for (auto &dynamicColorNode : ui.dynamicColorNodes)
+                                {
+                                    if (!acceptLinkState(dynamicColorNode.outputPinId, ui.principledInEmissivePinId, dynamicColorNode.linkToEmissiveActive, true))
+                                        continue;
+
+                                    ui.linkEmissiveActive = false;
+                                    ui.linkColorToEmissiveActive = false;
+                                    for (auto &otherDynamicColorNode : ui.dynamicColorNodes)
+                                    {
+                                        if (otherDynamicColorNode.outputPinId != dynamicColorNode.outputPinId)
+                                            otherDynamicColorNode.linkToEmissiveActive = false;
+                                    }
+
+                                    const glm::vec3 emissiveValue = dynamicColorNode.color * dynamicColorNode.strength;
+                                    gpuMat->setEmissiveFactor(emissiveValue);
+                                    cpuMat.emissiveFactor = emissiveValue;
+                                    acceptedDynamicColorLink = true;
                                     break;
+                                }
+
+                                if (acceptedDynamicColorLink)
+                                    continue;
+
+                                auto acceptTextureLink = [&](TextureSlotRow &row)
+                                {
+                                    const bool accepted = acceptLinkState(row.textureOutputPinId, row.principledInputPinId, *row.linkState, true);
+                                    if (!accepted)
+                                        return false;
+
+                                    if (row.principledInputPinId == ui.principledInEmissivePinId)
+                                    {
+                                        ui.linkColorToEmissiveActive = false;
+                                        for (auto &dynamicColorNode : ui.dynamicColorNodes)
+                                            dynamicColorNode.linkToEmissiveActive = false;
+                                    }
+
+                                    return true;
+                                };
+
+                                for (auto &row : textureRows)
+                                {
+                                    if (acceptTextureLink(row))
+                                        break;
+                                }
                             }
                         }
                     }
@@ -4085,6 +4733,43 @@ void Editor::drawMaterialEditors()
                         ed::LinkId deletedLinkId;
                         while (ed::QueryDeletedLink(&deletedLinkId))
                         {
+                            if (deletedLinkId == ed::LinkId(ui.linkMappingId))
+                            {
+                                if (ed::AcceptDeletedItem())
+                                    ui.linkMappingActive = false;
+                                continue;
+                            }
+
+                            if (deletedLinkId == ed::LinkId(ui.linkOutputId))
+                            {
+                                if (ed::AcceptDeletedItem())
+                                    ui.linkOutputActive = false;
+                                continue;
+                            }
+
+                            if (deletedLinkId == ed::LinkId(ui.linkColorToEmissiveId))
+                            {
+                                if (ed::AcceptDeletedItem())
+                                    ui.linkColorToEmissiveActive = false;
+                                continue;
+                            }
+
+                            bool deletedDynamicColorLink = false;
+                            for (auto &dynamicColorNode : ui.dynamicColorNodes)
+                            {
+                                if (deletedLinkId != ed::LinkId(dynamicColorNode.linkId))
+                                    continue;
+
+                                if (ed::AcceptDeletedItem())
+                                    dynamicColorNode.linkToEmissiveActive = false;
+
+                                deletedDynamicColorLink = true;
+                                break;
+                            }
+
+                            if (deletedDynamicColorLink)
+                                continue;
+
                             auto removeTextureLink = [&](TextureSlotRow &row)
                             {
                                 if (deletedLinkId != ed::LinkId(row.linkId))
@@ -4092,7 +4777,7 @@ void Editor::drawMaterialEditors()
 
                                 if (ed::AcceptDeletedItem())
                                 {
-                                    setTexturePathAndGpu(*row.cpuPath, row.usage, "", row.assignTexture, *row.linkState);
+                                    applyTextureSlotChange(row, "");
                                     matEditor.dirty = true;
                                 }
                                 return true;
@@ -4106,6 +4791,173 @@ void Editor::drawMaterialEditors()
                         }
                     }
                     ed::EndDelete();
+
+                    ed::Suspend();
+                    const std::string createNodePopupName = "MaterialNodeCreatePopup##" + normalizedMatPath;
+                    if (ed::ShowBackgroundContextMenu())
+                        ImGui::OpenPopup(createNodePopupName.c_str());
+
+                    if (ImGui::BeginPopup(createNodePopupName.c_str()))
+                    {
+                        if (ImGui::BeginMenu("Add node"))
+                        {
+                            if (ImGui::MenuItem("Color"))
+                            {
+                                MaterialEditorUIState::DynamicColorNode newColorNode;
+                                newColorNode.nodeId = ui.nextDynamicColorNodeId++;
+                                newColorNode.outputPinId = ui.nextDynamicColorPinId++;
+                                newColorNode.linkId = ui.nextDynamicColorLinkId++;
+                                newColorNode.color = glm::vec3(1.0f, 1.0f, 1.0f);
+                                newColorNode.strength = 1.0f;
+                                const ImVec2 canvasPosition = ed::ScreenToCanvas(ImGui::GetMousePos());
+                                newColorNode.spawnPosition = glm::vec2(canvasPosition.x, canvasPosition.y);
+                                newColorNode.pendingPlacement = true;
+                                ui.dynamicColorNodes.push_back(newColorNode);
+                            }
+                            ImGui::EndMenu();
+                        }
+                        ImGui::EndPopup();
+                    }
+
+                    for (auto &popup : deferredTexturePopups)
+                    {
+                        if (!popup.row)
+                            continue;
+
+                        auto &row = *popup.row;
+                        ImGui::PushID(row.label);
+
+                        if (ui.openTexturePopup && ui.texturePopupSlot == row.label)
+                        {
+                            ImGui::OpenPopup(popup.popupName.c_str());
+                            ui.openTexturePopup = false;
+                        }
+
+                        if (ImGui::BeginPopup(popup.popupName.c_str()))
+                        {
+                            ImGui::Text("Select Texture for %s", row.label);
+                            ImGui::Separator();
+                            ImGui::InputTextWithHint("##Search", "Search textures...", ui.textureFilter, sizeof(ui.textureFilter));
+                            ImGui::SameLine();
+                            if (ImGui::Button("X"))
+                                ui.textureFilter[0] = '\0';
+
+                            if (ImGui::Selectable("<Default>"))
+                            {
+                                applyTextureSlotChange(row, "");
+                                matEditor.dirty = true;
+                                ImGui::CloseCurrentPopup();
+                            }
+
+                            ImGui::BeginChild("TextureScroll", ImVec2(360.0f, 240.0f), true);
+                            const std::string currentTextureReference = toMaterialTextureReferencePath(*row.cpuPath, projectRoot);
+                            const auto textureAssetPaths = gatherProjectTextureAssets(*project, projectRoot);
+                            for (const auto &texturePath : textureAssetPaths)
+                            {
+                                const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
+                                const std::string textureReferencePath = toMaterialTextureReferencePath(normalizedTexturePath, projectRoot);
+                                const std::string textureDisplayName = makeTextureAssetDisplayName(textureReferencePath);
+
+                                if (ui.textureFilter[0] != '\0')
+                                {
+                                    const std::string filterLower = toLowerCopy(std::string(ui.textureFilter));
+                                    if (toLowerCopy(textureReferencePath).find(filterLower) == std::string::npos &&
+                                        toLowerCopy(textureDisplayName).find(filterLower) == std::string::npos)
+                                        continue;
+                                }
+
+                                ImGui::PushID(textureReferencePath.c_str());
+                                const auto previewTexture = ensureProjectTextureLoadedPreview(normalizedTexturePath, row.usage);
+                                const auto previewDS = m_assetsPreviewSystem.getOrRequestTexturePreview(normalizedTexturePath, previewTexture);
+                                const bool selected = currentTextureReference == textureReferencePath;
+                                if (selected)
+                                    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 200, 255, 255));
+
+                                if (ImGui::ImageButton("##pick", (ImTextureID)(uintptr_t)previewDS, ImVec2(44.0f, 44.0f)))
+                                {
+                                    applyTextureSlotChange(row, textureReferencePath);
+                                    matEditor.dirty = true;
+                                    ImGui::CloseCurrentPopup();
+                                }
+
+                                if (selected)
+                                    ImGui::PopStyleColor();
+
+                                ImGui::SameLine();
+                                ImGui::TextWrapped("%s", textureDisplayName.c_str());
+                                ImGui::Separator();
+                                ImGui::PopID();
+                            }
+                            ImGui::EndChild();
+
+                            if (ImGui::Button("Close"))
+                                ImGui::CloseCurrentPopup();
+
+                            ImGui::EndPopup();
+                        }
+
+                        ImGui::PopID();
+                    }
+
+                    const std::string baseColorPopupName = "BaseColorPickerPopup##" + normalizedMatPath;
+                    const std::string emissiveColorPopupName = "EmissiveColorPickerPopup##" + normalizedMatPath;
+
+                    if (ui.openColorPopup)
+                    {
+                        if (ui.colorPopupSlot == 1)
+                            ImGui::OpenPopup(baseColorPopupName.c_str());
+                        else if (ui.colorPopupSlot == 2)
+                            ImGui::OpenPopup(emissiveColorPopupName.c_str());
+                        ui.openColorPopup = false;
+                    }
+
+                    if (ImGui::BeginPopup(baseColorPopupName.c_str()))
+                    {
+                        glm::vec4 pickerBaseColor = cpuMat.baseColorFactor;
+                        if (ImGui::ColorPicker4("##BaseColorPicker",
+                                                glm::value_ptr(pickerBaseColor),
+                                                ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_DisplayRGB))
+                        {
+                            gpuMat->setBaseColorFactor(pickerBaseColor);
+                            cpuMat.baseColorFactor = pickerBaseColor;
+                            matEditor.dirty = true;
+                        }
+
+                        if (ImGui::Button("Close##BaseColorPicker"))
+                        {
+                            ui.colorPopupSlot = 0;
+                            ImGui::CloseCurrentPopup();
+                        }
+
+                        ImGui::EndPopup();
+                    }
+
+                    if (ImGui::BeginPopup(emissiveColorPopupName.c_str()))
+                    {
+                        glm::vec3 pickerEmissiveColor = cpuMat.emissiveFactor;
+                        if (ImGui::ColorPicker3("##EmissiveColorPicker",
+                                                glm::value_ptr(pickerEmissiveColor),
+                                                ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR))
+                        {
+                            gpuMat->setEmissiveFactor(pickerEmissiveColor);
+                            cpuMat.emissiveFactor = pickerEmissiveColor;
+                            matEditor.dirty = true;
+                        }
+
+                        if (ImGui::Button("Close##EmissiveColorPicker"))
+                        {
+                            ui.colorPopupSlot = 0;
+                            ImGui::CloseCurrentPopup();
+                        }
+
+                        ImGui::EndPopup();
+                    }
+
+                    if (!ImGui::IsPopupOpen(baseColorPopupName.c_str()) &&
+                        !ImGui::IsPopupOpen(emissiveColorPopupName.c_str()))
+                        ui.colorPopupSlot = 0;
+
+                    ed::Resume();
 
                     ed::End();
                     ed::SetCurrentEditor(nullptr);
@@ -4686,14 +5538,39 @@ void Editor::openMaterialEditor(const std::filesystem::path &path)
     if (auto project = m_currentProject.lock(); project)
         normalizedPath = resolveMaterialPathAgainstProjectRoot(path.string(), std::filesystem::path(project->fullPath));
 
-    for (auto &mat : m_openMaterialEditors)
+    auto destroyNodeEditorStateForPath = [&](const std::filesystem::path &materialPath)
+    {
+        const std::string normalizedMaterialPath = materialPath.lexically_normal().string();
+        auto stateIt = m_materialEditorUiState.find(normalizedMaterialPath);
+        if (stateIt == m_materialEditorUiState.end())
+            return;
+
+        if (stateIt->second.nodeEditorContext)
+        {
+            ed::DestroyEditor(stateIt->second.nodeEditorContext);
+            stateIt->second.nodeEditorContext = nullptr;
+        }
+
+        m_materialEditorUiState.erase(stateIt);
+    };
+
+    for (const auto &mat : m_openMaterialEditors)
     {
         if (mat.path == normalizedPath)
         {
-            mat.open = true;
+            m_openMaterialEditors.clear();
+            OpenMaterialEditor editor;
+            editor.path = normalizedPath;
+            editor.open = true;
+            editor.dirty = mat.dirty;
+            m_openMaterialEditors.push_back(std::move(editor));
             return;
         }
     }
+
+    for (const auto &mat : m_openMaterialEditors)
+        destroyNodeEditorStateForPath(mat.path);
+    m_openMaterialEditors.clear();
 
     OpenMaterialEditor editor;
     editor.path = normalizedPath;
@@ -4733,6 +5610,45 @@ engine::Texture::SharedPtr Editor::ensureProjectTextureLoaded(const std::string 
     return texture;
 }
 
+engine::Texture::SharedPtr Editor::ensureProjectTextureLoadedPreview(const std::string &texturePath, TextureUsage usage)
+{
+    if (texturePath.empty())
+        return nullptr;
+
+    auto project = m_currentProject.lock();
+    if (!project)
+        return nullptr;
+
+    const uint32_t previewMaxDimension = std::clamp(
+        engine::RenderQualitySettings::getInstance().texturePreviewMaxDimension,
+        64u, 2048u);
+
+    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
+
+    auto &record = project->cache.texturesByPath[normalizedTexturePath];
+    record.path = normalizedTexturePath;
+
+    const TextureUsage previewUsage = isDataTextureUsage(usage) ? TextureUsage::PreviewData : TextureUsage::PreviewColor;
+    if (auto cached = record.getGpuVariant(previewUsage))
+        return cached;
+
+    auto texture = engine::AssetsLoader::loadTextureGPU(
+        normalizedTexturePath,
+        getLdrTextureFormat(previewUsage),
+        previewMaxDimension);
+    if (!texture)
+    {
+        VX_EDITOR_WARNING_STREAM("Failed to load preview texture: " << normalizedTexturePath << '\n');
+        return nullptr;
+    }
+
+    record.setGpuVariant(previewUsage, texture);
+    record.loaded = true;
+
+    return texture;
+}
+
 bool Editor::saveMaterialToDisk(const std::filesystem::path &path, const engine::CPUMaterial &cpuMaterial)
 {
     nlohmann::json json;
@@ -4756,6 +5672,7 @@ bool Editor::saveMaterialToDisk(const std::filesystem::path &path, const engine:
     json["roughness"] = cpuMaterial.roughnessFactor;
     json["ao_strength"] = cpuMaterial.aoStrength;
     json["normal_scale"] = cpuMaterial.normalScale;
+    json["ior"] = cpuMaterial.ior;
     json["alpha_cutoff"] = cpuMaterial.alphaCutoff;
     json["flags"] = cpuMaterial.flags;
     json["uv_scale"] = {cpuMaterial.uvScale.x, cpuMaterial.uvScale.y};
@@ -4824,6 +5741,7 @@ bool Editor::reloadMaterialFromDisk(const std::filesystem::path &path)
     record.gpu->setRoughness(cpuMaterial.roughnessFactor);
     record.gpu->setAoStrength(cpuMaterial.aoStrength);
     record.gpu->setNormalScale(cpuMaterial.normalScale);
+    record.gpu->setIor(cpuMaterial.ior);
     record.gpu->setAlphaCutoff(cpuMaterial.alphaCutoff);
     record.gpu->setFlags(cpuMaterial.flags);
     record.gpu->setUVScale(cpuMaterial.uvScale);
@@ -4883,6 +5801,7 @@ engine::Material::SharedPtr Editor::ensureMaterialLoaded(const std::string &mate
         record.gpu->setRoughness(cpuMaterial.roughnessFactor);
         record.gpu->setAoStrength(cpuMaterial.aoStrength);
         record.gpu->setNormalScale(cpuMaterial.normalScale);
+        record.gpu->setIor(cpuMaterial.ior);
         record.gpu->setAlphaCutoff(cpuMaterial.alphaCutoff);
         record.gpu->setFlags(cpuMaterial.flags);
         record.gpu->setUVScale(cpuMaterial.uvScale);
@@ -4960,7 +5879,9 @@ void Editor::rebuildModelDetailsCache(const engine::ModelAsset &modelAsset,
                                                    projectRoot,
                                                    textureSearchDirectory,
                                                    m_modelTextureManualOverrides,
-                                                   resolved);
+                                                   resolved,
+                                                   {},
+                                                   false);
     };
 
     auto collectUnresolvedPath = [&](const std::string &texturePath)
@@ -4971,7 +5892,9 @@ void Editor::rebuildModelDetailsCache(const engine::ModelAsset &modelAsset,
                                             projectRoot,
                                             textureSearchDirectory,
                                             m_modelTextureManualOverrides,
-                                            resolved);
+                                            resolved,
+                                            {},
+                                            false);
 
         if (!resolved && !texturePath.empty())
             unresolvedTexturePaths.insert(texturePath);
@@ -5297,19 +6220,26 @@ bool Editor::exportModelMaterials(const std::filesystem::path &modelPath,
         {
             const std::string originalPath = texturePath;
             bool resolved = true;
-            texturePath = toMaterialTextureReferencePath(resolveTexturePathForMaterialExport(texturePath,
-                                                                                             modelDirectory,
-                                                                                             projectRoot,
-                                                                                             textureSearchDirectory,
-                                                                                             textureOverrides,
-                                                                                             resolved),
-                                                         projectRoot);
-
+            const std::string resolvedTexturePathForField = resolveTexturePathForMaterialExport(texturePath,
+                                                                                                modelDirectory,
+                                                                                                projectRoot,
+                                                                                                textureSearchDirectory,
+                                                                                                textureOverrides,
+                                                                                                resolved,
+                                                                                                exportDirectory,
+                                                                                                true);
+            texturePath = toMaterialTextureReferencePath(resolvedTexturePathForField, projectRoot, exportDirectory, false);
             const std::filesystem::path resolvedTexturePath = std::filesystem::path(resolveTexturePathAgainstProjectRoot(texturePath, projectRoot)).lexically_normal();
             auto textureType = readSerializedAssetType(resolvedTexturePath);
             const bool isSerializedTexture = textureType.has_value() && textureType.value() == engine::Asset::AssetType::TEXTURE;
 
-            if ((!resolved || !isSerializedTexture) && !originalPath.empty())
+            if (!resolved || !isSerializedTexture)
+            {
+                if (!originalPath.empty())
+                    unresolvedTexturePaths.insert(originalPath);
+                texturePath.clear();
+            }
+            else if (texturePath.empty() && !originalPath.empty())
                 unresolvedTexturePaths.insert(originalPath);
         };
 
@@ -5634,7 +6564,9 @@ void Editor::drawAssetDetails()
                                                                                                 projectRoot,
                                                                                                 textureSearchDirectory,
                                                                                                 previewOverrides,
-                                                                                                remappedResolved);
+                                                                                                remappedResolved,
+                                                                                                {},
+                                                                                                false);
                     if (remappedResolved && !resolvedPreviewPath.empty())
                     {
                         remappedPathString = resolvedPreviewPath;
@@ -5720,7 +6652,9 @@ void Editor::drawAssetDetails()
                                                                                     projectRoot,
                                                                                     textureSearchDirectory,
                                                                                     m_modelTextureManualOverrides,
-                                                                                    previewResolved);
+                                                                                    previewResolved,
+                                                                                    {},
+                                                                                    false);
                 ImGui::TextWrapped("Preview: %s", previewPath.empty() ? "<None>" : previewPath.c_str());
                 ImGui::TextDisabled("%s", previewResolved ? "Status: Resolved" : "Status: Unresolved");
             }
@@ -6356,6 +7290,10 @@ void Editor::drawBenchmark()
     float fps = ImGui::GetIO().Framerate;
     ImGui::Text("FPS: %.1f", fps);
     ImGui::Text("Frame time: %.3f ms", 1000.0f / fps);
+    ImGui::Text("VSync: %s", engine::RenderQualitySettings::getInstance().enableVSync ? "ON" : "OFF");
+    ImGui::TextDisabled("FPS above is full editor loop; detailed CPU/GPU numbers below are render-graph only.");
+    if (m_isGameViewportVisible)
+        ImGui::TextDisabled("Game Viewport graph is active; table below shows only main Viewport graph.");
 
     auto &engineConfig = engine::EngineConfig::instance();
     bool detailedRenderProfiling = engineConfig.getDetailedRenderProfilingEnabled();
@@ -6373,8 +7311,11 @@ void Editor::drawBenchmark()
     }
     else
     {
-        ImGui::Text("VRAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
-        ImGui::Text("RAM usage: %ld mB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
+        ImGui::Text("VRAM usage: %ld MB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
+        ImGui::Text("RAM usage: %ld MB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
+        const auto gpuProperties = core::VulkanContext::getContext()->getPhysicalDevicePoperties();
+        if (gpuProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+            ImGui::TextDisabled("Integrated GPU detected: VRAM value reflects shared memory usage.");
         ImGui::Separator();
         ImGui::Text("Render Graph (frame #%llu)", static_cast<unsigned long long>(m_renderGraphProfilingData.frameIndex));
         ImGui::Text("Total draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
@@ -6399,6 +7340,12 @@ void Editor::drawBenchmark()
         }
         else
             ImGui::TextDisabled("GPU timing unavailable on this GPU/queue");
+
+        const double renderGraphFrameMs = m_renderGraphProfilingData.gpuTimingAvailable
+                                              ? std::max(m_renderGraphProfilingData.cpuFrameTimeMs, m_renderGraphProfilingData.gpuFrameTimeMs)
+                                              : m_renderGraphProfilingData.cpuFrameTimeMs;
+        if (renderGraphFrameMs > 0.0)
+            ImGui::Text("RenderGraph theoretical FPS: %.1f", 1000.0 / renderGraphFrameMs);
 
         if (ImGui::BeginTable("RenderGraphPassStats", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY))
         {
@@ -6818,6 +7765,14 @@ void Editor::drawUITools()
     ImGui::End();
 }
 
+void Editor::drawTerrainTools()
+{
+    if (!m_showTerrainTools)
+        return;
+
+    m_terrainTools.draw(&m_showTerrainTools, &m_notificationManager);
+}
+
 void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 {
     //! This is the biggest dog shit I've ever seen
@@ -7047,6 +8002,43 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
     const bool viewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     ImGuiIO &io = ImGui::GetIO();
 
+    bool terrainBrushConsumed = false;
+    const bool canUseTerrainBrush = hovered &&
+                                    imageHovered &&
+                                    m_showTerrainTools &&
+                                    !m_isViewportMouseCaptured &&
+                                    !ImGuizmo::IsOver() &&
+                                    !m_isColliderHandleHovered &&
+                                    !m_isColliderHandleActive &&
+                                    m_uiPlacementTool == UIPlacementTool::None &&
+                                    m_currentMode == EditorMode::EDIT &&
+                                    static_cast<bool>(m_editorCamera);
+
+    if (canUseTerrainBrush)
+    {
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const bool mouseInsideImage = mouse.x >= imageMin.x && mouse.x < imageMax.x &&
+                                      mouse.y >= imageMin.y && mouse.y < imageMax.y;
+
+        if (mouseInsideImage && ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        {
+            const glm::vec2 ndcPosition = viewportPixelToNdc(mouse, imageMin, imageMax);
+            terrainBrushConsumed = m_terrainTools.applyBrushStrokeFromNdc(
+                ndcPosition,
+                m_editorCamera.get(),
+                m_selectedEntity,
+                io.DeltaTime,
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left));
+
+            if (terrainBrushConsumed)
+                m_hasPendingObjectPick = false;
+        }
+        else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            m_terrainTools.cancelBrushStroke();
+    }
+    else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        m_terrainTools.cancelBrushStroke();
+
     if (viewportFocused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
     {
         if (m_currentMode != EditorMode::EDIT)
@@ -7068,6 +8060,7 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
     GLFWwindow *windowHandler = window.getRawHandler();
 
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsOver() &&
+        !terrainBrushConsumed &&
         !m_isColliderHandleHovered && !m_isColliderHandleActive &&
         m_viewportSizeX > 0 && m_viewportSizeY > 0)
     {

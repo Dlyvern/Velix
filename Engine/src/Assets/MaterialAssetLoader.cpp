@@ -97,6 +97,9 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
         hasNormalScale = true;
     }
 
+    if (json.contains("ior"))
+        material.ior = json["ior"].get<float>();
+
     if (json.contains("alpha_cutoff"))
         material.alphaCutoff = json["alpha_cutoff"].get<float>();
 
@@ -135,6 +138,7 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
     material.roughnessFactor = std::clamp(sanitizeFinite(material.roughnessFactor, 1.0f), 0.04f, 1.0f);
     material.aoStrength = std::clamp(sanitizeFinite(material.aoStrength, 1.0f), 0.0f, 1.0f);
     material.normalScale = std::max(0.0f, sanitizeFinite(material.normalScale, 1.0f));
+    material.ior = std::clamp(sanitizeFinite(material.ior, 1.5f), 1.0f, 2.6f);
     material.alphaCutoff = std::clamp(sanitizeFinite(material.alphaCutoff, 0.5f), 0.0f, 1.0f);
     material.uvScale.x = sanitizeFinite(material.uvScale.x, 1.0f);
     material.uvScale.y = sanitizeFinite(material.uvScale.y, 1.0f);
@@ -152,7 +156,10 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
     const uint32_t supportedFlags =
         engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK |
         engine::Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND |
-        engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED;
+        engine::Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED |
+        engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_V |
+        engine::Material::MaterialFlags::EMATERIAL_FLAG_FLIP_U |
+        engine::Material::MaterialFlags::EMATERIAL_FLAG_CLAMP_UV;
     material.flags &= supportedFlags;
 
     // Keep non-ORM materials dielectric unless author explicitly set values.

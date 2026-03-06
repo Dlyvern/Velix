@@ -357,6 +357,8 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
             colorBlendAttachments[2].colorWriteMask = 0;
             if (colorBlendAttachments.size() >= 5)
                 colorBlendAttachments[4].colorWriteMask = 0;
+            if (colorBlendAttachments.size() >= 6)
+                colorBlendAttachments[5].colorWriteMask = 0;
         }
     }
 

@@ -307,7 +307,7 @@ bool EditorRuntime::init()
 
     m_loadingFuture = std::async(std::launch::async, [this, entryScenePath]() -> engine::Scene::SharedPtr
                                  {
-                                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                                    std::this_thread::sleep_for(std::chrono::seconds(1));
                                      auto scene = std::make_shared<engine::Scene>();
                                      if (!scene->loadSceneFromFile(entryScenePath,
                                                                    [this](const std::string &status)
@@ -328,11 +328,9 @@ bool EditorRuntime::init()
     m_editor->setDockingFullscreen(true);
 
     initEditorRenderGraph();
-    initGameViewportRenderGraph();
 
     m_iblManager.createFallback();
     m_lightingRenderGraphPass->setIBLManager(&m_iblManager);
-    m_gameLightingRenderGraphPass->setIBLManager(&m_iblManager);
 
     m_editor->addOnViewportChangedCallback(std::bind(&EditorRuntime::applyEditorViewportExtent, this, std::placeholders::_1,
                                                      std::placeholders::_2));
@@ -474,6 +472,7 @@ void EditorRuntime::initEditorRenderGraph()
         m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gBufferRenderGraphPass->getEmissiveTextureHandlers(),
         m_gBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         &m_ssaoRenderGraphPass->getAOHandlers());
 
@@ -562,6 +561,7 @@ void EditorRuntime::initGameViewportRenderGraph()
         m_gameGBufferRenderGraphPass->getAlbedoTextureHandlers(),
         m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gameGBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getEmissiveTextureHandlers(),
         m_gameGBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         &m_gameSSAORenderGraphPass->getAOHandlers());
 
@@ -701,6 +701,16 @@ void EditorRuntime::tick(float deltaTime)
     if (!m_activeScene || !m_editor || !m_renderGraph)
         return;
 
+    bool shaderReloadRequested = m_editor->consumeShaderReloadRequest();
+    if (m_shaderHotReloader)
+    {
+        m_shaderHotReloader->update(static_cast<double>(deltaTime));
+        shaderReloadRequested = shaderReloadRequested || m_shaderHotReloader->consumeReloadRequest();
+    }
+
+    if (shaderReloadRequested)
+        engine::GraphicsPipelineManager::reloadShaders();
+
     if (m_stillLoadingTheScene && m_loadingFuture.valid())
     {
         const auto state = m_loadingFuture.wait_for(std::chrono::milliseconds(0));
@@ -777,6 +787,14 @@ void EditorRuntime::tick(float deltaTime)
         }
     }
 
+    const bool shouldRenderGameViewport = m_isPlaySessionActive || m_editor->isGameViewportVisible();
+    if (shouldRenderGameViewport && !m_gameViewportRenderGraph)
+    {
+        initGameViewportRenderGraph();
+        if (m_gameLightingRenderGraphPass)
+            m_gameLightingRenderGraphPass->setIBLManager(&m_iblManager);
+    }
+
     const uint32_t gameViewportWidth = m_editor->getGameViewportX();
     const uint32_t gameViewportHeight = m_editor->getGameViewportY();
     applyGameViewportExtent(gameViewportWidth, gameViewportHeight);
@@ -803,8 +821,6 @@ void EditorRuntime::tick(float deltaTime)
         m_shadowRenderGraphPass->syncQualitySettings();
     if (m_gameShadowRenderGraphPass)
         m_gameShadowRenderGraphPass->syncQualitySettings();
-
-    const bool shouldRenderGameViewport = m_isPlaySessionActive || m_editor->isGameViewportVisible();
 
     if (m_gameViewportRenderGraph && m_gameRenderCamera && shouldRenderGameViewport)
     {
@@ -861,6 +877,9 @@ void EditorRuntime::applyEditorViewportExtent(uint32_t width, uint32_t height)
 
 void EditorRuntime::applyGameViewportExtent(uint32_t width, uint32_t height)
 {
+    if (!m_gameViewportRenderGraph || !m_gameGBufferRenderGraphPass || !m_gameUIRenderGraphPass)
+        return;
+
     const VkExtent2D extent = makeScaledRenderExtent(width, height);
     if (extent.width == m_lastGameRenderExtent.width && extent.height == m_lastGameRenderExtent.height)
         return;

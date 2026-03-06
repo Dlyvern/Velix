@@ -7,6 +7,7 @@
 #include "Engine/Texture.hpp"
 #include "Engine/Assets/IAssetLoader.hpp"
 #include "Engine/Skeleton.hpp"
+#include "Engine/Terrain/TerrainAsset.hpp"
 
 #include <filesystem>
 #include <string>
@@ -26,9 +27,14 @@ public:
     static std::optional<ModelAsset> loadModel(const std::string &path);
     static std::optional<TextureAsset> loadTexture(const std::string &path);
     static std::optional<AudioAsset> loadAudio(const std::string &path);
-    static Texture::SharedPtr loadTextureGPU(const std::string &path, VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB);
-    static Texture::SharedPtr createTextureGPU(const TextureAsset &textureAsset, VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB);
+    static Texture::SharedPtr loadTextureGPU(const std::string &path,
+                                             VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB,
+                                             std::optional<uint32_t> maxDimensionOverride = std::nullopt);
+    static Texture::SharedPtr createTextureGPU(const TextureAsset &textureAsset,
+                                               VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB,
+                                               std::optional<uint32_t> maxDimensionOverride = std::nullopt);
     static std::optional<MaterialAsset> loadMaterial(const std::string &path);
+    static std::optional<TerrainAsset> loadTerrain(const std::string &path);
     static void setTextureImportMaxDimension(uint32_t maxDimension);
     static uint32_t getTextureImportMaxDimension();
     static void setTextureAssetImportRootDirectory(const std::filesystem::path &rootDirectory);

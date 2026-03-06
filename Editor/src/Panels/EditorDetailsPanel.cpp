@@ -31,9 +31,103 @@
 #include <cctype>
 #include <cstring>
 #include <filesystem>
+#include <vector>
 
 namespace
 {
+    std::string toLowerCopy(std::string value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
+                       { return static_cast<char>(std::tolower(character)); });
+        return value;
+    }
+
+    bool isParticleTextureAssetPath(const std::string &path)
+    {
+        if (path.empty())
+            return false;
+
+        const std::string lowerPath = toLowerCopy(path);
+        if (lowerPath.size() >= 14u && lowerPath.rfind(".tex.elixasset") == (lowerPath.size() - 14u))
+            return true;
+
+        const std::string extension = toLowerCopy(std::filesystem::path(path).extension().string());
+        return extension == ".png" ||
+               extension == ".jpg" ||
+               extension == ".jpeg" ||
+               extension == ".tga" ||
+               extension == ".bmp" ||
+               extension == ".dds" ||
+               extension == ".ktx" ||
+               extension == ".ktx2" ||
+               extension == ".hdr" ||
+               extension == ".exr";
+    }
+
+    std::string normalizePathAgainstProjectRoot(const std::string &rawPath, const std::filesystem::path &projectRoot)
+    {
+        if (rawPath.empty())
+            return {};
+
+        std::filesystem::path resolvedPath(rawPath);
+        if (resolvedPath.is_relative() && !projectRoot.empty())
+            resolvedPath = projectRoot / resolvedPath;
+
+        std::error_code errorCode;
+        resolvedPath = std::filesystem::absolute(resolvedPath, errorCode);
+        if (errorCode)
+            return std::filesystem::path(rawPath).lexically_normal().string();
+
+        return resolvedPath.lexically_normal().string();
+    }
+
+    std::vector<std::string> collectProjectParticleTextureCandidates(const std::filesystem::path &projectRoot)
+    {
+        std::vector<std::string> result;
+        if (projectRoot.empty() || !std::filesystem::exists(projectRoot))
+            return result;
+
+        std::error_code iteratorError;
+        for (std::filesystem::recursive_directory_iterator iterator(projectRoot, iteratorError), end; iterator != end; iterator.increment(iteratorError))
+        {
+            if (iteratorError)
+            {
+                iteratorError.clear();
+                continue;
+            }
+
+            if (!iterator->is_regular_file())
+                continue;
+
+            const std::filesystem::path candidatePath = iterator->path().lexically_normal();
+            if (!isParticleTextureAssetPath(candidatePath.string()))
+                continue;
+
+            result.push_back(candidatePath.string());
+        }
+
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return result;
+    }
+
+    std::string formatTexturePathForDisplay(const std::string &path, const std::filesystem::path &projectRoot)
+    {
+        if (path.empty())
+            return "<None>";
+
+        std::filesystem::path candidate(path);
+        if (candidate.is_absolute() && !projectRoot.empty())
+        {
+            std::error_code errorCode;
+            const std::filesystem::path relative = std::filesystem::relative(candidate, projectRoot, errorCode);
+            if (!errorCode && !relative.empty())
+                return relative.lexically_normal().string();
+        }
+
+        return candidate.lexically_normal().string();
+    }
+
     physx::PxTransform makePxTransformFromEntity(elix::engine::Entity *entity)
     {
         if (!entity)
@@ -1613,6 +1707,75 @@ void Editor::drawDetails()
                                 ImGui::Checkbox("Soft Particles", &rend->softParticles);
                                 if (rend->softParticles)
                                     ImGui::DragFloat("Soft Range", &rend->softParticleRange, 0.1f, 0.0f, 100.0f);
+
+                                const auto currentProject = m_currentProject.lock();
+                                const std::filesystem::path projectRoot = currentProject ? std::filesystem::path(currentProject->fullPath) : std::filesystem::path{};
+
+                                ImGui::Separator();
+                                ImGui::TextUnformatted("Particle Texture");
+
+                                VkDescriptorSet previewSet = m_assetsPreviewSystem.getPlaceholder();
+                                if (!rend->texturePath.empty())
+                                    previewSet = m_assetsPreviewSystem.getOrRequestTexturePreview(rend->texturePath);
+
+                                ImGui::Image(previewSet, ImVec2(52.0f, 52.0f));
+                                ImGui::SameLine();
+                                ImGui::BeginGroup();
+                                ImGui::TextWrapped("%s", formatTexturePathForDisplay(rend->texturePath, projectRoot).c_str());
+                                if (!rend->texturePath.empty() && ImGui::Button("Clear Texture"))
+                                    rend->texturePath.clear();
+                                ImGui::EndGroup();
+
+                                ImGui::Button("Drop texture asset here##ParticleTextureDrop");
+                                if (ImGui::BeginDragDropTarget())
+                                {
+                                    if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                                    {
+                                        std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
+                                        if (isParticleTextureAssetPath(droppedPath))
+                                        {
+                                            rend->texturePath = normalizePathAgainstProjectRoot(droppedPath, projectRoot);
+                                            m_notificationManager.showSuccess("Particle texture applied");
+                                        }
+                                        else
+                                            m_notificationManager.showWarning("Drop a texture asset for particles");
+                                    }
+                                    ImGui::EndDragDropTarget();
+                                }
+
+                                if (ImGui::Button("Select Texture##ParticleTexturePicker"))
+                                    ImGui::OpenPopup("ParticleTexturePickerPopup");
+
+                                if (ImGui::BeginPopup("ParticleTexturePickerPopup"))
+                                {
+                                    static char textureFilter[128] = "";
+                                    ImGui::InputText("Search##ParticleTextureFilter", textureFilter, sizeof(textureFilter));
+
+                                    const std::vector<std::string> candidates = collectProjectParticleTextureCandidates(projectRoot);
+                                    const std::string filterText = toLowerCopy(std::string(textureFilter));
+
+                                    if (candidates.empty())
+                                        ImGui::TextDisabled("No textures found in project");
+
+                                    for (const std::string &candidatePath : candidates)
+                                    {
+                                        const std::string displayPath = formatTexturePathForDisplay(candidatePath, projectRoot);
+                                        const std::string loweredDisplay = toLowerCopy(displayPath);
+                                        if (!filterText.empty() && loweredDisplay.find(filterText) == std::string::npos)
+                                            continue;
+
+                                        const bool isSelected = candidatePath == rend->texturePath;
+                                        if (ImGui::Selectable(displayPath.c_str(), isSelected))
+                                        {
+                                            rend->texturePath = candidatePath;
+                                            m_notificationManager.showSuccess("Particle texture selected");
+                                            ImGui::CloseCurrentPopup();
+                                            break;
+                                        }
+                                    }
+
+                                    ImGui::EndPopup();
+                                }
                                 ImGui::TreePop();
                             }
                         }

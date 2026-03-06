@@ -4,6 +4,7 @@
 #include "Engine/Assets/OBJAssetLoader.hpp"
 #include "Engine/Assets/FBXAssetLoader.hpp"
 #include "Engine/Assets/MaterialAssetLoader.hpp"
+#include "Engine/Assets/TerrainAssetLoader.hpp"
 #include "Engine/Physics/PhysXCore.hpp"
 #include "Engine/Scripting/VelixAPI.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
@@ -178,6 +179,7 @@ bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
     AssetsLoader::registerAssetLoader(std::make_shared<OBJAssetLoader>());
     AssetsLoader::registerAssetLoader(std::make_shared<FBXAssetLoader>());
     AssetsLoader::registerAssetLoader(std::make_shared<MaterialAssetLoader>());
+    AssetsLoader::registerAssetLoader(std::make_shared<TerrainAssetLoader>());
 
     m_window = platform::Window::create(800, 600, "Velix", platform::Window::WindowFlags::EWINDOW_FLAGS_DEFAULT);
     m_window->centerizedOnScreen();

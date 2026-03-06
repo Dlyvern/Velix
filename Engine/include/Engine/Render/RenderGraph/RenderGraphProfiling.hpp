@@ -7,6 +7,11 @@
 
 #include "volk.h"
 
+#include <chrono>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
@@ -14,6 +19,18 @@ class RenderGraphProfiling
 {
 public:
     RenderGraphProfiling(uint32_t renderGraphPassSize);
+
+    enum class CpuStage
+    {
+        WaitForFence,
+        AcquireImage,
+        Recompile,
+        Submit,
+        Present,
+        CommandPoolReset,
+        PrimaryCommandBufferEnd,
+        ResolveProfiling
+    };
 
     struct PassExecutionProfilingData
     {
@@ -108,6 +125,46 @@ public:
     void syncDetailedProfilingMode();
     bool isDetailedProfilingEnabled() const;
     void resolveFrameProfilingData(uint32_t frameIndex);
+    void beginFrameCpuProfiling(uint32_t frameIndex, double waitForFenceMs);
+    void onFenceWaitFailure(uint32_t frameIndex, double waitForFenceMs);
+    void recordCpuStage(uint32_t frameIndex, CpuStage stage, double milliseconds);
+
+    template <typename Fn>
+    auto measureCpuStage(uint32_t frameIndex, CpuStage stage, Fn &&fn) -> decltype(fn())
+    {
+        const auto start = std::chrono::high_resolution_clock::now();
+
+        if constexpr (std::is_void_v<decltype(fn())>)
+        {
+            std::forward<Fn>(fn)();
+            const auto end = std::chrono::high_resolution_clock::now();
+            recordCpuStage(frameIndex, stage, std::chrono::duration<double, std::milli>(end - start).count());
+        }
+        else
+        {
+            auto result = std::forward<Fn>(fn)();
+            const auto end = std::chrono::high_resolution_clock::now();
+            recordCpuStage(frameIndex, stage, std::chrono::duration<double, std::milli>(end - start).count());
+            return result;
+        }
+    }
+
+    template <typename Fn>
+    void measureFrameCpuTime(uint32_t frameIndex, Fn &&fn)
+    {
+        const auto start = std::chrono::high_resolution_clock::now();
+        std::forward<Fn>(fn)();
+        const auto end = std::chrono::high_resolution_clock::now();
+        setCpuFrameTimesByFrameMs(frameIndex, std::chrono::duration<double, std::milli>(end - start).count());
+    }
+
+    void beginFrameGpuProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t frameIndex);
+    void beginPassProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t frameIndex,
+                            PassExecutionProfilingData &executionProfilingData, std::string_view passName);
+    void endPassProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t frameIndex,
+                          PassExecutionProfilingData &&executionProfilingData);
+    void endFrameGpuProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t frameIndex);
+    void markFrameSubmitted(uint32_t frameIndex);
 
     const RenderGraphFrameProfilingData &getLastFrameProfilingData() const
     {

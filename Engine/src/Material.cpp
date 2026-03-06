@@ -27,7 +27,7 @@ namespace
 
     elix::engine::Texture::SharedPtr getDefaultOrmTexture()
     {
-        return elix::engine::Texture::getDefaultOrmTexture(); // AO=1, Roughness=1, Metallic=0
+        return elix::engine::Texture::getDefaultOrmTexture(); // AO=1, Roughness=1, Metallic=1 (neutral map)
     }
 
     elix::engine::Texture::SharedPtr getDefaultBlackTexture()

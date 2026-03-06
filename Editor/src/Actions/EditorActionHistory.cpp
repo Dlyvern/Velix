@@ -3,6 +3,7 @@
 #include "Core/Logger.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <system_error>
@@ -13,6 +14,61 @@ namespace actions
 {
     namespace
     {
+        bool looksLikeWindowsAbsolutePath(const std::string &path)
+        {
+            return path.size() >= 3u &&
+                   std::isalpha(static_cast<unsigned char>(path[0])) &&
+                   path[1] == ':' &&
+                   (path[2] == '\\' || path[2] == '/');
+        }
+
+        bool isPathLikeJsonField(const std::string &fieldName)
+        {
+            return fieldName == "path" ||
+                   fieldName == "asset_path" ||
+                   fieldName == "texture_path" ||
+                   fieldName == "font_path" ||
+                   fieldName == "material_override_path" ||
+                   fieldName == "skybox" ||
+                   fieldName == "skybox_hdr";
+        }
+
+        std::string resolveSerializedPathAgainstDirectory(const std::string &rawPath, const std::filesystem::path &baseDirectory)
+        {
+            if (rawPath.empty() || looksLikeWindowsAbsolutePath(rawPath))
+                return rawPath;
+
+            std::filesystem::path parsedPath(rawPath);
+            if (!parsedPath.is_absolute())
+                parsedPath = baseDirectory / parsedPath;
+
+            return parsedPath.lexically_normal().string();
+        }
+
+        void absolutizeJsonPathFields(nlohmann::json &jsonValue,
+                                      const std::filesystem::path &baseDirectory,
+                                      const std::string &currentFieldName = {})
+        {
+            if (jsonValue.is_object())
+            {
+                for (auto it = jsonValue.begin(); it != jsonValue.end(); ++it)
+                    absolutizeJsonPathFields(it.value(), baseDirectory, it.key());
+                return;
+            }
+
+            if (jsonValue.is_array())
+            {
+                for (auto &arrayValue : jsonValue)
+                    absolutizeJsonPathFields(arrayValue, baseDirectory, currentFieldName);
+                return;
+            }
+
+            if (!jsonValue.is_string() || !isPathLikeJsonField(currentFieldName))
+                return;
+
+            jsonValue = resolveSerializedPathAgainstDirectory(jsonValue.get<std::string>(), baseDirectory);
+        }
+
         std::string makeUniqueName(const std::string &baseName, const std::unordered_set<std::string> &existingNames)
         {
             if (!existingNames.contains(baseName))
@@ -287,7 +343,9 @@ namespace actions
             if (objectJson["id"].get<std::uint32_t>() != entityId)
                 continue;
 
-            m_serializedEntityObject = objectJson.dump();
+            auto serializedEntity = objectJson;
+            absolutizeJsonPathFields(serializedEntity, tempScenePath.parent_path());
+            m_serializedEntityObject = serializedEntity.dump();
             return true;
         }
 
@@ -334,6 +392,13 @@ namespace actions
 
         if (!sceneJson.contains("game_objects") || !sceneJson["game_objects"].is_array())
             sceneJson["game_objects"] = nlohmann::json::array();
+
+        // Snapshot JSON is written against temporary scene location; normalize all
+        // path-like fields back to absolute paths before reloading from temp file.
+        for (auto &objectJson : sceneJson["game_objects"])
+            absolutizeJsonPathFields(objectJson, tempScenePath.parent_path());
+
+        absolutizeJsonPathFields(copiedEntityJson, tempScenePath.parent_path());
 
         std::unordered_set<std::uint32_t> existingIds;
         std::unordered_set<std::string> existingNames;

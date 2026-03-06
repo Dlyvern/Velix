@@ -57,6 +57,7 @@ public:
     static SharedPtr getDefaultNormalTexture();
     static SharedPtr getDefaultOrmTexture();
     static SharedPtr getDefaultBlackTexture();
+    static bool consumeMemoryWarning(std::string &outMessage);
 
 private:
     VkDevice m_device{VK_NULL_HANDLE};
@@ -64,6 +65,7 @@ private:
     int m_width{1};
     int m_height{1};
     int m_channels{0};
+    uint32_t m_mipLevels{1u};
     core::Image::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};
     core::Sampler::SharedPtr m_sampler{nullptr};

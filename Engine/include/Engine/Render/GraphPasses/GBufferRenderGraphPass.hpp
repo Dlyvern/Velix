@@ -51,6 +51,11 @@ public:
         return m_tangentAnisoTextureHandlers;
     }
 
+    std::vector<RGPResourceHandler> &getEmissiveTextureHandlers()
+    {
+        return m_emissiveTextureHandlers;
+    }
+
 private:
     enum class ExecutionVariant : uint8_t
     {
@@ -58,17 +63,19 @@ private:
         OBJECT_ONLY = 1
     };
 
-    std::array<VkClearValue, 6> m_clearValues;
+    std::array<VkClearValue, 7> m_clearValues;
 
     std::vector<const RenderTarget *> m_normalRenderTargets;
     std::vector<const RenderTarget *> m_albedoRenderTargets;
     std::vector<const RenderTarget *> m_materialRenderTargets;
     std::vector<const RenderTarget *> m_tangentAnisoRenderTargets;
+    std::vector<const RenderTarget *> m_emissiveRenderTargets;
 
     std::vector<const RenderTarget *> m_normalMsaaRenderTargets;
     std::vector<const RenderTarget *> m_albedoMsaaRenderTargets;
     std::vector<const RenderTarget *> m_materialMsaaRenderTargets;
     std::vector<const RenderTarget *> m_tangentAnisoMsaaRenderTargets;
+    std::vector<const RenderTarget *> m_emissiveMsaaRenderTargets;
 
     const RenderTarget *m_depthRenderTarget{nullptr};
     const RenderTarget *m_objectIdRenderTarget{nullptr};
@@ -89,10 +96,12 @@ private:
     std::vector<RGPResourceHandler> m_albedoTextureHandlers;
     std::vector<RGPResourceHandler> m_materialTextureHandlers;
     std::vector<RGPResourceHandler> m_tangentAnisoTextureHandlers;
+    std::vector<RGPResourceHandler> m_emissiveTextureHandlers;
     std::vector<RGPResourceHandler> m_normalMsaaTextureHandlers;
     std::vector<RGPResourceHandler> m_albedoMsaaTextureHandlers;
     std::vector<RGPResourceHandler> m_materialMsaaTextureHandlers;
     std::vector<RGPResourceHandler> m_tangentAnisoMsaaTextureHandlers;
+    std::vector<RGPResourceHandler> m_emissiveMsaaTextureHandlers;
 
     RGPResourceHandler m_depthTextureHandler;
     RGPResourceHandler m_objectIdTextureHandler;

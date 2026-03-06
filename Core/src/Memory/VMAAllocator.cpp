@@ -217,16 +217,32 @@ AllocatedBuffer VMAAllocator::createBuffer(VkDevice device, VkPhysicalDevice phy
 
 VkDeviceSize VMAAllocator::getTotalAllocatedVRAM() const
 {
-    VmaTotalStatistics stats{};
-    vmaCalculateStatistics(m_allocator, &stats);
+    if (!m_allocator)
+        return 0;
 
-    auto bytes = stats.total.statistics.allocationBytes;
+    const VkPhysicalDeviceMemoryProperties *memoryProperties = nullptr;
+    vmaGetMemoryProperties(m_allocator, &memoryProperties);
 
-    double megabytes = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    if (!memoryProperties)
+    {
+        VmaTotalStatistics stats{};
+        vmaCalculateStatistics(m_allocator, &stats);
+        return static_cast<VkDeviceSize>(stats.total.statistics.allocationBytes / (1024ull * 1024ull));
+    }
 
-    return megabytes;
-    // printf("Total allocation count: %u\n",
-    //        stats.total.statistics.allocationCount);
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(m_allocator, budgets);
+
+    VkDeviceSize totalDeviceLocalUsageBytes = 0;
+    for (uint32_t heapIndex = 0; heapIndex < memoryProperties->memoryHeapCount; ++heapIndex)
+    {
+        if ((memoryProperties->memoryHeaps[heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0)
+            continue;
+
+        totalDeviceLocalUsageBytes += static_cast<VkDeviceSize>(budgets[heapIndex].usage);
+    }
+
+    return totalDeviceLocalUsageBytes / (1024ull * 1024ull);
 }
 
 void VMAAllocator::destroyBuffer(VkDevice device, AllocatedBuffer &buffer)

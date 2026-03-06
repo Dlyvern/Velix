@@ -1,6 +1,7 @@
 #include "Core/CommandBuffer.hpp"
 #include "Core/VulkanContext.hpp"
 #include "Core/VulkanAssert.hpp"
+#include "Core/VulkanHelpers.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -58,6 +59,8 @@ bool CommandBuffer::submit(VkQueue queue, const std::vector<VkSemaphore> &waitSe
     submitInfo.signalSemaphoreCount = signalSemaphores.size();
     submitInfo.pSignalSemaphores = signalSemaphores.data();
 
+    // Queue operations on the same VkQueue require external host synchronization.
+    std::lock_guard<std::mutex> submitLock(helpers::queueHostSyncMutex());
     if (VX_VK_TRY(vkQueueSubmit(queue, 1, &submitInfo, fence)) != VK_SUCCESS)
         return false;
 

@@ -1,5 +1,6 @@
 #include "Engine/Render/RenderGraph/RenderGraph.hpp"
 #include "Core/VulkanContext.hpp"
+#include "Core/VulkanHelpers.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 #include "Engine/Render/ObjectIdEncoding.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
@@ -19,6 +20,7 @@
 
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
+#include "Engine/Components/TerrainComponent.hpp"
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
@@ -37,6 +39,7 @@ struct CameraUBO
     glm::mat4 projection;
     glm::mat4 invView;
     glm::mat4 invProjection;
+    glm::vec4 textureLodParams; // x=startDistance, y=endDistance, z=maxDistanceBias, w=globalLodBias
 };
 
 struct LightData
@@ -244,16 +247,43 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         if (looksLikeWindowsAbsolutePath(texturePath))
             return texturePath;
 
+        auto fileExists = [](const std::filesystem::path &path) -> bool
+        {
+            std::error_code errorCode;
+            return std::filesystem::exists(path, errorCode) && !errorCode;
+        };
+
         const std::filesystem::path parsedPath(texturePath);
         if (parsedPath.is_absolute())
             return makeAbsoluteNormalized(parsedPath).string();
 
         if (!materialAssetPath.empty())
         {
-            const std::filesystem::path materialRelativePath = makeAbsoluteNormalized(materialAssetPath.parent_path() / parsedPath);
-            std::error_code errorCode;
-            if (std::filesystem::exists(materialRelativePath, errorCode) && !errorCode)
+            const std::filesystem::path materialDirectory = makeAbsoluteNormalized(materialAssetPath.parent_path());
+
+            const std::filesystem::path materialRelativePath = makeAbsoluteNormalized(materialDirectory / parsedPath);
+            if (fileExists(materialRelativePath))
                 return materialRelativePath.string();
+
+            // Support project-relative paths serialized in materials (for example:
+            // "Office.model_Materials/Foo.tex.elixasset") by probing parent
+            // directories of the material file.
+            std::filesystem::path probeDirectory = materialDirectory;
+            while (!probeDirectory.empty())
+            {
+                const std::filesystem::path ancestorRelativePath = makeAbsoluteNormalized(probeDirectory / parsedPath);
+                if (fileExists(ancestorRelativePath))
+                    return ancestorRelativePath.string();
+
+                if (!probeDirectory.has_parent_path())
+                    break;
+
+                const std::filesystem::path parentDirectory = probeDirectory.parent_path();
+                if (parentDirectory == probeDirectory)
+                    break;
+
+                probeDirectory = parentDirectory;
+            }
         }
 
         const std::filesystem::path cwdRelativePath = makeAbsoluteNormalized(parsedPath);
@@ -418,7 +448,11 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         return material;
     };
 
-    auto resolveMeshMaterial = [&](const CPUMesh &mesh, StaticMeshComponent *staticComponent, SkeletalMeshComponent *skeletalComponent, size_t slot) -> Material::SharedPtr
+    auto resolveMeshMaterial = [&](const CPUMesh &mesh,
+                                   StaticMeshComponent *staticComponent,
+                                   SkeletalMeshComponent *skeletalComponent,
+                                   TerrainComponent *terrainComponent,
+                                   size_t slot) -> Material::SharedPtr
     {
         if (staticComponent)
         {
@@ -453,6 +487,16 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
             if (overrideMaterial)
                 return overrideMaterial;
+        }
+        else if (terrainComponent)
+        {
+            const std::string &overridePath = terrainComponent->getMaterialOverridePath();
+            if (!overridePath.empty())
+            {
+                auto overrideMaterial = resolveMaterialOverrideFromPath(overridePath);
+                if (overrideMaterial)
+                    return overrideMaterial;
+            }
         }
 
         if (mesh.material.albedoTexture.empty())
@@ -555,12 +599,18 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
         auto staticMeshComponent = entity->getComponent<StaticMeshComponent>();
         auto skeletalMeshComponent = entity->getComponent<SkeletalMeshComponent>();
+        auto terrainComponent = entity->getComponent<TerrainComponent>();
 
         const std::vector<CPUMesh> *meshes = nullptr;
         if (staticMeshComponent)
             meshes = &staticMeshComponent->getMeshes();
         else if (skeletalMeshComponent)
             meshes = &skeletalMeshComponent->getMeshes();
+        else if (terrainComponent)
+        {
+            terrainComponent->ensureChunkMeshesBuilt();
+            meshes = &terrainComponent->getChunkMeshes();
+        }
 
         if (!meshes || meshes->empty())
         {
@@ -583,6 +633,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         {
             drawItem.meshes.clear();
             drawItem.meshes.reserve(meshes->size());
+            drawItem.localMeshGeometryHashes.clear();
+            drawItem.localMeshGeometryHashes.reserve(meshes->size());
             drawItem.localMeshBoundsCenters.clear();
             drawItem.localMeshBoundsCenters.reserve(meshes->size());
             drawItem.localMeshBoundsRadii.clear();
@@ -592,10 +644,11 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
             for (const auto &mesh : *meshes)
             {
+                const std::size_t hashData = computeMeshGeometryHash(mesh);
                 drawItem.meshes.push_back(createDrawMeshInstance(mesh));
+                drawItem.localMeshGeometryHashes.push_back(hashData);
                 drawItem.localMeshTransforms.push_back(mesh.localTransform);
 
-                const std::size_t hashData = computeMeshGeometryHash(mesh);
                 const auto boundsIt = m_meshLocalBoundsByHash.find(hashData);
                 if (boundsIt != m_meshLocalBoundsByHash.end())
                 {
@@ -614,8 +667,34 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         {
             if (meshIndex >= drawItem.localMeshTransforms.size())
                 drawItem.localMeshTransforms.resize(meshes->size(), glm::mat4(1.0f));
+            if (meshIndex >= drawItem.localMeshGeometryHashes.size())
+                drawItem.localMeshGeometryHashes.resize(meshes->size(), 0u);
+            if (meshIndex >= drawItem.localMeshBoundsCenters.size())
+                drawItem.localMeshBoundsCenters.resize(meshes->size(), glm::vec3(0.0f));
+            if (meshIndex >= drawItem.localMeshBoundsRadii.size())
+                drawItem.localMeshBoundsRadii.resize(meshes->size(), 0.0f);
 
             const CPUMesh &sourceMesh = (*meshes)[meshIndex];
+            const std::size_t currentGeometryHash = computeMeshGeometryHash(sourceMesh);
+            if (!drawItem.meshes[meshIndex] ||
+                drawItem.localMeshGeometryHashes[meshIndex] != currentGeometryHash)
+            {
+                drawItem.meshes[meshIndex] = createDrawMeshInstance(sourceMesh);
+                drawItem.localMeshGeometryHashes[meshIndex] = currentGeometryHash;
+
+                const auto boundsIt = m_meshLocalBoundsByHash.find(currentGeometryHash);
+                if (boundsIt != m_meshLocalBoundsByHash.end())
+                {
+                    drawItem.localMeshBoundsCenters[meshIndex] = boundsIt->second.center;
+                    drawItem.localMeshBoundsRadii[meshIndex] = boundsIt->second.radius;
+                }
+                else
+                {
+                    drawItem.localMeshBoundsCenters[meshIndex] = glm::vec3(0.0f);
+                    drawItem.localMeshBoundsRadii[meshIndex] = 0.0f;
+                }
+            }
+
             glm::mat4 meshLocalTransform = sourceMesh.localTransform;
 
             if (skeletalMeshComponent && sourceMesh.attachedBoneId >= 0)
@@ -633,7 +712,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 continue;
 
             drawItem.meshes[meshIndex]->material =
-                resolveMeshMaterial((*meshes)[meshIndex], staticMeshComponent, skeletalMeshComponent, meshIndex);
+                resolveMeshMaterial((*meshes)[meshIndex], staticMeshComponent, skeletalMeshComponent, terrainComponent, meshIndex);
         }
 
         glm::vec3 boundsMin(FLT_MAX);
@@ -1345,6 +1424,14 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     cameraUBO.projection[1][1] *= -1;
     cameraUBO.invProjection = glm::inverse(cameraUBO.projection);
     cameraUBO.invView = glm::inverse(cameraUBO.view);
+    {
+        const auto &quality = RenderQualitySettings::getInstance();
+        cameraUBO.textureLodParams = glm::vec4(
+            std::max(0.0f, quality.textureLodDistanceStart),
+            std::max(0.0f, quality.textureLodDistanceEnd),
+            std::max(0.0f, quality.textureLodDistanceBias),
+            std::clamp(quality.textureLodBias, -2.0f, 8.0f));
+    }
 
     m_perFrameData.projection = cameraUBO.projection;
     m_perFrameData.view = cameraUBO.view;
@@ -1359,6 +1446,9 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
 
     previewCameraUBO.projection = glm::perspective(glm::radians(45.0f), 1.0f, 0.1f, 10.0f);
     previewCameraUBO.projection[1][1] *= -1;
+    previewCameraUBO.invProjection = glm::inverse(previewCameraUBO.projection);
+    previewCameraUBO.invView = glm::inverse(previewCameraUBO.view);
+    previewCameraUBO.textureLodParams = cameraUBO.textureLodParams;
 
     m_perFrameData.previewProjection = previewCameraUBO.projection;
     m_perFrameData.previewView = previewCameraUBO.view;
@@ -1649,7 +1739,10 @@ void RenderGraph::recreateSwapChain()
     commandBuffer.end();
 
     commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
-    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    {
+        std::lock_guard<std::mutex> queueLock(core::helpers::queueHostSyncMutex());
+        vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    }
 
     for (const auto &[id, renderPass] : m_renderGraphPasses)
         renderPass.renderGraphPass->compile(m_renderGraphPassesStorage);
@@ -1662,26 +1755,27 @@ bool RenderGraph::begin()
     utilities::AsyncGpuUpload::collectFinished(m_device);
     m_renderGraphProfiling->syncDetailedProfilingMode();
 
-    auto &cpuStageProfilingData = m_renderGraphProfiling->getCpuStageProfilingDataByFrame(m_currentFrame);
-
     // NOTE: do NOT reset the slot yet — it still holds complete profiling data from the
     // previous time this frame slot was used (2 frames ago). We resolve it below before
     // overwriting it, so that all fields (commandPoolResetMs, primaryCbEndMs, submitMs,
     // presentMs, etc.) are read correctly instead of as zeros.
     const bool detailedProfilingEnabled = m_renderGraphProfiling->isDetailedProfilingEnabled();
 
-    const auto waitForFenceStart = std::chrono::high_resolution_clock::now();
-    if (VkResult result = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX); result != VK_SUCCESS)
+    const VkResult waitForFenceResult = m_renderGraphProfiling->measureCpuStage(
+        m_currentFrame,
+        RenderGraphProfiling::CpuStage::WaitForFence,
+        [&]()
+        {
+            return vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+        });
+    const double currentFenceWaitMs = m_renderGraphProfiling->getCpuStageProfilingDataByFrame(m_currentFrame).waitForFenceMs;
+
+    if (waitForFenceResult != VK_SUCCESS)
     {
-        const auto waitForFenceEnd = std::chrono::high_resolution_clock::now();
-        const double fenceWaitMs = std::chrono::duration<double, std::milli>(waitForFenceEnd - waitForFenceStart).count();
-        m_renderGraphProfiling->resetCpuStageProfilingDataByFrame(m_currentFrame);
-        cpuStageProfilingData.waitForFenceMs = fenceWaitMs;
-        VX_ENGINE_ERROR_STREAM("Failed to wait for fences: " << core::helpers::vulkanResultToString(result) << '\n');
+        m_renderGraphProfiling->onFenceWaitFailure(m_currentFrame, currentFenceWaitMs);
+        VX_ENGINE_ERROR_STREAM("Failed to wait for fences: " << core::helpers::vulkanResultToString(waitForFenceResult) << '\n');
         return false;
     }
-    const auto waitForFenceEnd = std::chrono::high_resolution_clock::now();
-    const double currentFenceWaitMs = std::chrono::duration<double, std::milli>(waitForFenceEnd - waitForFenceStart).count();
 
     // Resize/fullscreen events can arrive while UI code is building a frame.
     // Recreate swapchain only from here, after fence wait, to avoid re-entrant resize work.
@@ -1735,45 +1829,25 @@ bool RenderGraph::begin()
         return false;
     }
 
-    // Resolve profiling data BEFORE resetting the slot. At this point the slot still
-    // contains the complete data from 2 frames ago (all fields fully written), so the
-    // resolve sees accurate commandPoolResetMs, primaryCbEndMs, submitMs, presentMs, etc.
-    double currentResolveProfilingMs = 0.0;
-    if (detailedProfilingEnabled && m_renderGraphProfiling->hasPendingProfilingResolveByFrame(m_currentFrame))
-    {
-        const auto resolveProfilingStart = std::chrono::high_resolution_clock::now();
-        m_renderGraphProfiling->resolveFrameProfilingData(m_currentFrame);
-        currentResolveProfilingMs = std::chrono::duration<double, std::milli>(
-                                        std::chrono::high_resolution_clock::now() - resolveProfilingStart)
-                                        .count();
+    // Resolve profiling for the previous use of this frame slot, then reset and seed
+    // current CPU stage timings (fence wait + resolve profiling).
+    m_renderGraphProfiling->beginFrameCpuProfiling(m_currentFrame, currentFenceWaitMs);
 
-        m_renderGraphProfiling->setPendingProfilingResolveByFrame(m_currentFrame, false);
-    }
-    else if (!detailedProfilingEnabled)
-    {
-        m_renderGraphProfiling->setPendingProfilingResolveByFrame(m_currentFrame, false);
-    }
-
-    // Reset the slot now that we have read the previous frame's data, then write
-    // the current frame's fence-wait and resolve-profiling timings.
-    m_renderGraphProfiling->resetCpuStageProfilingDataByFrame(m_currentFrame);
-    cpuStageProfilingData = m_renderGraphProfiling->getCpuStageProfilingDataByFrame(m_currentFrame);
-    // cpuStageProfilingData = FrameCpuStageProfilingData{};
-    cpuStageProfilingData.waitForFenceMs = currentFenceWaitMs;
-    cpuStageProfilingData.resolveProfilingMs = currentResolveProfilingMs;
-
-    const auto commandPoolResetStart = std::chrono::high_resolution_clock::now();
-    m_commandPools[m_currentFrame]->reset(0);
-    cpuStageProfilingData.commandPoolResetMs = std::chrono::duration<double, std::milli>(
-                                                   std::chrono::high_resolution_clock::now() - commandPoolResetStart)
-                                                   .count();
+    m_renderGraphProfiling->measureCpuStage(
+        m_currentFrame,
+        RenderGraphProfiling::CpuStage::CommandPoolReset,
+        [&]()
+        { m_commandPools[m_currentFrame]->reset(0); });
 
     if (m_presentToSwapchain)
     {
-        const auto acquireImageStart = std::chrono::high_resolution_clock::now();
-        VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
-        const auto acquireImageEnd = std::chrono::high_resolution_clock::now();
-        cpuStageProfilingData.acquireImageMs = std::chrono::duration<double, std::milli>(acquireImageEnd - acquireImageStart).count();
+        VkResult result = m_renderGraphProfiling->measureCpuStage(
+            m_currentFrame,
+            RenderGraphProfiling::CpuStage::AcquireImage,
+            [&]()
+            {
+                return vkAcquireNextImageKHR(m_device, m_swapchain->vk(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
+            });
 
         if (result == VK_ERROR_OUT_OF_DATE_KHR)
         {
@@ -1789,7 +1863,7 @@ bool RenderGraph::begin()
     }
     else
     {
-        cpuStageProfilingData.acquireImageMs = 0.0;
+        m_renderGraphProfiling->recordCpuStage(m_currentFrame, RenderGraphProfiling::CpuStage::AcquireImage, 0.0);
         const uint32_t imageCount = std::max(1u, m_swapchain->getImageCount());
         m_imageIndex = m_currentFrame % imageCount;
     }
@@ -1805,151 +1879,141 @@ bool RenderGraph::begin()
 
     if (!dirtyPassIds.empty())
     {
-        const auto recompileStart = std::chrono::high_resolution_clock::now();
-
-        vkDeviceWaitIdle(m_device);
-
-        std::unordered_set<uint32_t> dirtyPassIdsSet(dirtyPassIds.begin(), dirtyPassIds.end());
-        std::unordered_set<uint32_t> passesToCompile;
-        std::queue<uint32_t> pendingPassIds;
-
-        for (const uint32_t dirtyPassId : dirtyPassIds)
-            pendingPassIds.push(dirtyPassId);
-
-        while (!pendingPassIds.empty())
-        {
-            const uint32_t passId = pendingPassIds.front();
-            pendingPassIds.pop();
-
-            if (!passesToCompile.insert(passId).second)
-                continue;
-
-            auto *passData = findRenderGraphPassById(passId);
-            if (!passData)
+        m_renderGraphProfiling->measureCpuStage(
+            m_currentFrame,
+            RenderGraphProfiling::CpuStage::Recompile,
+            [&]()
             {
-                VX_ENGINE_ERROR_STREAM("Failed to find pass while resolving recompilation dependencies: " << passId << '\n');
-                continue;
-            }
+                vkDeviceWaitIdle(m_device);
 
-            for (const uint32_t dependentPassId : passData->outgoing)
-                pendingPassIds.push(dependentPassId);
-        }
+                std::unordered_set<uint32_t> dirtyPassIdsSet(dirtyPassIds.begin(), dirtyPassIds.end());
+                std::unordered_set<uint32_t> passesToCompile;
+                std::queue<uint32_t> pendingPassIds;
 
-        std::vector<RGPResourceHandler> resourcesToRecreate;
-        resourcesToRecreate.reserve(m_renderGraphPasses.size() * 2);
-        std::unordered_set<RGPResourceHandler> uniqueResources;
+                for (const uint32_t dirtyPassId : dirtyPassIds)
+                    pendingPassIds.push(dirtyPassId);
 
-        for (const uint32_t dirtyPassId : dirtyPassIdsSet)
-        {
-            const auto *passData = findRenderGraphPassById(dirtyPassId);
-            if (!passData)
-                continue;
+                while (!pendingPassIds.empty())
+                {
+                    const uint32_t passId = pendingPassIds.front();
+                    pendingPassIds.pop();
 
-            for (const auto &write : passData->passInfo.writes)
-            {
-                if (uniqueResources.insert(write.resourceId).second)
-                    resourcesToRecreate.push_back(write.resourceId);
-            }
-        }
+                    if (!passesToCompile.insert(passId).second)
+                        continue;
 
-        auto barriers = m_renderGraphPassesCompiler.compile(resourcesToRecreate, m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
+                    auto *passData = findRenderGraphPassById(passId);
+                    if (!passData)
+                    {
+                        VX_ENGINE_ERROR_STREAM("Failed to find pass while resolving recompilation dependencies: " << passId << '\n');
+                        continue;
+                    }
 
-        if (!barriers.empty())
-        {
-            auto commandBuffer = core::CommandBuffer::create(*core::VulkanContext::getContext()->getGraphicsCommandPool());
-            commandBuffer.begin();
+                    for (const uint32_t dependentPassId : passData->outgoing)
+                        pendingPassIds.push(dependentPassId);
+                }
 
-            VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-            dep.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
-            dep.pImageMemoryBarriers = barriers.data();
+                std::vector<RGPResourceHandler> resourcesToRecreate;
+                resourcesToRecreate.reserve(m_renderGraphPasses.size() * 2);
+                std::unordered_set<RGPResourceHandler> uniqueResources;
 
-            vkCmdPipelineBarrier2(commandBuffer, &dep);
+                for (const uint32_t dirtyPassId : dirtyPassIdsSet)
+                {
+                    const auto *passData = findRenderGraphPassById(dirtyPassId);
+                    if (!passData)
+                        continue;
 
-            commandBuffer.end();
+                    for (const auto &write : passData->passInfo.writes)
+                    {
+                        if (uniqueResources.insert(write.resourceId).second)
+                            resourcesToRecreate.push_back(write.resourceId);
+                    }
+                }
 
-            commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
-            vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
-        }
+                auto barriers = m_renderGraphPassesCompiler.compile(resourcesToRecreate, m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
 
-        auto findPassDataByPtr = [&](const IRenderGraphPass *passPtr) -> RenderGraphPassData *
-        {
-            for (auto &[_, passData] : m_renderGraphPasses)
-            {
-                if (passData.renderGraphPass.get() == passPtr)
-                    return &passData;
-            }
+                if (!barriers.empty())
+                {
+                    auto commandBuffer = core::CommandBuffer::create(*core::VulkanContext::getContext()->getGraphicsCommandPool());
+                    commandBuffer.begin();
 
-            return nullptr;
-        };
+                    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+                    dep.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+                    dep.pImageMemoryBarriers = barriers.data();
 
-        for (const auto *sortedPass : m_sortedRenderGraphPasses)
-        {
-            auto *passData = findPassDataByPtr(sortedPass);
-            if (!passData)
-            {
-                VX_ENGINE_ERROR_STREAM("Failed to find sorted pass while recompiling render graph\n");
-                continue;
-            }
+                    vkCmdPipelineBarrier2(commandBuffer, &dep);
 
-            if (!passesToCompile.contains(passData->id))
-                continue;
+                    commandBuffer.end();
 
-            passData->renderGraphPass->compile(m_renderGraphPassesStorage);
-        }
+                    commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
+                    {
+                        std::lock_guard<std::mutex> queueLock(core::helpers::queueHostSyncMutex());
+                        vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+                    }
+                }
 
-        if (m_sortedRenderGraphPasses.empty())
-        {
-            for (const uint32_t passId : passesToCompile)
-            {
-                auto *passData = findRenderGraphPassById(passId);
-                if (!passData)
-                    continue;
+                auto findPassDataByPtr = [&](const IRenderGraphPass *passPtr) -> RenderGraphPassData *
+                {
+                    for (auto &[_, passData] : m_renderGraphPasses)
+                    {
+                        if (passData.renderGraphPass.get() == passPtr)
+                            return &passData;
+                    }
 
-                passData->renderGraphPass->compile(m_renderGraphPassesStorage);
-            }
-        }
+                    return nullptr;
+                };
 
-        for (const uint32_t dirtyPassId : dirtyPassIdsSet)
-        {
-            auto *passData = findRenderGraphPassById(dirtyPassId);
-            if (passData)
-                passData->renderGraphPass->recompilationIsDone();
-        }
+                for (const auto *sortedPass : m_sortedRenderGraphPasses)
+                {
+                    auto *passData = findPassDataByPtr(sortedPass);
+                    if (!passData)
+                    {
+                        VX_ENGINE_ERROR_STREAM("Failed to find sorted pass while recompiling render graph\n");
+                        continue;
+                    }
 
-        // Invalidate execution cache for any pass that was recompiled
-        // (its resources/image handles may have changed).
-        if (m_passExecutionCache.size() == m_sortedRenderGraphPasses.size())
-        {
-            for (size_t i = 0; i < m_sortedRenderGraphPasses.size(); ++i)
-            {
-                auto *passData = findPassDataByPtr(m_sortedRenderGraphPasses[i]);
-                if (passData && passesToCompile.contains(passData->id))
-                    m_passExecutionCache[i].valid = false;
-            }
-        }
+                    if (!passesToCompile.contains(passData->id))
+                        continue;
 
-        const auto recompileEnd = std::chrono::high_resolution_clock::now();
-        cpuStageProfilingData.recompileMs = std::chrono::duration<double, std::milli>(recompileEnd - recompileStart).count();
+                    passData->renderGraphPass->compile(m_renderGraphPassesStorage);
+                }
+
+                if (m_sortedRenderGraphPasses.empty())
+                {
+                    for (const uint32_t passId : passesToCompile)
+                    {
+                        auto *passData = findRenderGraphPassById(passId);
+                        if (!passData)
+                            continue;
+
+                        passData->renderGraphPass->compile(m_renderGraphPassesStorage);
+                    }
+                }
+
+                for (const uint32_t dirtyPassId : dirtyPassIdsSet)
+                {
+                    auto *passData = findRenderGraphPassById(dirtyPassId);
+                    if (passData)
+                        passData->renderGraphPass->recompilationIsDone();
+                }
+
+                // Invalidate execution cache for any pass that was recompiled
+                // (its resources/image handles may have changed).
+                if (m_passExecutionCache.size() == m_sortedRenderGraphPasses.size())
+                {
+                    for (size_t i = 0; i < m_sortedRenderGraphPasses.size(); ++i)
+                    {
+                        auto *passData = findPassDataByPtr(m_sortedRenderGraphPasses[i]);
+                        if (passData && passesToCompile.contains(passData->id))
+                            m_passExecutionCache[i].valid = false;
+                    }
+                }
+            });
     }
 
     const auto &primaryCommandBuffer = m_commandBuffers.at(m_currentFrame);
 
     primaryCommandBuffer->begin();
-
-    auto &currentFramePassProfilingData = m_renderGraphProfiling->getPassExecutionProfillingDataByFrame(m_currentFrame);
-    currentFramePassProfilingData.clear();
-    m_renderGraphProfiling->setUsedTimestampQueries(0);
-    m_renderGraphProfiling->setTimestampQueryBase(m_currentFrame * m_renderGraphProfiling->getTimestampQueriesPerFrame());
-
-    m_renderGraphProfiling->resetFrameQueryRangesByFrame(m_currentFrame);
-
-    if (detailedProfilingEnabled && m_renderGraphProfiling->isGPUTimingAvailable() && m_renderGraphProfiling->getTimestampQueryPool() != VK_NULL_HANDLE && m_renderGraphProfiling->getTimestampQueriesPerFrame() > 0)
-    {
-        vkCmdResetQueryPool(primaryCommandBuffer->vk(), m_renderGraphProfiling->getTimestampQueryPool(), m_renderGraphProfiling->getTimestampQueryBase(), m_renderGraphProfiling->getTimestampQueriesPerFrame());
-        auto &frameRange = m_renderGraphProfiling->getFrameQueryRangesByFrame(m_currentFrame);
-        frameRange.startQueryIndex = m_renderGraphProfiling->getTimestampQueryBase() + m_renderGraphProfiling->getUsedTimestampQueries()++;
-        vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_renderGraphProfiling->getTimestampQueryPool(), frameRange.startQueryIndex);
-    }
+    m_renderGraphProfiling->beginFrameGpuProfiling(primaryCommandBuffer->vk(), m_currentFrame);
 
     if (m_occlusionQueryPool != VK_NULL_HANDLE && m_occlusionQueriesPerFrame > 0u)
     {
@@ -2025,25 +2089,14 @@ bool RenderGraph::begin()
             const auto &secondBarriers = cachedData.postBarriers[recordingIndex];
 
             RenderGraphProfiling::PassExecutionProfilingData executionProfilingData{};
-            executionProfilingData.passName = renderGraphPass->getDebugName().empty() ? ("Pass " + std::to_string(passIndex))
-                                                                                      : renderGraphPass->getDebugName();
+            const std::string passName = renderGraphPass->getDebugName().empty() ? ("Pass " + std::to_string(passIndex))
+                                                                                  : renderGraphPass->getDebugName();
+            m_renderGraphProfiling->beginPassProfiling(primaryCommandBuffer->vk(), m_currentFrame, executionProfilingData, passName);
 
             // Start CPU timing before barrier emit so the per-pass cost is fully captured.
             std::chrono::high_resolution_clock::time_point cpuStartTime{};
             if (detailedProfilingEnabled)
                 cpuStartTime = std::chrono::high_resolution_clock::now();
-
-            // Keep one query slot for the frame end timestamp.
-            if (detailedProfilingEnabled &&
-                m_renderGraphProfiling->isGPUTimingAvailable() &&
-                m_renderGraphProfiling->getTimestampQueryPool() != VK_NULL_HANDLE &&
-                (m_renderGraphProfiling->getUsedTimestampQueries() + 2) < m_renderGraphProfiling->getTimestampQueriesPerFrame())
-            {
-                executionProfilingData.startQueryIndex = m_renderGraphProfiling->getTimestampQueryBase() + m_renderGraphProfiling->getUsedTimestampQueries()++;
-                executionProfilingData.endQueryIndex = m_renderGraphProfiling->getTimestampQueryBase() + m_renderGraphProfiling->getUsedTimestampQueries()++;
-
-                vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_renderGraphProfiling->getTimestampQueryPool(), executionProfilingData.startQueryIndex);
-            }
 
             VkDependencyInfo firstDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
             firstDep.imageMemoryBarrierCount = static_cast<uint32_t>(firstBarriers.size());
@@ -2077,14 +2130,11 @@ bool RenderGraph::begin()
 
             vkCmdPipelineBarrier2(primaryCommandBuffer, &secondDep);
 
-            if (executionProfilingData.endQueryIndex != UINT32_MAX)
-                vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_renderGraphProfiling->getTimestampQueryPool(), executionProfilingData.endQueryIndex);
-
             if (detailedProfilingEnabled)
             {
                 const auto cpuEndTime = std::chrono::high_resolution_clock::now();
                 executionProfilingData.cpuTimeMs = std::chrono::duration<double, std::milli>(cpuEndTime - cpuStartTime).count();
-                currentFramePassProfilingData.push_back(std::move(executionProfilingData));
+                m_renderGraphProfiling->endPassProfiling(primaryCommandBuffer->vk(), m_currentFrame, std::move(executionProfilingData));
             }
 
             secIndex++;
@@ -2093,18 +2143,7 @@ bool RenderGraph::begin()
         ++passIndex;
     }
 
-    // auto &frameRange = m_frameQueryRangesByFrame[m_currentFrame];
-    auto &frameRange = m_renderGraphProfiling->getFrameQueryRangesByFrame(m_currentFrame);
-
-    if (detailedProfilingEnabled &&
-        m_renderGraphProfiling->isGPUTimingAvailable() &&
-        m_renderGraphProfiling->getTimestampQueryPool() != VK_NULL_HANDLE &&
-        frameRange.startQueryIndex != UINT32_MAX &&
-        m_renderGraphProfiling->getUsedTimestampQueries() < m_renderGraphProfiling->getTimestampQueriesPerFrame())
-    {
-        frameRange.endQueryIndex = m_renderGraphProfiling->getTimestampQueryBase() + m_renderGraphProfiling->getUsedTimestampQueries()++;
-        vkCmdWriteTimestamp(primaryCommandBuffer->vk(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_renderGraphProfiling->getTimestampQueryPool(), frameRange.endQueryIndex);
-    }
+    m_renderGraphProfiling->endFrameGpuProfiling(primaryCommandBuffer->vk(), m_currentFrame);
 
     if (m_occlusionQueryPool != VK_NULL_HANDLE &&
         m_occlusionQueriesPerFrame > 0u &&
@@ -2131,11 +2170,11 @@ bool RenderGraph::begin()
         }
     }
 
-    const auto primaryEndStart = std::chrono::high_resolution_clock::now();
-    primaryCommandBuffer->end();
-    cpuStageProfilingData.primaryCbEndMs = std::chrono::duration<double, std::milli>(
-                                               std::chrono::high_resolution_clock::now() - primaryEndStart)
-                                               .count();
+    m_renderGraphProfiling->measureCpuStage(
+        m_currentFrame,
+        RenderGraphProfiling::CpuStage::PrimaryCommandBufferEnd,
+        [&]()
+        { primaryCommandBuffer->end(); });
 
     return true;
 }
@@ -2155,8 +2194,6 @@ void RenderGraph::end()
         signalSemaphores.push_back(m_renderFinishedSemaphores[m_currentFrame]);
     }
 
-    auto &cpuStageProfilingData = m_renderGraphProfiling->getCpuStageProfilingDataByFrame(m_currentFrame);
-
     utilities::AsyncGpuUpload::collectFinished(m_device);
     auto uploadWaitSemaphores = utilities::AsyncGpuUpload::acquireReadySemaphores();
     for (VkSemaphore uploadSemaphore : uploadWaitSemaphores)
@@ -2165,11 +2202,14 @@ void RenderGraph::end()
         waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
     }
 
-    const auto submitStart = std::chrono::high_resolution_clock::now();
-    const bool submitOk = currentCommandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue(), waitSemaphores, waitStages, signalSemaphores,
-                                                       m_inFlightFences[m_currentFrame]);
-    const auto submitEnd = std::chrono::high_resolution_clock::now();
-    cpuStageProfilingData.submitMs = std::chrono::duration<double, std::milli>(submitEnd - submitStart).count();
+    const bool submitOk = m_renderGraphProfiling->measureCpuStage(
+        m_currentFrame,
+        RenderGraphProfiling::CpuStage::Submit,
+        [&]()
+        {
+            return currentCommandBuffer->submit(core::VulkanContext::getContext()->getGraphicsQueue(), waitSemaphores, waitStages, signalSemaphores,
+                                                m_inFlightFences[m_currentFrame]);
+        });
 
     if (!submitOk)
     {
@@ -2179,16 +2219,7 @@ void RenderGraph::end()
 
     m_uploadWaitSemaphoresByFrame[m_currentFrame] = std::move(uploadWaitSemaphores);
 
-    if (m_renderGraphProfiling->isDetailedProfilingEnabled())
-    {
-        m_renderGraphProfiling->setUsedTimestampQueriesByFrame(m_currentFrame, m_renderGraphProfiling->getUsedTimestampQueries());
-        m_renderGraphProfiling->setPendingProfilingResolveByFrame(m_currentFrame, true);
-    }
-    else
-    {
-        m_renderGraphProfiling->setUsedTimestampQueriesByFrame(m_currentFrame, 0u);
-        m_renderGraphProfiling->setPendingProfilingResolveByFrame(m_currentFrame, false);
-    }
+    m_renderGraphProfiling->markFrameSubmitted(m_currentFrame);
 
     if (m_occlusionQueryPool != VK_NULL_HANDLE && m_occlusionQueriesPerFrame > 0u)
     {
@@ -2215,10 +2246,14 @@ void RenderGraph::end()
         presentInfo.pImageIndices = &m_imageIndex;
         presentInfo.pResults = nullptr;
 
-        const auto presentStart = std::chrono::high_resolution_clock::now();
-        VkResult result = vkQueuePresentKHR(core::VulkanContext::getContext()->getPresentQueue(), &presentInfo);
-        const auto presentEnd = std::chrono::high_resolution_clock::now();
-        cpuStageProfilingData.presentMs = std::chrono::duration<double, std::milli>(presentEnd - presentStart).count();
+        VkResult result = m_renderGraphProfiling->measureCpuStage(
+            m_currentFrame,
+            RenderGraphProfiling::CpuStage::Present,
+            [&]()
+            {
+                std::lock_guard<std::mutex> queueLock(core::helpers::queueHostSyncMutex());
+                return vkQueuePresentKHR(core::VulkanContext::getContext()->getPresentQueue(), &presentInfo);
+            });
 
         if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
             recreateSwapChain();
@@ -2227,7 +2262,7 @@ void RenderGraph::end()
     }
     else
     {
-        cpuStageProfilingData.presentMs = 0.0;
+        m_renderGraphProfiling->recordCpuStage(m_currentFrame, RenderGraphProfiling::CpuStage::Present, 0.0);
     }
 
     m_perFrameData.additionalData.clear();
@@ -2235,14 +2270,13 @@ void RenderGraph::end()
 
 void RenderGraph::draw()
 {
-    const auto frameCpuStartTime = std::chrono::high_resolution_clock::now();
-
-    if (begin())
-        end();
-
-    const auto frameCpuEndTime = std::chrono::high_resolution_clock::now();
-
-    m_renderGraphProfiling->setCpuFrameTimesByFrameMs(m_currentFrame, std::chrono::duration<double, std::milli>(frameCpuEndTime - frameCpuStartTime).count());
+    m_renderGraphProfiling->measureFrameCpuTime(
+        m_currentFrame,
+        [&]()
+        {
+            if (begin())
+                end();
+        });
 
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -2476,7 +2510,10 @@ void RenderGraph::compile()
     commandBuffer.end();
 
     commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
-    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    {
+        std::lock_guard<std::mutex> queueLock(core::helpers::queueHostSyncMutex());
+        vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    }
 
     for (const auto &[id, pass] : m_renderGraphPasses)
         pass.renderGraphPass->compile(m_renderGraphPassesStorage);
@@ -2622,7 +2659,10 @@ void RenderGraph::cleanResources()
 {
     utilities::AsyncGpuUpload::flush(m_device);
 
-    vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    {
+        std::lock_guard<std::mutex> queueLock(core::helpers::queueHostSyncMutex());
+        vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    }
     vkDeviceWaitIdle(m_device);
 
     for (auto &uploadSemaphores : m_uploadWaitSemaphoresByFrame)

@@ -46,11 +46,12 @@ layout(set = 1, binding = 0) uniform sampler2D uGBufferNormal;
 layout(set = 1, binding = 1) uniform sampler2D uGBufferAlbedo;
 layout(set = 1, binding = 2) uniform sampler2D uGBufferMaterial;
 layout(set = 1, binding = 3) uniform sampler2D uGBufferTangentAniso;
-layout(set = 1, binding = 4) uniform sampler2D uDepth;
-layout(set = 1, binding = 5) uniform sampler2DArray directionalShadowMaps;
-layout(set = 1, binding = 6) uniform sampler2DArray spotShadowMaps;
-layout(set = 1, binding = 7) uniform samplerCubeArray cubeShadowMaps;
-layout(set = 1, binding = 8) uniform sampler2D uSSAO; // rgb=bent normal(enc), a=ao
+layout(set = 1, binding = 4) uniform sampler2D uGBufferEmissive;
+layout(set = 1, binding = 5) uniform sampler2D uDepth;
+layout(set = 1, binding = 6) uniform sampler2DArray directionalShadowMaps;
+layout(set = 1, binding = 7) uniform sampler2DArray spotShadowMaps;
+layout(set = 1, binding = 8) uniform samplerCubeArray cubeShadowMaps;
+layout(set = 1, binding = 9) uniform sampler2D uSSAO; // rgb=bent normal(enc), a=ao
 
 // IBL textures (set 2)
 layout(set = 2, binding = 0) uniform samplerCube uIrradianceMap;
@@ -269,6 +270,7 @@ void main()
     vec4 gA = texture(uGBufferAlbedo, vUV);
     vec4 gM = texture(uGBufferMaterial, vUV);
     vec4 gT = texture(uGBufferTangentAniso, vUV);
+    vec3 emissive = texture(uGBufferEmissive, vUV).rgb;
     vec4 aoBent = texture(uSSAO, vUV);
     float depth = texture(uDepth, vUV).r;
 
@@ -297,7 +299,6 @@ void main()
     float ao = clamp(gM.r * ssaoAO, 0.0, 1.0);
     float roughness = clamp(gM.g, 0.04, 1.0);
     float metallic = clamp(gM.b, 0.0, 1.0);
-    float emissiveStrength = gM.a;
 
     vec3 bentView = normalize(aoBent.rgb * 2.0 - 1.0);
     if (length(bentView) < 0.1 || pc.useBentNormals < 0.5)
@@ -460,7 +461,6 @@ void main()
 
     ambient *= (1.0 - clamp(pc.shadowAmbientStrength, 0.0, 1.0) * directionalShadowMax);
 
-    vec3 emissive = vec3(emissiveStrength);
     vec3 color = ambient + Lo + emissive;
 
     outColor = vec4(color, alpha);

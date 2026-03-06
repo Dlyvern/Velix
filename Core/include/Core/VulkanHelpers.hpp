@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -148,6 +149,12 @@ namespace helpers
         default:
             return "UNKNOWN_VK_RESULT";
         }
+    }
+
+    inline std::mutex &queueHostSyncMutex()
+    {
+        static std::mutex mutex;
+        return mutex;
     }
 } // namespace helpers
 
