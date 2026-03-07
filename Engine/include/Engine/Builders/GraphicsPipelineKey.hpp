@@ -25,7 +25,6 @@ enum class ShaderId : uint8_t
     FXAA,
     BloomExtract,
     BloomComposite,
-    SSR,
     SSAO,
     SMAA,
     ContactShadow,

@@ -21,6 +21,8 @@ public:
     SkyLightRenderGraphPass(std::vector<RGPResourceHandler> &lightingInputHandlers,
                             RGPResourceHandler &depthTextureHandler);
 
+    void prepareRecord(const RenderGraphPassPerFrameData &data,
+                       const RenderGraphPassContext &renderContext) override;
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
 

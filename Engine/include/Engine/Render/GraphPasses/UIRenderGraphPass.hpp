@@ -31,6 +31,8 @@ public:
 
     void setup(RGPResourcesBuilder &builder) override;
     void compile(RGPResourcesStorage &storage) override;
+    void prepareRecord(const RenderGraphPassPerFrameData &data,
+                       const RenderGraphPassContext &renderContext) override;
     void record(core::CommandBuffer::SharedPtr commandBuffer,
                 const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
@@ -74,14 +76,40 @@ private:
     };
 
     void recordPassthrough(core::CommandBuffer::SharedPtr commandBuffer, uint32_t frameIndex);
-    void recordBillboards(core::CommandBuffer::SharedPtr commandBuffer,
-                          const RenderGraphPassPerFrameData &data);
-    void recordUIText(core::CommandBuffer::SharedPtr commandBuffer, uint32_t currentFrame);
-    void recordUIButtons(core::CommandBuffer::SharedPtr commandBuffer, uint32_t currentFrame);
+    void recordBillboards(core::CommandBuffer::SharedPtr commandBuffer);
+    void recordUIText(core::CommandBuffer::SharedPtr commandBuffer);
+    void recordUIButtons(core::CommandBuffer::SharedPtr commandBuffer);
 
     ui::FontAtlas *getOrBuildAtlas(const ui::Font *font);
     core::Buffer::SharedPtr uploadVertices(const std::vector<vertex::Vertex2D> &verts, uint32_t currentFrame);
     VkDescriptorSet getTextureDescriptorSet(VkImageView view, VkSampler sampler);
+
+    struct PreparedBillboardDraw
+    {
+        VkDescriptorSet descriptorSet{VK_NULL_HANDLE};
+        BillboardPC pushConstants{};
+    };
+
+    struct PreparedTextDraw
+    {
+        VkDescriptorSet descriptorSet{VK_NULL_HANDLE};
+        core::Buffer::SharedPtr vertexBuffer{nullptr};
+        uint32_t vertexCount{0};
+        UITextPC pushConstants{};
+    };
+
+    struct PreparedButtonDraw
+    {
+        core::Buffer::SharedPtr backgroundVertexBuffer{nullptr};
+        uint32_t backgroundVertexCount{0};
+        UIQuadPC backgroundPushConstants{};
+
+        bool hasLabel{false};
+        VkDescriptorSet labelDescriptorSet{VK_NULL_HANDLE};
+        core::Buffer::SharedPtr labelVertexBuffer{nullptr};
+        uint32_t labelVertexCount{0};
+        UITextPC labelPushConstants{};
+    };
 
     std::vector<RGPResourceHandler> &m_inputHandlers;
     std::vector<RGPResourceHandler>  m_outputHandlers;
@@ -112,6 +140,9 @@ private:
     std::unordered_map<std::string, std::unique_ptr<ui::FontAtlas>> m_fontAtlases;
     std::unordered_map<VkImageView, VkDescriptorSet>                m_texDescriptorSets;
     std::vector<std::vector<core::Buffer::SharedPtr>>               m_transientVertexBuffersByFrame;
+    std::vector<PreparedBillboardDraw>                              m_preparedBillboards;
+    std::vector<PreparedTextDraw>                                   m_preparedTexts;
+    std::vector<PreparedButtonDraw>                                 m_preparedButtons;
 
     std::array<VkClearValue, 1> m_clearValues{};
 };

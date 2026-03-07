@@ -17,6 +17,18 @@ physx::PxPhysics *PhysXCore::getPhysics()
     return m_physics;
 }
 
+bool PhysXCore::isGPUEnabled() const
+{
+    return m_gpuEnabled;
+}
+
+#if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
+physx::PxCudaContextManager *PhysXCore::getCudaContextManager()
+{
+    return m_cudaContextManager;
+}
+#endif
+
 bool PhysXCore::init()
 {
     if (!m_instance)
@@ -47,6 +59,38 @@ bool PhysXCore::init()
         return false;
     }
 
+#if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
+    {
+        const int cudaOrdinal = PxGetSuggestedCudaDeviceOrdinal(m_instance->m_messenger);
+        if (cudaOrdinal >= 0)
+        {
+            physx::PxCudaContextManagerDesc cudaDesc;
+            cudaDesc.interopMode = physx::PxCudaInteropMode::NO_INTEROP;
+            m_instance->m_cudaContextManager = PxCreateCudaContextManager(
+                *m_instance->m_foundation, cudaDesc);
+
+            if (m_instance->m_cudaContextManager && m_instance->m_cudaContextManager->contextIsValid())
+            {
+                m_instance->m_gpuEnabled = true;
+                VX_ENGINE_INFO_STREAM("PhysX GPU acceleration enabled (CUDA device " << cudaOrdinal << ")");
+            }
+            else
+            {
+                if (m_instance->m_cudaContextManager)
+                {
+                    m_instance->m_cudaContextManager->release();
+                    m_instance->m_cudaContextManager = nullptr;
+                }
+                VX_ENGINE_WARNING_STREAM("PhysX CUDA context invalid — falling back to CPU");
+            }
+        }
+        else
+        {
+            VX_ENGINE_INFO_STREAM("No CUDA-capable GPU found — PhysX running on CPU");
+        }
+    }
+#endif
+
     return true;
 }
 
@@ -57,6 +101,14 @@ void PhysXCore::shutdown()
         m_instance->m_physics->release();
         m_instance->m_physics = nullptr;
     }
+
+#if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
+    if (m_instance->m_cudaContextManager)
+    {
+        m_instance->m_cudaContextManager->release();
+        m_instance->m_cudaContextManager = nullptr;
+    }
+#endif
 
     if (m_instance->m_foundation)
     {

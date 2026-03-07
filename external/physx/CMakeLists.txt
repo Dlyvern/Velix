@@ -28,14 +28,14 @@ message(STATUS "PhysX build type: ${PHYSX_BUILD_TYPE} (${CMAKE_BUILD_TYPE})")
 if(WIN32)
     set(PHYSX_LIB_DIR "${PHYSX_EXTERNAL_ROOT}/lib/windows/${PHYSX_BUILD_TYPE}")
     set(PHYSX_LIBS_TO_CHECK
-        "${PHYSX_LIB_DIR}/PhysX_64.lib"
+        "${PHYSX_LIB_DIR}/PhysX_static_64.lib"
         "${PHYSX_LIB_DIR}/PhysXPvdSDK_static_64.lib"
         "${PHYSX_LIB_DIR}/PhysXVehicle2_static_64.lib"
         "${PHYSX_LIB_DIR}/PhysXCharacterKinematic_static_64.lib"
         "${PHYSX_LIB_DIR}/PhysXExtensions_static_64.lib"
-        "${PHYSX_LIB_DIR}/PhysXCooking_64.lib"
-        "${PHYSX_LIB_DIR}/PhysXCommon_64.lib"
-        "${PHYSX_LIB_DIR}/PhysXFoundation_64.lib"
+        "${PHYSX_LIB_DIR}/PhysXCooking_static_64.lib"
+        "${PHYSX_LIB_DIR}/PhysXCommon_static_64.lib"
+        "${PHYSX_LIB_DIR}/PhysXFoundation_static_64.lib"
         "${PHYSX_LIB_DIR}/PhysXTask_static_64.lib"
     )
 elseif(UNIX)
@@ -93,15 +93,19 @@ target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
 
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} INTERFACE
-        ${PHYSX_LIB_DIR}/PhysX_64.lib
+        ${PHYSX_LIB_DIR}/PhysX_static_64.lib
         ${PHYSX_LIB_DIR}/PhysXPvdSDK_static_64.lib
         ${PHYSX_LIB_DIR}/PhysXVehicle2_static_64.lib
         ${PHYSX_LIB_DIR}/PhysXCharacterKinematic_static_64.lib
         ${PHYSX_LIB_DIR}/PhysXExtensions_static_64.lib
-        ${PHYSX_LIB_DIR}/PhysXCooking_64.lib
-        ${PHYSX_LIB_DIR}/PhysXCommon_64.lib
-        ${PHYSX_LIB_DIR}/PhysXFoundation_64.lib
+        ${PHYSX_LIB_DIR}/PhysXCooking_static_64.lib
+        ${PHYSX_LIB_DIR}/PhysXCommon_static_64.lib
+        ${PHYSX_LIB_DIR}/PhysXFoundation_static_64.lib
         ${PHYSX_LIB_DIR}/PhysXTask_static_64.lib
+        winmm
+        Advapi32
+        ws2_32
+        Psapi
     )
 elseif(UNIX)
     target_link_libraries(${PROJECT_NAME} INTERFACE
@@ -114,4 +118,17 @@ elseif(UNIX)
         ${PHYSX_LIB_DIR}/libPhysXCommon_static_64.a
         ${PHYSX_LIB_DIR}/libPhysXFoundation_static_64.a
     )
+
+    # GPU PhysX: present when built with a CUDA-capable preset
+    file(GLOB _PHYSX_GPU_SO "${PHYSX_LIB_DIR}/libPhysXGpu*.so")
+    if(_PHYSX_GPU_SO)
+        list(GET _PHYSX_GPU_SO 0 _PHYSX_GPU_SO_PATH)
+        message(STATUS "PhysX GPU library found: ${_PHYSX_GPU_SO_PATH}")
+        target_compile_definitions(${PROJECT_NAME} INTERFACE PHYSX_GPU_ENABLED=1)
+        # Expose the .so path so the top-level build can copy it next to the executable
+        set(PHYSX_GPU_SO_PATH "${_PHYSX_GPU_SO_PATH}" CACHE FILEPATH "Path to libPhysXGpu.so" FORCE)
+    else()
+        message(STATUS "PhysX GPU library not found in ${PHYSX_LIB_DIR} — CPU-only mode")
+        set(PHYSX_GPU_SO_PATH "" CACHE FILEPATH "Path to libPhysXGpu.so" FORCE)
+    endif()
 endif()

@@ -114,10 +114,6 @@ private:
 
     std::unique_ptr<RenderGraphProfiling> m_renderGraphProfiling{nullptr};
 
-    void initOcclusionQueryPool();
-    void destroyOcclusionQueryPool();
-    void resolveOcclusionQueries(uint32_t frameIndex);
-
     void createDescriptorSetPool();
     void createCameraDescriptorSets();
     void createPerObjectDescriptorSets();
@@ -170,6 +166,7 @@ private:
     std::vector<core::Buffer::SharedPtr> m_lightSpaceMatrixUniformObjects;
 
     std::vector<core::CommandBuffer::SharedPtr> m_commandBuffers;
+    std::vector<std::vector<core::CommandPool::SharedPtr>> m_secondaryCommandPools;
     std::vector<std::vector<core::CommandBuffer::SharedPtr>> m_secondaryCommandBuffers;
     std::vector<core::CommandPool::SharedPtr> m_commandPools;
 
@@ -191,37 +188,6 @@ private:
     std::unordered_set<std::string> m_failedMaterialAssetPaths;
 
     bool m_presentToSwapchain{true};
-
-    struct OcclusionState
-    {
-        bool hasResult{false};
-        bool occluded{false};
-        uint8_t occludedConsecutiveResults{0u};
-        uint64_t lastQueryFrame{0};
-    };
-    struct OcclusionQueryReadback
-    {
-        uint64_t samples{0ull};
-        uint64_t available{0ull};
-    };
-    static constexpr uint32_t OCCLUSION_QUERIES_PER_FRAME = 32768u;
-    VkQueryPool m_occlusionQueryPool{VK_NULL_HANDLE};
-    uint32_t m_occlusionQueriesPerFrame{0};
-    std::unordered_map<uint64_t, OcclusionState> m_occlusionStates;
-    std::array<core::Buffer::SharedPtr, MAX_FRAMES_IN_FLIGHT> m_occlusionReadbackBuffers{};
-    std::array<void *, MAX_FRAMES_IN_FLIGHT> m_occlusionReadbackMapped{};
-    std::array<std::vector<uint64_t>, MAX_FRAMES_IN_FLIGHT> m_submittedOcclusionQueryKeys{};
-    std::array<uint32_t, MAX_FRAMES_IN_FLIGHT> m_submittedOcclusionQueryCounts{};
-    std::array<uint64_t, MAX_FRAMES_IN_FLIGHT> m_submittedOcclusionFrameNumbers{};
-    std::array<bool, MAX_FRAMES_IN_FLIGHT> m_hasPendingOcclusionResolve{};
-    std::array<std::vector<uint64_t>, MAX_FRAMES_IN_FLIGHT> m_occlusionQueryKeysByFrame{};
-    std::array<uint32_t, MAX_FRAMES_IN_FLIGHT> m_usedOcclusionQueriesByFrame{};
-    std::array<uint64_t, MAX_FRAMES_IN_FLIGHT> m_occlusionFrameNumbersByFrame{};
-    uint64_t m_occlusionFrameCounter{0};
-    std::unordered_map<uint64_t, uint64_t> m_shadowCasterLastVisibleFrameByKey;
-    glm::vec3 m_lastOcclusionCameraPosition{0.0f};
-    glm::vec3 m_lastOcclusionCameraForward{0.0f, 0.0f, -1.0f};
-    bool m_hasLastOcclusionCameraState{false};
 
     // Per-pass execution and barrier cache to avoid per-frame heap allocations.
     // Keyed by pass index in m_sortedRenderGraphPasses. Invalidated on recompile.

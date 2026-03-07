@@ -8,6 +8,26 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
+#if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
+PhysicsScene::PhysicsScene(physx::PxPhysics *physics,
+                           physx::PxCudaContextManager *cudaContextManager)
+    : m_physics(physics)
+{
+    physx::PxSceneDesc sceneDesc(m_physics->getTolerancesScale());
+    sceneDesc.gravity = physx::PxVec3(0.0f, -9.81f, 0.0f);
+    m_defaultCpuDispatcher = physx::PxDefaultCpuDispatcherCreate(2);
+    sceneDesc.cpuDispatcher = m_defaultCpuDispatcher;
+    sceneDesc.filterShader = physx::PxDefaultSimulationFilterShader;
+
+    if (cudaContextManager && cudaContextManager->contextIsValid())
+    {
+        sceneDesc.cudaContextManager = cudaContextManager;
+        sceneDesc.flags |= physx::PxSceneFlag::eENABLE_GPU_DYNAMICS;
+        sceneDesc.broadPhaseType = physx::PxBroadPhaseType::eGPU;
+    }
+
+    m_scene = m_physics->createScene(sceneDesc);
+#else
 PhysicsScene::PhysicsScene(physx::PxPhysics *physics) : m_physics(physics)
 {
     physx::PxSceneDesc sceneDesc(m_physics->getTolerancesScale());
@@ -16,6 +36,7 @@ PhysicsScene::PhysicsScene(physx::PxPhysics *physics) : m_physics(physics)
     sceneDesc.cpuDispatcher = m_defaultCpuDispatcher;
     sceneDesc.filterShader = physx::PxDefaultSimulationFilterShader;
     m_scene = m_physics->createScene(sceneDesc);
+#endif
 
     m_defaultMaterial = m_physics->createMaterial(0.5f, 0.5f, 0.6f);
 

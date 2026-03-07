@@ -38,7 +38,6 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
     mat4 projection;
     mat4 invView;
     mat4 invProjection;
-    vec4 textureLodParams; // x=startDistance, y=endDistance, z=maxDistanceBias, w=globalBias
 } cameraUniformObject;
 
 layout(std430, set = 0, binding = 3) readonly buffer LightSSBO
@@ -69,10 +68,10 @@ layout(set = 1, binding = 4) uniform MaterialParams
     float ior;
 } material;
 
+const uint MATERIAL_FLAG_ALPHA_MASK = 1u << 0;
 const uint MATERIAL_FLAG_FLIP_V = 1u << 4;
 const uint MATERIAL_FLAG_FLIP_U = 1u << 5;
 const uint MATERIAL_FLAG_CLAMP_UV = 1u << 6;
-
 
 vec2 getUV()
 {
@@ -95,18 +94,7 @@ vec2 getUV()
     return uv;
 }
 
-float computeTextureLodBias()
-{
-    float startDistance = max(cameraUniformObject.textureLodParams.x, 0.0);
-    float endDistance = max(cameraUniformObject.textureLodParams.y, startDistance + 0.0001);
-    float maxDistanceBias = max(cameraUniformObject.textureLodParams.z, 0.0);
-    float globalBias = cameraUniformObject.textureLodParams.w;
-    float distanceToCamera = length(fragPositionView);
-    float t = clamp((distanceToCamera - startDistance) / max(endDistance - startDistance, 0.0001), 0.0, 1.0);
-    return globalBias + t * maxDistanceBias;
-}
-
-vec3 getNormalView(vec2 uv, float lodBias)
+vec3 getNormalView(vec2 uv)
 {
     vec3 N = normalize(fragNormalView);
     vec3 T = normalize(fragTangentView);
@@ -117,50 +105,11 @@ vec3 getNormalView(vec2 uv, float lodBias)
 
     mat3 TBN = mat3(T, B, N);
 
-    vec3 normalTS = texture(uNormalTex, uv, lodBias).xyz * 2.0 - 1.0;
+    vec3 normalTS = texture(uNormalTex, uv).xyz * 2.0 - 1.0;
     normalTS.xy *= material.normalScale;
     normalTS = normalize(normalTS);
 
     return normalize(TBN * normalTS);
-}
-
-float DistributionGGX(vec3 N, vec3 H, float roughness)
-{
-    float a = roughness * roughness;
-    float a2 = a * a;
-
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom = PI * denom * denom;
-
-    return a2 / max(denom, 0.000001);
-}
-
-float GeometrySchlickGGX(float NdotV, float roughness)
-{
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0; 
-
-    float denom = NdotV * (1.0 - k) + k;
-    return NdotV / max(denom, 0.000001);
-}
-
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
-{
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-
-    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
-    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
-
-    return ggx1 * ggx2;
-}
-
-vec3 FresnelSchlick(float cosTheta, vec3 F0)
-{
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
 float calculateDirectionalLightShadow(vec3 lightDirection, vec3 normal, sampler2D shadowMapToUse)
@@ -204,7 +153,8 @@ vec3 getLightRadianceAndDirection(in Light light, in vec3 fragPosView, out vec3 
         shadowFactor = calculateDirectionalLightShadow(L, normalize(fragNormalView), shadowMap);
         return color;
     }
-    else if (lightType == POINT_LIGHT_TYPE)
+
+    if (lightType == POINT_LIGHT_TYPE)
     {
         vec3 toLight = light.position.xyz - fragPosView;
         float distance = length(toLight);
@@ -216,7 +166,8 @@ vec3 getLightRadianceAndDirection(in Light light, in vec3 fragPosView, out vec3 
 
         return color * attenuation;
     }
-    else if (lightType == SPOT_LIGHT_TYPE)
+
+    if (lightType == SPOT_LIGHT_TYPE)
     {
         vec3 toLight = light.position.xyz - fragPosView;
         float distance = length(toLight);
@@ -239,38 +190,40 @@ vec3 getLightRadianceAndDirection(in Light light, in vec3 fragPosView, out vec3 
     return vec3(0.0);
 }
 
+vec3 computeSpecular(vec3 N, vec3 V, vec3 L, vec3 specularColor, float roughness)
+{
+    vec3 H = normalize(V + L);
+    float shininess = mix(128.0, 8.0, clamp(roughness, 0.0, 1.0));
+    float specularStrength = pow(max(dot(N, H), 0.0), shininess);
+    specularStrength *= mix(1.0, 0.15, clamp(roughness, 0.0, 1.0));
+    return specularColor * specularStrength;
+}
+
 void main()
 {
     outObjectId = objectIdPushConstant.objectId;
 
     vec2 uv = getUV();
-    float textureLodBias = computeTextureLodBias();
 
-    vec4 albedoTex = texture(uAlbedoTex, uv, textureLodBias);
+    vec4 albedoTex = texture(uAlbedoTex, uv);
     vec3 albedo = albedoTex.rgb * material.baseColorFactor.rgb;
     float alpha = albedoTex.a * material.baseColorFactor.a;
 
-    if ((material.flags & 1u) != 0u) 
-    {
-        if (alpha < material.alphaCutoff)
-            discard;
-    }
+    if ((material.flags & MATERIAL_FLAG_ALPHA_MASK) != 0u && alpha < material.alphaCutoff)
+        discard;
 
-    vec3 emissive = texture(uEmissiveTex, uv, textureLodBias).rgb * material.emissiveFactor.rgb;
+    vec3 emissive = texture(uEmissiveTex, uv).rgb * material.emissiveFactor.rgb;
 
-    vec3 orm = texture(uOrmTex, uv, textureLodBias).rgb;
+    vec3 orm = texture(uOrmTex, uv).rgb;
     float ao = mix(1.0, orm.r, material.aoStrength);
     float roughness = clamp(orm.g * material.roughnessFactor, 0.04, 1.0);
     float metallic = clamp(orm.b * material.metallicFactor, 0.0, 1.0);
 
-    vec3 N = getNormalView(uv, textureLodBias);
+    vec3 N = getNormalView(uv);
     vec3 V = normalize(-fragPositionView);
+    vec3 specularColor = mix(vec3(0.04), albedo, metallic);
 
-    vec3 F0 = vec3(0.04);
-    F0 = mix(F0, albedo, metallic);
-
-    vec3 Lo = vec3(0.0);
-
+    vec3 lighting = vec3(0.0);
     int count = min(lightData.lightCount, MAX_LIGHT_COUNT);
 
     for (int i = 0; i < count; ++i)
@@ -285,32 +238,15 @@ void main()
         if (NdotL <= 0.0)
             continue;
 
-        vec3 H = normalize(V + L);
+        vec3 diffuseColor = mix(albedo, vec3(0.0), metallic);
+        vec3 diffuse = (diffuseColor / PI) * NdotL;
+        vec3 specular = computeSpecular(N, V, L, specularColor, roughness) * NdotL;
 
-        float NDF = DistributionGGX(N, H, roughness);
-        float G   = GeometrySmith(N, V, L, roughness);
-        vec3  F   = FresnelSchlick(max(dot(H, V), 0.0), F0);
-
-        vec3 numerator = NDF * G * F;
-        float denom = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
-        vec3 specular = numerator / denom;
-
-        vec3 kS = F;
-        vec3 kD = vec3(1.0) - kS;
-        kD *= (1.0 - metallic); // metals have no diffuse
-
-        vec3 diffuse = (kD * albedo) / PI;
-
-        vec3 lightContrib = (diffuse + specular) * radiance * NdotL;
-
-        lightContrib *= (1.0 - shadow);
-
-        Lo += lightContrib;
+        lighting += (diffuse + specular) * radiance * (1.0 - shadow);
     }
 
     vec3 ambient = albedo * 0.03 * ao;
-
-    vec3 color = ambient + Lo + emissive;
+    vec3 color = ambient + lighting + emissive;
 
     outColor = vec4(color, alpha);
 }

@@ -20,6 +20,7 @@
 #include "Engine/Scripting/ScriptsRegister.hpp"
 
 #include "Engine/Scene.hpp"
+#include "Engine/Runtime/ProjectConfig.hpp"
 #include <volk.h>
 
 #include <vector>
@@ -92,6 +93,9 @@ public:
             m_assetsWindow->setProject(project.get());
 
         restoreSceneMaterialOverrides();
+
+        if (project)
+            loadProjectConfig();
     }
 
     void setProjectScriptsRegister(engine::ScriptsRegister *scriptsRegister, const std::string &modulePath = {})
@@ -220,6 +224,8 @@ public:
         m_reinitDocking = true;
     }
 
+    void saveProjectConfig();
+
 private:
     std::unordered_map<std::string, std::vector<DrawFn>> m_drawQueue;
     bool m_renderOnlyViewport{false};
@@ -264,9 +270,7 @@ private:
     void setDocumentLanguageFromPath(const std::filesystem::path &path);
 
     void drawMaterialEditors();
-    void saveRenderSettingsToEngineConfig();
-    void saveEditorCameraSettingsToEngineConfig();
-    void loadEditorCameraSettingsFromEngineConfig();
+    void loadProjectConfig();
     void resetSceneActionHistory();
     void captureSceneActionSnapshot(const std::string &label);
     bool performUndoAction();
@@ -439,8 +443,6 @@ private:
     bool m_showRenderSettings{false};
     bool m_showEditorCameraSettings{false};
     bool m_showBenchmark{false};
-    bool m_textureMemoryWarningPopupPendingOpen{false};
-    std::string m_textureMemoryWarningPopupMessage{};
     bool m_isGameViewportVisible{false};
     bool m_terminalAutoScroll{true};
     bool m_terminalClearInputOnSubmit{true};
@@ -451,6 +453,7 @@ private:
 
     engine::Camera::SharedPtr m_editorCamera{nullptr};
 
+    engine::ProjectConfig m_projectConfig;
     std::weak_ptr<Project> m_currentProject;
     engine::ScriptsRegister *m_projectScriptsRegister{nullptr};
     std::string m_loadedGameModulePath;
@@ -475,7 +478,6 @@ private:
     void drawEditorCameraSettings();
     void drawRenderSettings();
     void drawBenchmark();
-    void drawTextureMemoryWarningPopup();
     void drawUITools();
     void drawTerrainTools();
     void showDockSpace();

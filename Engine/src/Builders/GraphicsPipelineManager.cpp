@@ -86,7 +86,6 @@ void GraphicsPipelineManager::loadShaderModules()
     fxaaShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/fxaa.frag.spv");
     bloomExtractShader   = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_extract.frag.spv");
     bloomCompositeShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_composite.frag.spv");
-    ssrShader            = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssr.frag.spv");
     ssaoShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssao.frag.spv");
     smaaShader              = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/smaa.frag.spv");
     contactShadowShader     = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/contact_shadow.frag.spv");
@@ -125,7 +124,6 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(fxaaShader);
     destroyShader(bloomExtractShader);
     destroyShader(bloomCompositeShader);
-    destroyShader(ssrShader);
     destroyShader(ssaoShader);
     destroyShader(smaaShader);
     destroyShader(contactShadowShader);
@@ -200,9 +198,6 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         break;
     case ShaderId::BloomComposite:
         stages = bloomCompositeShader->getShaderStages();
-        break;
-    case ShaderId::SSR:
-        stages = ssrShader->getShaderStages();
         break;
     case ShaderId::SSAO:
         stages = ssaoShader->getShaderStages();
@@ -295,7 +290,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     else if (key.shader == ShaderId::ToneMap || key.shader == ShaderId::SelectionOverlay ||
              key.shader == ShaderId::Present  || key.shader == ShaderId::Lighting       ||
              key.shader == ShaderId::FXAA     || key.shader == ShaderId::BloomExtract   ||
-             key.shader == ShaderId::BloomComposite || key.shader == ShaderId::SSR      ||
+             key.shader == ShaderId::BloomComposite ||
              key.shader == ShaderId::SSAO     || key.shader == ShaderId::SMAA           ||
              key.shader == ShaderId::ContactShadow || key.shader == ShaderId::CinematicEffects ||
              key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||

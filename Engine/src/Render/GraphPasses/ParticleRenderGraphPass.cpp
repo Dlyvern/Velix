@@ -140,6 +140,8 @@ void ParticleRenderGraphPass::compile(RGPResourcesStorage &storage)
     m_descriptorSets.resize(imageCount, VK_NULL_HANDLE);
     m_passthroughSets.resize(imageCount, VK_NULL_HANDLE);
     m_textureSets.resize(imageCount, VK_NULL_HANDLE);
+    m_preparedPushConstants.resize(imageCount);
+    m_preparedVertexCounts.resize(imageCount, 0u);
 
     auto device = core::VulkanContext::getContext()->getDevice();
     auto pool = core::VulkanContext::getContext()->getPersistentDescriptorPool();
@@ -223,10 +225,82 @@ void ParticleRenderGraphPass::compile(RGPResourcesStorage &storage)
     recompilationIsDone();
 }
 
+void ParticleRenderGraphPass::prepareRecord(const RenderGraphPassPerFrameData &data,
+                                            const RenderGraphPassContext &ctx)
+{
+    if (ctx.currentImageIndex >= m_descriptorSets.size())
+        return;
+
+    const uint32_t imageIndex = ctx.currentImageIndex;
+    m_preparedVertexCounts[imageIndex] = 0u;
+
+    static thread_local std::vector<ParticleGPUData> gpuParticles;
+    static thread_local std::vector<std::string> textureSlots;
+    gpuParticles.clear();
+    textureSlots.clear();
+
+    const glm::vec3 cameraRight(data.view[0][0], data.view[1][0], data.view[2][0]);
+    const glm::vec3 cameraUp(data.view[0][1], data.view[1][1], data.view[2][1]);
+    collectParticleData(gpuParticles, textureSlots, cameraRight, cameraUp);
+
+    if (gpuParticles.empty())
+        return;
+
+    std::array<VkDescriptorImageInfo, MAX_PARTICLE_TEXTURES> imageInfos{};
+    for (uint32_t slot = 0; slot < MAX_PARTICLE_TEXTURES; ++slot)
+    {
+        Texture *tex = m_defaultWhiteTexture.get();
+
+        if (slot < static_cast<uint32_t>(textureSlots.size()) && !textureSlots[slot].empty())
+        {
+            const std::string &path = textureSlots[slot];
+            auto cacheIt = m_textureCache.find(path);
+            if (cacheIt != m_textureCache.end())
+            {
+                tex = cacheIt->second.get();
+            }
+            else
+            {
+                auto loaded = AssetsLoader::loadTextureGPU(path);
+                if (loaded)
+                {
+                    m_textureCache[path] = loaded;
+                    tex = loaded.get();
+                }
+            }
+        }
+
+        imageInfos[slot].sampler = m_linearSampler->vk();
+        imageInfos[slot].imageView = tex ? tex->vkImageView() : m_defaultWhiteTexture->vkImageView();
+        imageInfos[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = m_textureSets[imageIndex];
+    write.dstBinding = 0;
+    write.dstArrayElement = 0;
+    write.descriptorCount = MAX_PARTICLE_TEXTURES;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = imageInfos.data();
+    vkUpdateDescriptorSets(core::VulkanContext::getContext()->getDevice(), 1, &write, 0, nullptr);
+
+    const VkDeviceSize uploadSize = gpuParticles.size() * sizeof(ParticleGPUData);
+    m_particleSSBOs[imageIndex]->upload(gpuParticles.data(), uploadSize);
+
+    ParticlePC pc{};
+    pc.viewProj = data.projection * data.view;
+    pc.right = cameraRight;
+    pc.up = cameraUp;
+
+    m_preparedPushConstants[imageIndex] = pc;
+    m_preparedVertexCounts[imageIndex] = static_cast<uint32_t>(gpuParticles.size()) * 6u;
+}
+
 void ParticleRenderGraphPass::record(core::CommandBuffer::SharedPtr cmd,
                                      const RenderGraphPassPerFrameData &data,
                                      const RenderGraphPassContext &ctx)
 {
+    (void)data;
     vkCmdSetViewport(cmd->vk(), 0, 1, &m_viewport);
     vkCmdSetScissor(cmd->vk(), 0, 1, &m_scissor);
 
@@ -380,62 +454,14 @@ void ParticleRenderGraphPass::recordParticles(core::CommandBuffer::SharedPtr cmd
                                               const RenderGraphPassPerFrameData &data,
                                               uint32_t imageIndex)
 {
+    (void)data;
+
     if (imageIndex >= m_descriptorSets.size())
         return;
 
-    static thread_local std::vector<ParticleGPUData> gpuParticles;
-    static thread_local std::vector<std::string> textureSlots;
-    gpuParticles.clear();
-    textureSlots.clear();
-
-    const glm::vec3 cameraRight(data.view[0][0], data.view[1][0], data.view[2][0]);
-    const glm::vec3 cameraUp(data.view[0][1], data.view[1][1], data.view[2][1]);
-    collectParticleData(gpuParticles, textureSlots, cameraRight, cameraUp);
-
-    if (gpuParticles.empty())
+    const uint32_t vertexCount = imageIndex < m_preparedVertexCounts.size() ? m_preparedVertexCounts[imageIndex] : 0u;
+    if (vertexCount == 0u)
         return;
-
-    // Resolve textures for each slot and update the texture array descriptor set.
-    std::array<VkDescriptorImageInfo, MAX_PARTICLE_TEXTURES> imageInfos{};
-    for (uint32_t slot = 0; slot < MAX_PARTICLE_TEXTURES; ++slot)
-    {
-        Texture *tex = m_defaultWhiteTexture.get();
-
-        if (slot < static_cast<uint32_t>(textureSlots.size()) && !textureSlots[slot].empty())
-        {
-            const std::string &path = textureSlots[slot];
-            auto cacheIt = m_textureCache.find(path);
-            if (cacheIt != m_textureCache.end())
-            {
-                tex = cacheIt->second.get();
-            }
-            else
-            {
-                auto loaded = AssetsLoader::loadTextureGPU(path);
-                if (loaded)
-                {
-                    m_textureCache[path] = loaded;
-                    tex = loaded.get();
-                }
-            }
-        }
-
-        imageInfos[slot].sampler     = m_linearSampler->vk();
-        imageInfos[slot].imageView   = tex ? tex->vkImageView() : m_defaultWhiteTexture->vkImageView();
-        imageInfos[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    }
-
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet          = m_textureSets[imageIndex];
-    write.dstBinding      = 0;
-    write.dstArrayElement = 0;
-    write.descriptorCount = MAX_PARTICLE_TEXTURES;
-    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo      = imageInfos.data();
-    vkUpdateDescriptorSets(core::VulkanContext::getContext()->getDevice(), 1, &write, 0, nullptr);
-
-    const VkDeviceSize uploadSize = gpuParticles.size() * sizeof(ParticleGPUData);
-    m_particleSSBOs[imageIndex]->upload(gpuParticles.data(), uploadSize);
 
     GraphicsPipelineKey key{};
     key.shader = ShaderId::Particle;
@@ -457,17 +483,12 @@ void ParticleRenderGraphPass::recordParticles(core::CommandBuffer::SharedPtr cmd
                             m_particlePipelineLayout, 1, 1,
                             &m_textureSets[imageIndex], 0, nullptr);
 
-    ParticlePC pc{};
-    pc.viewProj = data.projection * data.view;
-    pc.right    = cameraRight;
-    pc.up       = cameraUp;
-
+    const ParticlePC &pc = m_preparedPushConstants[imageIndex];
     vkCmdPushConstants(cmd->vk(), m_particlePipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT,
                        0, sizeof(ParticlePC), &pc);
 
-    const uint32_t vertCount = static_cast<uint32_t>(gpuParticles.size()) * 6;
-    profiling::cmdDraw(cmd, vertCount, 1, 0, 0);
+    profiling::cmdDraw(cmd, vertexCount, 1, 0, 0);
 }
 
 ELIX_CUSTOM_NAMESPACE_END

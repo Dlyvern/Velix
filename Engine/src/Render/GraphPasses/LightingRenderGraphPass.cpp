@@ -43,15 +43,6 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
 {
     const auto &settings = RenderQualitySettings::getInstance();
 
-    // Defer potentially heavy IBL generation to compile() only when IBL is enabled.
-    if (m_iblManager && settings.enableIBL && data.skyboxHDRPath != m_requestedIBLPath)
-    {
-        m_requestedIBLPath = data.skyboxHDRPath;
-        m_pendingIBLUpdate = true;
-        requestRecompilation();
-        return;
-    }
-
     vkCmdSetViewport(commandBuffer, 0, 1, &m_viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &m_scissor);
 
@@ -72,51 +63,32 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
 
     struct LightingPC
     {
-        float iblEnabled;
-        float iblDiffuseIntensity;
-        float iblSpecularIntensity;
-        float useBentNormals;
-        float enableAnisotropy;
-        float anisotropyStrength;
-        float anisotropyRotationRadians;
         float shadowAmbientStrength;
+        float padding0;
+        float padding1;
+        float padding2;
     };
 
-    static_assert(sizeof(LightingPC) == 32, "LightingPC push constant must stay 32 bytes");
+    static_assert(sizeof(LightingPC) == 16, "LightingPC push constant must stay 16 bytes");
 
-    const bool iblActive = settings.enableIBL && m_iblManager && m_iblManager->isReady();
     LightingPC pc{
-        iblActive ? 1.0f : 0.0f,
-        settings.iblDiffuseIntensity,
-        settings.iblSpecularIntensity,
-        (settings.enableSSAO && settings.enableGTAO && settings.useBentNormals) ? 1.0f : 0.0f,
-        settings.enableAnisotropy ? 1.0f : 0.0f,
-        std::clamp(settings.anisotropyStrength, -0.95f, 0.95f),
-        glm::radians(settings.anisotropyRotation),
-        std::clamp(settings.shadowAmbientStrength, 0.0f, 1.0f)};
+        std::clamp(settings.shadowAmbientStrength, 0.0f, 1.0f),
+        0.0f,
+        0.0f,
+        0.0f};
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout,
                        VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
 
     const uint32_t imageIndex = renderContext.currentImageIndex;
-    VkDescriptorSet sets[3] = {
+    VkDescriptorSet sets[2] = {
         data.cameraDescriptorSet,
-        m_descriptorSets[imageIndex],
-        (imageIndex < m_iblDescriptorSets.size()) ? m_iblDescriptorSets[imageIndex] : VK_NULL_HANDLE
+        m_descriptorSets[imageIndex]
     };
 
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout,
-                            0, 3, sets, 0, nullptr);
+                            0, 2, sets, 0, nullptr);
 
     profiling::cmdDraw(commandBuffer, 3, 1, 0, 0);
-}
-
-void LightingRenderGraphPass::setIBLManager(IBLManager *ibl)
-{
-    m_iblManager = ibl;
-    m_requestedIBLPath.clear();
-    m_lastIBLPath.clear();
-    m_pendingIBLUpdate = true;
-    requestRecompilation();
 }
 
 std::vector<IRenderGraphPass::RenderPassExecution> LightingRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const
@@ -153,47 +125,13 @@ void LightingRenderGraphPass::setExtent(VkExtent2D extent)
 
 void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
 {
-    if (m_iblManager && m_pendingIBLUpdate)
-    {
-        const auto &settings = RenderQualitySettings::getInstance();
-        if (settings.enableIBL && !m_requestedIBLPath.empty())
-        {
-            if (m_iblManager->generate(m_requestedIBLPath))
-                m_lastIBLPath = m_requestedIBLPath;
-            else
-            {
-                VX_ENGINE_WARNING_STREAM("Failed to generate IBL from: " << m_requestedIBLPath << ". Falling back to black IBL.\n");
-                m_iblManager->createFallback();
-                m_lastIBLPath.clear();
-            }
-        }
-        else
-        {
-            m_iblManager->createFallback();
-            m_lastIBLPath.clear();
-        }
-
-        m_pendingIBLUpdate = false;
-    }
-
     const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
 
     m_colorRenderTargets.resize(imageCount);
     m_descriptorSets.resize(imageCount);
-    m_iblDescriptorSets.resize(imageCount, VK_NULL_HANDLE);
 
     auto device = core::VulkanContext::getContext()->getDevice();
     auto pool   = core::VulkanContext::getContext()->getPersistentDescriptorPool();
-
-    // Resolve IBL views — use 1x1 black fallback cubemap when IBL isn't ready
-    const bool iblReady = m_iblManager && m_iblManager->isReady();
-
-    VkImageView iblIrradianceView    = iblReady ? m_iblManager->irradianceView()    : m_iblFallbackCube->vkImageView();
-    VkSampler   iblIrradianceSampler = iblReady ? m_iblManager->irradianceSampler() : m_iblFallbackCube->vkSampler();
-    VkImageView iblBRDFView          = iblReady ? m_iblManager->brdfLUTView()       : m_iblFallbackLUT->vkImageView();
-    VkSampler   iblBRDFSampler       = iblReady ? m_iblManager->brdfLUTSampler()    : m_iblFallbackLUT->vkSampler();
-    VkImageView iblEnvView           = iblReady ? m_iblManager->envView()           : m_iblFallbackCube->vkImageView();
-    VkSampler   iblEnvSampler        = iblReady ? m_iblManager->envSampler()        : m_iblFallbackCube->vkSampler();
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
@@ -232,12 +170,6 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                                       .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 8)
                                       .addImage(aoTexture->vkImageView(), m_defaultSampler, aoLayout, 9)
                                       .build(device, pool, m_descriptorSetLayout);
-
-            m_iblDescriptorSets[i] = DescriptorSetBuilder::begin()
-                .addImage(iblIrradianceView, iblIrradianceSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
-                .addImage(iblBRDFView,        iblBRDFSampler,       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
-                .addImage(iblEnvView,         iblEnvSampler,        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
-                .build(device, pool, m_iblDescriptorSetLayout);
         }
         else
         {
@@ -253,12 +185,6 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                 .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 8)
                 .addImage(aoTexture->vkImageView(), m_defaultSampler, aoLayout, 9)
                 .update(device, m_descriptorSets[i]);
-
-            DescriptorSetBuilder::begin()
-                .addImage(iblIrradianceView, iblIrradianceSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
-                .addImage(iblBRDFView,        iblBRDFSampler,       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
-                .addImage(iblEnvView,         iblEnvSampler,        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
-                .update(device, m_iblDescriptorSets[i]);
         }
     }
 
@@ -375,50 +301,20 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
                                                                                                                       bindingAlbedo, bindingMaterial, bindingTangentAniso, bindingEmissive, bindingDepth,
                                                                                                                       lightMapBinding, spotMapBinding, pointMapBinding, aoBinding});
 
-    // Set 2: IBL textures — irradiance cubemap (0), BRDF LUT (1), env specular cubemap (2)
-    std::vector<VkDescriptorSetLayoutBinding> iblBindings(3);
-    for (uint32_t b = 0; b < 3; ++b)
-    {
-        iblBindings[b].binding         = b;
-        iblBindings[b].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        iblBindings[b].descriptorCount = 1;
-        iblBindings[b].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-        iblBindings[b].pImmutableSamplers = nullptr;
-    }
-    m_iblDescriptorSetLayout = core::DescriptorSetLayout::createShared(device, iblBindings);
-
-    // Push constants (32 bytes): IBL toggles, bent-normal toggle, anisotropy controls, ambient-shadow strength.
     VkPushConstantRange pcRange{};
     pcRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pcRange.offset     = 0;
-    pcRange.size       = 32;
+    pcRange.size       = 16;
 
     m_pipelineLayout = core::PipelineLayout::createShared(device,
                                                           std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{
                                                               *EngineShaderFamilies::cameraDescriptorSetLayout,
-                                                              *m_descriptorSetLayout,
-                                                              *m_iblDescriptorSetLayout},
+                                                              *m_descriptorSetLayout},
                                                           std::vector<VkPushConstantRange>{pcRange});
 
     m_defaultSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
     m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
                                             VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE, VK_COMPARE_OP_ALWAYS, VK_SAMPLER_MIPMAP_MODE_LINEAR);
-    m_iblSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
-
-    // 1x1 black fallback cubemap and LUT for when IBL is disabled or not yet generated
-    if (!m_iblFallbackCube)
-    {
-        m_iblFallbackCube = std::make_shared<Texture>();
-        const float blackPixel[3] = {0.0f, 0.0f, 0.0f};
-        m_iblFallbackCube->createCubemapFromEquirectangular(blackPixel, 1, 1, 1u);
-    }
-    if (!m_iblFallbackLUT)
-    {
-        m_iblFallbackLUT = std::make_shared<Texture>();
-        const float lutFallback[2] = {0.5f, 0.0f};
-        m_iblFallbackLUT->createFromMemory(lutFallback, sizeof(lutFallback),
-                                            1u, 1u, VK_FORMAT_R32G32_SFLOAT, 2u);
-    }
 }
 
 ELIX_CUSTOM_NAMESPACE_END

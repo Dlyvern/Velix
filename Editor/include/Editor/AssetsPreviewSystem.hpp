@@ -590,10 +590,7 @@ private:
                     return cached;
         }
 
-        const uint32_t previewMaxDimension = std::clamp(
-            engine::RenderQualitySettings::getInstance().texturePreviewMaxDimension,
-            64u, 2048u);
-        auto texture = engine::AssetsLoader::loadTextureGPU(normalizedTexturePath, getLdrTextureFormat(usage), previewMaxDimension);
+        auto texture = engine::AssetsLoader::loadTextureGPU(normalizedTexturePath, getLdrTextureFormat(usage));
         if (!texture)
         {
             const auto [_, inserted] = m_failedTexturePaths.insert(normalizedTexturePath);

@@ -223,12 +223,10 @@ void ShadowRenderGraphPass::rebuildLayerViews()
 void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                                    const RenderGraphPassContext &renderContext)
 {
-    (void)renderContext;
-
-    if (m_currentExecutionIndex >= m_executionInfos.size())
+    if (renderContext.executionIndex >= m_executionInfos.size())
         return;
 
-    const ShadowExecutionInfo executionInfo = m_executionInfos[m_currentExecutionIndex++];
+    const ShadowExecutionInfo executionInfo = m_executionInfos[renderContext.executionIndex];
 
     glm::mat4 activeLightSpaceMatrix{1.0f};
     const std::vector<DrawBatch> *executionBatches{nullptr};
@@ -337,8 +335,6 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
 
 std::vector<IRenderGraphPass::RenderPassExecution> ShadowRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const
 {
-    m_currentExecutionIndex = 0;
-
     const uint32_t activeDirectionalCount = std::min(renderContext.activeDirectionalShadowCount, m_directionalCascadeCount);
     const uint32_t activeSpotCount = std::min(renderContext.activeSpotShadowCount, ShadowConstants::MAX_SPOT_SHADOWS);
     const uint32_t activePointCount = std::min(renderContext.activePointShadowCount, ShadowConstants::MAX_POINT_SHADOWS);

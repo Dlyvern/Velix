@@ -37,6 +37,8 @@ public:
 
     void setup(RGPResourcesBuilder &builder) override;
     void compile(RGPResourcesStorage &storage) override;
+    void prepareRecord(const RenderGraphPassPerFrameData &data,
+                       const RenderGraphPassContext &ctx) override;
     void record(core::CommandBuffer::SharedPtr cmd,
                 const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &ctx) override;
@@ -90,6 +92,8 @@ private:
     Texture::SharedPtr m_defaultWhiteTexture;
 
     bool m_compiled{false};
+    std::vector<ParticlePC> m_preparedPushConstants;
+    std::vector<uint32_t> m_preparedVertexCounts;
 
     void collectParticleData(std::vector<ParticleGPUData> &out,
                              std::vector<std::string> &outTextureSlots,

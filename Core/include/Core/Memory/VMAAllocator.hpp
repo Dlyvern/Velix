@@ -13,6 +13,7 @@ class VMAAllocator final : public IAllocator
 public:
     VMAAllocator(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
                  uint32_t vulkanApiVersion,
+                 bool enableBufferDeviceAddress = false,
                  const VkAllocationCallbacks *allocationCallbacks = VK_NULL_HANDLE);
 
     void mapMemory(VkDevice device, void *allocation, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void *&data) override;

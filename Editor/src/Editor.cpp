@@ -124,27 +124,11 @@ namespace
         hashCombine(seed, settings.enablePostProcessing);
         hashCombine(seed, settings.enableFXAA);
         hashCombine(seed, settings.enableBloom);
-        hashCombine(seed, settings.enableSSR);
         hashCombine(seed, settings.bloomThreshold);
         hashCombine(seed, settings.bloomKnee);
         hashCombine(seed, settings.bloomStrength);
-        hashCombine(seed, settings.ssrMaxDistance);
-        hashCombine(seed, settings.ssrThickness);
-        hashCombine(seed, settings.ssrStrength);
-        hashCombine(seed, settings.ssrSteps);
         hashCombine(seed, settings.renderScale);
-        hashCombine(seed, static_cast<uint32_t>(settings.msaaMode));
         hashCombine(seed, static_cast<uint32_t>(settings.anisotropyMode));
-        hashCombine(seed, settings.enableTextureMipmaps);
-        hashCombine(seed, settings.textureMipLevelLimit);
-        hashCombine(seed, settings.textureLodBias);
-        hashCombine(seed, settings.textureLodDistanceStart);
-        hashCombine(seed, settings.textureLodDistanceEnd);
-        hashCombine(seed, settings.textureLodDistanceBias);
-        hashCombine(seed, settings.texturePreviewMaxDimension);
-        hashCombine(seed, settings.textureImportMaxDimension);
-        hashCombine(seed, settings.enableTextureOomFallback);
-        hashCombine(seed, settings.textureOomFallbackDimension);
         hashCombine(seed, settings.enableSSAO);
         hashCombine(seed, settings.ssaoRadius);
         hashCombine(seed, settings.ssaoBias);
@@ -154,25 +138,7 @@ namespace
         hashCombine(seed, settings.gtaoDirections);
         hashCombine(seed, settings.gtaoSteps);
         hashCombine(seed, settings.useBentNormals);
-        hashCombine(seed, settings.enableAnisotropy);
-        hashCombine(seed, settings.anisotropyStrength);
-        hashCombine(seed, settings.anisotropyRotation);
         hashCombine(seed, settings.shadowAmbientStrength);
-        hashCombine(seed, settings.enableShadowOcclusionCulling);
-        hashCombine(seed, settings.enableOcclusionCulling);
-        hashCombine(seed, settings.occlusionProbeInterval);
-        hashCombine(seed, settings.occlusionVisibleRequeryInterval);
-        hashCombine(seed, settings.occlusionOccludedConfirmationQueries);
-        hashCombine(seed, settings.occlusionMaxInstancesPerBatch);
-        hashCombine(seed, settings.occlusionFastMotionProbeInterval);
-        hashCombine(seed, settings.occlusionFastMotionVisibleRequeryInterval);
-        hashCombine(seed, settings.occlusionFastMotionStaleRevealFrames);
-        hashCombine(seed, settings.occlusionFastMotionTranslationThreshold);
-        hashCombine(seed, settings.occlusionFastMotionForwardDotThreshold);
-        hashCombine(seed, settings.shadowOcclusionVisibilityGraceFrames);
-        hashCombine(seed, settings.enableLUTGrading);
-        hashCombine(seed, settings.lutGradingPath);
-        hashCombine(seed, settings.lutGradingStrength);
         hashCombine(seed, settings.enableTAA);
         hashCombine(seed, settings.taaHistoryWeight);
         hashCombine(seed, settings.enableSMAA);
@@ -192,9 +158,6 @@ namespace
         hashCombine(seed, settings.filmGrainStrength);
         hashCombine(seed, settings.enableChromaticAberration);
         hashCombine(seed, settings.chromaticAberrationStrength);
-        hashCombine(seed, settings.enableIBL);
-        hashCombine(seed, settings.iblDiffuseIntensity);
-        hashCombine(seed, settings.iblSpecularIntensity);
 
         return seed;
     }
@@ -1349,7 +1312,6 @@ namespace
 Editor::Editor()
 {
     m_editorCamera = std::make_shared<engine::Camera>();
-    loadEditorCameraSettingsFromEngineConfig();
 }
 
 Editor::~Editor()
@@ -1786,16 +1748,17 @@ void Editor::initStyle()
     ImVec4 *colors = style.Colors;
 
     style.WindowRounding = 5.0f;
-    style.FrameRounding = 3.0f;
-    style.GrabRounding = 3.0f;
-    style.PopupRounding = 4.0f;
+    style.FrameRounding = 4.0f;
+    style.GrabRounding = 4.0f;
+    style.PopupRounding = 5.0f;
     style.ScrollbarRounding = 6.0f;
-    style.TabRounding = 3.0f;
+    style.TabRounding = 4.0f;
 
     style.WindowBorderSize = 1.0f;
-    style.FrameBorderSize = 1.0f;
+    style.FrameBorderSize = 0.0f;
     style.PopupBorderSize = 1.0f;
     style.TabBorderSize = 0.0f;
+    style.DockingSeparatorSize = 2.0f;
 
     style.FramePadding = ImVec2(8, 5);
     style.ItemSpacing = ImVec2(8, 6);
@@ -1803,8 +1766,8 @@ void Editor::initStyle()
     style.WindowPadding = ImVec2(10, 10);
     style.CellPadding = ImVec2(6, 4);
     style.IndentSpacing = 18.0f;
-    style.ScrollbarSize = 13.0f;
-    style.GrabMinSize = 9.0f;
+    style.ScrollbarSize = 12.0f;
+    style.GrabMinSize = 10.0f;
 
     const ImVec4 bg0 = ImVec4(0.070f, 0.073f, 0.078f, 1.000f);
     const ImVec4 bg1 = ImVec4(0.095f, 0.100f, 0.108f, 1.000f);
@@ -1856,9 +1819,11 @@ void Editor::initStyle()
 
     colors[ImGuiCol_Tab] = bg1;
     colors[ImGuiCol_TabHovered] = ImVec4(0.190f, 0.205f, 0.240f, 1.000f);
-    colors[ImGuiCol_TabActive] = bg2;
+    colors[ImGuiCol_TabActive] = ImVec4(0.160f, 0.172f, 0.192f, 1.000f);
     colors[ImGuiCol_TabUnfocused] = bg1;
-    colors[ImGuiCol_TabUnfocusedActive] = bg2;
+    colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.140f, 0.150f, 0.168f, 1.000f);
+    colors[ImGuiCol_TabSelectedOverline] = accentBlue;
+    colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.4f);
 
     colors[ImGuiCol_TextSelectedBg] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.400f);
     colors[ImGuiCol_DragDropTarget] = accentOrange;
@@ -3112,19 +3077,30 @@ void Editor::drawToolBar()
         // ImGui::SameLine(200);
         ImGui::SameLine();
 
-        std::string playText;
+        const bool isPlaying = m_currentMode == EditorMode::PLAY;
+        const bool isPaused = m_currentMode == EditorMode::PAUSE;
+        const bool isEditing = m_currentMode == EditorMode::EDIT;
 
-        if (m_currentMode == EditorMode::PAUSE || m_currentMode == EditorMode::EDIT)
-            playText = "Play";
-
-        else if (m_currentMode == EditorMode::PLAY)
-            playText = "Pause";
-
-        if (ImGui::Button(playText.c_str()))
+        // Play / Pause button — green when in edit/pause, yellow when playing
+        if (isPlaying)
         {
-            if (m_currentMode == Editor::EDIT || m_currentMode == EditorMode::PAUSE)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.55f, 0.00f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.68f, 0.00f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.60f, 0.45f, 0.00f, 1.00f));
+        }
+        else
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.20f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.68f, 0.25f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.42f, 0.15f, 1.00f));
+        }
+
+        const char *playText = isPlaying ? "Pause" : "Play";
+        if (ImGui::Button(playText))
+        {
+            if (isEditing || isPaused)
             {
-                if (m_currentMode == EditorMode::EDIT && hasUnsavedSceneChanges())
+                if (isEditing && hasUnsavedSceneChanges())
                 {
                     m_notificationManager.showWarning("Scene has unsaved changes. Save scene before Play.");
                     VX_EDITOR_WARNING_STREAM("Blocked Play due to unsaved scene changes.\n");
@@ -3134,18 +3110,26 @@ void Editor::drawToolBar()
                     changeMode(EditorMode::PLAY);
                 }
             }
-            else if (m_currentMode == EditorMode::PLAY)
+            else if (isPlaying)
             {
                 changeMode(EditorMode::PAUSE);
             }
         }
+        ImGui::PopStyleColor(3);
 
         ImGui::SameLine();
 
-        if (ImGui::Button("Stop"))
+        // Stop button — only colored red when not already in edit mode
+        if (!isEditing)
         {
-            changeMode(EditorMode::EDIT);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.12f, 0.10f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.15f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.48f, 0.08f, 0.07f, 1.00f));
         }
+        if (ImGui::Button("Stop"))
+            changeMode(EditorMode::EDIT);
+        if (!isEditing)
+            ImGui::PopStyleColor(3);
 
         ImGui::SameLine();
 
@@ -3192,42 +3176,6 @@ void Editor::drawRenderSettings()
 
     ImGui::DragFloat("Render Scale", &settings.renderScale, 0.01f, 0.25f, 2.0f, "%.2f");
     ImGui::SetItemTooltip("1.0 = native resolution. Values below 1 reduce quality but improve performance.");
-
-    ImGui::SeparatorText("Textures / Mipmapping");
-    ImGui::Checkbox("Generate Mipmaps", &settings.enableTextureMipmaps);
-    ImGui::SetItemTooltip("Generates full mip chain for non-compressed textures at upload time.");
-    ImGui::DragInt("Mip Levels Limit (0=Full)", &settings.textureMipLevelLimit, 1.0f, 0, 16);
-    ImGui::SetItemTooltip("Limits generated mip count. Lower values reduce VRAM usage.");
-    ImGui::DragFloat("Texture LOD Bias", &settings.textureLodBias, 0.05f, -2.0f, 8.0f, "%.2f");
-    ImGui::SetItemTooltip("Higher values force blurrier (lower mip) sampling to reduce shimmer and memory bandwidth.");
-    ImGui::DragFloat("LOD Distance Start", &settings.textureLodDistanceStart, 0.25f, 0.0f, 10000.0f, "%.2f m");
-    ImGui::DragFloat("LOD Distance End", &settings.textureLodDistanceEnd, 0.25f, 0.0f, 10000.0f, "%.2f m");
-    ImGui::DragFloat("Max Distance Bias", &settings.textureLodDistanceBias, 0.05f, 0.0f, 8.0f, "%.2f");
-    if (settings.textureLodDistanceEnd < settings.textureLodDistanceStart)
-        settings.textureLodDistanceEnd = settings.textureLodDistanceStart;
-    {
-        int previewMaxDimension = static_cast<int>(settings.texturePreviewMaxDimension);
-        if (ImGui::DragInt("Preview Max Dimension", &previewMaxDimension, 1.0f, 64, 2048))
-            settings.texturePreviewMaxDimension = static_cast<uint32_t>(std::clamp(previewMaxDimension, 64, 2048));
-    }
-    {
-        int importMaxDimension = static_cast<int>(settings.textureImportMaxDimension);
-        if (ImGui::DragInt("Runtime Max Dimension", &importMaxDimension, 1.0f, 0, 16384))
-        {
-            if (importMaxDimension != 0 && importMaxDimension < 64)
-                importMaxDimension = 64;
-
-            settings.textureImportMaxDimension = static_cast<uint32_t>(std::clamp(importMaxDimension, 0, 16384));
-            engine::AssetsLoader::setTextureImportMaxDimension(settings.textureImportMaxDimension);
-            settings.textureImportMaxDimension = engine::AssetsLoader::getTextureImportMaxDimension();
-        }
-    }
-    ImGui::Checkbox("OOM Fallback Texture", &settings.enableTextureOomFallback);
-    {
-        int fallbackDimension = static_cast<int>(settings.textureOomFallbackDimension);
-        if (ImGui::DragInt("OOM Fallback Size", &fallbackDimension, 1.0f, 4, 64))
-            settings.textureOomFallbackDimension = static_cast<uint32_t>(std::clamp(fallbackDimension, 4, 64));
-    }
 
     ImGui::SeparatorText("Shadows");
     {
@@ -3304,36 +3252,7 @@ void Editor::drawRenderSettings()
         ImGui::DragFloat("Shadow Max Distance", &settings.shadowMaxDistance, 1.0f, 20.0f, 2000.0f, "%.0f");
         ImGui::SetItemTooltip("Limits directional-shadow cascade range in world units. Lower values reduce shadow draw calls and CPU cost.");
 
-        ImGui::Checkbox("Shadow Occlusion Culling (Experimental)", &settings.enableShadowOcclusionCulling);
-        ImGui::SetItemTooltip("Skips shadow caster submission for objects culled by camera occlusion. Can improve performance, but may cause shadow instability in some scenes.");
-
         ImGui::TextDisabled("More cascades improve distance quality but increase shadow draw calls.");
-    }
-
-    ImGui::SeparatorText("Occlusion Culling");
-    ImGui::Checkbox("Enable Occlusion Culling##occlusion_main", &settings.enableOcclusionCulling);
-    ImGui::SetItemTooltip("Master switch for camera occlusion query culling.");
-    if (settings.enableOcclusionCulling)
-    {
-        ImGui::Indent();
-        ImGui::DragInt("Probe Interval##occlusion_probe", &settings.occlusionProbeInterval, 1.0f, 1, 240);
-        ImGui::SetItemTooltip("How often hidden objects are probed again (frames). Lower = less popping, more CPU/GPU.");
-        ImGui::DragInt("Visible Requery Interval##occlusion_visible_requery", &settings.occlusionVisibleRequeryInterval, 1.0f, 1, 480);
-        ImGui::SetItemTooltip("How often visible objects refresh occlusion state (frames).");
-        ImGui::DragInt("Confirm Hidden Queries##occlusion_confirm", &settings.occlusionOccludedConfirmationQueries, 1.0f, 1, 8);
-        ImGui::SetItemTooltip("Consecutive zero-sample query results required before marking occluded.");
-        ImGui::DragInt("Max Instances/Batch##occlusion_batch_limit", &settings.occlusionMaxInstancesPerBatch, 1.0f, 1, 1024);
-        ImGui::SetItemTooltip("Batches larger than this skip occlusion and stay visible.");
-        ImGui::DragInt("Fast Motion Probe Interval##occlusion_fast_probe", &settings.occlusionFastMotionProbeInterval, 1.0f, 1, 240);
-        ImGui::DragInt("Fast Motion Visible Requery##occlusion_fast_visible", &settings.occlusionFastMotionVisibleRequeryInterval, 1.0f, 1, 240);
-        ImGui::DragInt("Fast Motion Reveal Delay##occlusion_fast_reveal", &settings.occlusionFastMotionStaleRevealFrames, 1.0f, 0, 240);
-        ImGui::SetItemTooltip("Extra frames to keep previously hidden objects hidden during fast camera motion.");
-        ImGui::DragFloat("Fast Motion Translation Threshold##occlusion_fast_translate", &settings.occlusionFastMotionTranslationThreshold, 0.001f, 0.0f, 10.0f, "%.3f");
-        ImGui::DragFloat("Fast Motion Forward Dot Threshold##occlusion_fast_dot", &settings.occlusionFastMotionForwardDotThreshold, 0.0001f, -1.0f, 1.0f, "%.4f");
-        ImGui::SetItemTooltip("Lower value = require larger camera direction change before entering fast-motion mode.");
-        ImGui::DragInt("Shadow Grace Frames##occlusion_shadow_grace", &settings.shadowOcclusionVisibilityGraceFrames, 1.0f, 0, 600);
-        ImGui::SetItemTooltip("Frames to keep shadow casters after they become occluded.");
-        ImGui::Unindent();
     }
 
     ImGui::SeparatorText("Ambient Occlusion");
@@ -3368,18 +3287,6 @@ void Editor::drawRenderSettings()
         ImGui::Unindent();
     }
 
-    ImGui::SeparatorText("Reflections (SSR)");
-    ImGui::Checkbox("SSR##toggle", &settings.enableSSR);
-    if (settings.enableSSR)
-    {
-        ImGui::Indent();
-        ImGui::DragFloat("Max Distance##ssr", &settings.ssrMaxDistance, 0.5f, 1.0f, 200.0f, "%.1f");
-        ImGui::DragFloat("Thickness##ssr", &settings.ssrThickness, 0.01f, 0.0f, 2.0f, "%.2f");
-        ImGui::DragFloat("Strength##ssr", &settings.ssrStrength, 0.01f, 0.0f, 1.0f, "%.2f");
-        ImGui::DragInt("Steps##ssr", &settings.ssrSteps, 1, 4, 64);
-        ImGui::Unindent();
-    }
-
     ImGui::SeparatorText("Environment");
     if (m_scene && m_scene->hasSkyboxHDR())
     {
@@ -3393,26 +3300,6 @@ void Editor::drawRenderSettings()
     else
     {
         ImGui::TextDisabled("HDR Skybox: <None>");
-    }
-
-    ImGui::SeparatorText("Image-Based Lighting (IBL)");
-    ImGui::Checkbox("Enable IBL##ibl", &settings.enableIBL);
-    if (settings.enableIBL)
-    {
-        ImGui::Indent();
-        ImGui::DragFloat("Diffuse Intensity##ibl", &settings.iblDiffuseIntensity, 0.01f, 0.0f, 3.0f, "%.2f");
-        ImGui::DragFloat("Specular Intensity##ibl", &settings.iblSpecularIntensity, 0.01f, 0.0f, 3.0f, "%.2f");
-        ImGui::Unindent();
-    }
-
-    ImGui::SeparatorText("Anisotropic GGX");
-    ImGui::Checkbox("Enable Anisotropy##aniso", &settings.enableAnisotropy);
-    if (settings.enableAnisotropy)
-    {
-        ImGui::Indent();
-        ImGui::DragFloat("Anisotropy Strength##aniso", &settings.anisotropyStrength, 0.01f, -1.0f, 1.0f, "%.2f");
-        ImGui::DragFloat("Anisotropy Rotation##aniso", &settings.anisotropyRotation, 0.5f, -180.0f, 180.0f, "%.1f deg");
-        ImGui::Unindent();
     }
 
     ImGui::SeparatorText("Ambient Shadowing");
@@ -3440,33 +3327,6 @@ void Editor::drawRenderSettings()
         ImGui::SetItemTooltip("-1 = cool/blue, +1 = warm/orange");
         ImGui::DragFloat("Tint##cg", &settings.colorGradingTint, 0.01f, -1.0f, 1.0f, "%.2f");
         ImGui::SetItemTooltip("-1 = magenta, +1 = green");
-        ImGui::Unindent();
-    }
-
-    ImGui::SeparatorText("LUT Grading");
-    ImGui::Checkbox("Enable LUT Grading##toggle", &settings.enableLUTGrading);
-    if (settings.enableLUTGrading)
-    {
-        ImGui::Indent();
-        static std::array<char, 512> lutPathBuffer{};
-        static bool lutPathInitialized = false;
-
-        if (!lutPathInitialized || settings.lutGradingPath != std::string(lutPathBuffer.data()))
-        {
-            std::snprintf(lutPathBuffer.data(), lutPathBuffer.size(), "%s", settings.lutGradingPath.c_str());
-            lutPathInitialized = true;
-        }
-
-        if (ImGui::InputText("LUT Path##lut_path", lutPathBuffer.data(), lutPathBuffer.size()))
-            settings.lutGradingPath = std::string(lutPathBuffer.data());
-
-        if (ImGui::Button("Clear LUT Path##lut_path"))
-        {
-            settings.lutGradingPath.clear();
-            lutPathBuffer[0] = '\0';
-        }
-
-        ImGui::DragFloat("LUT Strength##lut_strength", &settings.lutGradingStrength, 0.01f, 0.0f, 1.0f, "%.2f");
         ImGui::Unindent();
     }
 
@@ -3520,18 +3380,6 @@ void Editor::drawRenderSettings()
     else
         ImGui::TextDisabled("AA disabled.");
 
-    const char *msaaModes[] = {
-        "OFF",
-        "2x",
-        "4x",
-        "8x",
-        "16x"};
-    int msaaModeIndex = static_cast<int>(settings.msaaMode);
-    if (ImGui::Combo("MSAA##msaa_mode", &msaaModeIndex, msaaModes, IM_ARRAYSIZE(msaaModes)))
-        settings.msaaMode = static_cast<engine::RenderQualitySettings::MSAAMode>(msaaModeIndex);
-
-    ImGui::TextDisabled("MSAA affects deferred GBuffer. Unsupported levels are clamped by GPU capabilities.");
-
     const char *anisotropyModes[] = {
         "OFF",
         "2x",
@@ -3545,53 +3393,66 @@ void Editor::drawRenderSettings()
     ImGui::TextDisabled("Applies to texture sampling. Unsupported levels are clamped by GPU capabilities.");
 
     if (settingsHashBefore != hashRenderQualitySettings(settings))
-        saveRenderSettingsToEngineConfig();
+        saveProjectConfig();
 
     ImGui::End();
 }
 
-void Editor::saveRenderSettingsToEngineConfig()
+void Editor::saveProjectConfig()
 {
-    auto &engineConfig = engine::EngineConfig::instance();
-    if (!engineConfig.save())
-        VX_EDITOR_WARNING_STREAM("Failed to persist render settings to engine config\n");
+    auto project = m_currentProject.lock();
+    if (!project)
+        return;
+
+    m_projectConfig.captureRenderSettings();
+
+    if (m_editorCamera)
+    {
+        engine::ProjectConfig::CameraSettings cam{};
+        cam.moveSpeed = std::max(m_movementSpeed, 0.05f);
+        cam.mouseSensitivity = std::max(m_mouseSensitivity, 0.005f);
+        cam.projectionMode = static_cast<uint8_t>(m_editorCamera->getProjectionMode());
+        cam.nearPlane = std::max(m_editorCamera->getNear(), 0.001f);
+        cam.farPlane = std::max(m_editorCamera->getFar(), cam.nearPlane + 0.001f);
+        cam.fov = std::clamp(m_editorCamera->getFOV(), 1.0f, 179.0f);
+        cam.orthographicSize = std::max(m_editorCamera->getOrthographicSize(), 0.01f);
+        const auto pos = m_editorCamera->getPosition();
+        cam.positionX = pos.x;
+        cam.positionY = pos.y;
+        cam.positionZ = pos.z;
+        cam.yaw = m_editorCamera->getYaw();
+        cam.pitch = m_editorCamera->getPitch();
+        m_projectConfig.setCameraSettings(cam);
+    }
+
+    if (!m_projectConfig.save(std::filesystem::path(project->fullPath)))
+        VX_EDITOR_WARNING_STREAM("Failed to save project config\n");
 }
 
-void Editor::saveEditorCameraSettingsToEngineConfig()
+void Editor::loadProjectConfig()
 {
+    auto project = m_currentProject.lock();
+    if (!project)
+        return;
+
+    m_projectConfig.load(std::filesystem::path(project->fullPath));
+    m_projectConfig.applyRenderSettings();
+
     if (!m_editorCamera)
         return;
 
-    engine::EngineConfig::EditorCameraSettings cameraSettings{};
-    cameraSettings.moveSpeed = std::max(m_movementSpeed, 0.05f);
-    cameraSettings.mouseSensitivity = std::max(m_mouseSensitivity, 0.005f);
-    cameraSettings.projectionMode = static_cast<uint8_t>(m_editorCamera->getProjectionMode());
-    cameraSettings.nearPlane = std::max(m_editorCamera->getNear(), 0.001f);
-    cameraSettings.farPlane = std::max(m_editorCamera->getFar(), cameraSettings.nearPlane + 0.001f);
-    cameraSettings.fov = std::clamp(m_editorCamera->getFOV(), 1.0f, 179.0f);
-    cameraSettings.orthographicSize = std::max(m_editorCamera->getOrthographicSize(), 0.01f);
-
-    auto &engineConfig = engine::EngineConfig::instance();
-    engineConfig.setEditorCameraSettings(cameraSettings);
-    if (!engineConfig.save())
-        VX_EDITOR_WARNING_STREAM("Failed to persist editor camera settings to engine config\n");
-}
-
-void Editor::loadEditorCameraSettingsFromEngineConfig()
-{
-    if (!m_editorCamera)
-        return;
-
-    const auto &cameraSettings = engine::EngineConfig::instance().getEditorCameraSettings();
-
-    m_movementSpeed = std::max(cameraSettings.moveSpeed, 0.05f);
-    m_mouseSensitivity = std::max(cameraSettings.mouseSensitivity, 0.005f);
-
-    m_editorCamera->setProjectionMode(static_cast<engine::Camera::ProjectionMode>(std::clamp(static_cast<int>(cameraSettings.projectionMode), 0, 1)));
-    m_editorCamera->setNear(std::max(cameraSettings.nearPlane, 0.001f));
-    m_editorCamera->setFar(std::max(cameraSettings.farPlane, m_editorCamera->getNear() + 0.001f));
-    m_editorCamera->setFOV(std::clamp(cameraSettings.fov, 1.0f, 179.0f));
-    m_editorCamera->setOrthographicSize(std::max(cameraSettings.orthographicSize, 0.01f));
+    const auto &cam = m_projectConfig.getCameraSettings();
+    m_movementSpeed = std::max(cam.moveSpeed, 0.05f);
+    m_mouseSensitivity = std::max(cam.mouseSensitivity, 0.005f);
+    m_editorCamera->setProjectionMode(static_cast<engine::Camera::ProjectionMode>(
+        std::clamp(static_cast<int>(cam.projectionMode), 0, 1)));
+    m_editorCamera->setNear(std::max(cam.nearPlane, 0.001f));
+    m_editorCamera->setFar(std::max(cam.farPlane, m_editorCamera->getNear() + 0.001f));
+    m_editorCamera->setFOV(std::clamp(cam.fov, 1.0f, 179.0f));
+    m_editorCamera->setOrthographicSize(std::max(cam.orthographicSize, 0.01f));
+    m_editorCamera->setPosition({cam.positionX, cam.positionY, cam.positionZ});
+    m_editorCamera->setYaw(cam.yaw);
+    m_editorCamera->setPitch(cam.pitch);
 }
 
 void Editor::drawEditorCameraSettings()
@@ -3685,7 +3546,7 @@ void Editor::drawEditorCameraSettings()
     }
 
     if (cameraSettingsChanged)
-        saveEditorCameraSettingsToEngineConfig();
+        saveProjectConfig();
 
     ImGui::End();
 }
@@ -3726,14 +3587,6 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
                        VkDescriptorSet gameViewportDescriptorSet,
                        bool hasGameCamera)
 {
-    std::string textureMemoryWarningMessage;
-    if (engine::Texture::consumeMemoryWarning(textureMemoryWarningMessage))
-    {
-        m_textureMemoryWarningPopupMessage = std::move(textureMemoryWarningMessage);
-        m_textureMemoryWarningPopupPendingOpen = true;
-        m_notificationManager.showWarning(m_textureMemoryWarningPopupMessage, 6.0f);
-    }
-
     if (m_renderOnlyViewport && viewportDescriptorSet)
     {
         drawViewport(viewportDescriptorSet);
@@ -3767,37 +3620,8 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     drawEditorCameraSettings();
     drawRenderSettings();
     drawBenchmark();
-    drawTextureMemoryWarningPopup();
 
     m_notificationManager.render();
-}
-
-void Editor::drawTextureMemoryWarningPopup()
-{
-    if (m_textureMemoryWarningPopupPendingOpen)
-    {
-        ImGui::OpenPopup("Texture Memory Warning");
-        m_textureMemoryWarningPopupPendingOpen = false;
-    }
-
-    if (!ImGui::BeginPopupModal("Texture Memory Warning", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        return;
-
-    const char *message = m_textureMemoryWarningPopupMessage.empty()
-                              ? "GPU memory is low. Some textures were replaced with emergency low-resolution placeholders."
-                              : m_textureMemoryWarningPopupMessage.c_str();
-
-    ImGui::TextWrapped("%s", message);
-    ImGui::Separator();
-    ImGui::TextWrapped("Recommendations:");
-    ImGui::BulletText("Lower Runtime Max Dimension in Render Settings.");
-    ImGui::BulletText("Lower Mip Levels Limit / increase Texture LOD Bias.");
-    ImGui::BulletText("Close heavy scenes or disable expensive effects.");
-
-    if (ImGui::Button("OK", ImVec2(120.0f, 0.0f)))
-        ImGui::CloseCurrentPopup();
-
-    ImGui::EndPopup();
 }
 
 void Editor::updateAnimationPreview(float deltaTime)
@@ -3848,22 +3672,15 @@ static bool drawMaterialTextureSlot(
 
     if (ImGui::Button("Clear"))
     {
-        // Caller should interpret empty path as "use default"
         clicked = true;
-        // We signal clear by popupRequest=false and caller checks button click separately if needed.
-        // If you want explicit behavior, split return enum.
     }
     ImGui::EndGroup();
 
-    // Drag-drop support (optional but very useful)
     if (ImGui::BeginDragDropTarget())
     {
-        // Example payload type, adapt to your engine
         if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
         {
             const char *droppedPath = static_cast<const char *>(payload->Data);
-            // Caller should handle the actual assignment, this helper only draws.
-            // You can redesign helper to output selected path if you want.
             (void)droppedPath;
         }
         ImGui::EndDragDropTarget();
@@ -5619,10 +5436,6 @@ engine::Texture::SharedPtr Editor::ensureProjectTextureLoadedPreview(const std::
     if (!project)
         return nullptr;
 
-    const uint32_t previewMaxDimension = std::clamp(
-        engine::RenderQualitySettings::getInstance().texturePreviewMaxDimension,
-        64u, 2048u);
-
     const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
     const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
 
@@ -5635,8 +5448,7 @@ engine::Texture::SharedPtr Editor::ensureProjectTextureLoadedPreview(const std::
 
     auto texture = engine::AssetsLoader::loadTextureGPU(
         normalizedTexturePath,
-        getLdrTextureFormat(previewUsage),
-        previewMaxDimension);
+        getLdrTextureFormat(previewUsage));
     if (!texture)
     {
         VX_EDITOR_WARNING_STREAM("Failed to load preview texture: " << normalizedTexturePath << '\n');
@@ -5678,7 +5490,6 @@ bool Editor::saveMaterialToDisk(const std::filesystem::path &path, const engine:
     json["uv_scale"] = {cpuMaterial.uvScale.x, cpuMaterial.uvScale.y};
     json["uv_location"] = {cpuMaterial.uvOffset.x, cpuMaterial.uvOffset.y};
     json["uv_rotation"] = cpuMaterial.uvRotation;
-    // Backward-compat for older loaders/tools.
     json["uv_offset"] = {cpuMaterial.uvOffset.x, cpuMaterial.uvOffset.y};
 
     std::ofstream file(path);

@@ -48,6 +48,8 @@ public:
     /// Called after all proxies have been realized and GPU resources are created.
     virtual void compile(RGPResourcesStorage &storage) = 0;
 
+    virtual void prepareRecord(const RenderGraphPassPerFrameData &, const RenderGraphPassContext &) {}
+
     virtual void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                         const RenderGraphPassContext &renderContext) = 0;
 

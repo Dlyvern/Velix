@@ -88,7 +88,6 @@ private:
     std::vector<VkImageView> m_pointLayerViews;
     std::vector<VkImageView> m_directionalLayerViews;
     std::vector<ShadowExecutionInfo> m_executionInfos;
-    mutable size_t m_currentExecutionIndex{0};
 };
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END

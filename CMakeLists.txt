@@ -118,14 +118,14 @@ else()
 endif()
 
 if(EXISTS ${FBX_DLL})
+    # Copy next to the executable so the OS loader finds it at runtime
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/lib"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${FBX_DLL}"
-            "${CMAKE_BINARY_DIR}/lib/libfbxsdk${DYNAMIC_LIB_EXTENSION}"
-        COMMENT "Copying FBX SDK to build directory"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/libfbxsdk${DYNAMIC_LIB_EXTENSION}"
+        COMMENT "Copying FBX SDK next to executable"
     )
-    message(STATUS "FBX SDK will be copied to: ${CMAKE_BINARY_DIR}/lib/")
+    message(STATUS "FBX SDK will be copied next to executable")
 else()
     message(WARNING "FBX SDK not found: ${FBX_DLL}")
 endif()
@@ -204,7 +204,11 @@ if(VELIX_BUNDLED_CMAKE_DIR_RESOLVED)
 endif()
 
 if(EXISTS ${FBX_DLL})
-    install(FILES ${FBX_DLL} DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    if(WIN32)
+        install(FILES ${FBX_DLL} DESTINATION ${CMAKE_INSTALL_BINDIR})
+    else()
+        install(FILES ${FBX_DLL} DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    endif()
 endif()
 
 if(WIN32 AND EXISTS "${FMOD_WINDOWS_RUNTIME_CANDIDATE}")

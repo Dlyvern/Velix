@@ -49,7 +49,6 @@ private:
     static inline core::Shader::SharedPtr fxaaShader{nullptr};
     static inline core::Shader::SharedPtr bloomExtractShader{nullptr};
     static inline core::Shader::SharedPtr bloomCompositeShader{nullptr};
-    static inline core::Shader::SharedPtr ssrShader{nullptr};
     static inline core::Shader::SharedPtr ssaoShader{nullptr};
     static inline core::Shader::SharedPtr smaaShader{nullptr};
     static inline core::Shader::SharedPtr contactShadowShader{nullptr};

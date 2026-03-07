@@ -243,7 +243,11 @@ namespace
     }
 }
 
-Scene::Scene() : m_physicsScene(PhysXCore::getInstance()->getPhysics())
+Scene::Scene() : m_physicsScene(PhysXCore::getInstance()->getPhysics()
+#if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
+    , PhysXCore::getInstance()->getCudaContextManager()
+#endif
+)
 {
 }
 

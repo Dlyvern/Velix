@@ -177,42 +177,21 @@ void UIRenderGraphPass::recordPassthrough(core::CommandBuffer::SharedPtr command
     profiling::cmdDraw(commandBuffer, 3, 1, 0, 0);
 }
 
-VkDescriptorSet UIRenderGraphPass::getTextureDescriptorSet(VkImageView view, VkSampler sampler)
+void UIRenderGraphPass::prepareRecord(const RenderGraphPassPerFrameData &data,
+                                      const RenderGraphPassContext &renderContext)
 {
-    auto it = m_texDescriptorSets.find(view);
-    if (it != m_texDescriptorSets.end())
-        return it->second;
+    if (renderContext.currentFrame >= m_transientVertexBuffersByFrame.size())
+        m_transientVertexBuffersByFrame.resize(renderContext.currentFrame + 1u);
 
-    VkDescriptorSet ds = DescriptorSetBuilder::begin()
-                             .addImage(view, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
-                             .build(core::VulkanContext::getContext()->getDevice(),
-                                    core::VulkanContext::getContext()->getPersistentDescriptorPool(),
-                                    m_textureDescriptorSetLayout);
-    m_texDescriptorSets[view] = ds;
-    return ds;
-}
-
-void UIRenderGraphPass::recordBillboards(core::CommandBuffer::SharedPtr commandBuffer,
-                                         const RenderGraphPassPerFrameData &data)
-{
-    if (m_renderData.billboards.empty())
-        return;
-
-    GraphicsPipelineKey key{};
-    key.shader = ShaderId::Billboard;
-    key.blend = BlendMode::AlphaBlend;
-    key.cull = CullMode::None;
-    key.depthTest = false;
-    key.depthWrite = false;
-    key.colorFormats = {m_format};
-    key.pipelineLayout = m_billboardPipelineLayout;
-
-    auto pipeline = GraphicsPipelineManager::getOrCreate(key);
-    vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    m_transientVertexBuffersByFrame[renderContext.currentFrame].clear();
+    m_preparedBillboards.clear();
+    m_preparedTexts.clear();
+    m_preparedButtons.clear();
 
     const glm::mat4 viewProj = data.projection * data.view;
     const glm::vec3 baseRight = glm::vec3(data.view[0][0], data.view[1][0], data.view[2][0]);
     const glm::vec3 baseUp = glm::vec3(data.view[0][1], data.view[1][1], data.view[2][1]);
+    const float aspectCorrection = static_cast<float>(m_extent.height) / static_cast<float>(m_extent.width);
 
     for (const auto *billboard : m_renderData.billboards)
     {
@@ -224,51 +203,25 @@ void UIRenderGraphPass::recordBillboards(core::CommandBuffer::SharedPtr commandB
         if (!billboard->getTexture())
             continue;
 
-        VkDescriptorSet ds = getTextureDescriptorSet(
+        PreparedBillboardDraw prepared{};
+        prepared.descriptorSet = getTextureDescriptorSet(
             billboard->getTexture()->vkImageView(), m_linearSampler);
 
-        vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                m_billboardPipelineLayout, 0, 1, &ds, 0, nullptr);
-
-        BillboardPC pc{};
-        pc.viewProj = viewProj;
         const float rotationRadians = glm::radians(billboard->getRotation());
         const float cosAngle = std::cos(rotationRadians);
         const float sinAngle = std::sin(rotationRadians);
 
-        pc.right = baseRight * cosAngle + baseUp * sinAngle;
-        pc.size = billboard->getSize();
-        pc.up = -baseRight * sinAngle + baseUp * cosAngle;
-        pc.pad0 = 0.0f;
-        pc.worldPos = billboard->getWorldPosition();
-        pc.pad1 = 0;
-        pc.color = billboard->getColor();
+        prepared.pushConstants.viewProj = viewProj;
+        prepared.pushConstants.right = baseRight * cosAngle + baseUp * sinAngle;
+        prepared.pushConstants.size = billboard->getSize();
+        prepared.pushConstants.up = -baseRight * sinAngle + baseUp * cosAngle;
+        prepared.pushConstants.pad0 = 0.0f;
+        prepared.pushConstants.worldPos = billboard->getWorldPosition();
+        prepared.pushConstants.pad1 = 0;
+        prepared.pushConstants.color = billboard->getColor();
 
-        vkCmdPushConstants(commandBuffer->vk(), m_billboardPipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(BillboardPC), &pc);
-
-        profiling::cmdDraw(commandBuffer, 6, 1, 0, 0);
+        m_preparedBillboards.push_back(std::move(prepared));
     }
-}
-
-void UIRenderGraphPass::recordUIText(core::CommandBuffer::SharedPtr commandBuffer, uint32_t currentFrame)
-{
-    if (m_renderData.texts.empty())
-        return;
-
-    GraphicsPipelineKey key{};
-    key.shader = ShaderId::UIText;
-    key.blend = BlendMode::AlphaBlend;
-    key.cull = CullMode::None;
-    key.depthTest = false;
-    key.depthWrite = false;
-    key.colorFormats = {m_format};
-    key.pipelineLayout = m_textPipelineLayout;
-
-    auto pipeline = GraphicsPipelineManager::getOrCreate(key);
-    vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-    const float aspectCorrection = static_cast<float>(m_extent.height) / static_cast<float>(m_extent.width);
 
     for (const auto *textObj : m_renderData.texts)
     {
@@ -282,18 +235,6 @@ void UIRenderGraphPass::recordUIText(core::CommandBuffer::SharedPtr commandBuffe
         ui::FontAtlas *atlas = getOrBuildAtlas(font);
         if (!atlas || !atlas->isBuilt())
             continue;
-
-        VkDescriptorSet ds = getTextureDescriptorSet(
-            atlas->getTexture()->vkImageView(), m_nearestSampler);
-
-        vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                m_textPipelineLayout, 0, 1, &ds, 0, nullptr);
-
-        UITextPC pc{};
-        pc.color = textObj->getColor();
-        vkCmdPushConstants(commandBuffer->vk(), m_textPipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(UITextPC), &pc);
 
         std::vector<vertex::Vertex2D> verts;
         const float scale = textObj->getScale() * 0.015f;
@@ -323,48 +264,34 @@ void UIRenderGraphPass::recordUIText(core::CommandBuffer::SharedPtr commandBuffe
             const glm::vec2 p3 = rotatePointAroundPivot(glm::vec2(x1, y1), pivot, textObj->getRotation());
 
             appendTexturedQuad(verts, p0, p1, p2, p3, uvRect);
-
             pen.x += (g->advance >> 6) * scale * aspectCorrection;
         }
 
         if (verts.empty())
             continue;
 
-        auto vb = uploadVertices(verts, currentFrame);
-        VkBuffer vkBuf = vb->vk();
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, &vkBuf, &offset);
-        profiling::cmdDraw(commandBuffer, static_cast<uint32_t>(verts.size()), 1, 0, 0);
+        PreparedTextDraw prepared{};
+        prepared.descriptorSet = getTextureDescriptorSet(
+            atlas->getTexture()->vkImageView(), m_nearestSampler);
+        prepared.vertexBuffer = uploadVertices(verts, renderContext.currentFrame);
+        prepared.vertexCount = static_cast<uint32_t>(verts.size());
+        prepared.pushConstants.color = textObj->getColor();
+        m_preparedTexts.push_back(std::move(prepared));
     }
-}
-
-void UIRenderGraphPass::recordUIButtons(core::CommandBuffer::SharedPtr commandBuffer, uint32_t currentFrame)
-{
-    if (m_renderData.buttons.empty())
-        return;
-
-    GraphicsPipelineKey quadKey{};
-    quadKey.shader = ShaderId::UIQuad;
-    quadKey.blend = BlendMode::AlphaBlend;
-    quadKey.cull = CullMode::None;
-    quadKey.depthTest = false;
-    quadKey.depthWrite = false;
-    quadKey.colorFormats = {m_format};
-    quadKey.pipelineLayout = m_quadPipelineLayout;
-
-    auto quadPipeline = GraphicsPipelineManager::getOrCreate(quadKey);
-
-    const float aspectCorrection = static_cast<float>(m_extent.height) / static_cast<float>(m_extent.width);
 
     for (const auto *btn : m_renderData.buttons)
     {
         if (!btn || !btn->isEnabled())
             continue;
 
+        PreparedButtonDraw prepared{};
+
         const glm::vec2 pos = btn->getPosition();
         const glm::vec2 size = btn->getSize();
-        const float x0 = pos.x, x1 = pos.x + size.x;
-        const float y0 = pos.y, y1 = pos.y + size.y;
+        const float x0 = pos.x;
+        const float x1 = pos.x + size.x;
+        const float y0 = pos.y;
+        const float y1 = pos.y + size.y;
         const glm::vec2 pivot = pos + size * 0.5f;
 
         const glm::vec2 p0 = rotatePointAroundPivot(glm::vec2(x0, y0), pivot, btn->getRotation());
@@ -380,33 +307,177 @@ void UIRenderGraphPass::recordUIButtons(core::CommandBuffer::SharedPtr commandBu
             {{p3.x, p3.y, 0.f}, {1.f, 1.f}},
             {{p2.x, p2.y, 0.f}, {0.f, 1.f}}};
 
-        vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, quadPipeline);
+        prepared.backgroundVertexBuffer = uploadVertices(quadVerts, renderContext.currentFrame);
+        prepared.backgroundVertexCount = static_cast<uint32_t>(quadVerts.size());
+        prepared.backgroundPushConstants.color = btn->isHovered() ? btn->getHoverColor() : btn->getBackgroundColor();
+        prepared.backgroundPushConstants.borderColor = btn->getBorderColor();
+        prepared.backgroundPushConstants.borderWidth = btn->getBorderWidth();
+        prepared.backgroundPushConstants.cornerRadius = 0.0f;
 
-        UIQuadPC pc{};
-        pc.color = btn->isHovered() ? btn->getHoverColor() : btn->getBackgroundColor();
-        pc.borderColor = btn->getBorderColor();
-        pc.borderWidth = btn->getBorderWidth();
-        pc.cornerRadius = 0.0f;
+        const std::string &label = btn->getLabel();
+        if (!label.empty())
+        {
+            const ui::Font *font = btn->getFont();
+            if (font)
+            {
+                ui::FontAtlas *atlas = getOrBuildAtlas(font);
+                if (atlas && atlas->isBuilt())
+                {
+                    const float scale = btn->getLabelScale() * 0.012f;
+                    glm::vec2 textSize = font->calculateTextSize(label, scale * aspectCorrection);
+                    glm::vec2 pen{pos.x + (size.x - textSize.x) * 0.5f,
+                                  pos.y + (size.y - textSize.y) * 0.5f};
+
+                    std::vector<vertex::Vertex2D> textVerts;
+                    for (char c : label)
+                    {
+                        const ui::Glyph *g = font->getGlyph(c);
+                        if (!g)
+                            continue;
+
+                        const auto uvRect = atlas->getGlyphUV(c);
+                        const float w = g->bitmapWidth * scale * aspectCorrection;
+                        const float h = g->bitmapRows * scale;
+                        const float xoff = g->bearing.x * scale * aspectCorrection;
+                        const float yoff = (g->bearing.y - g->bitmapRows) * scale;
+                        const float cx0 = pen.x + xoff;
+                        const float cx1 = cx0 + w;
+                        const float cy0 = pen.y + yoff;
+                        const float cy1 = cy0 + h;
+
+                        const glm::vec2 tp0 = rotatePointAroundPivot(glm::vec2(cx0, cy0), pivot, btn->getRotation());
+                        const glm::vec2 tp1 = rotatePointAroundPivot(glm::vec2(cx1, cy0), pivot, btn->getRotation());
+                        const glm::vec2 tp2 = rotatePointAroundPivot(glm::vec2(cx0, cy1), pivot, btn->getRotation());
+                        const glm::vec2 tp3 = rotatePointAroundPivot(glm::vec2(cx1, cy1), pivot, btn->getRotation());
+
+                        appendTexturedQuad(textVerts, tp0, tp1, tp2, tp3, uvRect);
+                        pen.x += (g->advance >> 6) * scale * aspectCorrection;
+                    }
+
+                    if (!textVerts.empty())
+                    {
+                        prepared.hasLabel = true;
+                        prepared.labelDescriptorSet = getTextureDescriptorSet(atlas->getTexture()->vkImageView(), m_nearestSampler);
+                        prepared.labelVertexBuffer = uploadVertices(textVerts, renderContext.currentFrame);
+                        prepared.labelVertexCount = static_cast<uint32_t>(textVerts.size());
+                        prepared.labelPushConstants.color = btn->getLabelColor();
+                    }
+                }
+            }
+        }
+
+        m_preparedButtons.push_back(std::move(prepared));
+    }
+}
+
+VkDescriptorSet UIRenderGraphPass::getTextureDescriptorSet(VkImageView view, VkSampler sampler)
+{
+    auto it = m_texDescriptorSets.find(view);
+    if (it != m_texDescriptorSets.end())
+        return it->second;
+
+    VkDescriptorSet ds = DescriptorSetBuilder::begin()
+                             .addImage(view, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                             .build(core::VulkanContext::getContext()->getDevice(),
+                                    core::VulkanContext::getContext()->getPersistentDescriptorPool(),
+                                    m_textureDescriptorSetLayout);
+    m_texDescriptorSets[view] = ds;
+    return ds;
+}
+
+void UIRenderGraphPass::recordBillboards(core::CommandBuffer::SharedPtr commandBuffer)
+{
+    if (m_preparedBillboards.empty())
+        return;
+
+    GraphicsPipelineKey key{};
+    key.shader = ShaderId::Billboard;
+    key.blend = BlendMode::AlphaBlend;
+    key.cull = CullMode::None;
+    key.depthTest = false;
+    key.depthWrite = false;
+    key.colorFormats = {m_format};
+    key.pipelineLayout = m_billboardPipelineLayout;
+
+    auto pipeline = GraphicsPipelineManager::getOrCreate(key);
+    vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+    for (const auto &billboard : m_preparedBillboards)
+    {
+        VkDescriptorSet ds = billboard.descriptorSet;
+        vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                m_billboardPipelineLayout, 0, 1, &ds, 0, nullptr);
+        vkCmdPushConstants(commandBuffer->vk(), m_billboardPipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(BillboardPC), &billboard.pushConstants);
+
+        profiling::cmdDraw(commandBuffer, 6, 1, 0, 0);
+    }
+}
+
+void UIRenderGraphPass::recordUIText(core::CommandBuffer::SharedPtr commandBuffer)
+{
+    if (m_preparedTexts.empty())
+        return;
+
+    GraphicsPipelineKey key{};
+    key.shader = ShaderId::UIText;
+    key.blend = BlendMode::AlphaBlend;
+    key.cull = CullMode::None;
+    key.depthTest = false;
+    key.depthWrite = false;
+    key.colorFormats = {m_format};
+    key.pipelineLayout = m_textPipelineLayout;
+
+    auto pipeline = GraphicsPipelineManager::getOrCreate(key);
+    vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+    for (const auto &textDraw : m_preparedTexts)
+    {
+        VkDescriptorSet ds = textDraw.descriptorSet;
+        vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                m_textPipelineLayout, 0, 1, &ds, 0, nullptr);
+
+        vkCmdPushConstants(commandBuffer->vk(), m_textPipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(UITextPC), &textDraw.pushConstants);
+
+        VkBuffer vkBuf = textDraw.vertexBuffer->vk();
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, &vkBuf, &offset);
+        profiling::cmdDraw(commandBuffer, textDraw.vertexCount, 1, 0, 0);
+    }
+}
+
+void UIRenderGraphPass::recordUIButtons(core::CommandBuffer::SharedPtr commandBuffer)
+{
+    if (m_preparedButtons.empty())
+        return;
+
+    GraphicsPipelineKey quadKey{};
+    quadKey.shader = ShaderId::UIQuad;
+    quadKey.blend = BlendMode::AlphaBlend;
+    quadKey.cull = CullMode::None;
+    quadKey.depthTest = false;
+    quadKey.depthWrite = false;
+    quadKey.colorFormats = {m_format};
+    quadKey.pipelineLayout = m_quadPipelineLayout;
+
+    auto quadPipeline = GraphicsPipelineManager::getOrCreate(quadKey);
+
+    for (const auto &button : m_preparedButtons)
+    {
+        vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, quadPipeline);
 
         vkCmdPushConstants(commandBuffer->vk(), m_quadPipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(UIQuadPC), &pc);
+                           0, sizeof(UIQuadPC), &button.backgroundPushConstants);
 
-        auto vb = uploadVertices(quadVerts, currentFrame);
-        VkBuffer vkBuf = vb->vk();
+        VkBuffer vkBuf = button.backgroundVertexBuffer->vk();
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, &vkBuf, &offset);
-        profiling::cmdDraw(commandBuffer, 6, 1, 0, 0);
+        profiling::cmdDraw(commandBuffer, button.backgroundVertexCount, 1, 0, 0);
 
-        // Draw label
-        const std::string &label = btn->getLabel();
-        if (label.empty())
-            continue;
-        const ui::Font *font = btn->getFont();
-        if (!font)
-            continue;
-        ui::FontAtlas *atlas = getOrBuildAtlas(font);
-        if (!atlas || !atlas->isBuilt())
+        if (!button.hasLabel)
             continue;
 
         GraphicsPipelineKey textKey = quadKey;
@@ -415,53 +486,18 @@ void UIRenderGraphPass::recordUIButtons(core::CommandBuffer::SharedPtr commandBu
         auto textPipeline = GraphicsPipelineManager::getOrCreate(textKey);
         vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, textPipeline);
 
-        VkDescriptorSet ds = getTextureDescriptorSet(atlas->getTexture()->vkImageView(), m_nearestSampler);
+        VkDescriptorSet ds = button.labelDescriptorSet;
         vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 m_textPipelineLayout, 0, 1, &ds, 0, nullptr);
 
-        UITextPC textPc{};
-        textPc.color = btn->getLabelColor();
         vkCmdPushConstants(commandBuffer->vk(), m_textPipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(UITextPC), &textPc);
+                           0, sizeof(UITextPC), &button.labelPushConstants);
 
-        const float scale = btn->getLabelScale() * 0.012f;
-        glm::vec2 textSize = font->calculateTextSize(label, scale * aspectCorrection);
-        glm::vec2 pen{pos.x + (size.x - textSize.x) * 0.5f,
-                      pos.y + (size.y - textSize.y) * 0.5f};
-
-        std::vector<vertex::Vertex2D> textVerts;
-        for (char c : label)
-        {
-            const ui::Glyph *g = font->getGlyph(c);
-            if (!g)
-                continue;
-            const auto uvRect = atlas->getGlyphUV(c);
-            const float w = g->bitmapWidth * scale * aspectCorrection;
-            const float h = g->bitmapRows * scale;
-            const float xoff = g->bearing.x * scale * aspectCorrection;
-            const float yoff = (g->bearing.y - g->bitmapRows) * scale;
-            const float cx0 = pen.x + xoff, cx1 = cx0 + w;
-            const float cy0 = pen.y + yoff, cy1 = cy0 + h;
-
-            const glm::vec2 tp0 = rotatePointAroundPivot(glm::vec2(cx0, cy0), pivot, btn->getRotation());
-            const glm::vec2 tp1 = rotatePointAroundPivot(glm::vec2(cx1, cy0), pivot, btn->getRotation());
-            const glm::vec2 tp2 = rotatePointAroundPivot(glm::vec2(cx0, cy1), pivot, btn->getRotation());
-            const glm::vec2 tp3 = rotatePointAroundPivot(glm::vec2(cx1, cy1), pivot, btn->getRotation());
-
-            appendTexturedQuad(textVerts, tp0, tp1, tp2, tp3, uvRect);
-
-            pen.x += (g->advance >> 6) * scale * aspectCorrection;
-        }
-
-        if (!textVerts.empty())
-        {
-            auto tvb = uploadVertices(textVerts, currentFrame);
-            VkBuffer tvkBuf = tvb->vk();
-            VkDeviceSize toffset = 0;
-            vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, &tvkBuf, &toffset);
-            profiling::cmdDraw(commandBuffer, static_cast<uint32_t>(textVerts.size()), 1, 0, 0);
-        }
+        VkBuffer tvkBuf = button.labelVertexBuffer->vk();
+        VkDeviceSize toffset = 0;
+        vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, &tvkBuf, &toffset);
+        profiling::cmdDraw(commandBuffer, button.labelVertexCount, 1, 0, 0);
     }
 }
 
@@ -469,18 +505,15 @@ void UIRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
                                const RenderGraphPassPerFrameData &data,
                                const RenderGraphPassContext &renderContext)
 {
-    if (renderContext.currentFrame >= m_transientVertexBuffersByFrame.size())
-        m_transientVertexBuffersByFrame.resize(renderContext.currentFrame + 1u);
-
-    m_transientVertexBuffersByFrame[renderContext.currentFrame].clear();
+    (void)data;
 
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);
     vkCmdSetScissor(commandBuffer->vk(), 0, 1, &m_scissor);
 
     recordPassthrough(commandBuffer, renderContext.currentImageIndex);
-    recordBillboards(commandBuffer, data);
-    recordUIText(commandBuffer, renderContext.currentFrame);
-    recordUIButtons(commandBuffer, renderContext.currentFrame);
+    recordBillboards(commandBuffer);
+    recordUIText(commandBuffer);
+    recordUIButtons(commandBuffer);
 }
 
 std::vector<IRenderGraphPass::RenderPassExecution>

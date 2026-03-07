@@ -50,8 +50,6 @@ struct DrawBatch
     bool skinned{false};
     uint32_t firstInstance{0};
     uint32_t instanceCount{0};
-    uint64_t occlusionKey{0};
-    bool runOcclusionQuery{false};
 };
 
 class AdditionalPerFrameData
@@ -65,6 +63,7 @@ class RenderGraphPassContext
 public:
     uint32_t currentFrame{0};
     uint32_t currentImageIndex{0};
+    uint32_t executionIndex{0};
     uint32_t activeDirectionalShadowCount{0};
     uint32_t activeSpotShadowCount{0};
     uint32_t activePointShadowCount{0};
@@ -84,8 +83,6 @@ public:
     std::unordered_map<Entity *, DrawItem> drawItems;
     std::vector<PerObjectInstanceData> perObjectInstances;
     std::vector<DrawBatch> drawBatches;
-    std::vector<DrawBatch> occlusionProbeBatches;
-    std::vector<uint64_t> occlusionQueryKeys;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_DIRECTIONAL_CASCADES> directionalShadowDrawBatches;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_SPOT_SHADOWS> spotShadowDrawBatches;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES> pointShadowDrawBatches;
@@ -112,9 +109,6 @@ public:
     VkDescriptorSet previewCameraDescriptorSet;
     VkDescriptorSet perObjectDescriptorSet;
     VkDescriptorSet shadowPerObjectDescriptorSet;
-    VkQueryPool occlusionQueryPool{VK_NULL_HANDLE};
-    uint32_t occlusionQueryBase{0};
-    bool enableOcclusionCulling{false};
 
     float deltaTime;
 

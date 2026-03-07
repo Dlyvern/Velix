@@ -15,7 +15,6 @@
 #include "Engine/Render/GraphPasses/PresentRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SSAORenderGraphPass.hpp"
-#include "Engine/Render/GraphPasses/SSRRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SkyLightRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/TonemapRenderGraphPass.hpp"
@@ -83,7 +82,6 @@ private:
     renderGraph::ShadowRenderGraphPass *m_shadowRenderGraphPass{nullptr};
     renderGraph::SSAORenderGraphPass *m_ssaoRenderGraphPass{nullptr};
     renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
-    renderGraph::SSRRenderGraphPass *m_ssrRenderGraphPass{nullptr};
     renderGraph::SkyLightRenderGraphPass *m_skyLightRenderGraphPass{nullptr};
     renderGraph::ParticleRenderGraphPass *m_particleRenderGraphPass{nullptr};
     renderGraph::BloomRenderGraphPass *m_bloomRenderGraphPass{nullptr};

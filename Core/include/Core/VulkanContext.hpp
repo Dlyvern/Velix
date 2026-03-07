@@ -46,6 +46,8 @@ public:
     CommandPool::SharedPtr getGraphicsCommandPool() const;
 
     DescriptorPool::SharedPtr getPersistentDescriptorPool() const;
+    bool hasBufferDeviceAddressSupport() const;
+    bool hasAccelerationStructureSupport() const;
 
     void cleanup();
 
@@ -139,13 +141,14 @@ private:
 
     enum class RayTracingMode : uint8_t
     {
-        None = 0,
+        Disabled = 0,
         RayQuery = 1,
         Pipeline = 2
     };
 
-    RayTracingMode m_rayTracingMode{RayTracingMode::None};
+    RayTracingMode m_rayTracingMode{RayTracingMode::Disabled};
     RayTracingSupport m_rayTracingSupport{};
+    bool m_bufferDeviceAddressSupported{false};
 
     RayTracingSupport hasRTXSupport(VkPhysicalDevice physicalDevice);
 

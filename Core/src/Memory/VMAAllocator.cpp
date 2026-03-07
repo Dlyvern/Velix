@@ -82,6 +82,7 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(allocators)
 
 VMAAllocator::VMAAllocator(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
                            uint32_t vulkanApiVersion,
+                           bool enableBufferDeviceAddress,
                            const VkAllocationCallbacks *allocationCallbacks) : IAllocator(allocationCallbacks)
 {
     VmaAllocatorCreateInfo info{};
@@ -89,6 +90,8 @@ VMAAllocator::VMAAllocator(VkInstance instance, VkPhysicalDevice physicalDevice,
     info.physicalDevice = physicalDevice;
     info.device = device;
     info.vulkanApiVersion = clampVulkanApiVersionForVma(vulkanApiVersion);
+    if (enableBufferDeviceAddress)
+        info.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
     VmaVulkanFunctions volkFunctions{};
 

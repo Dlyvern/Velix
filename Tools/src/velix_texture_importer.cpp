@@ -25,7 +25,6 @@ namespace
         bool deleteSource{false};
         bool overwrite{false};
         uint32_t jobs{0u};
-        uint32_t maxTextureSize{2048u};
         std::unordered_set<std::string> extensions{".png", ".jpg", ".dds", ".tga", ".TGA"};
     };
 
@@ -69,8 +68,6 @@ namespace
             << "  --overwrite           Overwrite existing .tex.elixasset files.\n"
             << "  --jobs <count>        Worker threads for conversion (0 = auto).\n"
             << "                        Default: 0\n"
-            << "  --max-size <pixels>   Clamp imported texture dimensions (0 = keep original).\n"
-            << "                        Default: 2048\n"
             << "  --ext <extension>     Additional extension to convert (repeatable).\n"
             << "                        Default: .png, .jpg\n"
             << "  --all-textures        Include common image extensions.\n"
@@ -150,29 +147,6 @@ namespace
                 const unsigned long clamped =
                     std::min(parsed, static_cast<unsigned long>(std::numeric_limits<uint32_t>::max()));
                 outOptions.jobs = static_cast<uint32_t>(clamped);
-                continue;
-            }
-
-            if (argument == "--max-size")
-            {
-                if (argumentIndex + 1 >= argc)
-                {
-                    std::cerr << "Missing value for --max-size\n";
-                    return false;
-                }
-
-                const std::string value = argv[++argumentIndex];
-                char *endPointer = nullptr;
-                const unsigned long parsed = std::strtoul(value.c_str(), &endPointer, 10);
-                if (!endPointer || endPointer == value.c_str())
-                {
-                    std::cerr << "Invalid value for --max-size: " << value << '\n';
-                    return false;
-                }
-
-                const unsigned long clamped =
-                    std::min(parsed, static_cast<unsigned long>(std::numeric_limits<uint32_t>::max()));
-                outOptions.maxTextureSize = static_cast<uint32_t>(clamped);
                 continue;
             }
 
@@ -349,8 +323,6 @@ int main(int argc, char **argv)
     Options options;
     if (!parseArguments(argc, argv, options))
         return 1;
-
-    elix::engine::AssetsLoader::setTextureImportMaxDimension(options.maxTextureSize);
 
     const std::filesystem::path absoluteInputPath = std::filesystem::absolute(options.inputPath).lexically_normal();
 

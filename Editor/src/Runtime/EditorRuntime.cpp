@@ -329,9 +329,6 @@ bool EditorRuntime::init()
 
     initEditorRenderGraph();
 
-    m_iblManager.createFallback();
-    m_lightingRenderGraphPass->setIBLManager(&m_iblManager);
-
     m_editor->addOnViewportChangedCallback(std::bind(&EditorRuntime::applyEditorViewportExtent, this, std::placeholders::_1,
                                                      std::placeholders::_2));
 
@@ -481,14 +478,8 @@ void EditorRuntime::initEditorRenderGraph()
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
-    m_ssrRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
-        m_contactShadowRenderGraphPass->getOutput(),
-        m_gBufferRenderGraphPass->getNormalTextureHandlers(),
-        m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
-        m_gBufferRenderGraphPass->getDepthTextureHandler());
-
     m_skyLightRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SkyLightRenderGraphPass>(
-        m_ssrRenderGraphPass->getOutput(),
+        m_contactShadowRenderGraphPass->getOutput(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
     m_particleRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
@@ -570,14 +561,8 @@ void EditorRuntime::initGameViewportRenderGraph()
         m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gameGBufferRenderGraphPass->getDepthTextureHandler());
 
-    m_gameSSRRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
-        m_gameContactShadowRenderGraphPass->getOutput(),
-        m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
-        m_gameGBufferRenderGraphPass->getMaterialTextureHandlers(),
-        m_gameGBufferRenderGraphPass->getDepthTextureHandler());
-
     m_gameSkyLightRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SkyLightRenderGraphPass>(
-        m_gameSSRRenderGraphPass->getOutput(),
+        m_gameContactShadowRenderGraphPass->getOutput(),
         m_gameGBufferRenderGraphPass->getDepthTextureHandler());
 
     m_gameParticleRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ParticleRenderGraphPass>(
@@ -789,11 +774,7 @@ void EditorRuntime::tick(float deltaTime)
 
     const bool shouldRenderGameViewport = m_isPlaySessionActive || m_editor->isGameViewportVisible();
     if (shouldRenderGameViewport && !m_gameViewportRenderGraph)
-    {
         initGameViewportRenderGraph();
-        if (m_gameLightingRenderGraphPass)
-            m_gameLightingRenderGraphPass->setIBLManager(&m_iblManager);
-    }
 
     const uint32_t gameViewportWidth = m_editor->getGameViewportX();
     const uint32_t gameViewportHeight = m_editor->getGameViewportY();
@@ -858,7 +839,6 @@ void EditorRuntime::applyEditorViewportExtent(uint32_t width, uint32_t height)
     m_gBufferRenderGraphPass->setExtent(extent);
     m_ssaoRenderGraphPass->setExtent(extent);
     m_lightingRenderGraphPass->setExtent(extent);
-    m_ssrRenderGraphPass->setExtent(extent);
     m_skyLightRenderGraphPass->setExtent(extent);
     m_bloomRenderGraphPass->setExtent(extent);
     m_tonemapRenderGraphPass->setExtent(extent);
@@ -887,7 +867,6 @@ void EditorRuntime::applyGameViewportExtent(uint32_t width, uint32_t height)
     m_gameGBufferRenderGraphPass->setExtent(extent);
     m_gameSSAORenderGraphPass->setExtent(extent);
     m_gameLightingRenderGraphPass->setExtent(extent);
-    m_gameSSRRenderGraphPass->setExtent(extent);
     m_gameSkyLightRenderGraphPass->setExtent(extent);
     m_gameBloomRenderGraphPass->setExtent(extent);
     m_gameTonemapRenderGraphPass->setExtent(extent);
@@ -917,6 +896,9 @@ void EditorRuntime::shutdown()
 
     engine::scripting::setActiveScene(nullptr);
     engine::scripting::setActiveWindow(nullptr);
+
+    if (m_editor)
+        m_editor->saveProjectConfig();
 
     if (m_project && m_project->projectLibrary)
     {

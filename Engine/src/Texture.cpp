@@ -176,76 +176,6 @@ namespace
         return {VK_TRUE, clampedAnisotropy};
     }
 
-    std::mutex g_textureMemoryWarningMutex;
-    std::string g_textureMemoryWarningMessage;
-
-    bool isOutOfMemoryError(const std::string &message)
-    {
-        return message.find("VK_ERROR_OUT_OF_DEVICE_MEMORY") != std::string::npos ||
-               message.find("VK_ERROR_OUT_OF_HOST_MEMORY") != std::string::npos;
-    }
-
-    void queueTextureMemoryWarning(const std::string &message)
-    {
-        std::scoped_lock lock(g_textureMemoryWarningMutex);
-        g_textureMemoryWarningMessage = message;
-    }
-
-    uint32_t computeFullMipCount(uint32_t width, uint32_t height)
-    {
-        const uint32_t dominant = std::max(width, height);
-        if (dominant <= 1u)
-            return 1u;
-
-        const uint32_t mipCount = static_cast<uint32_t>(std::floor(std::log2(static_cast<double>(dominant)))) + 1u;
-        return std::max(1u, mipCount);
-    }
-
-    bool supportsLinearBlitMips(VkPhysicalDevice physicalDevice, VkFormat format)
-    {
-        VkFormatProperties formatProperties{};
-        vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProperties);
-
-        const VkFormatFeatureFlags requiredFeatures =
-            VK_FORMAT_FEATURE_BLIT_SRC_BIT |
-            VK_FORMAT_FEATURE_BLIT_DST_BIT |
-            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-
-        return (formatProperties.optimalTilingFeatures & requiredFeatures) == requiredFeatures;
-    }
-
-    std::vector<uint8_t> buildFallbackCheckerPixels(uint32_t dimension)
-    {
-        const uint32_t clampedDimension = std::max(1u, dimension);
-        std::vector<uint8_t> pixels(static_cast<size_t>(clampedDimension) * static_cast<size_t>(clampedDimension) * 4u, 0u);
-
-        for (uint32_t y = 0u; y < clampedDimension; ++y)
-        {
-            for (uint32_t x = 0u; x < clampedDimension; ++x)
-            {
-                const bool bright = ((x / 2u) + (y / 2u)) % 2u == 0u;
-                const size_t base = (static_cast<size_t>(y) * static_cast<size_t>(clampedDimension) + static_cast<size_t>(x)) * 4u;
-
-                if (bright)
-                {
-                    pixels[base + 0u] = 255u;
-                    pixels[base + 1u] = 0u;
-                    pixels[base + 2u] = 255u;
-                    pixels[base + 3u] = 255u;
-                }
-                else
-                {
-                    pixels[base + 0u] = 40u;
-                    pixels[base + 1u] = 40u;
-                    pixels[base + 2u] = 40u;
-                    pixels[base + 3u] = 255u;
-                }
-            }
-        }
-
-        return pixels;
-    }
-
     uint32_t compressedBlockByteSize(VkFormat format)
     {
         switch (format)
@@ -685,17 +615,6 @@ Texture::SharedPtr Texture::getDefaultBlackTexture()
     return s_blackTexture;
 }
 
-bool Texture::consumeMemoryWarning(std::string &outMessage)
-{
-    std::scoped_lock lock(g_textureMemoryWarningMutex);
-    if (g_textureMemoryWarningMessage.empty())
-        return false;
-
-    outMessage = std::move(g_textureMemoryWarningMessage);
-    g_textureMemoryWarningMessage.clear();
-    return true;
-}
-
 uint32_t Texture::packRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
     // Matches little-endian memory layout used by most desktop CPUs for stb-style RGBA bytes
@@ -786,17 +705,6 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
             }
         }
 
-        const auto &qualitySettings = elix::engine::RenderQualitySettings::getInstance();
-        const uint32_t fullMipCount = computeFullMipCount(uploadWidth, uploadHeight);
-        uint32_t requestedMipCount = fullMipCount;
-        if (qualitySettings.textureMipLevelLimit > 0)
-            requestedMipCount = std::min<uint32_t>(requestedMipCount, static_cast<uint32_t>(qualitySettings.textureMipLevelLimit));
-        requestedMipCount = std::max(1u, requestedMipCount);
-
-        if (qualitySettings.enableTextureMipmaps && !compressed && requestedMipCount > 1u &&
-            supportsLinearBlitMips(vulkanContext->getPhysicalDevice(), uploadFormat))
-            m_mipLevels = requestedMipCount;
-
         const VkExtent2D extent{
             .width = uploadWidth,
             .height = uploadHeight};
@@ -805,12 +713,8 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
         auto stagingBuffer = core::Buffer::createShared(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
         stagingBuffer->upload(uploadPixels, imageSize);
 
-        VkImageUsageFlags imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        if (m_mipLevels > 1u)
-            imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-
         m_image = core::Image::createShared(extent,
-                                            imageUsage,
+                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                             core::memory::MemoryUsage::GPU_ONLY,
                                             uploadFormat,
                                             VK_IMAGE_TILING_OPTIMAL,
@@ -852,107 +756,20 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
         region.imageExtent = {uploadWidth, uploadHeight, 1};
         vkCmdCopyBufferToImage(commandBuffer, stagingBuffer->vk(), m_image->vk(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-        if (m_mipLevels > 1u)
-        {
-            int32_t mipWidth = static_cast<int32_t>(uploadWidth);
-            int32_t mipHeight = static_cast<int32_t>(uploadHeight);
+        auto secondBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+            *m_image,
+            VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            VK_ACCESS_2_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
-            for (uint32_t mipLevel = 1u; mipLevel < m_mipLevels; ++mipLevel)
-            {
-                auto transitionToSrc = utilities::ImageUtilities::insertImageMemoryBarrier(
-                    *m_image,
-                    VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                    VK_ACCESS_2_TRANSFER_READ_BIT,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    {VK_IMAGE_ASPECT_COLOR_BIT, mipLevel - 1u, 1u, 0, 1});
-
-                VkDependencyInfo transitionToSrcDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-                transitionToSrcDependency.imageMemoryBarrierCount = 1;
-                transitionToSrcDependency.pImageMemoryBarriers = &transitionToSrc;
-                vkCmdPipelineBarrier2(commandBuffer, &transitionToSrcDependency);
-
-                VkImageBlit blit{};
-                blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                blit.srcSubresource.mipLevel = mipLevel - 1u;
-                blit.srcSubresource.baseArrayLayer = 0;
-                blit.srcSubresource.layerCount = 1;
-                blit.srcOffsets[0] = {0, 0, 0};
-                blit.srcOffsets[1] = {mipWidth, mipHeight, 1};
-
-                const int32_t nextMipWidth = std::max(1, mipWidth / 2);
-                const int32_t nextMipHeight = std::max(1, mipHeight / 2);
-
-                blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                blit.dstSubresource.mipLevel = mipLevel;
-                blit.dstSubresource.baseArrayLayer = 0;
-                blit.dstSubresource.layerCount = 1;
-                blit.dstOffsets[0] = {0, 0, 0};
-                blit.dstOffsets[1] = {nextMipWidth, nextMipHeight, 1};
-
-                vkCmdBlitImage(
-                    commandBuffer,
-                    m_image->vk(),
-                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    m_image->vk(),
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    1,
-                    &blit,
-                    VK_FILTER_LINEAR);
-
-                auto transitionToShaderRead = utilities::ImageUtilities::insertImageMemoryBarrier(
-                    *m_image,
-                    VK_ACCESS_2_TRANSFER_READ_BIT,
-                    VK_ACCESS_2_SHADER_READ_BIT,
-                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                    {VK_IMAGE_ASPECT_COLOR_BIT, mipLevel - 1u, 1u, 0, 1});
-
-                VkDependencyInfo transitionToShaderReadDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-                transitionToShaderReadDependency.imageMemoryBarrierCount = 1;
-                transitionToShaderReadDependency.pImageMemoryBarriers = &transitionToShaderRead;
-                vkCmdPipelineBarrier2(commandBuffer, &transitionToShaderReadDependency);
-
-                mipWidth = nextMipWidth;
-                mipHeight = nextMipHeight;
-            }
-
-            auto finalMipBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
-                *m_image,
-                VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                VK_ACCESS_2_SHADER_READ_BIT,
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                {VK_IMAGE_ASPECT_COLOR_BIT, m_mipLevels - 1u, 1u, 0, 1});
-
-            VkDependencyInfo finalMipDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-            finalMipDependency.imageMemoryBarrierCount = 1;
-            finalMipDependency.pImageMemoryBarriers = &finalMipBarrier;
-            vkCmdPipelineBarrier2(commandBuffer, &finalMipDependency);
-        }
-        else
-        {
-            auto secondBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
-                *m_image,
-                VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                VK_ACCESS_2_SHADER_READ_BIT,
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
-
-            VkDependencyInfo secondDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-            secondDependency.imageMemoryBarrierCount = 1;
-            secondDependency.pImageMemoryBarriers = &secondBarrier;
-            vkCmdPipelineBarrier2(commandBuffer, &secondDependency);
-        }
+        VkDependencyInfo secondDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        secondDependency.imageMemoryBarrierCount = 1;
+        secondDependency.pImageMemoryBarriers = &secondBarrier;
+        vkCmdPipelineBarrier2(commandBuffer, &secondDependency);
 
         commandBuffer->end();
 
@@ -976,8 +793,6 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
             throw std::runtime_error("Failed to create image view: " + core::helpers::vulkanResultToString(result));
 
         const auto [anisotropyEnabled, anisotropyLevel] = resolveTextureAnisotropy();
-        const float mipLodBias = std::clamp(qualitySettings.textureLodBias, -2.0f, 8.0f);
-        const float maxLod = static_cast<float>(m_mipLevels > 0u ? (m_mipLevels - 1u) : 0u);
 
         m_sampler = core::Sampler::createShared(
             VK_FILTER_LINEAR,
@@ -989,9 +804,9 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
             anisotropyLevel,
             VK_FALSE,
             VK_FALSE,
-            mipLodBias,
             0.0f,
-            maxLod);
+            0.0f,
+            0.0f);
 
         return true;
     };
@@ -1002,36 +817,6 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
     }
     catch (const std::runtime_error &exception)
     {
-        const auto &qualitySettings = elix::engine::RenderQualitySettings::getInstance();
-        const bool allowFallback = qualitySettings.enableTextureOomFallback && isOutOfMemoryError(exception.what());
-
-        if (allowFallback)
-        {
-            const uint32_t fallbackDimension = std::clamp(qualitySettings.textureOomFallbackDimension, 4u, 64u);
-            const std::vector<uint8_t> fallbackPixels = buildFallbackCheckerPixels(fallbackDimension);
-            const VkFormat fallbackFormat = prefersSrgb(format) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-
-            VX_ENGINE_WARNING_STREAM("Texture allocation failed due to low memory. Falling back to "
-                                     << fallbackDimension << "x" << fallbackDimension << " placeholder texture.\n");
-            queueTextureMemoryWarning(
-                "Low GPU memory detected. Some textures were replaced by emergency low-res placeholders.");
-
-            try
-            {
-                if (createImpl(fallbackPixels.data(),
-                               fallbackPixels.size(),
-                               fallbackDimension,
-                               fallbackDimension,
-                               fallbackFormat,
-                               4u))
-                    return true;
-            }
-            catch (const std::runtime_error &fallbackException)
-            {
-                VX_ENGINE_ERROR_STREAM("Texture fallback creation failed: " << fallbackException.what() << '\n');
-            }
-        }
-
         VX_ENGINE_ERROR_STREAM("Failed to create texture from memory: " << exception.what() << '\n');
         return false;
     }
@@ -1215,129 +1000,6 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
     const auto [anisotropyEnabled, anisotropyLevel] = resolveTextureAnisotropy();
     m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_COMPARE_OP_ALWAYS,
                                             VK_SAMPLER_MIPMAP_MODE_LINEAR, anisotropyEnabled, anisotropyLevel);
-
-    return true;
-}
-
-bool Texture::createPreFilteredCubemap(const std::vector<std::vector<std::vector<float>>> &mipFaceData,
-                                       const std::vector<uint32_t> &mipSizes)
-{
-    if (mipFaceData.empty() || mipSizes.empty())
-        return false;
-
-    const uint32_t numMips = static_cast<uint32_t>(mipFaceData.size());
-    const uint32_t baseSize = mipSizes[0];
-
-    m_device = core::VulkanContext::getContext()->getDevice();
-    m_width = static_cast<int>(baseSize);
-    m_height = static_cast<int>(baseSize);
-    m_mipLevels = numMips;
-
-    if (m_imageView)
-    {
-        vkDestroyImageView(m_device, m_imageView, nullptr);
-        m_imageView = VK_NULL_HANDLE;
-    }
-    m_image.reset();
-
-    VkExtent2D extent{baseSize, baseSize};
-    m_image = core::Image::createShared(extent,
-                                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                        core::memory::MemoryUsage::GPU_ONLY,
-                                        VK_FORMAT_R32G32B32A32_SFLOAT,
-                                        VK_IMAGE_TILING_OPTIMAL,
-                                        6,
-                                        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-                                        VK_SAMPLE_COUNT_1_BIT,
-                                        numMips);
-
-    auto commandPool = core::VulkanContext::getContext()->getGraphicsCommandPool();
-    auto queue = core::VulkanContext::getContext()->getGraphicsQueue();
-    auto commandBuffer = core::CommandBuffer::createShared(*commandPool);
-    commandBuffer->begin();
-
-    // Transition entire image (all mips, all faces) to TRANSFER_DST_OPTIMAL
-    auto firstBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
-        *m_image, 0, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-        {VK_IMAGE_ASPECT_COLOR_BIT, 0, numMips, 0, 6});
-
-    VkDependencyInfo firstDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    firstDep.imageMemoryBarrierCount = 1;
-    firstDep.pImageMemoryBarriers = &firstBarrier;
-    vkCmdPipelineBarrier2(commandBuffer, &firstDep);
-
-    // Upload each mip × face
-    std::vector<core::Buffer::SharedPtr> stagingBuffers;
-    stagingBuffers.reserve(numMips * 6);
-
-    for (uint32_t mip = 0; mip < numMips; ++mip)
-    {
-        const uint32_t mipSize = mipSizes[mip];
-        const VkDeviceSize faceBytes = static_cast<VkDeviceSize>(mipSize) * mipSize * 4 * sizeof(float);
-
-        for (uint32_t face = 0; face < 6; ++face)
-        {
-            const auto &facePixels = mipFaceData[mip][face];
-
-            auto staging = core::Buffer::createShared(
-                faceBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                core::memory::MemoryUsage::CPU_TO_GPU);
-            staging->upload(facePixels.data(), faceBytes);
-
-            utilities::BufferUtilities::copyBufferToImage(
-                *staging, *m_image, *commandBuffer,
-                VkExtent2D{mipSize, mipSize},
-                VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                1, face, mip);
-
-            stagingBuffers.push_back(std::move(staging));
-        }
-    }
-
-    // Transition to SHADER_READ_ONLY_OPTIMAL
-    auto secondBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
-        *m_image, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-        {VK_IMAGE_ASPECT_COLOR_BIT, 0, numMips, 0, 6});
-
-    VkDependencyInfo secondDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    secondDep.imageMemoryBarrierCount = 1;
-    secondDep.pImageMemoryBarriers = &secondBarrier;
-    vkCmdPipelineBarrier2(commandBuffer, &secondDep);
-
-    commandBuffer->end();
-
-    if (!utilities::AsyncGpuUpload::submit(commandBuffer, queue, std::move(stagingBuffers)))
-    {
-        VX_ENGINE_ERROR_STREAM("Failed to submit pre-filtered cubemap upload\n");
-        return false;
-    }
-
-    // Image view covering all mip levels
-    VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    viewInfo.image = m_image->vk();
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-    viewInfo.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = numMips;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 6;
-
-    if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create pre-filtered cubemap image view!");
-
-    // Sampler with maxLod matching number of mips
-    const auto [anisotropyEnabled, anisotropyLevel] = resolveTextureAnisotropy();
-    m_sampler = core::Sampler::createShared(
-        VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_COMPARE_OP_ALWAYS,
-        VK_SAMPLER_MIPMAP_MODE_LINEAR, anisotropyEnabled, anisotropyLevel,
-        VK_FALSE, VK_FALSE, 0.0f, 0.0f, static_cast<float>(numMips - 1));
 
     return true;
 }

@@ -20,7 +20,8 @@ class SkyLightSystem
 public:
     SkyLightSystem();
 
-    void render(core::CommandBuffer::SharedPtr commandBuffer, float strength, float deltaTime, const glm::mat4 &view, const glm::mat4 &projection, core::GraphicsPipeline::SharedPtr graphicsPipeline);
+    void prepareFrame(float strength, float deltaTime);
+    void render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat4 &view, const glm::mat4 &projection, core::GraphicsPipeline::SharedPtr graphicsPipeline);
 
     void setTimeOfDay(float hour);
     void setSunDirection(const glm::vec3 &direction);

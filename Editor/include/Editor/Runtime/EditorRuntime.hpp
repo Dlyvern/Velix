@@ -13,7 +13,6 @@
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SkyLightRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/TonemapRenderGraphPass.hpp"
-#include "Engine/Render/GraphPasses/SSRRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/BloomRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/BloomCompositeRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/FXAARenderGraphPass.hpp"
@@ -27,7 +26,6 @@
 #include "Engine/Render/GraphPasses/ParticleRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ContactShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/CinematicEffectsRenderGraphPass.hpp"
-#include "Engine/Render/IBLManager.hpp"
 
 #include <chrono>
 #include <future>
@@ -92,7 +90,6 @@ private:
     engine::renderGraph::GBufferRenderGraphPass *m_gBufferRenderGraphPass{nullptr};
     engine::renderGraph::ShadowRenderGraphPass *m_shadowRenderGraphPass{nullptr};
     engine::renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
-    engine::renderGraph::SSRRenderGraphPass *m_ssrRenderGraphPass{nullptr};
     engine::renderGraph::SkyLightRenderGraphPass *m_skyLightRenderGraphPass{nullptr};
     engine::renderGraph::BloomRenderGraphPass *m_bloomRenderGraphPass{nullptr};
     engine::renderGraph::TonemapRenderGraphPass *m_tonemapRenderGraphPass{nullptr};
@@ -112,7 +109,6 @@ private:
     engine::renderGraph::ShadowRenderGraphPass *m_gameShadowRenderGraphPass{nullptr};
     engine::renderGraph::SSAORenderGraphPass *m_gameSSAORenderGraphPass{nullptr};
     engine::renderGraph::LightingRenderGraphPass *m_gameLightingRenderGraphPass{nullptr};
-    engine::renderGraph::SSRRenderGraphPass *m_gameSSRRenderGraphPass{nullptr};
     engine::renderGraph::SkyLightRenderGraphPass *m_gameSkyLightRenderGraphPass{nullptr};
     engine::renderGraph::ParticleRenderGraphPass *m_gameParticleRenderGraphPass{nullptr};
     engine::renderGraph::BloomRenderGraphPass *m_gameBloomRenderGraphPass{nullptr};
@@ -123,8 +119,6 @@ private:
     engine::renderGraph::ContactShadowRenderGraphPass *m_gameContactShadowRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_gameCinematicEffectsRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_gameUIRenderGraphPass{nullptr};
-
-    engine::IBLManager m_iblManager;
 
     VkExtent2D m_lastEditorRenderExtent{0u, 0u};
     VkExtent2D m_lastGameRenderExtent{0u, 0u};

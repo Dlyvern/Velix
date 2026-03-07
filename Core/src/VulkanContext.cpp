@@ -119,8 +119,7 @@ void VulkanContext::createLogicalDevice()
     if (!supportedFeatures2.features.imageCubeArray)
         throw std::runtime_error("Selected GPU does not support imageCubeArray");
 
-    if (!supportedV12.bufferDeviceAddress)
-        throw std::runtime_error("Selected GPU does not support bufferDeviceAddress");
+    m_bufferDeviceAddressSupported = supportedV12.bufferDeviceAddress == VK_TRUE;
 
     if (!supportedV13.dynamicRendering)
         throw std::runtime_error("Selected GPU does not support dynamicRendering");
@@ -179,7 +178,8 @@ void VulkanContext::createLogicalDevice()
 
     m_rayTracingSupport = {};
 
-    if (hasAS && hasRTP && hasDHO &&
+    if (m_bufferDeviceAddressSupported &&
+        hasAS && hasRTP && hasDHO &&
         supportedAS.accelerationStructure &&
         supportedRTP.rayTracingPipeline)
     {
@@ -192,7 +192,8 @@ void VulkanContext::createLogicalDevice()
 
         VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: Pipeline");
     }
-    else if (hasAS && hasRQ && hasDHO &&
+    else if (m_bufferDeviceAddressSupported &&
+             hasAS && hasRQ && hasDHO &&
              supportedAS.accelerationStructure &&
              supportedRQ.rayQuery)
     {
@@ -224,7 +225,7 @@ void VulkanContext::createLogicalDevice()
 
     VkPhysicalDeviceVulkan12Features v12{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-    v12.bufferDeviceAddress = VK_TRUE;
+    v12.bufferDeviceAddress = m_bufferDeviceAddressSupported ? VK_TRUE : VK_FALSE;
 
     VkPhysicalDeviceVulkan13Features v13{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
@@ -338,7 +339,8 @@ void VulkanContext::createLogicalDevice()
         m_instance,
         m_physicalDevice,
         m_vkDevice,
-        VK_API_VERSION_1_3);
+        VK_API_VERSION_1_3,
+        m_bufferDeviceAddressSupported);
 
     m_device = Device::createShared(
         m_vkDevice,
@@ -349,6 +351,16 @@ void VulkanContext::createLogicalDevice()
 DescriptorPool::SharedPtr VulkanContext::getPersistentDescriptorPool() const
 {
     return m_descriptorPool;
+}
+
+bool VulkanContext::hasBufferDeviceAddressSupport() const
+{
+    return m_bufferDeviceAddressSupported;
+}
+
+bool VulkanContext::hasAccelerationStructureSupport() const
+{
+    return m_rayTracingMode != RayTracingMode::Disabled;
 }
 
 uint32_t VulkanContext::getGraphicsFamily() const

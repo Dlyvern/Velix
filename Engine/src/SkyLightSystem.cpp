@@ -140,34 +140,9 @@ void SkyLightSystem::setSunDirection(const glm::vec3 &direction)
     m_sunDirection = direction;
 }
 
-const GraphicsPipelineKey &SkyLightSystem::getGraphicsPipelineKey() const
+void SkyLightSystem::prepareFrame(float strength, float deltaTime)
 {
-    return m_graphicsPipelineKey;
-}
-
-glm::vec3 SkyLightSystem::directionFromAzimuthElevation(float azimuthDeg, float elevationDeg)
-{
-    float az = glm::radians(azimuthDeg);
-    float el = glm::radians(elevationDeg);
-
-    float x = cos(el) * cos(az);
-    float y = sin(el);
-    float z = cos(el) * sin(az);
-
-    return glm::normalize(glm::vec3(x, y, z));
-}
-
-void SkyLightSystem::render(core::CommandBuffer::SharedPtr commandBuffer, float strength, float deltaTime, const glm::mat4 &view, const glm::mat4 &projection, core::GraphicsPipeline::SharedPtr graphicsPipeline)
-{
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-    glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
-
     m_time += deltaTime * m_cloudSpeed;
-
-    PushConstantView skyboxPushConstant{
-        .view = skyboxView,
-        .projection = projection};
 
     UBO *uboData = static_cast<UBO *>(m_mappedData);
     uboData->sunDirection_time = glm::vec4(m_sunDirection, m_time);
@@ -194,17 +169,44 @@ void SkyLightSystem::render(core::CommandBuffer::SharedPtr commandBuffer, float 
 
     const float sunsetExposureBoost = horizonFactor * (1.0f - belowHorizonFactor * 0.65f);
     uboData->skyParams = glm::vec4(
-        m_cloudSpeed, // x
-        0.55f,        // coverage
-        0.75f,        // density
-        1.0f + sunsetExposureBoost * 0.12f // exposure
-    );
+        m_cloudSpeed,
+        0.55f,
+        0.75f,
+        1.0f + sunsetExposureBoost * 0.12f);
 
     uboData->lightParams = glm::vec4(
-        strength, // x (0 = sun off)
-        1.0f,     // y star intensity
-        0.65f,    // z star density
+        strength,
+        1.0f,
+        0.65f,
         0.0f);
+}
+
+const GraphicsPipelineKey &SkyLightSystem::getGraphicsPipelineKey() const
+{
+    return m_graphicsPipelineKey;
+}
+
+glm::vec3 SkyLightSystem::directionFromAzimuthElevation(float azimuthDeg, float elevationDeg)
+{
+    float az = glm::radians(azimuthDeg);
+    float el = glm::radians(elevationDeg);
+
+    float x = cos(el) * cos(az);
+    float y = sin(el);
+    float z = cos(el) * sin(az);
+
+    return glm::normalize(glm::vec3(x, y, z));
+}
+
+void SkyLightSystem::render(core::CommandBuffer::SharedPtr commandBuffer, const glm::mat4 &view, const glm::mat4 &projection, core::GraphicsPipeline::SharedPtr graphicsPipeline)
+{
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+    glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
+
+    PushConstantView skyboxPushConstant{
+        .view = skyboxView,
+        .projection = projection};
 
     VkBuffer vertexBuffers[] = {m_vertexBuffer};
     VkDeviceSize offset[] = {0};

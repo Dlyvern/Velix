@@ -3,6 +3,9 @@
 
 #define PX_PHYSX_STATIC_LIB
 #include "PxPhysicsAPI.h"
+#if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
+#include "gpu/PxGpu.h"
+#endif
 #include "Core/Macros.hpp"
 #include "Engine/Physics/PhysXMessenger.hpp"
 
@@ -25,6 +28,12 @@ public:
 
     physx::PxPhysics *getPhysics();
 
+    bool isGPUEnabled() const;
+
+#if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
+    physx::PxCudaContextManager *getCudaContextManager();
+#endif
+
 private:
     PhysXCore();
 
@@ -36,6 +45,11 @@ private:
     physx::PxFoundation *m_foundation{nullptr};
     physx::PxDefaultAllocator m_defaultAllocator;
     physx::PxPvd *m_pvd{nullptr};
+
+#if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
+    physx::PxCudaContextManager *m_cudaContextManager{nullptr};
+#endif
+    bool m_gpuEnabled{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

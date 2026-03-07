@@ -20,17 +20,6 @@ public:
         std::string command;
     };
 
-    struct EditorCameraSettings
-    {
-        float moveSpeed{3.0f};
-        float mouseSensitivity{0.1f};
-        uint8_t projectionMode{0}; // 0 = Perspective, 1 = Orthographic
-        float nearPlane{0.1f};
-        float farPlane{1000.0f};
-        float fov{60.0f};
-        float orthographicSize{10.0f};
-    };
-
     static EngineConfig &instance();
 
     bool reload();
@@ -51,9 +40,6 @@ public:
     bool getDetailedRenderProfilingEnabled() const;
     void setDetailedRenderProfilingEnabled(bool enabled);
 
-    const EditorCameraSettings &getEditorCameraSettings() const;
-    void setEditorCameraSettings(const EditorCameraSettings &settings);
-
     std::optional<IdeInfo> findPreferredVSCodeIde() const;
     bool hasVSCodeIde() const;
 
@@ -72,7 +58,6 @@ private:
     std::string m_preferredIdeId{"vscode"};
     bool m_showAssetThumbnails{true};
     bool m_detailedRenderProfilingEnabled{true};
-    EditorCameraSettings m_editorCameraSettings{};
     std::vector<IdeInfo> m_detectedIdes;
 };
 

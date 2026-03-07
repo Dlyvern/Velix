@@ -152,14 +152,8 @@ bool GameRuntime::init()
         m_gBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         &m_ssaoRenderGraphPass->getAOHandlers());
 
-    m_ssrRenderGraphPass = m_renderGraph->addPass<renderGraph::SSRRenderGraphPass>(
-        m_lightingRenderGraphPass->getOutput(),
-        m_gBufferRenderGraphPass->getNormalTextureHandlers(),
-        m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
-        m_gBufferRenderGraphPass->getDepthTextureHandler());
-
     m_skyLightRenderGraphPass = m_renderGraph->addPass<renderGraph::SkyLightRenderGraphPass>(
-        m_ssrRenderGraphPass->getOutput(),
+        m_lightingRenderGraphPass->getOutput(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
     m_particleRenderGraphPass = m_renderGraph->addPass<renderGraph::ParticleRenderGraphPass>(
@@ -504,8 +498,6 @@ void GameRuntime::syncViewportExtent()
         m_ssaoRenderGraphPass->setExtent(extent);
     if (m_lightingRenderGraphPass)
         m_lightingRenderGraphPass->setExtent(extent);
-    if (m_ssrRenderGraphPass)
-        m_ssrRenderGraphPass->setExtent(extent);
     if (m_skyLightRenderGraphPass)
         m_skyLightRenderGraphPass->setExtent(extent);
     if (m_particleRenderGraphPass)

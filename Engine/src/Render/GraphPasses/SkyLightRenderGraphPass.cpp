@@ -20,6 +20,23 @@ SkyLightRenderGraphPass::SkyLightRenderGraphPass(std::vector<RGPResourceHandler>
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
 }
 
+void SkyLightRenderGraphPass::prepareRecord(const RenderGraphPassPerFrameData &data,
+                                            const RenderGraphPassContext &)
+{
+    if (m_requestedSkyboxHDRPath != data.skyboxHDRPath)
+    {
+        m_requestedSkyboxHDRPath = data.skyboxHDRPath;
+        m_pendingSkyboxUpdate = true;
+        requestRecompilation();
+    }
+
+    if (!m_skyLightSystem || !data.hasDirectionalLight || !data.skyLightEnabled)
+        return;
+
+    m_skyLightSystem->setSunDirection(-data.directionalLightDirection);
+    m_skyLightSystem->prepareFrame(data.directionalLightStrength, data.deltaTime);
+}
+
 void SkyLightRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                                      const RenderGraphPassContext &renderContext)
 {
@@ -28,13 +45,6 @@ void SkyLightRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
 
     if (!data.hasDirectionalLight || !data.skyLightEnabled)
         return;
-
-    if (m_requestedSkyboxHDRPath != data.skyboxHDRPath)
-    {
-        m_requestedSkyboxHDRPath = data.skyboxHDRPath;
-        m_pendingSkyboxUpdate = true;
-        requestRecompilation();
-    }
 
     if (m_skybox)
     {
@@ -57,9 +67,7 @@ void SkyLightRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     skyKey.depthFormat = m_depthFormat;
 
     auto skyPipeline = GraphicsPipelineManager::getOrCreate(skyKey);
-
-    m_skyLightSystem->setSunDirection(-data.directionalLightDirection);
-    m_skyLightSystem->render(commandBuffer, data.directionalLightStrength, data.deltaTime, data.view, data.projection, skyPipeline);
+    m_skyLightSystem->render(commandBuffer, data.view, data.projection, skyPipeline);
 }
 
 std::vector<IRenderGraphPass::RenderPassExecution> SkyLightRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const

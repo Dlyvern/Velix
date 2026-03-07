@@ -18,7 +18,12 @@ struct PhysicsRaycastHit
 class PhysicsScene
 {
 public:
+#if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
+    explicit PhysicsScene(physx::PxPhysics *physics,
+                          physx::PxCudaContextManager *cudaContextManager = nullptr);
+#else
     explicit PhysicsScene(physx::PxPhysics *physics);
+#endif
 
     void update(float deltaTime);
 

@@ -16,8 +16,7 @@ int main(int argc, char **argv)
                             if (useGameRuntime)
                                 return std::make_unique<elix::engine::GameRuntime>(applicationConfig);
 
-                            return std::make_unique<elix::editor::EditorRuntime>(applicationConfig);
-                        });
+                            return std::make_unique<elix::editor::EditorRuntime>(applicationConfig); });
     }
     catch (const std::exception &e)
     {

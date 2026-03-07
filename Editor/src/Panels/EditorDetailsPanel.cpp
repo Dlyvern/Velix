@@ -35,7 +35,59 @@
 
 namespace
 {
-    std::string toLowerCopy(std::string value)
+    // Draws a vec3 control with colored X/Y/Z axis buttons (click to reset to resetValue)
+    // Returns true if any component changed.
+    bool drawVec3Control(const char *id, glm::vec3 &v, float resetValue = 0.0f, float speed = 0.01f)
+    {
+        bool changed = false;
+
+        const float lineHeight  = ImGui::GetTextLineHeight();
+        const ImVec2 btnSize    = {lineHeight + 6.0f, lineHeight + 4.0f};
+        // Divide the remaining item width equally among the 3 drag fields
+        const float totalBtnW   = 3.0f * btnSize.x + 2.0f * 2.0f; // 3 buttons + 2 inner gaps
+        const float fieldW      = (ImGui::CalcItemWidth() - totalBtnW - 2.0f * 4.0f) / 3.0f;
+
+        ImGui::PushID(id);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, ImGui::GetStyle().ItemSpacing.y));
+
+        // --- X (red) ---
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.72f, 0.14f, 0.14f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.88f, 0.24f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.55f, 0.08f, 0.08f, 1.0f));
+        if (ImGui::Button("X", btnSize)) { v.x = resetValue; changed = true; }
+        ImGui::PopStyleColor(3);
+        ImGui::SameLine(0, 1);
+        ImGui::SetNextItemWidth(fieldW);
+        changed |= ImGui::DragFloat("##X", &v.x, speed, 0.0f, 0.0f, "%.3f");
+        ImGui::SameLine(0, 4);
+
+        // --- Y (green) ---
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.14f, 0.58f, 0.16f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.74f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.08f, 0.42f, 0.10f, 1.0f));
+        if (ImGui::Button("Y", btnSize)) { v.y = resetValue; changed = true; }
+        ImGui::PopStyleColor(3);
+        ImGui::SameLine(0, 1);
+        ImGui::SetNextItemWidth(fieldW);
+        changed |= ImGui::DragFloat("##Y", &v.y, speed, 0.0f, 0.0f, "%.3f");
+        ImGui::SameLine(0, 4);
+
+        // --- Z (blue) ---
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.16f, 0.26f, 0.72f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.36f, 0.88f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.08f, 0.16f, 0.55f, 1.0f));
+        if (ImGui::Button("Z", btnSize)) { v.z = resetValue; changed = true; }
+        ImGui::PopStyleColor(3);
+        ImGui::SameLine(0, 1);
+        ImGui::SetNextItemWidth(-1);
+        changed |= ImGui::DragFloat("##Z", &v.z, speed, 0.0f, 0.0f, "%.3f");
+
+        ImGui::PopStyleVar();
+        ImGui::PopID();
+        return changed;
+    }
+
+std::string toLowerCopy(std::string value)
     {
         std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
                        { return static_cast<char>(std::tolower(character)); });
@@ -602,59 +654,37 @@ void Editor::drawDetails()
         {
             if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                if (ImGui::BeginTable("TransformTable", 2, ImGuiTableFlags_SizingStretchProp))
-                {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::Text("Position");
+                constexpr float kLabelW = 68.0f;
+                ImGui::Spacing();
 
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::PushID("Position");
-                    auto position = transformComponent->getPosition();
+                auto position = transformComponent->getPosition();
+                auto euler    = transformComponent->getEulerDegrees();
+                auto scale    = transformComponent->getScale();
 
-                    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(100, 100, 100, 255));
-                    if (ImGui::Button("R"))
-                        position = glm::vec3(0.0f);
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine();
-
-                    ImGui::DragFloat3("##Position", &position.x, 0.01f);
-
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("Position");
+                ImGui::SameLine(kLabelW);
+                ImGui::SetNextItemWidth(-1);
+                if (drawVec3Control("##tfPos", position, 0.0f, 0.01f))
                     transformComponent->setPosition(position);
 
-                    // X/Y/Z colored drag
-                    // float* values[3] = { &pos.x, &pos.y, &pos.z };
-                    // ImVec4 colors[3] = { ImVec4(0.8f,0.2f,0.2f,1.0f), ImVec4(0.2f,0.8f,0.2f,1.0f), ImVec4(0.2f,0.2f,0.8f,1.0f) };
-                    // ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4,2));
-                    // for (int i = 0; i < 3; i++)
-                    // {
-                    //     ImGui::PushStyleColor(ImGuiCol_Text, colors[i]);
-                    //     ImGui::DragFloat(i==0 ? "##X" : (i==1?"##Y":"##Z"), values[i], 0.1f);
-                    //     ImGui::PopStyleColor();
-                    //     if(i<2) ImGui::SameLine();
-                    // }
-                    // ImGui::PopStyleVar();
-                    // transformComponent->setPosition(pos);
-                    ImGui::PopID();
+                ImGui::Spacing();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("Rotation");
+                ImGui::SameLine(kLabelW);
+                ImGui::SetNextItemWidth(-1);
+                if (drawVec3Control("##tfRot", euler, 0.0f, 0.1f))
+                    transformComponent->setEulerDegrees(euler);
 
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::Text("Rotation");
-                    ImGui::TableSetColumnIndex(1);
-                    auto euler = transformComponent->getEulerDegrees();
-                    if (ImGui::DragFloat3("##Rotation", &euler.x, 0.1f))
-                        transformComponent->setEulerDegrees(euler);
+                ImGui::Spacing();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("Scale");
+                ImGui::SameLine(kLabelW);
+                ImGui::SetNextItemWidth(-1);
+                if (drawVec3Control("##tfScl", scale, 1.0f, 0.01f))
+                    transformComponent->setScale(scale);
 
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::Text("Scale");
-                    ImGui::TableSetColumnIndex(1);
-                    auto scale = transformComponent->getScale();
-                    if (ImGui::DragFloat3("##Scale", &scale.x, 0.01f, 0.0f, 100.0f))
-                        transformComponent->setScale(scale);
-
-                    ImGui::EndTable();
-                }
+                ImGui::Spacing();
             }
         }
         else if (auto lightComponent = dynamic_cast<engine::LightComponent *>(component.get()))

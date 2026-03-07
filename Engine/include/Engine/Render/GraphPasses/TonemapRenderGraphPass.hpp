@@ -3,8 +3,6 @@
 
 #include "Engine/Render/RenderTarget.hpp"
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
-#include "Engine/Texture.hpp"
-
 #include "Core/Buffer.hpp"
 #include "Core/PipelineLayout.hpp"
 #include "Core/Sampler.hpp"
@@ -53,11 +51,6 @@ private:
 
     std::vector<VkDescriptorSet> m_descriptorSets{VK_NULL_HANDLE};
     bool m_descriptorSetsInitialized{false};
-
-    Texture::SharedPtr m_identityLUTTexture{nullptr};
-    Texture::SharedPtr m_lutTexture{nullptr};
-    std::string m_lastLUTPath{};
-    bool m_lutDescriptorDirty{true};
 
     VkExtent2D m_extent;
     VkViewport m_viewport;

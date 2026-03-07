@@ -2,8 +2,6 @@
 #define ELIX_LIGHTING_RENDER_GRAPH_PASS_HPP
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
-#include "Engine/Render/IBLManager.hpp"
-#include "Engine/Texture.hpp"
 #include "Core/PipelineLayout.hpp"
 #include "Core/Sampler.hpp"
 
@@ -37,8 +35,6 @@ public:
         return m_colorTextureHandler;
     }
 
-    void setIBLManager(IBLManager *ibl);
-
 private:
     std::array<VkClearValue, 1> m_clearValues;
 
@@ -67,24 +63,12 @@ private:
 
     core::Sampler::SharedPtr m_defaultSampler{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};
-    core::Sampler::SharedPtr m_iblSampler{nullptr};
 
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
-    core::DescriptorSetLayout::SharedPtr m_iblDescriptorSetLayout{nullptr};
 
     std::vector<VkDescriptorSet> m_descriptorSets{VK_NULL_HANDLE};
-    std::vector<VkDescriptorSet> m_iblDescriptorSets;
     bool m_descriptorSetsInitialized{false};
-
-    IBLManager *m_iblManager{nullptr};
-    std::string m_lastIBLPath{};
-    std::string m_requestedIBLPath{};
-    bool m_pendingIBLUpdate{false};
-
-    // 1x1 black fallback textures for IBL when manager is null/not ready
-    Texture::SharedPtr m_iblFallbackCube;
-    Texture::SharedPtr m_iblFallbackLUT;
 };
 
 ELIX_CUSTOM_NAMESPACE_END

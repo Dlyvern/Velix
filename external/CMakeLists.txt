@@ -45,6 +45,16 @@ add_subdirectory(physx)
 
 
 # OpenEXR / Imath / OpenJPH
+set(IMATH_BUILD_TESTING OFF CACHE BOOL "Disable Imath tests" FORCE)
+set(IMATH_INSTALL OFF CACHE BOOL "Disable Imath install target" FORCE)
+set(IMATH_INSTALL_PKG_CONFIG OFF CACHE BOOL "Disable Imath pkg-config generation" FORCE)
+add_subdirectory(Imath)
+
+# Force OpenEXR to skip find_package(Imath) entirely.
+# Imath::Imath is already defined above via add_subdirectory, so OpenEXR will
+# use it directly without triggering FetchContent (no internet needed).
+set(OPENEXR_FORCE_INTERNAL_IMATH ON CACHE BOOL "Use already-added Imath target" FORCE)
+
 set(OPENEXR_BUILD_LIBS ON CACHE BOOL "Build OpenEXR libraries" FORCE)
 set(OPENEXR_BUILD_TOOLS OFF CACHE BOOL "Disable OpenEXR tools" FORCE)
 set(OPENEXR_BUILD_EXAMPLES OFF CACHE BOOL "Disable OpenEXR examples" FORCE)
@@ -99,10 +109,13 @@ set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "Disable glslang install target" FORCE
 set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "Disable glslang standalone binaries" FORCE)
 add_subdirectory(glslang)
 
-# zlib
+# zlib — force static-only so OpenEXR doesn't produce a z.dll dependency on Windows
 set(ZLIB_BUILD_TESTING OFF CACHE BOOL "Disable zlib example tests" FORCE)
 set(ZLIB_INSTALL OFF CACHE BOOL "Disable zlib install target" FORCE)
+set(_velix_saved_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(zlib)
+set(BUILD_SHARED_LIBS "${_velix_saved_BUILD_SHARED_LIBS}" CACHE BOOL "" FORCE)
 
 # shaderc
 set(SHADERC_SKIP_TESTS ON CACHE BOOL "Skip building shaderc tests" FORCE)
