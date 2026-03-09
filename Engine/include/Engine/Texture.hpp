@@ -53,6 +53,8 @@ public:
     static SharedPtr getDefaultBlackTexture();
 
 private:
+    bool generateMipmaps(core::CommandBuffer::SharedPtr commandBuffer);
+
     VkDevice m_device{VK_NULL_HANDLE};
     unsigned char *m_pixels{nullptr};
     int m_width{1};

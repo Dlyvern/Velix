@@ -53,6 +53,11 @@ public:
     virtual void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                         const RenderGraphPassContext &renderContext) = 0;
 
+    /// Return false to skip the pass entirely this frame (no GPU work issued).
+    /// The pass still participates in the dependency graph; skipping is purely a
+    /// per-frame execution decision and requires no render-graph recompile.
+    virtual bool isEnabled() const { return true; }
+
     virtual std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const = 0;
 
     virtual void cleanup() {}

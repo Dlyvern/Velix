@@ -176,6 +176,28 @@ namespace
         return {VK_TRUE, clampedAnisotropy};
     }
 
+    uint32_t computeMipLevelCount(uint32_t width, uint32_t height)
+    {
+        const uint32_t maxDimension = std::max(width, height);
+        if (maxDimension <= 1u)
+            return 1u;
+
+        return static_cast<uint32_t>(std::floor(std::log2(static_cast<double>(maxDimension)))) + 1u;
+    }
+
+    bool supportsLinearBlitMips(VkPhysicalDevice physicalDevice, VkFormat format)
+    {
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
+
+        constexpr VkFormatFeatureFlags requiredFeatures =
+            VK_FORMAT_FEATURE_BLIT_SRC_BIT |
+            VK_FORMAT_FEATURE_BLIT_DST_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+
+        return (properties.optimalTilingFeatures & requiredFeatures) == requiredFeatures;
+    }
+
     uint32_t compressedBlockByteSize(VkFormat format)
     {
         switch (format)
@@ -624,6 +646,75 @@ uint32_t Texture::packRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
            (uint32_t(a) << 24);
 }
 
+bool Texture::generateMipmaps(core::CommandBuffer::SharedPtr commandBuffer)
+{
+    if (m_mipLevels <= 1u)
+        return false;
+
+    int32_t mipWidth = m_width;
+    int32_t mipHeight = m_height;
+
+    for (uint32_t i = 1; i < m_mipLevels; ++i)
+    {
+        utilities::ImageUtilities::insertImageMemoryBarrier(
+            *m_image,
+            *commandBuffer,
+            VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            VK_ACCESS_2_TRANSFER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            {VK_IMAGE_ASPECT_COLOR_BIT, i - 1u, 1u, 0, 1});
+
+        VkImageBlit blit{};
+        blit.srcOffsets[0] = {0, 0, 0};
+        blit.srcOffsets[1] = {mipWidth, mipHeight, 1};
+        blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.srcSubresource.mipLevel = i - 1;
+        blit.srcSubresource.baseArrayLayer = 0;
+        blit.srcSubresource.layerCount = 1;
+        blit.dstOffsets[0] = {0, 0, 0};
+        blit.dstOffsets[1] = {mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1};
+        blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.dstSubresource.mipLevel = i;
+        blit.dstSubresource.baseArrayLayer = 0;
+        blit.dstSubresource.layerCount = 1;
+
+        vkCmdBlitImage(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+
+        utilities::ImageUtilities::insertImageMemoryBarrier(
+            *m_image,
+            *commandBuffer,
+            VK_ACCESS_2_TRANSFER_READ_BIT,
+            VK_ACCESS_2_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            {VK_IMAGE_ASPECT_COLOR_BIT, i - 1u, 1u, 0, 1});
+
+        if (mipWidth > 1)
+            mipWidth /= 2;
+
+        if (mipHeight > 1)
+            mipHeight /= 2;
+    }
+
+    utilities::ImageUtilities::insertImageMemoryBarrier(
+        *m_image,
+        *commandBuffer,
+        VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        VK_ACCESS_2_SHADER_READ_BIT,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, m_mipLevels - 1u, 1u, 0, 1});
+
+    return true;
+}
+
 bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t width, uint32_t height, VkFormat format, uint32_t channels)
 {
     if (!pixels || byteCount == 0u || width == 0u || height == 0u)
@@ -703,6 +794,12 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
                 VX_ENGINE_ERROR_STREAM("Failed to create texture from memory. Payload is too small for format.\n");
                 return false;
             }
+
+            if ((uploadWidth > 1u || uploadHeight > 1u) &&
+                supportsLinearBlitMips(vulkanContext->getPhysicalDevice(), uploadFormat))
+            {
+                m_mipLevels = computeMipLevelCount(uploadWidth, uploadHeight);
+            }
         }
 
         const VkExtent2D extent{
@@ -713,8 +810,12 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
         auto stagingBuffer = core::Buffer::createShared(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
         stagingBuffer->upload(uploadPixels, imageSize);
 
+        VkImageUsageFlags imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        if (m_mipLevels > 1u)
+            imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
         m_image = core::Image::createShared(extent,
-                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                            imageUsage,
                                             core::memory::MemoryUsage::GPU_ONLY,
                                             uploadFormat,
                                             VK_IMAGE_TILING_OPTIMAL,
@@ -756,20 +857,25 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
         region.imageExtent = {uploadWidth, uploadHeight, 1};
         vkCmdCopyBufferToImage(commandBuffer, stagingBuffer->vk(), m_image->vk(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-        auto secondBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
-            *m_image,
-            VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            VK_ACCESS_2_SHADER_READ_BIT,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+        bool wasTransitionedToSRC = generateMipmaps(commandBuffer);
 
-        VkDependencyInfo secondDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-        secondDependency.imageMemoryBarrierCount = 1;
-        secondDependency.pImageMemoryBarriers = &secondBarrier;
-        vkCmdPipelineBarrier2(commandBuffer, &secondDependency);
+        if (!wasTransitionedToSRC)
+        {
+            auto secondBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+                *m_image,
+                VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_ACCESS_2_SHADER_READ_BIT,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+
+            VkDependencyInfo secondDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            secondDependency.imageMemoryBarrierCount = 1;
+            secondDependency.pImageMemoryBarriers = &secondBarrier;
+            vkCmdPipelineBarrier2(commandBuffer, &secondDependency);
+        }
 
         commandBuffer->end();
 
@@ -806,7 +912,7 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
             VK_FALSE,
             0.0f,
             0.0f,
-            0.0f);
+            static_cast<float>(m_mipLevels - 1u));
 
         return true;
     };

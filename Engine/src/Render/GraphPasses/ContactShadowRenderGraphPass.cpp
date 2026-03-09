@@ -12,6 +12,12 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
+bool ContactShadowRenderGraphPass::isEnabled() const
+{
+    const auto &s = RenderQualitySettings::getInstance();
+    return s.enablePostProcessing && s.enableContactShadows;
+}
+
 struct ContactShadowPC
 {
     float rayLength;

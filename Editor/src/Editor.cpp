@@ -5035,6 +5035,7 @@ void Editor::setSelectedEntity(engine::Entity *entity)
     if (m_selectedEntity != entity)
     {
         m_selectedMeshSlot.reset();
+        m_lastScrolledMeshSlot.reset();
         m_isColliderHandleActive = false;
         m_isColliderHandleHovered = false;
         m_activeColliderHandle = ColliderHandleType::NONE;
@@ -5691,8 +5692,8 @@ void Editor::rebuildModelDetailsCache(const engine::ModelAsset &modelAsset,
                                                    textureSearchDirectory,
                                                    m_modelTextureManualOverrides,
                                                    resolved,
-                                                   {},
-                                                   false);
+                                                   textureSearchDirectory,
+                                                   true);
     };
 
     auto collectUnresolvedPath = [&](const std::string &texturePath)
@@ -5704,8 +5705,8 @@ void Editor::rebuildModelDetailsCache(const engine::ModelAsset &modelAsset,
                                             textureSearchDirectory,
                                             m_modelTextureManualOverrides,
                                             resolved,
-                                            {},
-                                            false);
+                                            textureSearchDirectory,
+                                            true);
 
         if (!resolved && !texturePath.empty())
             unresolvedTexturePaths.insert(texturePath);
@@ -6376,8 +6377,8 @@ void Editor::drawAssetDetails()
                                                                                                 textureSearchDirectory,
                                                                                                 previewOverrides,
                                                                                                 remappedResolved,
-                                                                                                {},
-                                                                                                false);
+                                                                                                textureSearchDirectory,
+                                                                                                true);
                     if (remappedResolved && !resolvedPreviewPath.empty())
                     {
                         remappedPathString = resolvedPreviewPath;
@@ -6464,8 +6465,8 @@ void Editor::drawAssetDetails()
                                                                                     textureSearchDirectory,
                                                                                     m_modelTextureManualOverrides,
                                                                                     previewResolved,
-                                                                                    {},
-                                                                                    false);
+                                                                                    textureSearchDirectory,
+                                                                                    true);
                 ImGui::TextWrapped("Preview: %s", previewPath.empty() ? "<None>" : previewPath.c_str());
                 ImGui::TextDisabled("%s", previewResolved ? "Status: Resolved" : "Status: Unresolved");
             }

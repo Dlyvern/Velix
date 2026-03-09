@@ -13,6 +13,12 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
+bool BloomRenderGraphPass::isEnabled() const
+{
+    const auto &s = RenderQualitySettings::getInstance();
+    return s.enablePostProcessing && s.enableBloom;
+}
+
 struct BloomExtractPC
 {
     glm::vec2 texelSize;

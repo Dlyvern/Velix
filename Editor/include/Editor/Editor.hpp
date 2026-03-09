@@ -496,6 +496,7 @@ private:
     engine::Scene::SharedPtr m_scene{nullptr};
     engine::Entity *m_selectedEntity{nullptr};
     std::optional<uint32_t> m_selectedMeshSlot;
+    std::optional<uint32_t> m_lastScrolledMeshSlot; // tracks last slot we auto-scrolled to
 
     enum class UIPlacementTool : uint8_t
     {

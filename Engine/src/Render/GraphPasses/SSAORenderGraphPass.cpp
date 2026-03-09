@@ -16,6 +16,12 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
+bool SSAORenderGraphPass::isEnabled() const
+{
+    const auto &s = RenderQualitySettings::getInstance();
+    return s.enablePostProcessing && (s.enableSSAO || s.enableGTAO);
+}
+
 namespace
 {
     struct SSAOpc

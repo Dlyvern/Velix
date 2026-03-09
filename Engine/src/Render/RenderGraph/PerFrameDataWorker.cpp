@@ -88,27 +88,42 @@ bool PerFrameDataWorker::fillDirectionalLight(Camera *camera, DirectionalLight *
                 cascadeCenter += corner;
             cascadeCenter /= static_cast<float>(corners.size());
 
+            // Fit a bounding sphere instead of a tight AABB — rotation-invariant, prevents
+            // the ortho bounds from changing as the camera rotates (eliminates one source of shimmer)
+            float sphereRadius = 0.0f;
+            for (const auto &corner : corners)
+                sphereRadius = std::max(sphereRadius, glm::length(corner - cascadeCenter));
+            // Round up to a fixed texel-aligned step to reduce frame-to-frame variation
+            const float shadowResolutionF = static_cast<float>(RenderQualitySettings::getInstance().getShadowResolution());
+            if (shadowResolutionF > 0.0f)
+                sphereRadius = std::ceil(sphereRadius * shadowResolutionF / 2.0f) / (shadowResolutionF / 2.0f);
+
             glm::vec3 lightUp = (std::abs(glm::dot(dirWorld, glm::vec3(0, 1, 0))) > 0.95f)
                                     ? glm::vec3(0, 0, 1)
                                     : glm::vec3(0, 1, 0);
-            const float lightDistance = splitFar + 50.0f;
+            constexpr float zPadding = 25.0f;
+            const float lightDistance = sphereRadius + zPadding + 50.0f;
             glm::mat4 lightView = glm::lookAt(cascadeCenter - dirWorld * lightDistance, cascadeCenter, lightUp);
 
-            glm::vec3 minBounds(std::numeric_limits<float>::max());
-            glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
-
-            for (const auto &corner : corners)
-            {
-                glm::vec3 cornerLight = glm::vec3(lightView * glm::vec4(corner, 1.0f));
-                minBounds = glm::min(minBounds, cornerLight);
-                maxBounds = glm::max(maxBounds, cornerLight);
-            }
-
-            constexpr float zPadding = 25.0f;
-            const float cascadeNear = std::max(0.1f, -maxBounds.z - zPadding);
-            const float cascadeFar = std::max(cascadeNear + 0.1f, -minBounds.z + zPadding);
-            glm::mat4 lightProj = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, cascadeNear, cascadeFar);
+            // Square ortho projection sized to the sphere — stays constant as camera moves/rotates
+            const float cascadeNear = std::max(0.1f, lightDistance - sphereRadius - zPadding);
+            const float cascadeFar  = lightDistance + sphereRadius + zPadding;
+            glm::mat4 lightProj = glm::ortho(-sphereRadius, sphereRadius, -sphereRadius, sphereRadius, cascadeNear, cascadeFar);
             glm::mat4 lightMatrix = lightProj * lightView;
+
+            // Texel snapping: quantise the world-origin projection to the nearest shadow-map texel
+            // so the shadow map doesn't drift by sub-texel amounts as the camera translates
+            if (shadowResolutionF > 0.0f)
+            {
+                glm::vec4 shadowOrigin = lightMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                shadowOrigin *= shadowResolutionF / 2.0f;
+                const glm::vec4 roundedOrigin = glm::round(shadowOrigin);
+                glm::vec4 roundOffset = (roundedOrigin - shadowOrigin) * (2.0f / shadowResolutionF);
+                roundOffset.z = 0.0f;
+                roundOffset.w = 0.0f;
+                lightProj[3] += roundOffset;
+                lightMatrix = lightProj * lightView;
+            }
 
             m_data.directionalLightSpaceMatrices[cascadeIndex] = lightMatrix;
             m_data.directionalCascadeSplits[cascadeIndex] = splitFar;

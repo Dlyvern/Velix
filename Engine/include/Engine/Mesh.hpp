@@ -36,6 +36,10 @@ struct CPUMesh
     CPUMaterial material;
     glm::mat4 localTransform{1.0f};
 
+    // Cached geometry hash — computed once, reused every frame (static meshes never change)
+    mutable std::size_t cachedGeometryHash{0};
+    mutable bool        geometryHashCached{false};
+
     template <typename VertexT>
     static CPUMesh build(const std::vector<VertexT> &vertices, const std::vector<uint32_t> &indices)
     {

@@ -27,6 +27,8 @@ public:
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
 
+    bool isEnabled() const override;
+
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
 
     void setExtent(VkExtent2D extent);

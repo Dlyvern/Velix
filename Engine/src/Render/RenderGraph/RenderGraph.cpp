@@ -114,8 +114,6 @@ RenderGraph::RenderGraph(bool presentToSwapchain) : m_presentToSwapchain(present
 
 void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling)
 {
-    (void)projection;
-    (void)enableFrustumCulling;
 
     const auto &sceneEntities = scene->getEntities();
 
@@ -148,6 +146,9 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
     auto computeMeshGeometryHash = [](const CPUMesh &mesh) -> std::size_t
     {
+        if (mesh.geometryHashCached)
+            return mesh.cachedGeometryHash;
+
         std::size_t hashData{0};
         hashing::hash(hashData, mesh.vertexStride);
         hashing::hash(hashData, mesh.vertexLayoutHash);
@@ -158,6 +159,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         for (const auto &index : mesh.indices)
             hashing::hash(hashData, index);
 
+        mesh.cachedGeometryHash = hashData;
+        mesh.geometryHashCached = true;
         return hashData;
     };
 
@@ -183,14 +186,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         }
 
         bounds.center = (minPosition + maxPosition) * 0.5f;
-        bounds.radius = 0.0f;
-
-        for (uint32_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
-        {
-            glm::vec3 position(0.0f);
-            std::memcpy(&position, mesh.vertexData.data() + static_cast<size_t>(vertexIndex) * mesh.vertexStride, sizeof(glm::vec3));
-            bounds.radius = std::max(bounds.radius, glm::length(position - bounds.center));
-        }
+        // Conservative bounding sphere from AABB diagonal — single pass, no second loop
+        bounds.radius = glm::length((maxPosition - minPosition) * 0.5f);
 
         return bounds;
     };
@@ -684,10 +681,6 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 resolveMeshMaterial((*meshes)[meshIndex], staticMeshComponent, skeletalMeshComponent, terrainComponent, meshIndex);
         }
 
-        glm::vec3 boundsMin(FLT_MAX);
-        glm::vec3 boundsMax(-FLT_MAX);
-        bool hasBounds = false;
-
         const size_t meshCount = drawItem.localMeshBoundsRadii.size();
         drawItem.cachedWorldBoundsCenters.resize(meshCount);
         drawItem.cachedWorldBoundsRadii.resize(meshCount);
@@ -709,14 +702,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
             drawItem.cachedWorldBoundsCenters[meshIndex] = worldCenter;
             drawItem.cachedWorldBoundsRadii[meshIndex] = worldRadius;
-
-            const glm::vec3 extents(worldRadius);
-            boundsMin = glm::min(boundsMin, worldCenter - extents);
-            boundsMax = glm::max(boundsMax, worldCenter + extents);
-            hasBounds = true;
         }
-
-        (void)hasBounds;
     }
 
     std::vector<glm::mat4> frameBones;
@@ -748,6 +734,38 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
     const uint64_t skinnedVertexLayoutHash = vertex::VertexTraits<vertex::VertexSkinned>::layout().hash;
 
+    // Extract frustum planes from view-projection matrix (Gribb-Hartmann method, Vulkan depth [0,1])
+    std::array<glm::vec4, 6> frustumPlanes{};
+    if (enableFrustumCulling)
+    {
+        const glm::mat4 vp = projection * view;
+        auto row = [&](int r) -> glm::vec4 {
+            return glm::vec4(vp[0][r], vp[1][r], vp[2][r], vp[3][r]);
+        };
+        frustumPlanes[0] = row(3) + row(0); // Left
+        frustumPlanes[1] = row(3) - row(0); // Right
+        frustumPlanes[2] = row(3) + row(1); // Bottom
+        frustumPlanes[3] = row(3) - row(1); // Top
+        frustumPlanes[4] = row(2);          // Near (Vulkan: z_clip >= 0)
+        frustumPlanes[5] = row(3) - row(2); // Far
+        for (auto &p : frustumPlanes)
+        {
+            const float len = glm::length(glm::vec3(p));
+            if (len > 1e-6f)
+                p /= len;
+        }
+    }
+
+    auto sphereInsideFrustum = [&](const glm::vec3 &center, float radius) -> bool
+    {
+        for (const auto &plane : frustumPlanes)
+        {
+            if (glm::dot(glm::vec3(plane), center) + plane.w < -radius)
+                return false;
+        }
+        return true;
+    };
+
     std::vector<MeshDrawReference> drawReferences;
     drawReferences.reserve(m_perFrameData.drawItems.size() * 2);
 
@@ -778,6 +796,10 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 worldBoundsCenter = drawItem.cachedWorldBoundsCenters[meshIndex];
                 worldBoundsRadius = drawItem.cachedWorldBoundsRadii[meshIndex];
             }
+
+            if (enableFrustumCulling && worldBoundsRadius > 0.0f &&
+                !sphereInsideFrustum(worldBoundsCenter, worldBoundsRadius))
+                continue;
 
             drawReferences.push_back(MeshDrawReference{
                 .entity = entity,
@@ -943,7 +965,31 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         return batch.skinned == reference.skinned && hasSameGeometry(batch.mesh, reference.mesh);
     };
 
-    auto buildShadowBatches = [&](std::vector<DrawBatch> &outBatches)
+    // Extract 6 frustum planes (Gribb-Hartmann) from a VP matrix, normalized for sphere tests
+    auto extractLightFrustumPlanes = [](const glm::mat4 &vp) -> std::array<glm::vec4, 6>
+    {
+        auto row = [&](int r) -> glm::vec4 {
+            return glm::vec4(vp[0][r], vp[1][r], vp[2][r], vp[3][r]);
+        };
+        std::array<glm::vec4, 6> planes{
+            row(3) + row(0), // Left
+            row(3) - row(0), // Right
+            row(3) + row(1), // Bottom
+            row(3) - row(1), // Top
+            row(2),          // Near  (Vulkan [0,1] depth)
+            row(3) - row(2), // Far
+        };
+        for (auto &p : planes)
+        {
+            const float len = glm::length(glm::vec3(p));
+            if (len > 1e-6f)
+                p /= len;
+        }
+        return planes;
+    };
+
+    auto buildShadowBatches = [&](std::vector<DrawBatch> &outBatches,
+                                   const std::array<glm::vec4, 6> *cullPlanes)
     {
         outBatches.clear();
 
@@ -951,6 +997,22 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         {
             if (!reference || !reference->mesh)
                 continue;
+
+            // Per-light frustum culling: skip geometry outside this cascade/light view
+            if (cullPlanes && reference->worldBoundsRadius > 0.0f)
+            {
+                bool outside = false;
+                for (const auto &plane : *cullPlanes)
+                {
+                    if (glm::dot(glm::vec3(plane), reference->worldBoundsCenter) + plane.w < -reference->worldBoundsRadius)
+                    {
+                        outside = true;
+                        break;
+                    }
+                }
+                if (outside)
+                    continue;
+            }
 
             const uint32_t instanceIndex = static_cast<uint32_t>(shadowPerObjectInstances.size());
             PerObjectInstanceData instanceData{};
@@ -984,17 +1046,24 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     };
 
     for (uint32_t cascadeIndex = 0; cascadeIndex < m_perFrameData.activeDirectionalCascadeCount; ++cascadeIndex)
-        buildShadowBatches(m_perFrameData.directionalShadowDrawBatches[cascadeIndex]);
+    {
+        const auto planes = extractLightFrustumPlanes(m_perFrameData.directionalLightSpaceMatrices[cascadeIndex]);
+        buildShadowBatches(m_perFrameData.directionalShadowDrawBatches[cascadeIndex], &planes);
+    }
 
     for (uint32_t spotIndex = 0; spotIndex < m_perFrameData.activeSpotShadowCount; ++spotIndex)
-        buildShadowBatches(m_perFrameData.spotShadowDrawBatches[spotIndex]);
+    {
+        const auto planes = extractLightFrustumPlanes(m_perFrameData.spotLightSpaceMatrices[spotIndex]);
+        buildShadowBatches(m_perFrameData.spotShadowDrawBatches[spotIndex], &planes);
+    }
 
     for (uint32_t pointIndex = 0; pointIndex < m_perFrameData.activePointShadowCount; ++pointIndex)
     {
         for (uint32_t faceIndex = 0; faceIndex < ShadowConstants::POINT_SHADOW_FACES; ++faceIndex)
         {
             const uint32_t matrixIndex = pointIndex * ShadowConstants::POINT_SHADOW_FACES + faceIndex;
-            buildShadowBatches(m_perFrameData.pointShadowDrawBatches[matrixIndex]);
+            const auto planes = extractLightFrustumPlanes(m_perFrameData.pointLightSpaceMatrices[matrixIndex]);
+            buildShadowBatches(m_perFrameData.pointShadowDrawBatches[matrixIndex], &planes);
         }
     }
 

@@ -12,6 +12,14 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
+bool SMAAPassRenderGraphPass::isEnabled() const
+{
+    const auto &s = RenderQualitySettings::getInstance();
+    return s.enablePostProcessing &&
+           (s.getAntiAliasingMode() == RenderQualitySettings::AntiAliasingMode::SMAA ||
+            s.getAntiAliasingMode() == RenderQualitySettings::AntiAliasingMode::CMAA);
+}
+
 namespace
 {
     struct SMAApc

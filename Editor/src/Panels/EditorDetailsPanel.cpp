@@ -826,6 +826,12 @@ void Editor::drawDetails()
                     if (hasOverride)
                         previewDescriptorSet = m_assetsPreviewSystem.getOrRequestMaterialPreview(overridePath);
 
+                    if (isPickedMeshSlot && m_lastScrolledMeshSlot != m_selectedMeshSlot)
+                    {
+                        ImGui::SetScrollHereY(0.5f);
+                        m_lastScrolledMeshSlot = m_selectedMeshSlot;
+                    }
+
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, isPickedMeshSlot ? 2.0f : 1.0f);
                     if (isPickedMeshSlot)
                         ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 170, 40, 255));
@@ -954,6 +960,12 @@ void Editor::drawDetails()
                     VkDescriptorSet previewDescriptorSet = m_assetsPreviewSystem.getPlaceholder();
                     if (hasOverride)
                         previewDescriptorSet = m_assetsPreviewSystem.getOrRequestMaterialPreview(overridePath);
+
+                    if (isPickedMeshSlot && m_lastScrolledMeshSlot != m_selectedMeshSlot)
+                    {
+                        ImGui::SetScrollHereY(0.5f);
+                        m_lastScrolledMeshSlot = m_selectedMeshSlot;
+                    }
 
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, isPickedMeshSlot ? 2.0f : 1.0f);
                     if (isPickedMeshSlot)

@@ -11,6 +11,12 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
+bool CinematicEffectsRenderGraphPass::isEnabled() const
+{
+    const auto &s = RenderQualitySettings::getInstance();
+    return s.enablePostProcessing && (s.enableVignette || s.enableFilmGrain || s.enableChromaticAberration);
+}
+
 struct CinematicPC
 {
     float vignetteStrength;
