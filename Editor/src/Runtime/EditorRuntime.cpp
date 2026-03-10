@@ -321,11 +321,13 @@ bool EditorRuntime::init()
                                      return scene; });
 
     m_shaderHotReloader = std::make_unique<engine::shaders::ShaderHotReloader>("./resources/shaders");
-    m_shaderHotReloader->setPollIntervalSeconds(0.35);
-    m_shaderHotReloader->prime();
 
     m_editor = std::make_shared<Editor>();
     m_editor->setDockingFullscreen(true);
+    m_editor->setReloadShadersCallback([this](std::vector<std::string> *outErrors) -> size_t
+    {
+        return m_shaderHotReloader ? m_shaderHotReloader->recompileAll(outErrors) : 0;
+    });
 
     initEditorRenderGraph();
 
@@ -686,13 +688,7 @@ void EditorRuntime::tick(float deltaTime)
     if (!m_activeScene || !m_editor || !m_renderGraph)
         return;
 
-    bool shaderReloadRequested = m_editor->consumeShaderReloadRequest();
-    if (m_shaderHotReloader)
-    {
-        m_shaderHotReloader->update(static_cast<double>(deltaTime));
-        shaderReloadRequested = shaderReloadRequested || m_shaderHotReloader->consumeReloadRequest();
-    }
-
+    const bool shaderReloadRequested = m_editor->consumeShaderReloadRequest();
     if (shaderReloadRequested)
         engine::GraphicsPipelineManager::reloadShaders();
 

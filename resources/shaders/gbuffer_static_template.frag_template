@@ -114,6 +114,8 @@ vec3 getTangentView()
     return T;
 }
 
+// <<ELIX_CUSTOM_FUNCTIONS>>
+
 void main()
 {
     outObjectId = fragObjectId;
@@ -148,6 +150,10 @@ void main()
     }
 
     vec3 N = getNormalView(uv);
+
+    // <<ELIX_CUSTOM_EXPRESSION>>
+    // Modifiable: albedo, roughness, metallic, ao, emissive, N, alpha
+    // Read-only:  uv, pc.time, fragPositionView, fragNormalView, material.*
 
     vec3 encN = N * 0.5 + 0.5;
 

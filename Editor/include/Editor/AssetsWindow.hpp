@@ -47,6 +47,11 @@ public:
         m_onAssetSelectionChangedFunction = function;
     }
 
+    void setOnAssetDeleted(const std::function<void(const std::filesystem::path &)> &function)
+    {
+        m_onAssetDeletedFunction = function;
+    }
+
     [[nodiscard]] bool hasKeyboardFocus() const
     {
         return m_hasKeyboardFocus;
@@ -56,6 +61,7 @@ private:
     std::function<void(const std::filesystem::path &)> m_onMaterialOpenRequestFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onTextAssetOpenRequestFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onAssetSelectionChangedFunction{nullptr};
+    std::function<void(const std::filesystem::path &)> m_onAssetDeletedFunction{nullptr};
 
     AssetsPreviewSystem &m_assetsPreviewSystem;
 
@@ -94,6 +100,8 @@ private:
     bool matchesSearch(const std::string &filename) const;
     void refreshCurrentDirectory();
     void pollAsyncImportJob();
+    void startDeletingSelectedAssets();
+    bool deleteSelectedAssets();
 
     Project *m_currentProject{nullptr};
     EditorResourcesStorage *m_resourcesStorage{nullptr};
@@ -111,6 +119,9 @@ private:
     TreeNode *m_selectedTreeNode = nullptr;
     std::filesystem::path m_selectedAssetPath;
     std::filesystem::path m_contextAssetPath;
+    std::unordered_set<std::string> m_multiSelectedPaths;
+    std::filesystem::path m_lastClickedPath;
+    bool m_openDeleteMultiplePopupRequested{false};
     std::filesystem::path m_renameAssetPath;
     std::filesystem::path m_deleteAssetPath;
     bool m_openRenamePopupRequested{false};

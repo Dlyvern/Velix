@@ -215,14 +215,10 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         auto instance = std::make_shared<GPUMesh>();
         instance->indexBuffer = sharedGeometry->indexBuffer;
         instance->vertexBuffer = sharedGeometry->vertexBuffer;
-        instance->rayTracingIndexBuffer = sharedGeometry->rayTracingIndexBuffer;
-        instance->rayTracingVertexBuffer = sharedGeometry->rayTracingVertexBuffer;
         instance->indicesCount = sharedGeometry->indicesCount;
         instance->indexType = sharedGeometry->indexType;
         instance->vertexStride = sharedGeometry->vertexStride;
         instance->vertexLayoutHash = sharedGeometry->vertexLayoutHash;
-        instance->rayTracingPositionOffset = sharedGeometry->rayTracingPositionOffset;
-        instance->rayTracingPositionFormat = sharedGeometry->rayTracingPositionFormat;
 
         return instance;
     };
@@ -415,8 +411,18 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         material->setUVOffset(materialCPU.uvOffset);
         material->setUVRotation(materialCPU.uvRotation);
         material->setIor(materialCPU.ior);
+
+        if (!materialCPU.customShaderHash.empty())
+            material->setCustomFragPath("./resources/shaders/material_cache/" + materialCPU.customShaderHash + ".spv");
+
         return material;
     };
+
+    // Limit new cold-cache material loads per frame to avoid multi-second freezes
+    // when a large scene (e.g. 1000+ meshes) first loads its materials.
+    // Materials not loaded this frame return a placeholder and are retried next frame.
+    int newMaterialLoadsThisFrame = 0;
+    constexpr int maxNewMaterialLoadsPerFrame = 10;
 
     auto resolveMaterialOverrideFromPath = [&](const std::string &materialPath) -> Material::SharedPtr
     {
@@ -434,6 +440,11 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         if (m_failedMaterialAssetPaths.find(normalizedMaterialPath) != m_failedMaterialAssetPaths.end())
             return nullptr;
 
+        // Defer disk load to a later frame if this frame's budget is spent
+        if (newMaterialLoadsThisFrame >= maxNewMaterialLoadsPerFrame)
+            return nullptr;
+        ++newMaterialLoadsThisFrame;
+
         auto materialAsset = AssetsLoader::loadMaterial(normalizedMaterialPath);
         if (!materialAsset.has_value())
         {
@@ -445,7 +456,16 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
         auto materialCPU = materialAsset.value().material;
         const std::filesystem::path materialAssetFilePath = std::filesystem::path(normalizedMaterialPath);
-        auto material = createMaterialFromCpuData(materialCPU, materialAssetFilePath);
+        Material::SharedPtr material;
+        try
+        {
+            material = createMaterialFromCpuData(materialCPU, materialAssetFilePath);
+        }
+        catch (const std::exception &e)
+        {
+            VX_ENGINE_ERROR_STREAM("Exception creating material from '" << normalizedMaterialPath << "': " << e.what() << '\n');
+            return nullptr;
+        }
         if (!material)
             return nullptr;
 
@@ -517,7 +537,20 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         if (m_failedAlbedoTexturePaths.find(materialCacheKey) != m_failedAlbedoTexturePaths.end())
             return Material::getDefaultMaterial();
 
-        auto material = createMaterialFromCpuData(mesh.material, {});
+        // Defer disk load to a later frame if this frame's budget is spent
+        if (newMaterialLoadsThisFrame >= maxNewMaterialLoadsPerFrame)
+            return Material::getDefaultMaterial();
+        ++newMaterialLoadsThisFrame;
+
+        Material::SharedPtr material;
+        try
+        {
+            material = createMaterialFromCpuData(mesh.material, {});
+        }
+        catch (const std::exception &e)
+        {
+            VX_ENGINE_ERROR_STREAM("Exception creating material for mesh '" << mesh.name << "': " << e.what() << '\n');
+        }
         if (!material)
         {
             const auto [_, inserted] = m_failedAlbedoTexturePaths.insert(materialCacheKey);
@@ -705,6 +738,10 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         }
     }
 
+    // Flush all texture upload command buffers queued during material loading
+    // in a single vkQueueSubmit instead of one per texture.
+    utilities::AsyncGpuUpload::batchFlush(core::VulkanContext::getContext()->getGraphicsQueue());
+
     std::vector<glm::mat4> frameBones;
     frameBones.reserve(1024);
 
@@ -739,7 +776,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     if (enableFrustumCulling)
     {
         const glm::mat4 vp = projection * view;
-        auto row = [&](int r) -> glm::vec4 {
+        auto row = [&](int r) -> glm::vec4
+        {
             return glm::vec4(vp[0][r], vp[1][r], vp[2][r], vp[3][r]);
         };
         frustumPlanes[0] = row(3) + row(0); // Left
@@ -861,6 +899,56 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                   return leftEntityId < rightEntityId;
               });
 
+    const bool enableRayTracing =
+        RenderQualitySettings::getInstance().enableRayTracing &&
+        core::VulkanContext::getContext()->hasAccelerationStructureSupport() &&
+        core::VulkanContext::getContext()->hasBufferDeviceAddressSupport();
+
+    if (enableRayTracing)
+    {
+        std::vector<rayTracing::RayTracingScene::InstanceInput> rtInstances;
+        rtInstances.reserve(drawReferences.size());
+
+        for (const auto &reference : drawReferences)
+        {
+            if (!reference.mesh || !reference.material || !reference.drawItem)
+                continue;
+
+            if (reference.skinned)
+                continue;
+
+            const uint32_t materialFlags = reference.material->params().flags;
+            const bool isAlphaBlend = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
+            const bool isAlphaMask = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK) != 0u;
+            const bool isLegacyGlass = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_LEGACY_GLASS) != 0u;
+            if (isAlphaBlend || isAlphaMask || isLegacyGlass)
+                continue;
+
+            if (reference.meshIndex >= reference.drawItem->localMeshGeometryHashes.size())
+                continue;
+
+            const std::size_t geometryHash = reference.drawItem->localMeshGeometryHashes[reference.meshIndex];
+            if (geometryHash == 0u)
+                continue;
+
+            rayTracing::RayTracingScene::InstanceInput instance{};
+            instance.geometryHash = geometryHash;
+            instance.mesh = reference.mesh;
+            instance.transform = reference.modelMatrix;
+            instance.customInstanceIndex = render::encodeObjectId(reference.entity->getId(), reference.meshIndex);
+            instance.mask = 0xFFu;
+            instance.forceOpaque = true;
+            rtInstances.push_back(std::move(instance));
+        }
+
+        m_rayTracingScene.update(m_currentFrame, rtInstances, m_rayTracingGeometryCache);
+    }
+    else
+    {
+        m_rayTracingScene.clear();
+        m_rayTracingGeometryCache.clear();
+    }
+
     m_perFrameData.perObjectInstances.clear();
     m_perFrameData.perObjectInstances.reserve(drawReferences.size());
     m_perFrameData.drawBatches.clear();
@@ -968,7 +1056,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     // Extract 6 frustum planes (Gribb-Hartmann) from a VP matrix, normalized for sphere tests
     auto extractLightFrustumPlanes = [](const glm::mat4 &vp) -> std::array<glm::vec4, 6>
     {
-        auto row = [&](int r) -> glm::vec4 {
+        auto row = [&](int r) -> glm::vec4
+        {
             return glm::vec4(vp[0][r], vp[1][r], vp[2][r], vp[3][r]);
         };
         std::array<glm::vec4, 6> planes{
@@ -989,7 +1078,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     };
 
     auto buildShadowBatches = [&](std::vector<DrawBatch> &outBatches,
-                                   const std::array<glm::vec4, 6> *cullPlanes)
+                                  const std::array<glm::vec4, 6> *cullPlanes)
     {
         outBatches.clear();
 
@@ -1111,6 +1200,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
     m_perFrameData.previewCameraDescriptorSet = m_previewCameraDescriptorSets[m_currentFrame];
     m_perFrameData.deltaTime = deltaTime;
+    m_perFrameData.elapsedTime += deltaTime;
 
     CameraUBO cameraUBO{};
 
@@ -1395,6 +1485,7 @@ void RenderGraph::createDescriptorSetPool()
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 100},
         {VK_DESCRIPTOR_TYPE_SAMPLER, 100},
         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 100},
+        {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 32},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 100},
         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 100},
         {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 100}};
@@ -1490,6 +1581,10 @@ bool RenderGraph::begin()
         VX_ENGINE_ERROR_STREAM("Failed to reset fences: " << core::helpers::vulkanResultToString(result) << '\n');
         return false;
     }
+
+    refreshCameraDescriptorSet(m_currentFrame);
+    m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
+    m_perFrameData.previewCameraDescriptorSet = m_previewCameraDescriptorSets[m_currentFrame];
 
     // Resolve profiling for the previous use of this frame slot, then reset and seed
     // current CPU stage timings (fence wait + resolve profiling).
@@ -2216,6 +2311,37 @@ void RenderGraph::createPreviewCameraDescriptorSets()
     }
 }
 
+void RenderGraph::refreshCameraDescriptorSet(uint32_t frameIndex)
+{
+    if (frameIndex >= MAX_FRAMES_IN_FLIGHT ||
+        frameIndex >= m_cameraUniformObjects.size() ||
+        frameIndex >= m_lightSpaceMatrixUniformObjects.size() ||
+        frameIndex >= m_lightSSBOs.size() ||
+        frameIndex >= m_cameraDescriptorSets.size())
+        return;
+
+    if (m_cameraDescriptorSets[frameIndex] != VK_NULL_HANDLE)
+    {
+        vkFreeDescriptorSets(m_device, m_descriptorPool->vk(), 1, &m_cameraDescriptorSets[frameIndex]);
+        m_cameraDescriptorSets[frameIndex] = VK_NULL_HANDLE;
+    }
+
+    auto builder = DescriptorSetBuilder::begin()
+                       .addBuffer(m_cameraUniformObjects[frameIndex], sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                       .addBuffer(m_lightSpaceMatrixUniformObjects[frameIndex], sizeof(LightSpaceMatrixUBO), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                       .addBuffer(m_lightSSBOs[frameIndex], VK_WHOLE_SIZE, 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+    auto context = core::VulkanContext::getContext();
+    if (context && context->hasAccelerationStructureSupport())
+    {
+        const auto &tlas = m_rayTracingScene.getTLAS(frameIndex);
+        if (tlas && tlas->isValid())
+            builder.addAccelerationStructure(tlas->vk(), 3);
+    }
+
+    m_cameraDescriptorSets[frameIndex] = builder.build(m_device, m_descriptorPool, EngineShaderFamilies::cameraDescriptorSetLayout->vk());
+}
+
 void RenderGraph::createPerObjectDescriptorSets()
 {
     m_perObjectDescriptorSets.resize(RenderGraph::MAX_FRAMES_IN_FLIGHT);
@@ -2283,12 +2409,7 @@ void RenderGraph::createCameraDescriptorSets()
 
         cameraBuffer->map(m_cameraMapped[i]);
         lightBuffer->map(m_lightMapped[i]);
-
-        m_cameraDescriptorSets[i] = DescriptorSetBuilder::begin()
-                                        .addBuffer(cameraBuffer, sizeof(CameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                                        .addBuffer(lightBuffer, sizeof(LightSpaceMatrixUBO), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                                        .addBuffer(ssboBuffer, VK_WHOLE_SIZE, 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                                        .build(m_device, m_descriptorPool, EngineShaderFamilies::cameraDescriptorSetLayout->vk());
+        refreshCameraDescriptorSet(static_cast<uint32_t>(i));
     }
 
     createPreviewCameraDescriptorSets();
@@ -2385,6 +2506,8 @@ void RenderGraph::cleanResources()
 
     m_renderGraphProfiling->destroyTimestampQueryPool();
     m_renderGraphPassesStorage.cleanup();
+    m_rayTracingScene.clear();
+    m_rayTracingGeometryCache.clear();
 }
 
 ELIX_CUSTOM_NAMESPACE_END

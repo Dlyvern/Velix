@@ -5,6 +5,7 @@
 #include "Engine/Caches/Hash.hpp"
 
 #include <cstdint>
+#include <string>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -22,6 +23,7 @@ enum class ShaderId : uint8_t
     GBufferStatic,
     GBufferSkinned,
     Lighting,
+    LightingRayQuery,
     FXAA,
     BloomExtract,
     BloomComposite,
@@ -76,6 +78,7 @@ struct GraphicsPipelineKey
     VkPrimitiveTopology topology{VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
     VkSampleCountFlagBits rasterizationSamples{VK_SAMPLE_COUNT_1_BIT};
     GBufferOutputMode gbufferOutputMode{GBufferOutputMode::Full};
+    std::string customFragSpvPath;
 
     VkPipelineLayout pipelineLayout{VK_NULL_HANDLE};
 
@@ -96,7 +99,8 @@ struct GraphicsPipelineKey
                rasterizationSamples == o.rasterizationSamples &&
                gbufferOutputMode == o.gbufferOutputMode &&
                colorFormats == o.colorFormats &&
-               depthFormat == o.depthFormat;
+               depthFormat == o.depthFormat &&
+               customFragSpvPath == o.customFragSpvPath;
     }
 };
 
@@ -117,6 +121,7 @@ struct GraphicsPipelineKeyHash
         hashing::hash(data, static_cast<uint32_t>(k.rasterizationSamples));
         hashing::hash(data, static_cast<uint8_t>(k.gbufferOutputMode));
         hashing::hash(data, reinterpret_cast<uintptr_t>(k.pipelineLayout));
+        hashing::hash(data, std::hash<std::string>{}(k.customFragSpvPath));
 
         for (const auto &colorFormat : k.colorFormats)
             hashing::hash(data, static_cast<uint32_t>(colorFormat));

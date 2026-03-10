@@ -50,6 +50,10 @@ private:
 
     bool m_enablePostProcessing{true};
     bool m_enableVSync{false};
+    bool m_enableRayTracing{false};
+    bool m_enableRTShadows{false};
+    bool m_enableRTReflections{false};
+    int m_rayTracingMode{1};
     float m_renderScale{1.0f};
     int m_anisotropyMode{4};
 

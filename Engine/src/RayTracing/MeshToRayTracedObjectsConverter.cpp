@@ -19,27 +19,28 @@ namespace
     }
 } // namespace
 
-bool MeshToRayTracedObjectsConverter::convert(GPUMesh &mesh,
+bool MeshToRayTracedObjectsConverter::convert(const GPUMesh &mesh,
+                                              const RayTracedMesh &rayTracedMesh,
                                               VkAccelerationStructureGeometryKHR &geometry,
                                               VkAccelerationStructureBuildRangeInfoKHR &rangeInfo)
 {
-    if (!mesh.ensureRayTracingBuffers() || !mesh.rayTracingVertexBuffer || !mesh.rayTracingIndexBuffer || mesh.vertexStride == 0u)
+    if (!rayTracedMesh.vertexBuffer || !rayTracedMesh.indexBuffer || mesh.vertexStride == 0u)
         return false;
 
     const uint32_t triangleCount = mesh.indicesCount / 3u;
-    const uint32_t vertexCount = static_cast<uint32_t>(mesh.rayTracingVertexBuffer->getSize() / mesh.vertexStride);
+    const uint32_t vertexCount = static_cast<uint32_t>(rayTracedMesh.vertexBuffer->getSize() / mesh.vertexStride);
     if (triangleCount == 0u || vertexCount == 0u)
         return false;
 
     VkAccelerationStructureGeometryTrianglesDataKHR triangles{
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
-    triangles.vertexFormat = mesh.rayTracingPositionFormat;
+    triangles.vertexFormat = rayTracedMesh.positionFormat;
     triangles.vertexData.deviceAddress =
-        getBufferDeviceAddress(*mesh.rayTracingVertexBuffer) + mesh.rayTracingPositionOffset;
+        getBufferDeviceAddress(*rayTracedMesh.vertexBuffer) + rayTracedMesh.positionOffset;
     triangles.vertexStride = mesh.vertexStride;
     triangles.maxVertex = vertexCount - 1u;
     triangles.indexType = mesh.indexType;
-    triangles.indexData.deviceAddress = getBufferDeviceAddress(*mesh.rayTracingIndexBuffer);
+    triangles.indexData.deviceAddress = getBufferDeviceAddress(*rayTracedMesh.indexBuffer);
     triangles.transformData.deviceAddress = 0u;
 
     if (triangles.vertexData.deviceAddress == 0u || triangles.indexData.deviceAddress == 0u)

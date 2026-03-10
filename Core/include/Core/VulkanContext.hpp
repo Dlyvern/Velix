@@ -48,6 +48,9 @@ public:
     DescriptorPool::SharedPtr getPersistentDescriptorPool() const;
     bool hasBufferDeviceAddressSupport() const;
     bool hasAccelerationStructureSupport() const;
+    bool hasRayQuerySupport() const;
+    bool hasRayTracingPipelineSupport() const;
+    bool hasRayTracingDeviceFeaturesEnabled() const;
 
     void cleanup();
 

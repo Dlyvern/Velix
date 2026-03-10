@@ -613,8 +613,13 @@ void AssetsWindow::drawAssetGrid()
     const bool assetGridFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     if (assetGridFocused && !m_selectedAssetPath.empty() && ImGui::IsKeyPressed(ImGuiKey_F2, false))
         startRenamingAsset(m_selectedAssetPath);
-    if (assetGridFocused && !m_selectedAssetPath.empty() && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
-        startDeletingAsset(m_selectedAssetPath);
+    if (assetGridFocused && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+    {
+        if (m_multiSelectedPaths.size() > 1)
+            startDeletingSelectedAssets();
+        else if (!m_selectedAssetPath.empty())
+            startDeletingAsset(m_selectedAssetPath);
+    }
 
     if (entries.empty())
     {
@@ -672,7 +677,8 @@ void AssetsWindow::drawAssetGrid()
                 }
             }
 
-            const bool isSelected = !m_selectedAssetPath.empty() && m_selectedAssetPath == assetPath;
+            const bool isSelected = (!m_selectedAssetPath.empty() && m_selectedAssetPath == assetPath)
+                                    || m_multiSelectedPaths.count(assetPath.string()) > 0;
             if (isSelected)
             {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.35f, 0.55f, 0.45f));
@@ -720,11 +726,60 @@ void AssetsWindow::drawAssetGrid()
                 !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left);
 
             if (selectOnReleaseWithoutDrag)
-                setSelectedAssetPath(assetPath);
+            {
+                ImGuiIO &io = ImGui::GetIO();
+                if (io.KeyCtrl)
+                {
+                    // Ctrl+click: toggle this item in multi-selection
+                    const std::string key = assetPath.string();
+                    if (m_multiSelectedPaths.count(key))
+                        m_multiSelectedPaths.erase(key);
+                    else
+                    {
+                        m_multiSelectedPaths.insert(key);
+                        m_multiSelectedPaths.insert(m_selectedAssetPath.string());
+                    }
+                    setSelectedAssetPath(assetPath);
+                }
+                else if (io.KeyShift && !m_lastClickedPath.empty())
+                {
+                    // Shift+click: range select between last clicked and current
+                    m_multiSelectedPaths.clear();
+                    bool inRange = false;
+                    for (const auto &rangeEntry : entries)
+                    {
+                        const auto &rp = rangeEntry.path();
+                        const bool isAnchor = rp == m_lastClickedPath;
+                        const bool isCurrent = rp == assetPath;
+                        if (isAnchor || isCurrent)
+                        {
+                            m_multiSelectedPaths.insert(rp.string());
+                            if (inRange)
+                                break;
+                            inRange = true;
+                        }
+                        else if (inRange)
+                            m_multiSelectedPaths.insert(rp.string());
+                    }
+                    setSelectedAssetPath(assetPath);
+                }
+                else
+                {
+                    // Plain click: clear multi-selection
+                    m_multiSelectedPaths.clear();
+                    setSelectedAssetPath(assetPath);
+                    m_lastClickedPath = assetPath;
+                }
+            }
 
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
             {
-                setSelectedAssetPath(assetPath);
+                // If right-clicking on an item not in multi-selection, reset to single
+                if (m_multiSelectedPaths.empty() || m_multiSelectedPaths.count(assetPath.string()) == 0)
+                {
+                    m_multiSelectedPaths.clear();
+                    setSelectedAssetPath(assetPath);
+                }
                 m_contextAssetPath = assetPath;
                 ImGui::OpenPopup("AssetItemContextMenu");
             }
@@ -779,10 +834,20 @@ void AssetsWindow::drawAssetGrid()
     if (ImGui::BeginPopup("AssetItemContextMenu"))
     {
         const bool assetExists = !m_contextAssetPath.empty() && std::filesystem::exists(m_contextAssetPath);
+        const bool hasMultiSelection = m_multiSelectedPaths.size() > 1;
 
         if (!assetExists)
         {
             ImGui::TextDisabled("Asset no longer exists.");
+        }
+        else if (hasMultiSelection)
+        {
+            ImGui::TextDisabled("%zu items selected", m_multiSelectedPaths.size());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete Selected", "Del"))
+                startDeletingSelectedAssets();
+            if (ImGui::MenuItem("Copy Path of Last Selected"))
+                ImGui::SetClipboardText(m_contextAssetPath.string().c_str());
         }
         else
         {
@@ -793,17 +858,21 @@ void AssetsWindow::drawAssetGrid()
                                                  ? engine::Asset::AssetType::NONE
                                                  : readSerializedAssetType(m_contextAssetPath).value_or(engine::Asset::AssetType::NONE);
 
+            // --- Open actions ---
             if (isDirectory)
             {
-                if (ImGui::MenuItem("Open"))
+                if (ImGui::MenuItem("Open Folder"))
                     navigateToDirectory(m_contextAssetPath);
             }
             else
             {
-                if (extensionLower == ".elixmat" && ImGui::MenuItem("Open Material"))
+                if (extensionLower == ".elixmat")
                 {
-                    if (m_onMaterialOpenRequestFunction)
-                        m_onMaterialOpenRequestFunction(m_contextAssetPath);
+                    if (ImGui::MenuItem("Open Material Editor"))
+                    {
+                        if (m_onMaterialOpenRequestFunction)
+                            m_onMaterialOpenRequestFunction(m_contextAssetPath);
+                    }
                 }
 
                 const bool isTextEditable =
@@ -814,18 +883,49 @@ void AssetsWindow::drawAssetGrid()
                     m_sceneExtensions.find(extensionLower) != m_sceneExtensions.end() ||
                     m_velixExtensions.find(extensionLower) != m_velixExtensions.end();
 
-                if (isTextEditable && m_onTextAssetOpenRequestFunction && ImGui::MenuItem("Open in Editor"))
-                    m_onTextAssetOpenRequestFunction(m_contextAssetPath);
-
-                if (serializedAssetType == engine::Asset::AssetType::TEXTURE)
+                if (isTextEditable && m_onTextAssetOpenRequestFunction)
                 {
-                    if (ImGui::MenuItem("Create Material From Texture"))
-                        createMaterialFromTexture(m_contextAssetPath);
+                    if (ImGui::MenuItem("Open in Text Editor"))
+                        m_onTextAssetOpenRequestFunction(m_contextAssetPath);
                 }
+            }
+
+            // Show in file manager
+            if (ImGui::MenuItem("Show in File Manager"))
+            {
+                const std::filesystem::path showPath = isDirectory ? m_contextAssetPath : m_contextAssetPath.parent_path();
+                const std::string cmd = "xdg-open \"" + showPath.string() + "\" &";
+                std::system(cmd.c_str());
             }
 
             ImGui::Separator();
 
+            // --- Create actions ---
+            if (isDirectory)
+            {
+                if (ImGui::BeginMenu("Create"))
+                {
+                    if (ImGui::MenuItem("New Folder"))
+                    {
+                        std::filesystem::path newFolder = m_contextAssetPath / "New Folder";
+                        int suffix = 1;
+                        while (std::filesystem::exists(newFolder))
+                            newFolder = m_contextAssetPath / ("New Folder " + std::to_string(suffix++));
+                        std::filesystem::create_directory(newFolder);
+                        refreshTree();
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+            }
+            else if (serializedAssetType == engine::Asset::AssetType::TEXTURE)
+            {
+                if (ImGui::MenuItem("Create Material from Texture"))
+                    createMaterialFromTexture(m_contextAssetPath);
+                ImGui::Separator();
+            }
+
+            // --- File management ---
             if (ImGui::MenuItem("Rename", "F2"))
                 startRenamingAsset(m_contextAssetPath);
 
@@ -833,10 +933,9 @@ void AssetsWindow::drawAssetGrid()
                 duplicateAsset(m_contextAssetPath);
 
             if (ImGui::MenuItem("Copy Path"))
-            {
-                const std::string pathString = m_contextAssetPath.string();
-                ImGui::SetClipboardText(pathString.c_str());
-            }
+                ImGui::SetClipboardText(m_contextAssetPath.string().c_str());
+
+            ImGui::Separator();
 
             if (ImGui::MenuItem("Delete", "Del"))
                 startDeletingAsset(m_contextAssetPath);
@@ -904,6 +1003,33 @@ void AssetsWindow::drawAssetGrid()
 
         ImGui::SameLine();
 
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+
+    if (m_openDeleteMultiplePopupRequested)
+    {
+        ImGui::OpenPopup("Delete Selected Assets");
+        m_openDeleteMultiplePopupRequested = false;
+    }
+
+    if (ImGui::BeginPopupModal("Delete Selected Assets", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("Delete %zu selected items?", m_multiSelectedPaths.size());
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "This cannot be undone.");
+        ImGui::Separator();
+
+        if (ImGui::Button("Delete All"))
+        {
+            if (deleteSelectedAssets())
+            {
+                ImGui::CloseCurrentPopup();
+                refreshTree();
+            }
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Cancel"))
             ImGui::CloseCurrentPopup();
 
@@ -1346,6 +1472,27 @@ void AssetsWindow::startDeletingAsset(const std::filesystem::path &path)
     m_openDeletePopupRequested = true;
 }
 
+void AssetsWindow::startDeletingSelectedAssets()
+{
+    if (m_multiSelectedPaths.empty())
+        return;
+    m_openDeleteMultiplePopupRequested = true;
+}
+
+bool AssetsWindow::deleteSelectedAssets()
+{
+    bool anyDeleted = false;
+    for (const auto &pathStr : m_multiSelectedPaths)
+    {
+        const std::filesystem::path path{pathStr};
+        if (deleteAsset(path))
+            anyDeleted = true;
+    }
+    m_multiSelectedPaths.clear();
+    m_lastClickedPath.clear();
+    return anyDeleted;
+}
+
 bool AssetsWindow::renameAsset(const std::filesystem::path &path, const std::string &newName)
 {
     if (path.empty() || !std::filesystem::exists(path))
@@ -1437,6 +1584,9 @@ bool AssetsWindow::deleteAsset(const std::filesystem::path &path)
 
     if (!m_currentDirectory.empty() && pathContains(path, m_currentDirectory))
         m_currentDirectory = m_currentProject ? std::filesystem::path(m_currentProject->fullPath) : std::filesystem::current_path();
+
+    if (m_onAssetDeletedFunction)
+        m_onAssetDeletedFunction(path);
 
     return true;
 }
@@ -1635,12 +1785,10 @@ void AssetsWindow::syncTreeWithCurrentDirectory()
 
 void AssetsWindow::navigateToDirectory(const std::filesystem::path &path)
 {
-    // if (m_currentDirectory.has_parent_path() &&
-    //     m_currentDirectory != m_currentProject->fullPath)
-    // {
     m_currentDirectory = std::filesystem::absolute(path);
+    m_multiSelectedPaths.clear();
+    m_lastClickedPath.clear();
     syncTreeWithCurrentDirectory();
-    // }
 }
 
 void AssetsWindow::goUpOneDirectory()

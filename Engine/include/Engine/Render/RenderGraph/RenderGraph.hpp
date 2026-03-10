@@ -15,6 +15,8 @@
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphProfilingData.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphProfiling.hpp"
+#include "Engine/RayTracing/RayTracingGeometryCache.hpp"
+#include "Engine/RayTracing/RayTracingScene.hpp"
 
 #include <typeindex>
 #include <unordered_map>
@@ -94,6 +96,26 @@ public:
 
     void createRenderGraphResources();
 
+    rayTracing::RayTracingGeometryCache &getRayTracingGeometryCache()
+    {
+        return m_rayTracingGeometryCache;
+    }
+
+    const rayTracing::RayTracingGeometryCache &getRayTracingGeometryCache() const
+    {
+        return m_rayTracingGeometryCache;
+    }
+
+    rayTracing::RayTracingScene &getRayTracingScene()
+    {
+        return m_rayTracingScene;
+    }
+
+    const rayTracing::RayTracingScene &getRayTracingScene() const
+    {
+        return m_rayTracingScene;
+    }
+
     void cleanResources();
 
 private:
@@ -118,6 +140,7 @@ private:
     void createCameraDescriptorSets();
     void createPerObjectDescriptorSets();
     void createPreviewCameraDescriptorSets();
+    void refreshCameraDescriptorSet(uint32_t frameIndex);
 
     static constexpr uint32_t MAX_RENDER_JOBS = 64;
 
@@ -179,6 +202,8 @@ private:
     std::array<std::vector<VkSemaphore>, MAX_FRAMES_IN_FLIGHT> m_uploadWaitSemaphoresByFrame;
 
     std::unordered_map<std::size_t, GPUMesh::SharedPtr> m_meshes;
+    rayTracing::RayTracingGeometryCache m_rayTracingGeometryCache;
+    rayTracing::RayTracingScene m_rayTracingScene{MAX_FRAMES_IN_FLIGHT};
     std::unordered_map<std::size_t, MeshLocalBounds> m_meshLocalBoundsByHash;
     std::unordered_map<std::string, Texture::SharedPtr> m_texturesByResolvedPath;
     std::unordered_set<std::string> m_failedTextureResolvedPaths;

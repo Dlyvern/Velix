@@ -37,6 +37,17 @@ DescriptorSetBuilder& DescriptorSetBuilder::addImage(VkImageView imageView, VkSa
     return *this;
 }
 
+DescriptorSetBuilder& DescriptorSetBuilder::addAccelerationStructure(VkAccelerationStructureKHR accelerationStructure, uint32_t binding)
+{
+    AccelerationStructureInfo accelerationStructureInfo{};
+    accelerationStructureInfo.accelerationStructure = accelerationStructure;
+    accelerationStructureInfo.binding = binding;
+
+    m_accelerationStructureInfos.push_back(std::move(accelerationStructureInfo));
+
+    return *this;
+}
+
 void DescriptorSetBuilder::update(VkDevice device, VkDescriptorSet dst)
 {
     if (device == VK_NULL_HANDLE)
@@ -48,27 +59,35 @@ void DescriptorSetBuilder::update(VkDevice device, VkDescriptorSet dst)
     if (dst == VK_NULL_HANDLE)
     {
         VX_ENGINE_ERROR_STREAM("DescriptorSetBuilder::update skipped: destination descriptor set is VK_NULL_HANDLE "
-                               << "(images=" << m_imageInfos.size() << ", buffers=" << m_bufferInfos.size() << ")\n");
+                               << "(images=" << m_imageInfos.size()
+                               << ", buffers=" << m_bufferInfos.size()
+                               << ", accelerationStructures=" << m_accelerationStructureInfos.size() << ")\n");
         return;
     }
 
     std::vector<VkWriteDescriptorSet> writers;
     std::vector<VkDescriptorBufferInfo> bufferInfos;
     std::vector<VkDescriptorImageInfo> imageInfos;
+    std::vector<VkWriteDescriptorSetAccelerationStructureKHR> accelerationStructureInfos;
 
-    writers.reserve(m_bufferInfos.size() + m_imageInfos.size());
+    writers.reserve(m_bufferInfos.size() + m_imageInfos.size() + m_accelerationStructureInfos.size());
     bufferInfos.reserve(m_bufferInfos.size());
     imageInfos.reserve(m_imageInfos.size());
+    accelerationStructureInfos.reserve(m_accelerationStructureInfos.size());
 
-    createWriters(dst, writers, bufferInfos, imageInfos);
+    createWriters(dst, writers, bufferInfos, imageInfos, accelerationStructureInfos);
 
-    if(!writers.empty())
+    if (!writers.empty())
         vkUpdateDescriptorSets(device, static_cast<uint32_t>(writers.size()), writers.data(), 0, nullptr);
 }
 
-void DescriptorSetBuilder::createWriters(VkDescriptorSet dstSet, std::vector<VkWriteDescriptorSet>& writers, std::vector<VkDescriptorBufferInfo>& bufferInfos, std::vector<VkDescriptorImageInfo>& imageInfos)
+void DescriptorSetBuilder::createWriters(VkDescriptorSet dstSet,
+                                         std::vector<VkWriteDescriptorSet>& writers,
+                                         std::vector<VkDescriptorBufferInfo>& bufferInfos,
+                                         std::vector<VkDescriptorImageInfo>& imageInfos,
+                                         std::vector<VkWriteDescriptorSetAccelerationStructureKHR>& accelerationStructureInfos)
 {
-    for(const auto& buffer : m_bufferInfos)
+    for (const auto& buffer : m_bufferInfos)
     {
         VkDescriptorBufferInfo& descriptorBufferInfo = bufferInfos.emplace_back();
         descriptorBufferInfo.buffer = buffer.buffer->vk();
@@ -85,7 +104,7 @@ void DescriptorSetBuilder::createWriters(VkDescriptorSet dstSet, std::vector<VkW
         writer.dstSet = dstSet;
     }
 
-    for(const auto& image : m_imageInfos)
+    for (const auto& image : m_imageInfos)
     {
         VkDescriptorImageInfo& descriptorImageInfo = imageInfos.emplace_back();
         descriptorImageInfo.imageLayout = image.imageLayout;
@@ -101,6 +120,27 @@ void DescriptorSetBuilder::createWriters(VkDescriptorSet dstSet, std::vector<VkW
         writer.dstSet = dstSet;
         writer.dstBinding = image.binding;
     }
+
+    for (const auto& accelerationStructure : m_accelerationStructureInfos)
+    {
+        auto& descriptorAccelerationStructureInfo = accelerationStructureInfos.emplace_back();
+        descriptorAccelerationStructureInfo.sType =
+            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        descriptorAccelerationStructureInfo.accelerationStructureCount = 1;
+        descriptorAccelerationStructureInfo.pAccelerationStructures = &accelerationStructure.accelerationStructure;
+
+        VkWriteDescriptorSet& writer = writers.emplace_back();
+        writer.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writer.pNext = &descriptorAccelerationStructureInfo;
+        writer.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        writer.descriptorCount = 1;
+        writer.dstArrayElement = 0;
+        writer.pImageInfo = nullptr;
+        writer.pBufferInfo = nullptr;
+        writer.pTexelBufferView = nullptr;
+        writer.dstSet = dstSet;
+        writer.dstBinding = accelerationStructure.binding;
+    }
 }
 
 VkDescriptorSet DescriptorSetBuilder::build(VkDevice device, VkDescriptorPool descriptorPool, VkDescriptorSetLayout layout)
@@ -113,7 +153,7 @@ VkDescriptorSet DescriptorSetBuilder::build(VkDevice device, VkDescriptorPool de
     allocateInfo.pSetLayouts = &layout;
     allocateInfo.pNext = nullptr;
 
-    if(VkResult result = vkAllocateDescriptorSets(device, &allocateInfo, &descriptorSet); result != VK_SUCCESS)
+    if (VkResult result = vkAllocateDescriptorSets(device, &allocateInfo, &descriptorSet); result != VK_SUCCESS)
         throw std::runtime_error("Failed to allocate descriptor set " + core::helpers::vulkanResultToString(result));
 
     update(device, descriptorSet);

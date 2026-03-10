@@ -316,14 +316,15 @@ void VulkanContext::createLogicalDevice()
         VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
     std::vector<VkDescriptorPoolSize> descriptorPoolSizes = {
-        {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
-        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+        {VK_DESCRIPTOR_TYPE_SAMPLER, 2000},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16000},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2000},
+        {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 256},
         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
         {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4000},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2000},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
         {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000},
@@ -333,7 +334,7 @@ void VulkanContext::createLogicalDevice()
         m_vkDevice,
         descriptorPoolSizes,
         VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        1000);
+        8000);
 
     auto vmaAllocator = std::make_unique<allocators::VMAAllocator>(
         m_instance,
@@ -359,6 +360,21 @@ bool VulkanContext::hasBufferDeviceAddressSupport() const
 }
 
 bool VulkanContext::hasAccelerationStructureSupport() const
+{
+    return m_rayTracingMode != RayTracingMode::Disabled;
+}
+
+bool VulkanContext::hasRayQuerySupport() const
+{
+    return m_rayTracingSupport.rayQuery;
+}
+
+bool VulkanContext::hasRayTracingPipelineSupport() const
+{
+    return m_rayTracingSupport.rayTracingPipeline;
+}
+
+bool VulkanContext::hasRayTracingDeviceFeaturesEnabled() const
 {
     return m_rayTracingMode != RayTracingMode::Disabled;
 }

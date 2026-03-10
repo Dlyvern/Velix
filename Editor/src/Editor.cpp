@@ -122,6 +122,10 @@ namespace
         hashCombine(seed, settings.shadowMaxDistance);
         hashCombine(seed, settings.enableVSync);
         hashCombine(seed, settings.enablePostProcessing);
+        hashCombine(seed, settings.enableRayTracing);
+        hashCombine(seed, settings.enableRTShadows);
+        hashCombine(seed, settings.enableRTReflections);
+        hashCombine(seed, static_cast<uint32_t>(settings.rayTracingMode));
         hashCombine(seed, settings.enableFXAA);
         hashCombine(seed, settings.enableBloom);
         hashCombine(seed, settings.bloomThreshold);
@@ -1865,6 +1869,52 @@ void Editor::initStyle()
                                                    else if (m_selectedEntity)
                                                        m_detailsContext = DetailsContext::Entity; });
 
+    m_assetsWindow->setOnAssetDeleted([this](const std::filesystem::path &deletedPath)
+                                      {
+                                          // Close any open material editor for this path
+                                          const std::string deletedStr = deletedPath.lexically_normal().string();
+                                          m_openMaterialEditors.erase(
+                                              std::remove_if(m_openMaterialEditors.begin(), m_openMaterialEditors.end(),
+                                                  [&deletedStr](const OpenMaterialEditor &e)
+                                                  { return e.path.lexically_normal().string() == deletedStr; }),
+                                              m_openMaterialEditors.end());
+
+                                          // Clear material overrides on mesh components that reference the deleted asset
+                                          if (!m_scene)
+                                              return;
+                                          for (const auto &entity : m_scene->getEntities())
+                                          {
+                                              auto *staticMesh = entity->getComponent<engine::StaticMeshComponent>();
+                                              if (staticMesh)
+                                              {
+                                                  for (size_t slot = 0; slot < staticMesh->getMaterialSlotCount(); ++slot)
+                                                  {
+                                                      const std::string &overridePath = staticMesh->getMaterialOverridePath(slot);
+                                                      if (!overridePath.empty())
+                                                      {
+                                                          const std::string normalizedOverride = std::filesystem::path(overridePath).lexically_normal().string();
+                                                          if (normalizedOverride == deletedStr || normalizedOverride.find(deletedStr) != std::string::npos)
+                                                              staticMesh->clearMaterialOverride(slot);
+                                                      }
+                                                  }
+                                              }
+                                              auto *skeletalMesh = entity->getComponent<engine::SkeletalMeshComponent>();
+                                              if (skeletalMesh)
+                                              {
+                                                  for (size_t slot = 0; slot < skeletalMesh->getMaterialSlotCount(); ++slot)
+                                                  {
+                                                      const std::string &overridePath = skeletalMesh->getMaterialOverridePath(slot);
+                                                      if (!overridePath.empty())
+                                                      {
+                                                          const std::string normalizedOverride = std::filesystem::path(overridePath).lexically_normal().string();
+                                                          if (normalizedOverride == deletedStr || normalizedOverride.find(deletedStr) != std::string::npos)
+                                                              skeletalMesh->clearMaterialOverride(slot);
+                                                      }
+                                                  }
+                                              }
+                                          }
+                                      });
+
     m_entityIdBuffer = core::Buffer::createShared(sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                   core::memory::MemoryUsage::CPU_TO_GPU);
 
@@ -3146,6 +3196,15 @@ void Editor::drawToolBar()
         if (ImGui::Button("Benchmark"))
             m_showBenchmark = !m_showBenchmark;
 
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.45f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.60f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.18f, 0.35f, 1.00f));
+        if (ImGui::Button("Dev Tools"))
+            m_showDevTools = !m_showDevTools;
+        ImGui::PopStyleColor(3);
+
         ImGui::EndMenuBar();
     }
 
@@ -3176,6 +3235,61 @@ void Editor::drawRenderSettings()
 
     ImGui::DragFloat("Render Scale", &settings.renderScale, 0.01f, 0.25f, 2.0f, "%.2f");
     ImGui::SetItemTooltip("1.0 = native resolution. Values below 1 reduce quality but improve performance.");
+
+    ImGui::SeparatorText("Ray Tracing");
+    const auto context = core::VulkanContext::getContext();
+    const bool supportsRayQuery = context && context->hasRayQuerySupport();
+    const bool supportsPipeline = context && context->hasRayTracingPipelineSupport();
+    const bool supportsAnyRayTracing = supportsRayQuery || supportsPipeline;
+
+    if (!supportsAnyRayTracing)
+    {
+        ImGui::TextDisabled("This GPU/runtime does not expose Vulkan ray tracing support.");
+        ImGui::TextDisabled("The project settings still persist, but rendering will stay raster-only.");
+    }
+    else
+    {
+        if (supportsRayQuery && supportsPipeline)
+            ImGui::TextDisabled("Available modes: Ray Query, Pipeline");
+        else if (supportsPipeline)
+            ImGui::TextDisabled("Available mode: Pipeline");
+        else
+            ImGui::TextDisabled("Available mode: Ray Query");
+    }
+
+    ImGui::BeginDisabled(!supportsAnyRayTracing);
+    ImGui::Checkbox("Enable RTX", &settings.enableRayTracing);
+    if (settings.enableRayTracing)
+    {
+        ImGui::Indent();
+
+        if (supportsRayQuery && supportsPipeline)
+        {
+            const char *rtModes[] = {"Ray Query", "Pipeline"};
+            int rtModeIndex = settings.rayTracingMode == engine::RenderQualitySettings::RayTracingMode::Pipeline ? 1 : 0;
+            if (ImGui::Combo("Mode##rt_mode", &rtModeIndex, rtModes, IM_ARRAYSIZE(rtModes)))
+            {
+                settings.rayTracingMode = (rtModeIndex == 0)
+                                              ? engine::RenderQualitySettings::RayTracingMode::RayQuery
+                                              : engine::RenderQualitySettings::RayTracingMode::Pipeline;
+            }
+        }
+        else if (supportsPipeline)
+        {
+            settings.rayTracingMode = engine::RenderQualitySettings::RayTracingMode::Pipeline;
+            ImGui::TextDisabled("Mode: Pipeline");
+        }
+        else if (supportsRayQuery)
+        {
+            settings.rayTracingMode = engine::RenderQualitySettings::RayTracingMode::RayQuery;
+            ImGui::TextDisabled("Mode: Ray Query");
+        }
+
+        ImGui::Checkbox("RT Shadows", &settings.enableRTShadows);
+        ImGui::Checkbox("RT Reflections", &settings.enableRTReflections);
+        ImGui::Unindent();
+    }
+    ImGui::EndDisabled();
 
     ImGui::SeparatorText("Shadows");
     {
@@ -3620,6 +3734,7 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     drawEditorCameraSettings();
     drawRenderSettings();
     drawBenchmark();
+    drawDevTools();
 
     m_notificationManager.render();
 }
@@ -3951,6 +4066,164 @@ void Editor::drawMaterialEditors()
 
                     if (isMaterialEditorFocused && isCtrlDown && ImGui::IsKeyPressed(ImGuiKey_S, false))
                         saveCurrentMaterial();
+
+                    ImGui::Separator();
+
+                    // ── Custom Shader Expression ──────────────────────────────────────────
+                    if (!ui.customShaderInitialized)
+                    {
+                        const auto &glslLang = TextEditor::LanguageDefinition::GLSL();
+                        ui.customFunctionsEditor.SetLanguageDefinition(glslLang);
+                        ui.customExpressionEditor.SetLanguageDefinition(glslLang);
+                        ui.customFunctionsEditor.SetShowWhitespaces(false);
+                        ui.customExpressionEditor.SetShowWhitespaces(false);
+
+                        std::string initFuncs;
+                        std::string initExpr;
+                        if (!cpuMat.customExpression.empty())
+                        {
+                            const std::string funcMarker = "// [FUNCTIONS]\n";
+                            const std::string exprMarker = "// [EXPRESSION]\n";
+                            const std::string &src = cpuMat.customExpression;
+                            const size_t fPos = src.find(funcMarker);
+                            const size_t ePos = src.find(exprMarker);
+                            if (fPos != std::string::npos && ePos != std::string::npos)
+                            {
+                                initFuncs = src.substr(fPos + funcMarker.size(), ePos - fPos - funcMarker.size());
+                                initExpr  = src.substr(ePos + exprMarker.size());
+                            }
+                            else
+                            {
+                                initExpr = src;
+                            }
+                        }
+                        ui.customFunctionsEditor.SetText(initFuncs);
+                        ui.customExpressionEditor.SetText(initExpr);
+                        ui.customShaderInitialized = true;
+                    }
+
+                    if (ImGui::CollapsingHeader("Custom Shader Expression"))
+                    {
+                        ui.customShaderPanelOpen = true;
+                        ImGui::TextDisabled("Write GLSL to override: albedo, roughness, metallic, ao, emissive, N, alpha");
+                        ImGui::TextDisabled("Read-only: uv, pc.time, fragPositionView, fragNormalView, material.*");
+                        ImGui::Spacing();
+
+                        ImGui::Text("Helper Functions (optional):");
+                        ui.customFunctionsEditor.Render("##customFunctionsEditor",
+                            ImVec2(-1.0f, ImGui::GetTextLineHeight() * 7.0f), true);
+
+                        ImGui::Spacing();
+                        ImGui::Text("Expression:");
+                        ui.customExpressionEditor.Render("##customExpressionEditor",
+                            ImVec2(-1.0f, ImGui::GetTextLineHeight() * 12.0f), true);
+
+                        ImGui::Spacing();
+                        if (ImGui::Button("Compile & Apply"))
+                        {
+                            std::ifstream templateFile("./resources/shaders/gbuffer_static_template.frag_template");
+                            if (!templateFile.is_open())
+                            {
+                                ui.customShaderLastError = "Template not found: resources/shaders/gbuffer_static_template.frag_template";
+                                ui.customShaderHasError = true;
+                            }
+                            else
+                            {
+                                std::string templateSrc((std::istreambuf_iterator<char>(templateFile)),
+                                                         std::istreambuf_iterator<char>());
+
+                                const std::string functions  = ui.customFunctionsEditor.GetText();
+                                const std::string expression = ui.customExpressionEditor.GetText();
+
+                                auto replaceFirst = [](std::string &s, const std::string &from, const std::string &to)
+                                {
+                                    const size_t pos = s.find(from);
+                                    if (pos != std::string::npos)
+                                        s.replace(pos, from.size(), to);
+                                };
+
+                                replaceFirst(templateSrc, "// <<ELIX_CUSTOM_FUNCTIONS>>", functions);
+                                replaceFirst(templateSrc, "// <<ELIX_CUSTOM_EXPRESSION>>", expression);
+
+                                std::vector<uint32_t> spv;
+                                try
+                                {
+                                    spv = engine::shaders::ShaderCompiler::compileGLSL(
+                                        templateSrc, shaderc_glsl_fragment_shader, 0, "custom_material.frag");
+                                    ui.customShaderHasError = false;
+                                    ui.customShaderLastError.clear();
+                                }
+                                catch (const std::exception &e)
+                                {
+                                    ui.customShaderLastError = e.what();
+                                    ui.customShaderHasError = true;
+                                }
+
+                                if (!ui.customShaderHasError && !spv.empty())
+                                {
+                                    // FNV-1a hash of expression content (stable, no extra lib)
+                                    const std::string hashInput = functions + "\n" + expression;
+                                    uint64_t hash = 14695981039346656037ULL;
+                                    for (unsigned char c : hashInput) { hash ^= c; hash *= 1099511628211ULL; }
+                                    char hashStr[17];
+                                    snprintf(hashStr, sizeof(hashStr), "%016llx", static_cast<unsigned long long>(hash));
+
+                                    std::filesystem::create_directories("./resources/shaders/material_cache");
+                                    const std::string spvPath = std::string("./resources/shaders/material_cache/") + hashStr + ".spv";
+
+                                    std::ofstream spvFile(spvPath, std::ios::binary);
+                                    if (!spvFile.is_open())
+                                    {
+                                        ui.customShaderLastError = "Failed to write SPV: " + spvPath;
+                                        ui.customShaderHasError = true;
+                                    }
+                                    else
+                                    {
+                                        spvFile.write(reinterpret_cast<const char *>(spv.data()), spv.size() * sizeof(uint32_t));
+                                        spvFile.close();
+
+                                        cpuMat.customExpression = "// [FUNCTIONS]\n" + functions + "// [EXPRESSION]\n" + expression;
+                                        cpuMat.customShaderHash = hashStr;
+                                        gpuMat->setCustomFragPath(spvPath);
+
+                                        matEditor.dirty = true;
+                                        saveCurrentMaterial();
+                                        m_notificationManager.showSuccess("Custom shader compiled and applied");
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!cpuMat.customShaderHash.empty())
+                        {
+                            ImGui::SameLine();
+                            if (ImGui::Button("Clear"))
+                            {
+                                cpuMat.customExpression.clear();
+                                cpuMat.customShaderHash.clear();
+                                gpuMat->setCustomFragPath("");
+                                ui.customFunctionsEditor.SetText("");
+                                ui.customExpressionEditor.SetText("");
+                                ui.customShaderLastError.clear();
+                                ui.customShaderHasError = false;
+                                matEditor.dirty = true;
+                            }
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("hash: %s", cpuMat.customShaderHash.c_str());
+                        }
+
+                        if (ui.customShaderHasError)
+                        {
+                            ImGui::Spacing();
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                            ImGui::TextWrapped("%s", ui.customShaderLastError.c_str());
+                            ImGui::PopStyleColor();
+                        }
+                    }
+                    else
+                    {
+                        ui.customShaderPanelOpen = false;
+                    }
 
                     ImGui::Separator();
 
@@ -4784,6 +5057,12 @@ void Editor::drawMaterialEditors()
 
         ImGui::End();
 
+        if (!keepOpen && matEditor.dirty)
+        {
+            matEditor.confirmCloseRequested = true;
+            keepOpen = true; // keep window alive
+        }
+
         matEditor.open = keepOpen;
         if (!matEditor.open || closeRequested)
         {
@@ -4792,6 +5071,50 @@ void Editor::drawMaterialEditors()
         }
         else
             ++it;
+    }
+
+    // Unsaved-changes confirmation for material editors (rendered outside the per-editor loop)
+    for (auto it = m_openMaterialEditors.begin(); it != m_openMaterialEditors.end(); ++it)
+    {
+        auto &matEditor = *it;
+        if (!matEditor.confirmCloseRequested)
+            continue;
+
+        const std::string popupId = "Unsaved Changes##Mat_" + matEditor.path.string();
+        ImGui::OpenPopup(popupId.c_str());
+        matEditor.confirmCloseRequested = false;
+
+        if (ImGui::BeginPopupModal(popupId.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text("'%s' has unsaved changes.", matEditor.path.filename().string().c_str());
+            ImGui::Text("Do you want to save before closing?");
+            ImGui::Separator();
+
+            auto project = m_currentProject.lock();
+            const std::filesystem::path projectRoot = project ? std::filesystem::path(project->fullPath) : std::filesystem::path{};
+            const std::string normalizedMatPath = resolveMaterialPathAgainstProjectRoot(matEditor.path.string(), projectRoot);
+
+            if (ImGui::Button("Save"))
+            {
+                auto materialRecordIt = project ? project->cache.materialsByPath.find(normalizedMatPath) : project->cache.materialsByPath.end();
+                if (project && materialRecordIt != project->cache.materialsByPath.end())
+                    saveMaterialToDisk(matEditor.path, materialRecordIt->second.cpuData);
+                matEditor.open = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Discard"))
+            {
+                matEditor.open = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+                ImGui::CloseCurrentPopup();
+
+            ImGui::EndPopup();
+        }
+        break; // only one modal at a time
     }
 }
 
@@ -4861,13 +5184,55 @@ void Editor::drawDocument()
         compileOpenDocumentShader();
 
     ImGui::End();
-    m_showDocumentWindow = keepOpen;
 
-    if (!m_showDocumentWindow)
+    if (!keepOpen && isDirty)
     {
+        m_documentConfirmCloseRequested = true;
+        // keep the window alive until user decides
+    }
+    else if (!keepOpen)
+    {
+        m_showDocumentWindow = false;
         m_openDocumentPath.clear();
         m_openDocumentSavedText.clear();
         m_textEditor.SetText("");
+    }
+
+    if (m_documentConfirmCloseRequested)
+    {
+        ImGui::OpenPopup("Unsaved Changes##Doc");
+        m_documentConfirmCloseRequested = false;
+    }
+
+    if (ImGui::BeginPopupModal("Unsaved Changes##Doc", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("'%s' has unsaved changes.", m_openDocumentPath.filename().string().c_str());
+        ImGui::Text("Do you want to save before closing?");
+        ImGui::Separator();
+
+        if (ImGui::Button("Save"))
+        {
+            saveOpenDocument();
+            m_showDocumentWindow = false;
+            m_openDocumentPath.clear();
+            m_openDocumentSavedText.clear();
+            m_textEditor.SetText("");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard"))
+        {
+            m_showDocumentWindow = false;
+            m_openDocumentPath.clear();
+            m_openDocumentSavedText.clear();
+            m_textEditor.SetText("");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
     }
 }
 
@@ -5492,6 +5857,11 @@ bool Editor::saveMaterialToDisk(const std::filesystem::path &path, const engine:
     json["uv_location"] = {cpuMaterial.uvOffset.x, cpuMaterial.uvOffset.y};
     json["uv_rotation"] = cpuMaterial.uvRotation;
     json["uv_offset"] = {cpuMaterial.uvOffset.x, cpuMaterial.uvOffset.y};
+
+    if (!cpuMaterial.customExpression.empty())
+        json["custom_expression"] = cpuMaterial.customExpression;
+    if (!cpuMaterial.customShaderHash.empty())
+        json["custom_shader_hash"] = cpuMaterial.customShaderHash;
 
     std::ofstream file(path);
     if (!file.is_open())
@@ -7193,6 +7563,59 @@ void Editor::drawBenchmark()
 
             ImGui::EndTable();
         }
+    }
+
+    ImGui::End();
+}
+
+void Editor::drawDevTools()
+{
+    if (!m_showDevTools)
+        return;
+
+    ImGui::SetNextWindowSize(ImVec2(420, 280), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(120, 120), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Dev Tools", &m_showDevTools))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::SeparatorText("Engine Shaders");
+    ImGui::TextDisabled("Recompiles all GLSL sources in resources/shaders/ to SPIR-V,");
+    ImGui::TextDisabled("then reloads all GPU pipelines. Use after editing engine shaders.");
+
+    ImGui::Spacing();
+
+    if (ImGui::Button("Reload Engine Shaders", ImVec2(200, 0)))
+    {
+        m_devToolsShaderErrors.clear();
+        m_devToolsLastCompiledCount = -1;
+
+        if (m_reloadShadersCallback)
+            m_devToolsLastCompiledCount = static_cast<int>(m_reloadShadersCallback(&m_devToolsShaderErrors));
+
+        m_pendingShaderReloadRequest = true;
+    }
+
+    if (m_devToolsLastCompiledCount >= 0)
+    {
+        ImGui::SameLine();
+        if (m_devToolsShaderErrors.empty())
+            ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "OK (%d compiled)", m_devToolsLastCompiledCount);
+        else
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "%d errors", static_cast<int>(m_devToolsShaderErrors.size()));
+    }
+
+    if (!m_devToolsShaderErrors.empty())
+    {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "Compile errors:");
+        ImGui::BeginChild("##shader_errors", ImVec2(0, 120), true);
+        for (const auto &err : m_devToolsShaderErrors)
+            ImGui::TextUnformatted(err.c_str());
+        ImGui::EndChild();
     }
 
     ImGui::End();

@@ -47,7 +47,14 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     vkCmdSetScissor(commandBuffer, 0, 1, &m_scissor);
 
     GraphicsPipelineKey key{};
-    key.shader = ShaderId::Lighting;
+    const auto *context = core::VulkanContext::getContext().get();
+    const bool useRayQueryLighting =
+        settings.enableRayTracing &&
+        settings.rayTracingMode == RenderQualitySettings::RayTracingMode::RayQuery &&
+        context &&
+        context->hasRayQuerySupport();
+
+    key.shader = useRayQueryLighting ? ShaderId::LightingRayQuery : ShaderId::Lighting;
     key.cull = CullMode::None;
     key.depthTest = false;
     key.depthWrite = false;

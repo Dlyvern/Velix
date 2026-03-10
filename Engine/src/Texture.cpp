@@ -879,11 +879,7 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
 
         commandBuffer->end();
 
-        if (!utilities::AsyncGpuUpload::submit(commandBuffer, queue, {stagingBuffer}))
-        {
-            VX_ENGINE_ERROR_STREAM("Failed to submit texture upload from memory.\n");
-            return false;
-        }
+        utilities::AsyncGpuUpload::enqueue(commandBuffer, {stagingBuffer});
 
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = m_image->vk();
@@ -1084,11 +1080,7 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
     vkCmdPipelineBarrier2(commandBuffer, &secondDependency);
     commandBuffer->end();
 
-    if (!utilities::AsyncGpuUpload::submit(commandBuffer, queue, std::move(stagingBuffers)))
-    {
-        VX_ENGINE_ERROR_STREAM("Failed to submit cubemap upload\n");
-        return false;
-    }
+    utilities::AsyncGpuUpload::enqueue(commandBuffer, std::move(stagingBuffers));
 
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.image = m_image->vk();

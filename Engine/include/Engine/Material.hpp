@@ -95,6 +95,9 @@ public:
 
     void uploadParams();
 
+    const std::string &getCustomFragPath() const;
+    void setCustomFragPath(const std::string &path);
+
 private:
     void createDescriptorSets();
     void updateTextureDescriptors();
@@ -113,6 +116,8 @@ private:
 
     std::vector<VkDescriptorSet> m_descriptorSets;
     std::vector<core::Buffer::SharedPtr> m_paramBuffers;
+
+    std::string m_customFragPath;
 };
 
 class CPUMaterial
@@ -136,6 +141,13 @@ public:
     glm::vec2 uvScale{1.0f, 1.0f};
     glm::vec2 uvOffset{0.0f, 0.0f};
     float uvRotation{0.0f}; // degrees
+
+    // Custom shader expression — GLSL source written in the material editor.
+    // Empty means "use the default gbuffer_static pipeline".
+    std::string customExpression;
+    // SHA-1 hex hash of customExpression; used at runtime to locate the cached .spv
+    // without recompiling. Stored alongside customExpression in the .elixmat file.
+    std::string customShaderHash;
 };
 
 ELIX_NESTED_NAMESPACE_END

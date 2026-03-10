@@ -64,14 +64,10 @@ struct GPUMesh
 
     core::Buffer::SharedPtr indexBuffer{nullptr};
     core::Buffer::SharedPtr vertexBuffer{nullptr};
-    core::Buffer::SharedPtr rayTracingIndexBuffer{nullptr};
-    core::Buffer::SharedPtr rayTracingVertexBuffer{nullptr};
     uint32_t indicesCount{0};
     VkIndexType indexType{VK_INDEX_TYPE_UINT32};
     uint32_t vertexStride{0};
     uint64_t vertexLayoutHash{0};
-    VkDeviceSize rayTracingPositionOffset{0u};
-    VkFormat rayTracingPositionFormat{VK_FORMAT_R32G32B32_SFLOAT};
 
     Material::SharedPtr material{nullptr};
 
@@ -136,52 +132,6 @@ struct GPUMesh
         gpuMesh->vertexStride = mesh.vertexStride;
         gpuMesh->vertexLayoutHash = mesh.vertexLayoutHash;
         return gpuMesh;
-    }
-
-    bool ensureRayTracingBuffers()
-    {
-        auto context = core::VulkanContext::getContext();
-        if (!context || !context->hasBufferDeviceAddressSupport() || !context->hasAccelerationStructureSupport())
-            return false;
-
-        if (rayTracingVertexBuffer && rayTracingIndexBuffer)
-            return true;
-
-        if (!vertexBuffer || !indexBuffer)
-            return false;
-
-        auto commandBuffer = core::CommandBuffer::createShared(*context->getGraphicsCommandPool());
-        commandBuffer->begin();
-
-        rayTracingVertexBuffer = core::Buffer::createShared(
-            vertexBuffer->getSize(),
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-            core::memory::MemoryUsage::CPU_TO_GPU);
-
-        rayTracingIndexBuffer = core::Buffer::createShared(
-            indexBuffer->getSize(),
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-            core::memory::MemoryUsage::CPU_TO_GPU);
-
-        utilities::BufferUtilities::copyBuffer(*vertexBuffer, *rayTracingVertexBuffer, *commandBuffer, vertexBuffer->getSize());
-        utilities::BufferUtilities::copyBuffer(*indexBuffer, *rayTracingIndexBuffer, *commandBuffer, indexBuffer->getSize());
-
-        commandBuffer->end();
-
-        if (!utilities::AsyncGpuUpload::submit(commandBuffer, context->getGraphicsQueue(), {}))
-        {
-            rayTracingVertexBuffer.reset();
-            rayTracingIndexBuffer.reset();
-            return false;
-        }
-
-        return true;
     }
 };
 

@@ -45,6 +45,7 @@ private:
     static inline core::Shader::SharedPtr gBufferSkinnedShader{nullptr};
 
     static inline core::Shader::SharedPtr lightingShader{nullptr};
+    static inline core::Shader::SharedPtr lightingRayQueryShader{nullptr};
 
     static inline core::Shader::SharedPtr fxaaShader{nullptr};
     static inline core::Shader::SharedPtr bloomExtractShader{nullptr};

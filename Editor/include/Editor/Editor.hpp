@@ -201,6 +201,11 @@ public:
         return requested;
     }
 
+    void setReloadShadersCallback(std::function<size_t(std::vector<std::string> *)> callback)
+    {
+        m_reloadShadersCallback = std::move(callback);
+    }
+
     void setRenderViewportOnly(bool value)
     {
         m_renderOnlyViewport = value;
@@ -283,6 +288,7 @@ private:
         std::filesystem::path path;
         bool open = true;
         bool dirty = false;
+        bool confirmCloseRequested = false;
     };
 
     std::vector<OpenMaterialEditor> m_openMaterialEditors;
@@ -291,7 +297,16 @@ private:
     std::filesystem::path m_openDocumentPath;
     std::string m_openDocumentSavedText;
     bool m_showDocumentWindow{false};
+    bool m_documentConfirmCloseRequested{false};
     bool m_pendingShaderReloadRequest{false};
+    bool m_showDevTools{false};
+    // Callback invoked when "Reload Engine Shaders" is pressed.
+    // It should compile all shaders and populate outErrors, returning compiled count.
+    std::function<size_t(std::vector<std::string> *)> m_reloadShadersCallback;
+
+    // Results of the last shader reload, displayed in Dev Tools panel.
+    int m_devToolsLastCompiledCount{-1};
+    std::vector<std::string> m_devToolsShaderErrors;
     NotificationManager m_notificationManager;
 
     AssetsPreviewSystem m_assetsPreviewSystem;
@@ -404,6 +419,13 @@ private:
         bool linkOutputActive = true;
         bool linkColorToEmissiveActive = false;
 
+        bool customShaderInitialized = false;
+        bool customShaderPanelOpen = false;
+        TextEditor customFunctionsEditor;
+        TextEditor customExpressionEditor;
+        std::string customShaderLastError;
+        bool customShaderHasError = false;
+
         glm::vec3 colorNodeValue{1.0f, 1.0f, 1.0f};
         float colorNodeStrength{1.0f};
 
@@ -478,6 +500,7 @@ private:
     void drawEditorCameraSettings();
     void drawRenderSettings();
     void drawBenchmark();
+    void drawDevTools();
     void drawUITools();
     void drawTerrainTools();
     void showDockSpace();

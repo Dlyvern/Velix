@@ -3,6 +3,7 @@
 
 #include "Core/Macros.hpp"
 #include "Engine/Mesh.hpp"
+#include "Engine/RayTracing/RayTracedMesh.hpp"
 
 #include <volk.h>
 
@@ -12,7 +13,8 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(rayTracing)
 class MeshToRayTracedObjectsConverter
 {
 public:
-    static bool convert(GPUMesh &mesh,
+    static bool convert(const GPUMesh &mesh,
+                        const RayTracedMesh &rayTracedMesh,
                         VkAccelerationStructureGeometryKHR &geometry,
                         VkAccelerationStructureBuildRangeInfoKHR &rangeInfo);
 };

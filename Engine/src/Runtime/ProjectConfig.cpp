@@ -97,6 +97,10 @@ bool ProjectConfig::load(const std::filesystem::path &projectRoot)
 
     RB("enable_post_processing", m_enablePostProcessing);
     RB("enable_vsync", m_enableVSync);
+    RB("enable_ray_tracing", m_enableRayTracing);
+    RB("enable_rt_shadows", m_enableRTShadows);
+    RB("enable_rt_reflections", m_enableRTReflections);
+    RI("ray_tracing_mode", m_rayTracingMode);
     RF("render_scale", m_renderScale);
     RI("anisotropy_mode", m_anisotropyMode);
 
@@ -185,6 +189,10 @@ bool ProjectConfig::save(const std::filesystem::path &projectRoot) const
         {"taa_history_weight", m_taaHistoryWeight},
         {"enable_post_processing", m_enablePostProcessing},
         {"enable_vsync", m_enableVSync},
+        {"enable_ray_tracing", m_enableRayTracing},
+        {"enable_rt_shadows", m_enableRTShadows},
+        {"enable_rt_reflections", m_enableRTReflections},
+        {"ray_tracing_mode", m_rayTracingMode},
         {"render_scale", m_renderScale},
         {"anisotropy_mode", m_anisotropyMode},
         {"enable_ssao", m_enableSSAO},
@@ -274,6 +282,10 @@ void ProjectConfig::applyRenderSettings() const
     rs.taaHistoryWeight = std::clamp(m_taaHistoryWeight, 0.0f, 1.0f);
     rs.enablePostProcessing = m_enablePostProcessing;
     rs.enableVSync = m_enableVSync;
+    rs.enableRayTracing = m_enableRayTracing;
+    rs.enableRTShadows = m_enableRTShadows;
+    rs.enableRTReflections = m_enableRTReflections;
+    rs.rayTracingMode = static_cast<RenderQualitySettings::RayTracingMode>(std::clamp(m_rayTracingMode, 0, 2));
     rs.renderScale = std::clamp(m_renderScale, 0.25f, 2.0f);
     rs.anisotropyMode = static_cast<RenderQualitySettings::AnisotropyMode>(std::clamp(m_anisotropyMode, 0, 4));
 
@@ -328,6 +340,10 @@ void ProjectConfig::captureRenderSettings()
 
     m_enablePostProcessing = rs.enablePostProcessing;
     m_enableVSync = rs.enableVSync;
+    m_enableRayTracing = rs.enableRayTracing;
+    m_enableRTShadows = rs.enableRTShadows;
+    m_enableRTReflections = rs.enableRTReflections;
+    m_rayTracingMode = static_cast<int>(rs.rayTracingMode);
     m_renderScale = rs.renderScale;
     m_anisotropyMode = static_cast<int>(rs.anisotropyMode);
 

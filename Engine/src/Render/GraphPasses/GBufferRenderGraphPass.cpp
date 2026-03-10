@@ -11,11 +11,12 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 namespace
 {
-struct ModelPushConstant
-{
-    uint32_t baseInstance{0};
-    uint32_t padding[3]{0, 0, 0};
-};
+    struct ModelPushConstant
+    {
+        uint32_t baseInstance{0};
+        uint32_t padding[3]{0, 0, 0};
+        float time{0.0f};
+    };
 }
 
 GBufferRenderGraphPass::GBufferRenderGraphPass()
@@ -70,6 +71,10 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             const bool twoSided = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED) != 0u;
 
             GraphicsPipelineKey key = makeKey(batch.skinned, alphaBlend, twoSided);
+
+            if (!batch.material->getCustomFragPath().empty())
+                key.customFragSpvPath = batch.material->getCustomFragPath();
+
             key.gbufferOutputMode = GBufferOutputMode::Full;
             key.colorFormats = m_colorFormats;
             key.depthFormat = m_depthFormat;
@@ -128,7 +133,7 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
                 boundMaterialSet = materialSet;
             }
 
-            const ModelPushConstant pushConstant{.baseInstance = batch.firstInstance};
+            const ModelPushConstant pushConstant{.baseInstance = batch.firstInstance, .padding = {0,0,0}, .time = data.elapsedTime};
             vkCmdPushConstants(commandBuffer, pipelineLayout,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, sizeof(ModelPushConstant), &pushConstant);
@@ -256,13 +261,20 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     RGPTextureDescription objectIdTextureDescription{VK_FORMAT_R32_UINT, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription depthTextureDescription{m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
 
-    normalTextureDescription.setCustomExtentFunction([this] { return m_extent; });
-    albedoTextureDescription.setCustomExtentFunction([this] { return m_extent; });
-    materialTextureDescription.setCustomExtentFunction([this] { return m_extent; });
-    tangentAnisoTextureDescription.setCustomExtentFunction([this] { return m_extent; });
-    emissiveTextureDescription.setCustomExtentFunction([this] { return m_extent; });
-    objectIdTextureDescription.setCustomExtentFunction([this] { return m_extent; });
-    depthTextureDescription.setCustomExtentFunction([this] { return m_extent; });
+    normalTextureDescription.setCustomExtentFunction([this]
+                                                     { return m_extent; });
+    albedoTextureDescription.setCustomExtentFunction([this]
+                                                     { return m_extent; });
+    materialTextureDescription.setCustomExtentFunction([this]
+                                                       { return m_extent; });
+    tangentAnisoTextureDescription.setCustomExtentFunction([this]
+                                                           { return m_extent; });
+    emissiveTextureDescription.setCustomExtentFunction([this]
+                                                       { return m_extent; });
+    objectIdTextureDescription.setCustomExtentFunction([this]
+                                                       { return m_extent; });
+    depthTextureDescription.setCustomExtentFunction([this]
+                                                    { return m_extent; });
 
     objectIdTextureDescription.setDebugName("__ELIX_OBJECT_ID_GBUFFER_TEXTURE__");
     depthTextureDescription.setDebugName("__ELIX_DEPTH_GBUFFER_TEXTURE__");

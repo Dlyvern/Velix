@@ -129,6 +129,12 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
     if (json.contains("uv_rotation"))
         material.uvRotation = json["uv_rotation"].get<float>();
 
+    if (json.contains("custom_expression") && json["custom_expression"].is_string())
+        material.customExpression = json["custom_expression"].get<std::string>();
+
+    if (json.contains("custom_shader_hash") && json["custom_shader_hash"].is_string())
+        material.customShaderHash = json["custom_shader_hash"].get<std::string>();
+
     auto sanitizeFinite = [](float value, float fallback) -> float
     {
         return std::isfinite(value) ? value : fallback;

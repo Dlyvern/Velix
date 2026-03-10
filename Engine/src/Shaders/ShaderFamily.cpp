@@ -13,6 +13,9 @@ void EngineShaderFamilies::initEngineShaderFamilies()
     const auto &device = core::VulkanContext::getContext()->getDevice();
 
     {
+        const bool hasAccelerationStructureSupport = core::VulkanContext::getContext() &&
+                                                     core::VulkanContext::getContext()->hasAccelerationStructureSupport();
+
         VkDescriptorSetLayoutBinding uboLayoutBinding{};
         uboLayoutBinding.binding = 0;
         uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -34,8 +37,24 @@ void EngineShaderFamilies::initEngineShaderFamilies()
         lightSSBOLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         lightSSBOLayoutBinding.pImmutableSamplers = nullptr;
 
-        cameraDescriptorSetLayout = core::DescriptorSetLayout::createShared(device,
-                                                                            std::vector<VkDescriptorSetLayoutBinding>{uboLayoutBinding, lightSpaceBinding, lightSSBOLayoutBinding});
+        std::vector<VkDescriptorSetLayoutBinding> cameraBindings{
+            uboLayoutBinding,
+            lightSpaceBinding,
+            lightSSBOLayoutBinding};
+
+        if (hasAccelerationStructureSupport)
+        {
+            VkDescriptorSetLayoutBinding accelerationStructureBinding{};
+            accelerationStructureBinding.binding = 3;
+            accelerationStructureBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+            accelerationStructureBinding.descriptorCount = 1;
+            accelerationStructureBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            accelerationStructureBinding.pImmutableSamplers = nullptr;
+
+            cameraBindings.push_back(accelerationStructureBinding);
+        }
+
+        cameraDescriptorSetLayout = core::DescriptorSetLayout::createShared(device, cameraBindings);
     }
 
     {

@@ -47,4 +47,5 @@ void main()
     }
 
     outColor = vec4(mapped, 1.0);
+    // outColor.rgb *= vec3(1.0, 0.3, 0.3);  
 }

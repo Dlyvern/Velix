@@ -16,6 +16,7 @@ public:
     static DescriptorSetBuilder begin();
     DescriptorSetBuilder& addImage(VkImageView imageView, VkSampler sampler, VkImageLayout imageLayout, uint32_t binding);
     DescriptorSetBuilder& addBuffer(core::Buffer::SharedPtr buffer, VkDeviceSize range, uint32_t binding, VkDescriptorType descriptorType);
+    DescriptorSetBuilder& addAccelerationStructure(VkAccelerationStructureKHR accelerationStructure, uint32_t binding);
 
     VkDescriptorSet build(VkDevice device, VkDescriptorPool descriptorPool, VkDescriptorSetLayout layout);
 
@@ -38,12 +39,23 @@ private:
         uint32_t binding{0};
     };
 
+    struct AccelerationStructureInfo
+    {
+        VkAccelerationStructureKHR accelerationStructure{VK_NULL_HANDLE};
+        uint32_t binding{0};
+    };
+
     std::vector<BufferInfo> m_bufferInfos;
     std::vector<ImageInfo> m_imageInfos;
+    std::vector<AccelerationStructureInfo> m_accelerationStructureInfos;
 
     std::vector<VkWriteDescriptorSet> m_writers;
 
-    void createWriters(VkDescriptorSet dstSet, std::vector<VkWriteDescriptorSet>& writers, std::vector<VkDescriptorBufferInfo>& bufferInfos, std::vector<VkDescriptorImageInfo>& imageInfos);
+    void createWriters(VkDescriptorSet dstSet,
+                       std::vector<VkWriteDescriptorSet>& writers,
+                       std::vector<VkDescriptorBufferInfo>& bufferInfos,
+                       std::vector<VkDescriptorImageInfo>& imageInfos,
+                       std::vector<VkWriteDescriptorSetAccelerationStructureKHR>& accelerationStructureInfos);
 };
 
 ELIX_NESTED_NAMESPACE_END

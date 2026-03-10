@@ -111,6 +111,7 @@ public:
     VkDescriptorSet shadowPerObjectDescriptorSet;
 
     float deltaTime;
+    float elapsedTime{0.0f};
 
     glm::mat4 view;
     glm::mat4 projection;

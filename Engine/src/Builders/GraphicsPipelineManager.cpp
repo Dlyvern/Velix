@@ -82,20 +82,21 @@ void GraphicsPipelineManager::loadShaderModules()
     gBufferSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_skinned.vert.spv", "./resources/shaders/gbuffer_static.frag.spv");
 
     lightingShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/lighting.frag.spv");
+    lightingRayQueryShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/lighting_rt.frag.spv");
 
-    fxaaShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/fxaa.frag.spv");
-    bloomExtractShader   = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_extract.frag.spv");
+    fxaaShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/fxaa.frag.spv");
+    bloomExtractShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_extract.frag.spv");
     bloomCompositeShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/bloom_composite.frag.spv");
-    ssaoShader           = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssao.frag.spv");
-    smaaShader              = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/smaa.frag.spv");
-    contactShadowShader     = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/contact_shadow.frag.spv");
-    cinematicEffectsShader  = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/cinematic.frag.spv");
+    ssaoShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssao.frag.spv");
+    smaaShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/smaa.frag.spv");
+    contactShadowShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/contact_shadow.frag.spv");
+    cinematicEffectsShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/cinematic.frag.spv");
     editorBillboardShader = std::make_shared<core::Shader>("./resources/shaders/editor_billboard.vert.spv", "./resources/shaders/editor_billboard.frag.spv");
-    billboardShader       = std::make_shared<core::Shader>("./resources/shaders/billboard.vert.spv", "./resources/shaders/billboard.frag.spv");
-    uiTextShader          = std::make_shared<core::Shader>("./resources/shaders/ui_text.vert.spv", "./resources/shaders/ui_text.frag.spv");
-    uiQuadShader          = std::make_shared<core::Shader>("./resources/shaders/ui_quad.vert.spv", "./resources/shaders/ui_quad.frag.spv");
-    particleShader        = std::make_shared<core::Shader>("./resources/shaders/particle.vert.spv", "./resources/shaders/particle.frag.spv");
-    glassShader           = std::make_shared<core::Shader>("./resources/shaders/glass_mesh.vert.spv", "./resources/shaders/glass.frag.spv");
+    billboardShader = std::make_shared<core::Shader>("./resources/shaders/billboard.vert.spv", "./resources/shaders/billboard.frag.spv");
+    uiTextShader = std::make_shared<core::Shader>("./resources/shaders/ui_text.vert.spv", "./resources/shaders/ui_text.frag.spv");
+    uiQuadShader = std::make_shared<core::Shader>("./resources/shaders/ui_quad.vert.spv", "./resources/shaders/ui_quad.frag.spv");
+    particleShader = std::make_shared<core::Shader>("./resources/shaders/particle.vert.spv", "./resources/shaders/particle.frag.spv");
+    glassShader = std::make_shared<core::Shader>("./resources/shaders/glass_mesh.vert.spv", "./resources/shaders/glass.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -121,6 +122,7 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(gBufferStaticShader);
     destroyShader(gBufferSkinnedShader);
     destroyShader(lightingShader);
+    destroyShader(lightingRayQueryShader);
     destroyShader(fxaaShader);
     destroyShader(bloomExtractShader);
     destroyShader(bloomCompositeShader);
@@ -152,6 +154,8 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
 {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
 
+    core::Shader::SharedPtr tempCustomShader{nullptr};
+
     switch (key.shader)
     {
     case ShaderId::StaticShadow:
@@ -182,13 +186,27 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         stages = presentShader->getShaderStages();
         break;
     case ShaderId::GBufferStatic:
-        stages = gBufferStaticShader->getShaderStages();
+    {
+        if (!key.customFragSpvPath.empty())
+        {
+            tempCustomShader = core::Shader::create("./resources/shaders/gbuffer_static.vert.spv", key.customFragSpvPath);
+            if (tempCustomShader)
+                stages = tempCustomShader->getShaderStages();
+            else
+                stages = gBufferStaticShader->getShaderStages();
+        }
+        else
+            stages = gBufferStaticShader->getShaderStages();
         break;
+    }
     case ShaderId::GBufferSkinned:
         stages = gBufferSkinnedShader->getShaderStages();
         break;
     case ShaderId::Lighting:
         stages = lightingShader->getShaderStages();
+        break;
+    case ShaderId::LightingRayQuery:
+        stages = lightingRayQueryShader->getShaderStages();
         break;
     case ShaderId::FXAA:
         stages = fxaaShader->getShaderStages();
@@ -288,10 +306,11 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         vertexAttributeDescriptions = {attributeDescription};
     }
     else if (key.shader == ShaderId::ToneMap || key.shader == ShaderId::SelectionOverlay ||
-             key.shader == ShaderId::Present  || key.shader == ShaderId::Lighting       ||
-             key.shader == ShaderId::FXAA     || key.shader == ShaderId::BloomExtract   ||
+             key.shader == ShaderId::Present || key.shader == ShaderId::Lighting ||
+             key.shader == ShaderId::LightingRayQuery ||
+             key.shader == ShaderId::FXAA || key.shader == ShaderId::BloomExtract ||
              key.shader == ShaderId::BloomComposite ||
-             key.shader == ShaderId::SSAO     || key.shader == ShaderId::SMAA           ||
+             key.shader == ShaderId::SSAO || key.shader == ShaderId::SMAA ||
              key.shader == ShaderId::ContactShadow || key.shader == ShaderId::CinematicEffects ||
              key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||
              key.shader == ShaderId::Particle)
@@ -329,13 +348,13 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         auto attachment = builders::GraphicsPipelineBuilder::colorBlendAttachmentCI(false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
         if (key.blend == BlendMode::AlphaBlend)
         {
-            attachment.blendEnable         = VK_TRUE;
+            attachment.blendEnable = VK_TRUE;
             attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
             attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            attachment.colorBlendOp        = VK_BLEND_OP_ADD;
+            attachment.colorBlendOp = VK_BLEND_OP_ADD;
             attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
             attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
+            attachment.alphaBlendOp = VK_BLEND_OP_ADD;
         }
         colorBlendAttachments.push_back(attachment);
     }

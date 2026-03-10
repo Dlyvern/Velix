@@ -93,14 +93,14 @@ target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
 
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} INTERFACE
-        ${PHYSX_LIB_DIR}/PhysX_static_64.lib
+        ${PHYSX_LIB_DIR}/PhysX_64.lib
         ${PHYSX_LIB_DIR}/PhysXPvdSDK_static_64.lib
         ${PHYSX_LIB_DIR}/PhysXVehicle2_static_64.lib
         ${PHYSX_LIB_DIR}/PhysXCharacterKinematic_static_64.lib
         ${PHYSX_LIB_DIR}/PhysXExtensions_static_64.lib
-        ${PHYSX_LIB_DIR}/PhysXCooking_static_64.lib
-        ${PHYSX_LIB_DIR}/PhysXCommon_static_64.lib
-        ${PHYSX_LIB_DIR}/PhysXFoundation_static_64.lib
+        ${PHYSX_LIB_DIR}/PhysXCooking_64.lib
+        ${PHYSX_LIB_DIR}/PhysXCommon_64.lib
+        ${PHYSX_LIB_DIR}/PhysXFoundation_64.lib
         ${PHYSX_LIB_DIR}/PhysXTask_static_64.lib
         winmm
         Advapi32

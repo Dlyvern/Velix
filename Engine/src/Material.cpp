@@ -264,4 +264,14 @@ void Material::setIor(float ior)
     uploadParams();
 }
 
+const std::string &Material::getCustomFragPath() const
+{
+    return m_customFragPath;
+}
+
+void Material::setCustomFragPath(const std::string &path)
+{
+    m_customFragPath = path;
+}
+
 ELIX_NESTED_NAMESPACE_END

@@ -49,12 +49,23 @@ public:
         CMAA = 4
     };
 
+    enum class RayTracingMode : uint8_t
+    {
+        Off = 0,
+        RayQuery = 1,
+        Pipeline = 2
+    };
+
     ShadowQuality shadowQuality{ShadowQuality::High};
     ShadowCascadeCount shadowCascadeCount{ShadowCascadeCount::X4};
     float shadowMaxDistance{180.0f};
 
     bool enableVSync{false};
     bool enablePostProcessing{true};
+    bool enableRayTracing{false};
+    bool enableRTShadows{false};
+    bool enableRTReflections{false};
+    RayTracingMode rayTracingMode{RayTracingMode::RayQuery};
     bool enableFXAA{true};
     bool enableBloom{true};
 

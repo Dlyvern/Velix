@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cctype>
 
+#include "Core/Logger.hpp"
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(shaders)
 
@@ -157,6 +159,16 @@ size_t ShaderCompiler::compileDirectoryToSpv(const std::filesystem::path &rootPa
         const std::filesystem::path sourcePath = entry.path();
 
         if (!isCompilableShaderSource(sourcePath))
+            continue;
+
+        // VX_ENGINE_INFO_STREAM("Shader file: " << entry.path().filename());
+
+        // if (entry.path().filename() != "tonemap.frag")
+        //     continue;
+
+        const std::filesystem::path spvPath = std::filesystem::path(sourcePath.string() + ".spv");
+        if (std::filesystem::exists(spvPath) &&
+            std::filesystem::last_write_time(sourcePath) <= std::filesystem::last_write_time(spvPath))
             continue;
 
         std::string error;
