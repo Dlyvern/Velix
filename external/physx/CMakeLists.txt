@@ -85,6 +85,27 @@ else()
     message(STATUS "Using prebuilt PhysX from ${PHYSX_LIB_DIR}")
 endif()
 
+if(WIN32)
+    set(_PHYSX_RUNTIME_DLLS "")
+
+    file(GLOB _PHYSX_RUNTIME_DLLS_FROM_LIB_DIR "${PHYSX_LIB_DIR}/PhysX*.dll")
+    list(APPEND _PHYSX_RUNTIME_DLLS ${_PHYSX_RUNTIME_DLLS_FROM_LIB_DIR})
+
+    file(GLOB _PHYSX_RUNTIME_DLLS_FROM_BUILD_DIR "${PHYSX_ROOT}/bin/win.x86_64.*.mt/${PHYSX_BUILD_TYPE}/PhysX*.dll")
+    list(APPEND _PHYSX_RUNTIME_DLLS ${_PHYSX_RUNTIME_DLLS_FROM_BUILD_DIR})
+
+    list(REMOVE_DUPLICATES _PHYSX_RUNTIME_DLLS)
+    list(SORT _PHYSX_RUNTIME_DLLS)
+
+    if(_PHYSX_RUNTIME_DLLS)
+        set(PHYSX_RUNTIME_DLLS "${_PHYSX_RUNTIME_DLLS}" CACHE STRING "PhysX runtime DLLs for Windows staging" FORCE)
+        message(STATUS "PhysX runtime DLLs found: ${PHYSX_RUNTIME_DLLS}")
+    else()
+        set(PHYSX_RUNTIME_DLLS "" CACHE STRING "PhysX runtime DLLs for Windows staging" FORCE)
+        message(WARNING "PhysX runtime DLLs were not found under ${PHYSX_LIB_DIR} or ${PHYSX_ROOT}/bin. Windows builds will require these DLLs on PATH.")
+    endif()
+endif()
+
 add_library(${PROJECT_NAME} INTERFACE)
 
 target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE

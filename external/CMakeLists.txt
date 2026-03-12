@@ -109,13 +109,19 @@ set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "Disable glslang install target" FORCE
 set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "Disable glslang standalone binaries" FORCE)
 add_subdirectory(glslang)
 
-# zlib — force static-only so OpenEXR doesn't produce a z.dll dependency on Windows
+# zlib — force static-only so the engine doesn't produce a z.dll dependency on Windows
 set(ZLIB_BUILD_TESTING OFF CACHE BOOL "Disable zlib example tests" FORCE)
 set(ZLIB_INSTALL OFF CACHE BOOL "Disable zlib install target" FORCE)
+set(ZLIB_BUILD_SHARED OFF CACHE BOOL "Disable zlib shared library" FORCE)
+set(ZLIB_BUILD_STATIC ON CACHE BOOL "Enable zlib static library" FORCE)
 set(_velix_saved_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(zlib)
 set(BUILD_SHARED_LIBS "${_velix_saved_BUILD_SHARED_LIBS}" CACHE BOOL "" FORCE)
+
+if(TARGET zlibstatic AND NOT TARGET ZLIB::ZLIB)
+    add_library(ZLIB::ZLIB ALIAS zlibstatic)
+endif()
 
 # shaderc
 set(SHADERC_SKIP_TESTS ON CACHE BOOL "Skip building shaderc tests" FORCE)

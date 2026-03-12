@@ -97,6 +97,7 @@ void GraphicsPipelineManager::loadShaderModules()
     uiQuadShader = std::make_shared<core::Shader>("./resources/shaders/ui_quad.vert.spv", "./resources/shaders/ui_quad.frag.spv");
     particleShader = std::make_shared<core::Shader>("./resources/shaders/particle.vert.spv", "./resources/shaders/particle.frag.spv");
     glassShader = std::make_shared<core::Shader>("./resources/shaders/glass_mesh.vert.spv", "./resources/shaders/glass.frag.spv");
+    rtReflectionsShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/rt_reflections.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -136,6 +137,7 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(uiQuadShader);
     destroyShader(particleShader);
     destroyShader(glassShader);
+    destroyShader(rtReflectionsShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -247,6 +249,9 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::Glass:
         stages = glassShader->getShaderStages();
         break;
+    case ShaderId::RTReflections:
+        stages = rtReflectionsShader->getShaderStages();
+        break;
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
@@ -313,7 +318,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
              key.shader == ShaderId::SSAO || key.shader == ShaderId::SMAA ||
              key.shader == ShaderId::ContactShadow || key.shader == ShaderId::CinematicEffects ||
              key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||
-             key.shader == ShaderId::Particle)
+             key.shader == ShaderId::Particle || key.shader == ShaderId::RTReflections)
     {
         // Fullscreen / billboard passes generate vertices procedurally in the vertex shader
         vertexBindingDescriptions = {};

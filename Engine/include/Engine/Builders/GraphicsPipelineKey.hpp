@@ -37,6 +37,7 @@ enum class ShaderId : uint8_t
     UIQuad,
     Particle,
     Glass,
+    RTReflections,
     None
 };
 

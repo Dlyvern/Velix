@@ -6,6 +6,7 @@
 #include "Engine/Entity.hpp"
 #include "Engine/Components/ECS.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
+#include "Engine/Time.hpp"
 #include "VelixSDK/World.hpp"
 
 #include <string>
@@ -13,7 +14,6 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(sdk)
 
-// Base class for all SDK objects
 class VXObject : public engine::Script
 {
 public:
@@ -96,6 +96,28 @@ public:
     {
         return entity ? EntityRef(entity->getId()) : EntityRef{};
     }
+
+    engine::Entity *findEntity(const std::string &name) const
+    {
+        return engine::scripting::findEntityByName(name.c_str(), getScene());
+    }
+
+    void dontDestroyOnLoad()
+    {
+        engine::scripting::setDontDestroyOnLoad(getOuter());
+    }
+
+    void destroyOnLoad()
+    {
+        engine::scripting::clearDontDestroyOnLoad(getOuter());
+    }
+
+    static float deltaTime() { return engine::Time::instance().deltaTime(); }
+    static float totalTime() { return engine::Time::instance().totalTime(); }
+    static float scaledDeltaTime() { return engine::Time::instance().scaledDeltaTime(); }
+    static uint64_t frameCount() { return engine::Time::instance().frameCount(); }
+    static float timeScale() { return engine::Time::instance().timeScale(); }
+    static void setTimeScale(float scale) { engine::Time::instance().setTimeScale(scale); }
 };
 
 ELIX_NESTED_NAMESPACE_END

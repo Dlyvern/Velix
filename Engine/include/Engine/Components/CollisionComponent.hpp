@@ -42,6 +42,12 @@ public:
 
     void removeActor();
 
+    void setTrigger(bool trigger);
+    bool isTrigger() const;
+
+protected:
+    void onOwnerAttached() override;
+
 private:
     void cacheGeometryFromShape();
 
@@ -51,6 +57,7 @@ private:
     float m_capsuleRadius{0.5f};
     float m_capsuleHalfHeight{0.5f};
     physx::PxRigidStatic *m_actor{nullptr};
+    bool m_isTrigger{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

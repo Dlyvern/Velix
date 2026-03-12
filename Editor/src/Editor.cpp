@@ -126,6 +126,11 @@ namespace
         hashCombine(seed, settings.enableRTShadows);
         hashCombine(seed, settings.enableRTReflections);
         hashCombine(seed, static_cast<uint32_t>(settings.rayTracingMode));
+        hashCombine(seed, settings.rtShadowSamples);
+        hashCombine(seed, settings.rtShadowPenumbraSize);
+        hashCombine(seed, settings.rtReflectionSamples);
+        hashCombine(seed, settings.rtRoughnessThreshold);
+        hashCombine(seed, settings.rtReflectionStrength);
         hashCombine(seed, settings.enableFXAA);
         hashCombine(seed, settings.enableBloom);
         hashCombine(seed, settings.bloomThreshold);
@@ -1861,6 +1866,8 @@ void Editor::initStyle()
                                              { openMaterialEditor(path); });
     m_assetsWindow->setOnTextAssetOpenRequest([this](const std::filesystem::path &path)
                                               { openTextDocument(path); });
+    if (m_pendingSceneOpenRequestCallback)
+        m_assetsWindow->setOnSceneOpenRequest(m_pendingSceneOpenRequestCallback);
     m_assetsWindow->setOnAssetSelectionChanged([this](const std::filesystem::path &path)
                                                {
                                                    m_selectedAssetPath = path;
@@ -2452,7 +2459,42 @@ void Editor::drawCustomTitleBar()
             ImGui::InputTextWithHint("##NewScene", "New scene name...", sceneBuffer, sizeof(sceneBuffer));
             ImGui::Separator();
 
-            ImGui::Button("Create");
+            if (ImGui::Button("Create"))
+            {
+                auto project = m_currentProject.lock();
+                if (project)
+                {
+                    std::filesystem::path scenesDir = project->scenesDir.empty()
+                                                          ? std::filesystem::path(project->fullPath) / "Scenes"
+                                                          : std::filesystem::path(project->scenesDir);
+
+                    std::error_code ec;
+                    std::filesystem::create_directories(scenesDir, ec);
+
+                    const std::string rawName = strlen(sceneBuffer) > 0 ? sceneBuffer : "NewScene";
+                    const std::string baseName = std::filesystem::path(rawName).stem().string();
+
+                    std::filesystem::path scenePath = scenesDir / (baseName + ".elixscene");
+                    int counter = 1;
+                    while (std::filesystem::exists(scenePath))
+                        scenePath = scenesDir / (baseName + std::to_string(counter++) + ".elixscene");
+
+                    nlohmann::json sceneJson;
+                    sceneJson["name"] = scenePath.stem().string();
+                    std::ofstream file(scenePath);
+                    if (file.is_open())
+                    {
+                        file << std::setw(4) << sceneJson << '\n';
+                        file.close();
+                        if (m_pendingSceneOpenRequestCallback)
+                            m_pendingSceneOpenRequestCallback(scenePath);
+                    }
+
+                    std::memset(sceneBuffer, 0, sizeof(sceneBuffer));
+                    ImGui::CloseCurrentPopup();
+                    ImGui::CloseCurrentPopup(); // close FilePopup too
+                }
+            }
 
             ImGui::SameLine();
 
@@ -2465,7 +2507,8 @@ void Editor::drawCustomTitleBar()
 
         if (ImGui::Button("Open scene"))
         {
-            // TODO open my own file editor
+            m_openScenePopupRequested = true;
+            ImGui::CloseCurrentPopup();
         }
         if (ImGui::Button("Save"))
         {
@@ -2536,6 +2579,82 @@ void Editor::drawCustomTitleBar()
             saveAsBuf[0] = '\0';
             ImGui::CloseCurrentPopup();
         }
+        ImGui::EndPopup();
+    }
+
+    if (m_openScenePopupRequested)
+    {
+        ImGui::OpenPopup("OpenScenePopup");
+        m_openScenePopupRequested = false;
+    }
+
+    if (ImGui::BeginPopupModal("OpenScenePopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        static std::vector<std::filesystem::path> s_foundScenes;
+        static int s_selectedScene = -1;
+
+        if (ImGui::IsWindowAppearing())
+        {
+            s_foundScenes.clear();
+            s_selectedScene = -1;
+            auto project = m_currentProject.lock();
+            if (project && !project->fullPath.empty())
+            {
+                std::error_code ec;
+                for (const auto &entry : std::filesystem::recursive_directory_iterator(
+                         project->fullPath, std::filesystem::directory_options::skip_permission_denied, ec))
+                {
+                    if (entry.is_regular_file())
+                    {
+                        const auto ext = entry.path().extension().string();
+                        if (ext == ".elixscene" || ext == ".scene")
+                            s_foundScenes.push_back(entry.path());
+                    }
+                }
+            }
+        }
+
+        ImGui::Text("Select a scene to open:");
+        ImGui::Separator();
+
+        auto project = m_currentProject.lock();
+        ImGui::BeginChild("SceneList", ImVec2(520, 320), true);
+        for (int i = 0; i < static_cast<int>(s_foundScenes.size()); ++i)
+        {
+            const std::string label = project
+                                          ? std::filesystem::relative(s_foundScenes[i], project->fullPath).string()
+                                          : s_foundScenes[i].filename().string();
+            if (ImGui::Selectable(label.c_str(), s_selectedScene == i, ImGuiSelectableFlags_AllowDoubleClick))
+            {
+                s_selectedScene = i;
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                {
+                    if (m_pendingSceneOpenRequestCallback)
+                        m_pendingSceneOpenRequestCallback(s_foundScenes[i]);
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+        }
+        if (s_foundScenes.empty())
+            ImGui::TextDisabled("No .elixscene files found in project.");
+        ImGui::EndChild();
+
+        ImGui::Spacing();
+        const bool canOpen = s_selectedScene >= 0 && s_selectedScene < static_cast<int>(s_foundScenes.size());
+        if (!canOpen)
+            ImGui::BeginDisabled();
+        if (ImGui::Button("Open", ImVec2(120, 0)))
+        {
+            if (m_pendingSceneOpenRequestCallback)
+                m_pendingSceneOpenRequestCallback(s_foundScenes[s_selectedScene]);
+            ImGui::CloseCurrentPopup();
+        }
+        if (!canOpen)
+            ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0)))
+            ImGui::CloseCurrentPopup();
+
         ImGui::EndPopup();
     }
 
@@ -3286,7 +3405,29 @@ void Editor::drawRenderSettings()
         }
 
         ImGui::Checkbox("RT Shadows", &settings.enableRTShadows);
+        if (settings.enableRTShadows)
+        {
+            ImGui::Indent();
+            ImGui::SliderInt("Shadow Samples##rt", &settings.rtShadowSamples, 1, 16,
+                             settings.rtShadowSamples == 1 ? "1 (hard)" : "%d");
+            ImGui::SetItemTooltip("Rays per light. 1=hard shadow, 4-8=soft, 16=high quality.");
+            ImGui::SliderFloat("Penumbra Size##rt", &settings.rtShadowPenumbraSize, 0.0f, 2.0f, "%.3f");
+            ImGui::SetItemTooltip("Virtual light radius. Larger = wider, softer penumbra.");
+            ImGui::Unindent();
+        }
         ImGui::Checkbox("RT Reflections", &settings.enableRTReflections);
+        if (settings.enableRTReflections)
+        {
+            ImGui::Indent();
+            ImGui::SliderInt("Reflection Samples##rt", &settings.rtReflectionSamples, 1, 8,
+                             settings.rtReflectionSamples == 1 ? "1 (mirror)" : "%d");
+            ImGui::SetItemTooltip("Rays per pixel. 1=perfect mirror, 4-8=glossy blur.");
+            ImGui::SliderFloat("Roughness Threshold##rt", &settings.rtRoughnessThreshold, 0.0f, 1.0f, "%.2f");
+            ImGui::SetItemTooltip("Skip surfaces rougher than this. Lower = only shiny metals reflect.");
+            ImGui::SliderFloat("Reflection Strength##rt", &settings.rtReflectionStrength, 0.0f, 2.0f, "%.2f");
+            ImGui::SetItemTooltip("Overall reflection intensity multiplier.");
+            ImGui::Unindent();
+        }
         ImGui::Unindent();
     }
     ImGui::EndDisabled();

@@ -44,13 +44,7 @@ void Entity::setName(const std::string &name)
 
 bool Entity::removeTag(const std::string &tag)
 {
-    // auto it = std::find_if(m_tags.begin(), m_tags.end(), [&tag](const auto& t) {return tag == t; });
-
-    // if(it != m_tags.end())
-    //     m_tags.erase(it);
-
-    // return it != m_tags.end();
-    return false;
+    return m_tags.erase(tag) > 0;
 }
 
 bool Entity::hasTag(const std::string &tag) const

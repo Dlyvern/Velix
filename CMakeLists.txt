@@ -182,6 +182,21 @@ if(NOT FMOD_BUILD_RUNTIMES_FOUND)
     message(WARNING "FMOD runtime libraries were not found under external/fmod/lib")
 endif()
 
+if(WIN32 AND PHYSX_RUNTIME_DLLS)
+    foreach(PHYSX_RUNTIME_DLL IN LISTS PHYSX_RUNTIME_DLLS)
+        get_filename_component(_velix_physx_runtime_name "${PHYSX_RUNTIME_DLL}" NAME)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PHYSX_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/${_velix_physx_runtime_name}"
+            COMMENT "Copying PhysX runtime ${_velix_physx_runtime_name} next to executable"
+        )
+    endforeach()
+    message(STATUS "PhysX runtime DLLs will be copied next to executable")
+elseif(WIN32)
+    message(WARNING "PhysX runtime DLLs were not found. Windows executable may fail to launch unless PhysX DLLs are on PATH.")
+endif()
+
 install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -213,6 +228,10 @@ endif()
 
 if(WIN32 AND EXISTS "${FMOD_WINDOWS_RUNTIME_CANDIDATE}")
     install(FILES "${FMOD_WINDOWS_RUNTIME_CANDIDATE}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
+if(WIN32 AND PHYSX_RUNTIME_DLLS)
+    install(FILES ${PHYSX_RUNTIME_DLLS} DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
 if(UNIX AND EXISTS "${FMOD_LINUX_RUNTIME_CANDIDATE}")

@@ -328,6 +328,9 @@ bool EditorRuntime::init()
     {
         return m_shaderHotReloader ? m_shaderHotReloader->recompileAll(outErrors) : 0;
     });
+    // Must be set BEFORE initEditorRenderGraph(), which triggers initStyle() → creates m_assetsWindow.
+    m_editor->setOnSceneOpenRequest([this](const std::filesystem::path &path)
+                                    { openSceneFromFile(path); });
 
     initEditorRenderGraph();
 
@@ -452,6 +455,36 @@ void EditorRuntime::switchActiveScene(const std::shared_ptr<engine::Scene> &scen
     }
 }
 
+void EditorRuntime::openSceneFromFile(const std::filesystem::path &path)
+{
+    if (m_isPlaySessionActive)
+        return;
+
+    if (m_loadingFuture.valid() && m_stillLoadingTheScene)
+        return;
+
+    const std::string scenePath = path.string();
+    m_stillLoadingTheScene = true;
+    m_loadingStartedAt = std::chrono::steady_clock::now();
+    m_loadingSceneName = path.filename().string();
+    setLoadingStatus("Preparing async scene loading...");
+    m_editor->setRenderViewportOnly(true);
+
+    m_loadingFuture = std::async(std::launch::async, [this, scenePath]() -> engine::Scene::SharedPtr
+                                 {
+                                     auto scene = std::make_shared<engine::Scene>();
+                                     if (!scene->loadSceneFromFile(scenePath,
+                                                                   [this](const std::string &status)
+                                                                   { setLoadingStatus(status); }))
+                                     {
+                                         setLoadingStatus("Failed to load scene");
+                                         VX_EDITOR_ERROR_STREAM("Failed to load scene asynchronously: " << scenePath << '\n');
+                                         return nullptr;
+                                     }
+                                     setLoadingStatus("Scene is ready");
+                                     return scene; });
+}
+
 void EditorRuntime::initEditorRenderGraph()
 {
     m_renderGraph = std::make_unique<engine::renderGraph::RenderGraph>(true);
@@ -475,8 +508,15 @@ void EditorRuntime::initEditorRenderGraph()
         m_gBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         &m_ssaoRenderGraphPass->getAOHandlers());
 
-    m_contactShadowRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ContactShadowRenderGraphPass>(
+    m_rtReflectionsRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::RTReflectionsRenderGraphPass>(
         m_lightingRenderGraphPass->getOutput(),
+        m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+        m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
+        m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gBufferRenderGraphPass->getDepthTextureHandler());
+
+    m_contactShadowRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::ContactShadowRenderGraphPass>(
+        m_rtReflectionsRenderGraphPass->getOutput(),
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
@@ -558,8 +598,15 @@ void EditorRuntime::initGameViewportRenderGraph()
         m_gameGBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         &m_gameSSAORenderGraphPass->getAOHandlers());
 
-    m_gameContactShadowRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ContactShadowRenderGraphPass>(
+    m_gameRTReflectionsRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::RTReflectionsRenderGraphPass>(
         m_gameLightingRenderGraphPass->getOutput(),
+        m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getAlbedoTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gameGBufferRenderGraphPass->getDepthTextureHandler());
+
+    m_gameContactShadowRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::ContactShadowRenderGraphPass>(
+        m_gameRTReflectionsRenderGraphPass->getOutput(),
         m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gameGBufferRenderGraphPass->getDepthTextureHandler());
 

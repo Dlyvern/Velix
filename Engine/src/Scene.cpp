@@ -439,7 +439,7 @@ Entity::SharedPtr Scene::addEntity(const std::string &name)
     return entity;
 }
 
-bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback)
+bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback, bool additive)
 {
     auto reportStatus = [&](const std::string &status)
     {
@@ -447,14 +447,17 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
             statusCallback(status);
     };
 
-    reportStatus("Resetting scene state...");
+    if (!additive)
+    {
+        reportStatus("Resetting scene state...");
 
-    m_entities.clear();
-    m_uiTexts.clear();
-    m_uiButtons.clear();
-    m_billboards.clear();
-    m_nextEntityId = 0;
-    m_skyboxHDRPath.clear();
+        m_entities.clear();
+        m_uiTexts.clear();
+        m_uiButtons.clear();
+        m_billboards.clear();
+        m_nextEntityId = 0;
+        m_skyboxHDRPath.clear();
+    }
 
     reportStatus("Opening scene file...");
 
@@ -1318,6 +1321,43 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
     reportStatus("Scene loaded");
 
     return true;
+}
+
+bool Scene::loadEntitiesFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback)
+{
+    return loadSceneFromFile(filePath, statusCallback, true);
+}
+
+std::vector<Entity::SharedPtr> Scene::extractEntitiesWithTag(const std::string &tag)
+{
+    std::vector<Entity::SharedPtr> extracted;
+    auto it = m_entities.begin();
+    while (it != m_entities.end())
+    {
+        if (*it && (*it)->hasTag(tag))
+        {
+            extracted.push_back(*it);
+            it = m_entities.erase(it);
+        }
+        else
+            ++it;
+    }
+    return extracted;
+}
+
+void Scene::injectEntities(std::vector<Entity::SharedPtr> entities)
+{
+    for (auto &entity : entities)
+    {
+        if (!entity)
+            continue;
+
+        const uint32_t id = entity->getId();
+        const uint32_t candidateNext = (id == std::numeric_limits<uint32_t>::max()) ? id : id + 1u;
+        m_nextEntityId = std::max(m_nextEntityId, candidateNext);
+
+        m_entities.push_back(std::move(entity));
+    }
 }
 
 std::vector<std::shared_ptr<BaseLight>> Scene::getLights()

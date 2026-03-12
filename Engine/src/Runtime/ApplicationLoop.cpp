@@ -217,6 +217,7 @@ void ApplicationLoop::loop()
         lastFrame = currentFrame;
 
         m_window->pollEvents();
+        scripting::beginFrame(deltaTime);
 
         m_runtime->tick(deltaTime);
     }

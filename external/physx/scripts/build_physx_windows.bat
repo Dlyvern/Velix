@@ -22,9 +22,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [VelixFlow] Moving built .lib files to %PHYSX_LIB_OUTPUT%...
+echo [VelixFlow] Copying built PhysX binaries to %PHYSX_LIB_OUTPUT%...
 mkdir "%PHYSX_LIB_OUTPUT%" 2>nul
 
-robocopy "%PHYSX_ROOT%\bin\win.x86_64.vc143.mt/%PHYSX_BUILD_TYPE%" "%PHYSX_LIB_OUTPUT%" *.lib /njh /njs /ndl /nc /ns /np >nul
+robocopy "%PHYSX_ROOT%\bin\win.x86_64.vc143.mt/%PHYSX_BUILD_TYPE%" "%PHYSX_LIB_OUTPUT%" *.lib *.dll *.pdb /njh /njs /ndl /nc /ns /np >nul
+set ROBOCOPY_EXIT=%ERRORLEVEL%
+if %ROBOCOPY_EXIT% GEQ 8 (
+    echo [VelixFlow] Error: Failed to copy PhysX binaries (robocopy exit %ROBOCOPY_EXIT%)
+    exit /b 1
+)
 
 echo [VelixFlow] PhysX built and installed to %PHYSX_LIB_OUTPUT%

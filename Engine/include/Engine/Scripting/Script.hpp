@@ -19,6 +19,13 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class Entity;
 
+struct CollisionInfo
+{
+    glm::vec3 contactPoint{0.0f};
+    glm::vec3 contactNormal{0.0f};
+    float impulse{0.0f};
+};
+
 class Script
 {
 public:
@@ -158,6 +165,15 @@ public:
     virtual void onUpdate(float deltaTime) {}
     virtual void onStart() {}
     virtual void onStop() {}
+
+    // Physics collision callbacks (fired when this entity's rigid body contacts another)
+    virtual void onCollisionEnter(Entity * /*other*/, const CollisionInfo & /*info*/) {}
+    virtual void onCollisionStay(Entity * /*other*/, const CollisionInfo & /*info*/) {}
+    virtual void onCollisionExit(Entity * /*other*/) {}
+
+    // Trigger callbacks (fired when this entity's trigger volume overlaps another)
+    virtual void onTriggerEnter(Entity * /*other*/) {}
+    virtual void onTriggerExit(Entity * /*other*/) {}
 
     static Script *getCurrentConstructingScript()
     {

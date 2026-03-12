@@ -156,6 +156,13 @@ public:
 
     void addOnModeChangedCallback(const std::function<void(EditorMode)> &function);
 
+    void setOnSceneOpenRequest(const std::function<void(const std::filesystem::path &)> &function)
+    {
+        if (m_assetsWindow)
+            m_assetsWindow->setOnSceneOpenRequest(function);
+        m_pendingSceneOpenRequestCallback = function;
+    }
+
     uint32_t getViewportX() const
     {
         return m_viewportSizeX;
@@ -299,6 +306,7 @@ private:
     bool m_showDocumentWindow{false};
     bool m_documentConfirmCloseRequested{false};
     bool m_pendingShaderReloadRequest{false};
+    bool m_openScenePopupRequested{false};
     bool m_showDevTools{false};
     // Callback invoked when "Reload Engine Shaders" is pressed.
     // It should compile all shaders and populate outErrors, returning compiled count.
@@ -494,6 +502,7 @@ private:
 
     EditorResourcesStorage m_resourceStorage;
     std::shared_ptr<AssetsWindow> m_assetsWindow{nullptr};
+    std::function<void(const std::filesystem::path &)> m_pendingSceneOpenRequestCallback{nullptr};
 
     void drawBottomPanel();
     void drawToolBar();

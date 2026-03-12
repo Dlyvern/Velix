@@ -45,8 +45,15 @@ public:
 
     bool destroyEntity(Entity *entity);
 
-    bool loadSceneFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback = {});
+    bool loadSceneFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback = {}, bool additive = false);
+    bool loadEntitiesFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback = {});
     void saveSceneToFile(const std::string &filePath);
+
+    // Extract all entities that have a specific tag, removing them from this scene.
+    std::vector<Entity::SharedPtr> extractEntitiesWithTag(const std::string &tag);
+
+    // Inject pre-existing entity shared_ptrs directly (used by SceneManager for DontDestroyOnLoad).
+    void injectEntities(std::vector<Entity::SharedPtr> entities);
 
     void setSkyboxHDRPath(const std::string &path);
     const std::string &getSkyboxHDRPath() const;

@@ -8,6 +8,7 @@
 #include "Engine/PluginSystem/PluginLoader.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
+#include "Engine/SceneManager.hpp"
 #include "Engine/Scripting/VelixAPI.hpp"
 
 #include <algorithm>
@@ -203,6 +204,22 @@ void GameRuntime::tick(float deltaTime)
 {
     if (!m_initialized || !m_scene || !m_renderGraph)
         return;
+
+    if (SceneManager::instance().hasPendingRequests())
+    {
+        forEachScriptComponent([](ScriptComponent *scriptComponent)
+                               {
+                                   if (scriptComponent)
+                                       scriptComponent->onDetach(); });
+
+        SceneManager::instance().processRequests(m_scene, [this](std::shared_ptr<Scene> /*newScene*/)
+                                                 { bindSceneToPasses(); });
+
+        forEachScriptComponent([](ScriptComponent *scriptComponent)
+                               {
+                                   if (scriptComponent)
+                                       scriptComponent->onAttach(); });
+    }
 
     m_scene->update(deltaTime);
 

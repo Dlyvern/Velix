@@ -215,13 +215,8 @@ namespace
             }
         }
 
-        const std::filesystem::path outputDirectory = (normalizedImportRoot / "resources" / "textures" / "imported").lexically_normal();
-        std::string outputBaseName = normalizedSourcePath.stem().string();
-        if (outputBaseName.empty())
-            outputBaseName = "Texture";
-
-        const uint64_t sourcePathHash = static_cast<uint64_t>(std::hash<std::string>{}(normalizedSourcePath.string()));
-        const std::filesystem::path outputPath = outputDirectory / (outputBaseName + "_" + std::to_string(sourcePathHash) + ".tex.elixasset");
+        auto outputPath = normalizedSourcePath;
+        outputPath.replace_extension(".tex.elixasset");
         return outputPath.lexically_normal();
     }
 

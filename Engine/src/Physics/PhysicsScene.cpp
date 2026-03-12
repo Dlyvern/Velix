@@ -17,7 +17,8 @@ PhysicsScene::PhysicsScene(physx::PxPhysics *physics,
     sceneDesc.gravity = physx::PxVec3(0.0f, -9.81f, 0.0f);
     m_defaultCpuDispatcher = physx::PxDefaultCpuDispatcherCreate(2);
     sceneDesc.cpuDispatcher = m_defaultCpuDispatcher;
-    sceneDesc.filterShader = physx::PxDefaultSimulationFilterShader;
+    sceneDesc.filterShader = contactNotifyFilterShader;
+    sceneDesc.simulationEventCallback = &m_contactListener;
 
     if (cudaContextManager && cudaContextManager->contextIsValid())
     {
@@ -34,7 +35,8 @@ PhysicsScene::PhysicsScene(physx::PxPhysics *physics) : m_physics(physics)
     sceneDesc.gravity = physx::PxVec3(0.0f, -9.81f, 0.0f);
     m_defaultCpuDispatcher = physx::PxDefaultCpuDispatcherCreate(2);
     sceneDesc.cpuDispatcher = m_defaultCpuDispatcher;
-    sceneDesc.filterShader = physx::PxDefaultSimulationFilterShader;
+    sceneDesc.filterShader = contactNotifyFilterShader;
+    sceneDesc.simulationEventCallback = &m_contactListener;
     m_scene = m_physics->createScene(sceneDesc);
 #endif
 

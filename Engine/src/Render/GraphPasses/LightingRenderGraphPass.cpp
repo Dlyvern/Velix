@@ -71,18 +71,19 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     struct LightingPC
     {
         float shadowAmbientStrength;
-        float padding0;
-        float padding1;
-        float padding2;
+        float enableRTShadows;      // 1.0 = ray query, 0.0 = shadow maps
+        float rtShadowSamples;      // rays per light (1=hard, 4-16=soft)
+        float rtShadowPenumbraSize; // virtual light radius → penumbra width
     };
 
     static_assert(sizeof(LightingPC) == 16, "LightingPC push constant must stay 16 bytes");
 
+    const bool rtShadowsActive = useRayQueryLighting && settings.enableRTShadows;
     LightingPC pc{
         std::clamp(settings.shadowAmbientStrength, 0.0f, 1.0f),
-        0.0f,
-        0.0f,
-        0.0f};
+        rtShadowsActive ? 1.0f : 0.0f,
+        rtShadowsActive ? static_cast<float>(std::clamp(settings.rtShadowSamples, 1, 16)) : 1.0f,
+        rtShadowsActive ? std::clamp(settings.rtShadowPenumbraSize, 0.0f, 2.0f) : 0.0f};
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout,
                        VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
 

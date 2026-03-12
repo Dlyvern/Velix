@@ -2,6 +2,7 @@
 #define ELIX_PHYSICS_SCENE_HPP
 
 #include "Engine/Physics/PhysXCore.hpp"
+#include "Engine/Physics/PhysicsContactListener.hpp"
 
 #include <glm/vec3.hpp>
 
@@ -48,6 +49,7 @@ private:
     physx::PxMaterial *m_defaultMaterial = nullptr;
     physx::PxScene *m_scene = nullptr;
     physx::PxControllerManager *m_controllerManager = nullptr;
+    PhysicsContactListener m_contactListener;
 };
 
 ELIX_NESTED_NAMESPACE_END

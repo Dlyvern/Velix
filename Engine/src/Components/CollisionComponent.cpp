@@ -58,6 +58,40 @@ void CollisionComponent::update(float deltaTime)
     m_actor->setGlobalPose(transform);
 }
 
+void CollisionComponent::onOwnerAttached()
+{
+    ECS::onOwnerAttached();
+
+    // Store the owning entity so the PhysicsContactListener can route callbacks to it
+    auto *owner = getOwner<Entity>();
+    if (m_actor && owner)
+        m_actor->userData = owner;
+}
+
+void CollisionComponent::setTrigger(bool trigger)
+{
+    m_isTrigger = trigger;
+
+    if (!m_shape)
+        return;
+
+    if (trigger)
+    {
+        m_shape->setFlag(physx::PxShapeFlag::eSIMULATION_SHAPE, false);
+        m_shape->setFlag(physx::PxShapeFlag::eTRIGGER_SHAPE, true);
+    }
+    else
+    {
+        m_shape->setFlag(physx::PxShapeFlag::eTRIGGER_SHAPE, false);
+        m_shape->setFlag(physx::PxShapeFlag::eSIMULATION_SHAPE, true);
+    }
+}
+
+bool CollisionComponent::isTrigger() const
+{
+    return m_isTrigger;
+}
+
 void CollisionComponent::removeActor()
 {
     m_actor = nullptr;

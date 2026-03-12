@@ -66,6 +66,11 @@ public:
     bool enableRTShadows{false};
     bool enableRTReflections{false};
     RayTracingMode rayTracingMode{RayTracingMode::RayQuery};
+    int   rtShadowSamples{4};           // rays per light: 1=hard, 4=default soft, 16=high quality
+    float rtShadowPenumbraSize{0.05f};  // virtual light radius in world units → penumbra width
+    int   rtReflectionSamples{1};       // rays per pixel: 1=mirror, 4-8=glossy
+    float rtRoughnessThreshold{0.4f};   // skip surfaces rougher than this (0=only perfect mirrors, 1=all)
+    float rtReflectionStrength{1.0f};   // overall reflection intensity multiplier
     bool enableFXAA{true};
     bool enableBloom{true};
 

@@ -26,8 +26,10 @@
 #include "Engine/Render/GraphPasses/ParticleRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ContactShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/CinematicEffectsRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTReflectionsRenderGraphPass.hpp"
 
 #include <chrono>
+#include <filesystem>
 #include <future>
 #include <mutex>
 
@@ -45,6 +47,8 @@ public:
     bool init() override;
     void tick(float deltaTime) override;
     void shutdown() override;
+
+    void openSceneFromFile(const std::filesystem::path &path);
 
 private:
     void applyEditorViewportExtent(uint32_t width, uint32_t height);
@@ -98,6 +102,7 @@ private:
     engine::renderGraph::SSAORenderGraphPass *m_ssaoRenderGraphPass{nullptr};
     engine::renderGraph::SMAAPassRenderGraphPass *m_smaaRenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
+    engine::renderGraph::RTReflectionsRenderGraphPass *m_rtReflectionsRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_cinematicEffectsRenderGraphPass{nullptr};
     SelectionOverlayRenderGraphPass *m_selectionOverlayRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_uiRenderGraphPass{nullptr};
@@ -117,6 +122,7 @@ private:
     engine::renderGraph::FXAARenderGraphPass *m_gameFXAARenderGraphPass{nullptr};
     engine::renderGraph::SMAAPassRenderGraphPass *m_gameSMAARenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_gameContactShadowRenderGraphPass{nullptr};
+    engine::renderGraph::RTReflectionsRenderGraphPass *m_gameRTReflectionsRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_gameCinematicEffectsRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_gameUIRenderGraphPass{nullptr};
 

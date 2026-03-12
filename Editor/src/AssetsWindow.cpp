@@ -147,7 +147,8 @@ namespace
 
     std::vector<std::filesystem::path> gatherImportableFiles(const std::filesystem::path &directory,
                                                              bool recursive,
-                                                             const std::string &filterLower)
+                                                             const std::string &filterLower,
+                                                             int importTypeIndex = 0)
     {
         std::vector<std::filesystem::path> files;
         std::error_code errorCode;
@@ -158,7 +159,16 @@ namespace
         auto maybeAddFile = [&](const std::filesystem::path &path)
         {
             const std::string extensionLower = toLowerCopy(path.extension().string());
-            if (!isSupportedImportSourceExtension(extensionLower))
+            bool accepted = false;
+            if (importTypeIndex == 1)
+                accepted = isSupportedModelSourceExtension(extensionLower);
+            else if (importTypeIndex == 2)
+                accepted = isSupportedTextureSourceExtension(extensionLower);
+            else if (importTypeIndex == 3)
+                accepted = isSupportedAudioSourceExtension(extensionLower);
+            else
+                accepted = isSupportedImportSourceExtension(extensionLower);
+            if (!accepted)
                 return;
 
             const std::string pathLower = toLowerCopy(path.string());
@@ -168,6 +178,18 @@ namespace
             files.push_back(path.lexically_normal());
         };
 
+        // Returns true if any path component starts with '.' (hidden directory/file).
+        auto isHiddenPath = [](const std::filesystem::path &p) -> bool
+        {
+            for (const auto &part : p)
+            {
+                const std::string s = part.string();
+                if (!s.empty() && s.front() == '.' && s != "." && s != "..")
+                    return true;
+            }
+            return false;
+        };
+
         if (recursive)
         {
             for (std::filesystem::recursive_directory_iterator iterator(directory, errorCode);
@@ -175,8 +197,22 @@ namespace
                  iterator.increment(errorCode))
             {
                 const auto &entry = *iterator;
+
+                // Skip hidden directories entirely (e.g. .velixcache).
                 std::error_code fileError;
+                if (entry.is_directory(fileError) && !fileError)
+                {
+                    if (isHiddenPath(entry.path().filename()))
+                    {
+                        iterator.disable_recursion_pending();
+                        continue;
+                    }
+                }
+
                 if (!entry.is_regular_file(fileError) || fileError)
+                    continue;
+
+                if (isHiddenPath(entry.path().filename()))
                     continue;
 
                 maybeAddFile(entry.path());
@@ -191,6 +227,9 @@ namespace
                 const auto &entry = *iterator;
                 std::error_code fileError;
                 if (!entry.is_regular_file(fileError) || fileError)
+                    continue;
+
+                if (isHiddenPath(entry.path().filename()))
                     continue;
 
                 maybeAddFile(entry.path());
@@ -273,6 +312,24 @@ namespace
         json["uv_offset"] = {0.0f, 0.0f};
 
         std::ofstream file(materialPath);
+        if (!file.is_open())
+            return false;
+
+        file << std::setw(4) << json << '\n';
+        return file.good();
+    }
+
+    std::filesystem::path makeUniqueScenePath(const std::filesystem::path &directory, const std::string &baseName)
+    {
+        return makeUniquePathWithExtension(directory, baseName, ".elixscene");
+    }
+
+    bool writeDefaultSceneAsset(const std::filesystem::path &scenePath)
+    {
+        nlohmann::json json;
+        json["name"] = scenePath.stem().string();
+
+        std::ofstream file(scenePath);
         if (!file.is_open())
             return false;
 
@@ -411,6 +468,20 @@ void AssetsWindow::draw()
             ImGui::CloseCurrentPopup();
             refreshTree();
         }
+
+        if (ImGui::Button("Scene"))
+        {
+            const auto newScenePath = makeUniqueScenePath(m_currentDirectory, "NewScene");
+
+            if (!writeDefaultSceneAsset(newScenePath))
+                VX_EDITOR_ERROR_STREAM("Failed to create scene asset: " << newScenePath << '\n');
+            else if (m_onSceneOpenRequestFunction)
+                m_onSceneOpenRequestFunction(newScenePath);
+
+            ImGui::CloseCurrentPopup();
+            refreshTree();
+        }
+
         ImGui::EndPopup();
     }
 
@@ -699,6 +770,8 @@ void AssetsWindow::drawAssetGrid()
                 {
                     if (extensionLower == ".elixmat" && m_onMaterialOpenRequestFunction)
                         m_onMaterialOpenRequestFunction(assetPath);
+                    else if ((extensionLower == ".elixscene" || extensionLower == ".scene") && m_onSceneOpenRequestFunction)
+                        m_onSceneOpenRequestFunction(assetPath);
                     else
                     {
                         const bool isTextEditable =
@@ -706,7 +779,7 @@ void AssetsWindow::drawAssetGrid()
                             m_cppExtensions.find(extensionLower) != m_cppExtensions.end() ||
                             m_headerExtensions.find(extensionLower) != m_headerExtensions.end() ||
                             m_configExtensions.find(extensionLower) != m_configExtensions.end() ||
-                            m_sceneExtensions.find(extensionLower) != m_sceneExtensions.end() ||
+                            (m_sceneExtensions.find(extensionLower) != m_sceneExtensions.end() && !m_onSceneOpenRequestFunction) ||
                             m_velixExtensions.find(extensionLower) != m_velixExtensions.end();
 
                         if (isTextEditable && m_onTextAssetOpenRequestFunction)
@@ -1170,7 +1243,7 @@ void AssetsWindow::drawAssetGrid()
             ImGui::BeginChild("ImportFileList", ImVec2(520.0f, paneHeight), true);
             {
                 const std::string filterLower = toLowerCopy(trimCopy(m_importFilterBuffer));
-                const auto importFiles = gatherImportableFiles(m_importBrowserCurrentDirectory, m_importRecursive, filterLower);
+                const auto importFiles = gatherImportableFiles(m_importBrowserCurrentDirectory, m_importRecursive, filterLower, m_importTypeIndex);
 
                 if (ImGui::Button("Select All Visible"))
                 {

@@ -147,4 +147,5 @@ void EngineShaderFamilies::cleanEngineShaderFamilies()
     for (auto &descriptorSetLayout : meshShaderFamily.layouts)
         descriptorSetLayout->destroyVk();
 }
+
 ELIX_NESTED_NAMESPACE_END

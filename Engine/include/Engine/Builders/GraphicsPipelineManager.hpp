@@ -60,6 +60,7 @@ private:
     static inline core::Shader::SharedPtr uiQuadShader{nullptr};
     static inline core::Shader::SharedPtr particleShader{nullptr};
     static inline core::Shader::SharedPtr glassShader{nullptr};
+    static inline core::Shader::SharedPtr rtReflectionsShader{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

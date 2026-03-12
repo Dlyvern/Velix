@@ -63,6 +63,9 @@ void RigidBodyComponent::onOwnerAttached()
 
     auto *owner = getOwner<Entity>();
     m_transformComponent = owner ? owner->getComponent<Transform3DComponent>() : nullptr;
+
+    if (m_rigidActor && owner)
+        m_rigidActor->userData = owner;
 }
 
 void RigidBodyComponent::syncToPhysics()
@@ -92,6 +95,88 @@ void RigidBodyComponent::syncFromPhysics()
 physx::PxRigidActor *RigidBodyComponent::getRigidActor() const
 {
     return m_rigidActor;
+}
+
+void RigidBodyComponent::applyImpulse(const glm::vec3 &impulse)
+{
+    auto *dynamic = m_rigidActor ? m_rigidActor->is<physx::PxRigidDynamic>() : nullptr;
+    if (!dynamic || isKinematic())
+        return;
+
+    physx::PxRigidBodyExt::addForceAtPos(
+        *dynamic,
+        physx::PxVec3(impulse.x, impulse.y, impulse.z),
+        dynamic->getGlobalPose().p,
+        physx::PxForceMode::eIMPULSE);
+}
+
+void RigidBodyComponent::addForce(const glm::vec3 &force)
+{
+    auto *dynamic = m_rigidActor ? m_rigidActor->is<physx::PxRigidDynamic>() : nullptr;
+    if (!dynamic || isKinematic())
+        return;
+
+    dynamic->addForce(physx::PxVec3(force.x, force.y, force.z), physx::PxForceMode::eFORCE);
+}
+
+void RigidBodyComponent::addTorque(const glm::vec3 &torque)
+{
+    auto *dynamic = m_rigidActor ? m_rigidActor->is<physx::PxRigidDynamic>() : nullptr;
+    if (!dynamic || isKinematic())
+        return;
+
+    dynamic->addTorque(physx::PxVec3(torque.x, torque.y, torque.z), physx::PxForceMode::eFORCE);
+}
+
+void RigidBodyComponent::setLinearVelocity(const glm::vec3 &velocity)
+{
+    auto *dynamic = m_rigidActor ? m_rigidActor->is<physx::PxRigidDynamic>() : nullptr;
+    if (!dynamic)
+        return;
+
+    dynamic->setLinearVelocity(physx::PxVec3(velocity.x, velocity.y, velocity.z));
+}
+
+glm::vec3 RigidBodyComponent::getLinearVelocity() const
+{
+    auto *dynamic = m_rigidActor ? m_rigidActor->is<physx::PxRigidDynamic>() : nullptr;
+    if (!dynamic)
+        return glm::vec3(0.0f);
+
+    const physx::PxVec3 v = dynamic->getLinearVelocity();
+    return glm::vec3(v.x, v.y, v.z);
+}
+
+void RigidBodyComponent::setAngularVelocity(const glm::vec3 &angularVelocity)
+{
+    auto *dynamic = m_rigidActor ? m_rigidActor->is<physx::PxRigidDynamic>() : nullptr;
+    if (!dynamic)
+        return;
+
+    dynamic->setAngularVelocity(physx::PxVec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
+}
+
+glm::vec3 RigidBodyComponent::getAngularVelocity() const
+{
+    auto *dynamic = m_rigidActor ? m_rigidActor->is<physx::PxRigidDynamic>() : nullptr;
+    if (!dynamic)
+        return glm::vec3(0.0f);
+
+    const physx::PxVec3 v = dynamic->getAngularVelocity();
+    return glm::vec3(v.x, v.y, v.z);
+}
+
+float RigidBodyComponent::getMass() const
+{
+    auto *dynamic = m_rigidActor ? m_rigidActor->is<physx::PxRigidDynamic>() : nullptr;
+    return dynamic ? dynamic->getMass() : 0.0f;
+}
+
+void RigidBodyComponent::setMass(float mass)
+{
+    auto *dynamic = m_rigidActor ? m_rigidActor->is<physx::PxRigidDynamic>() : nullptr;
+    if (dynamic)
+        physx::PxRigidBodyExt::setMassAndUpdateInertia(*dynamic, mass);
 }
 
 ELIX_NESTED_NAMESPACE_END

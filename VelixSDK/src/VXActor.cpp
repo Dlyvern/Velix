@@ -1,19 +1,13 @@
 #include "VelixSDK/VXActor.hpp"
 
-#include "Engine/Scripting/VelixAPI.hpp"
-
-#include <GLFW/glfw3.h>
+#include "Engine/Input/InputManager.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(sdk)
 
-namespace
+engine::InputManager &VXActor::input()
 {
-    GLFWwindow *resolveActiveGlfwWindow()
-    {
-        auto *window = engine::scripting::getActiveWindow();
-        return window ? window->getRawHandler() : nullptr;
-    }
-} // namespace
+    return engine::InputManager::instance();
+}
 
 void VXActor::onUpdate(float deltaTime)
 {
@@ -21,52 +15,124 @@ void VXActor::onUpdate(float deltaTime)
     onActorUpdate(deltaTime);
 }
 
+// --- Keyboard (held) ---
+
 bool VXActor::isKeyDown(engine::KeyCode keyCode) const
 {
-    auto *window = resolveActiveGlfwWindow();
-    if (!window)
-        return false;
+    return input().isKeyDown(keyCode);
+}
 
-    return glfwGetKey(window, static_cast<int>(keyCode)) == GLFW_PRESS;
+bool VXActor::isKeyDown(int keyCode) const
+{
+    return input().isKeyDown(static_cast<engine::KeyCode>(keyCode));
+}
+
+// --- Keyboard (edge) ---
+
+bool VXActor::isKeyJustPressed(engine::KeyCode keyCode) const
+{
+    return input().isKeyJustPressed(keyCode);
+}
+
+bool VXActor::isKeyJustPressed(int keyCode) const
+{
+    return input().isKeyJustPressed(static_cast<engine::KeyCode>(keyCode));
+}
+
+bool VXActor::isKeyJustReleased(engine::KeyCode keyCode) const
+{
+    return input().isKeyJustReleased(keyCode);
+}
+
+bool VXActor::isKeyJustReleased(int keyCode) const
+{
+    return input().isKeyJustReleased(static_cast<engine::KeyCode>(keyCode));
 }
 
 bool VXActor::isKeyUp(engine::KeyCode keyCode) const
 {
-    auto *window = resolveActiveGlfwWindow();
-    if (!window)
-        return true;
-
-    return glfwGetKey(window, static_cast<int>(keyCode)) == GLFW_RELEASE;
+    return !input().isKeyDown(keyCode);
 }
 
-bool VXActor::isMouseButtonDown(int32_t button) const
+bool VXActor::isKeyUp(int keyCode) const
 {
-    auto *window = resolveActiveGlfwWindow();
-    if (!window)
-        return false;
-
-    return glfwGetMouseButton(window, button) == GLFW_PRESS;
+    return !input().isKeyDown(static_cast<engine::KeyCode>(keyCode));
 }
 
-bool VXActor::isMouseButtonUp(int32_t button) const
+// --- Mouse buttons ---
+
+bool VXActor::isMouseButtonDown(int button) const
 {
-    auto *window = resolveActiveGlfwWindow();
-    if (!window)
-        return true;
-
-    return glfwGetMouseButton(window, button) == GLFW_RELEASE;
+    return input().isMouseButtonDown(button);
 }
+
+bool VXActor::isMouseButtonDown(engine::MouseButton button) const
+{
+    return input().isMouseButtonDown(button);
+}
+
+bool VXActor::isMouseButtonJustPressed(int button) const
+{
+    return input().isMouseButtonJustPressed(button);
+}
+
+bool VXActor::isMouseButtonJustPressed(engine::MouseButton button) const
+{
+    return input().isMouseButtonJustPressed(button);
+}
+
+bool VXActor::isMouseButtonJustReleased(int button) const
+{
+    return input().isMouseButtonJustReleased(button);
+}
+
+bool VXActor::isMouseButtonJustReleased(engine::MouseButton button) const
+{
+    return input().isMouseButtonJustReleased(button);
+}
+
+bool VXActor::isMouseButtonUp(int button) const
+{
+    return !input().isMouseButtonDown(button);
+}
+
+// --- Mouse position & movement ---
 
 glm::vec2 VXActor::getMousePosition() const
 {
-    auto *window = resolveActiveGlfwWindow();
-    if (!window)
-        return glm::vec2(0.0f);
+    return input().getMousePosition();
+}
 
-    double x = 0.0;
-    double y = 0.0;
-    glfwGetCursorPos(window, &x, &y);
-    return glm::vec2(static_cast<float>(x), static_cast<float>(y));
+glm::vec2 VXActor::getMouseDelta() const
+{
+    return input().getMouseDelta();
+}
+
+float VXActor::getScrollDelta() const
+{
+    return input().getScrollDelta();
+}
+
+// --- Cursor control ---
+
+void VXActor::setCursorLocked(bool locked)
+{
+    input().setCursorLocked(locked);
+}
+
+bool VXActor::isCursorLocked() const
+{
+    return input().isCursorLocked();
+}
+
+void VXActor::setCursorVisible(bool visible)
+{
+    input().setCursorVisible(visible);
+}
+
+bool VXActor::isCursorVisible() const
+{
+    return input().isCursorVisible();
 }
 
 ELIX_NESTED_NAMESPACE_END

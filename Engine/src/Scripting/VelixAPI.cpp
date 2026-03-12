@@ -1,8 +1,13 @@
 #include "Engine/Scripting/VelixAPI.hpp"
+#include "Engine/SceneManager.hpp"
+
+#include "Core/Window.hpp"
 
 #include "Engine/Scene.hpp"
 #include "Engine/Entity.hpp"
+#include "Engine/Input/InputManager.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
+#include "Engine/Time.hpp"
 
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/AudioComponent.hpp"
@@ -117,11 +122,18 @@ Scene *const getActiveScene()
 void setActiveWindow(platform::Window *window)
 {
     g_activeWindow = window;
+    InputManager::instance().setWindow(window ? window->getRawHandler() : nullptr);
 }
 
 platform::Window *const getActiveWindow()
 {
     return g_activeWindow;
+}
+
+void beginFrame(float deltaTime)
+{
+    InputManager::instance().update();
+    Time::instance().update(deltaTime);
 }
 
 Entity *spawnEntity(const char *name, Scene *scene)
@@ -155,6 +167,22 @@ Entity *findEntityById(uint32_t id, Scene *scene)
         return nullptr;
 
     return targetScene->getEntityById(id);
+}
+
+Entity *findEntityByName(const char *name, Scene *scene)
+{
+    auto *targetScene = resolveScene(scene);
+
+    if (!targetScene || !name)
+        return nullptr;
+
+    for (const auto &entity : targetScene->getEntities())
+    {
+        if (entity && entity->getName() == name)
+            return entity.get();
+    }
+
+    return nullptr;
 }
 
 uint64_t getEntitiesCount(Scene *scene)
@@ -221,6 +249,39 @@ ECS *getEntityComponentByIndex(Entity *entity, const char *componentTypeName, ui
 bool entityHasComponent(Entity *entity, const char *componentTypeName)
 {
     return getEntitySingleComponent(entity, componentTypeName) != nullptr;
+}
+
+void loadScene(const char *filePath)
+{
+    if (filePath)
+        SceneManager::instance().requestLoadScene(filePath);
+}
+
+void loadSceneAdditive(const char *filePath)
+{
+    if (filePath)
+        SceneManager::instance().requestLoadAdditive(filePath);
+}
+
+void unloadGroup(const char *tag)
+{
+    if (tag)
+        SceneManager::instance().requestUnloadGroup(tag);
+}
+
+void setDontDestroyOnLoad(Entity *entity)
+{
+    SceneManager::instance().setDontDestroyOnLoad(entity);
+}
+
+void clearDontDestroyOnLoad(Entity *entity)
+{
+    SceneManager::instance().clearDontDestroyOnLoad(entity);
+}
+
+InputManager &getInputManager()
+{
+    return InputManager::instance();
 }
 
 RenderQualitySettings *getRenderQualitySettings()

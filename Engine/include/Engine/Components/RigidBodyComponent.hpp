@@ -28,6 +28,20 @@ public:
     void setPosition(const physx::PxVec3 &vec);
     void setPosition(const glm::vec3 &vec);
 
+    // Forces & velocity (dynamic bodies only; silently ignored on static/kinematic)
+    void applyImpulse(const glm::vec3 &impulse);
+    void addForce(const glm::vec3 &force);
+    void addTorque(const glm::vec3 &torque);
+
+    void setLinearVelocity(const glm::vec3 &velocity);
+    glm::vec3 getLinearVelocity() const;
+
+    void setAngularVelocity(const glm::vec3 &angularVelocity);
+    glm::vec3 getAngularVelocity() const;
+
+    float getMass() const;
+    void setMass(float mass);
+
 protected:
     void onOwnerAttached() override;
 

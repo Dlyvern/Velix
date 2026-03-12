@@ -96,6 +96,33 @@ public:
         return *engine::scripting::getRenderQualitySettings();
     }
 
+    // --- Entity search ---
+
+    engine::Entity *findByName(const std::string &name) const
+    {
+        return engine::scripting::findEntityByName(name.c_str(), getScene());
+    }
+
+    // --- Scene management (queued — safe to call during update()) ---
+
+    // Replace the active scene. DontDestroyOnLoad entities survive.
+    static void loadScene(const std::string &path)
+    {
+        engine::scripting::loadScene(path.c_str());
+    }
+
+    // Merge entities from a scene file into the current scene.
+    static void loadAdditive(const std::string &path)
+    {
+        engine::scripting::loadSceneAdditive(path.c_str());
+    }
+
+    // Destroy all entities in the current scene that have the given tag.
+    static void unloadGroup(const std::string &tag)
+    {
+        engine::scripting::unloadGroup(tag.c_str());
+    }
+
 private:
     engine::Scene *m_scene{nullptr};
 };

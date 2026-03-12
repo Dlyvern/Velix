@@ -52,6 +52,11 @@ public:
         m_onAssetDeletedFunction = function;
     }
 
+    void setOnSceneOpenRequest(const std::function<void(const std::filesystem::path &)> &function)
+    {
+        m_onSceneOpenRequestFunction = function;
+    }
+
     [[nodiscard]] bool hasKeyboardFocus() const
     {
         return m_hasKeyboardFocus;
@@ -62,6 +67,7 @@ private:
     std::function<void(const std::filesystem::path &)> m_onTextAssetOpenRequestFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onAssetSelectionChangedFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onAssetDeletedFunction{nullptr};
+    std::function<void(const std::filesystem::path &)> m_onSceneOpenRequestFunction{nullptr};
 
     AssetsPreviewSystem &m_assetsPreviewSystem;
 
