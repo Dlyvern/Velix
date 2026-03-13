@@ -57,7 +57,7 @@
 	url = https://github.com/freetype/freetype.git
 [submodule "external/imgui-node-editor"]
 	path = external/imgui-node-editor
-	url = git@github.com:Dlyvern/imgui-node-editor.git
+	url = https://github.com/Dlyvern/imgui-node-editor.git
 [submodule "external/Imath"]
 	path = external/Imath
 	url = https://github.com/AcademySoftwareFoundation/Imath.git
