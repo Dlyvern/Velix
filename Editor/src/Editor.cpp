@@ -1353,6 +1353,22 @@ void Editor::setScene(engine::Scene::SharedPtr scene)
     restoreSceneMaterialOverrides();
 }
 
+void Editor::setCurrentScenePath(const std::filesystem::path &path)
+{
+    m_currentScenePath = path.lexically_normal();
+}
+
+std::filesystem::path Editor::resolveCurrentScenePath() const
+{
+    if (!m_currentScenePath.empty())
+        return m_currentScenePath;
+
+    if (auto project = m_currentProject.lock(); project)
+        return std::filesystem::path(project->entryScene).lexically_normal();
+
+    return {};
+}
+
 void Editor::restoreSceneMaterialOverrides()
 {
     if (!m_scene)
@@ -2523,11 +2539,12 @@ void Editor::drawCustomTitleBar()
             }
 
             auto project = m_currentProject.lock();
-            if (m_scene && project && m_currentMode == EditorMode::EDIT)
+            const std::filesystem::path scenePath = resolveCurrentScenePath();
+            if (m_scene && project && m_currentMode == EditorMode::EDIT && !scenePath.empty())
             {
-                m_scene->saveSceneToFile(project->entryScene);
+                m_scene->saveSceneToFile(scenePath.string());
                 m_notificationManager.showInfo("Scene saved");
-                VX_EDITOR_INFO_STREAM("Scene saved to: " << project->entryScene);
+                VX_EDITOR_INFO_STREAM("Scene saved to: " << scenePath.string());
             }
         }
 
@@ -2565,11 +2582,12 @@ void Editor::drawCustomTitleBar()
             auto project = m_currentProject.lock();
             if (m_scene && project && m_currentMode == EditorMode::EDIT)
             {
+                const std::filesystem::path currentScenePath = resolveCurrentScenePath();
                 std::string filename = saveAsBuf;
                 if (filename.find('.') == std::string::npos)
                     filename += ".elixscene";
                 const std::filesystem::path newPath =
-                    std::filesystem::path(project->entryScene).parent_path() / filename;
+                    currentScenePath.parent_path() / filename;
                 m_scene->saveSceneToFile(newPath.string());
                 m_notificationManager.showSuccess("Scene copy saved: " + newPath.filename().string());
                 VX_EDITOR_INFO_STREAM("Scene copy saved to: " << newPath.string());
@@ -2748,7 +2766,7 @@ bool Editor::hasUnsavedSceneChanges()
     if (!m_scene || !project)
         return false;
 
-    const std::filesystem::path scenePath = project->entryScene;
+    const std::filesystem::path scenePath = resolveCurrentScenePath();
     if (scenePath.empty() || !std::filesystem::exists(scenePath))
         return true;
 
@@ -2757,7 +2775,7 @@ bool Editor::hasUnsavedSceneChanges()
     if (sceneDirectory.empty())
         sceneDirectory = std::filesystem::current_path();
 
-    // Save temporary snapshot next to the entry scene.
+    // Save temporary snapshot next to the active scene.
     // This keeps relative path serialization and fallback scene naming stable.
     const std::filesystem::path tempScenePath = sceneDirectory / (scenePath.stem().string() +
                                                                   ".__velix_editor_unsaved_scene_check_" +
@@ -8430,11 +8448,12 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
         }
 
         auto project = m_currentProject.lock();
-        if (m_scene && project && m_currentMode == EditorMode::EDIT)
+        const std::filesystem::path scenePath = resolveCurrentScenePath();
+        if (m_scene && project && m_currentMode == EditorMode::EDIT && !scenePath.empty())
         {
-            m_scene->saveSceneToFile(project->entryScene);
+            m_scene->saveSceneToFile(scenePath.string());
             m_notificationManager.showInfo("Scene saved");
-            VX_EDITOR_INFO_STREAM("Scene saved to: " << project->entryScene);
+            VX_EDITOR_INFO_STREAM("Scene saved to: " << scenePath.string());
         }
     }
 

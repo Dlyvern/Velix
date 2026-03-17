@@ -69,6 +69,8 @@ private:
     std::future<engine::Scene::SharedPtr> m_loadingFuture;
     std::chrono::steady_clock::time_point m_loadingStartedAt{};
     std::string m_loadingSceneName;
+    std::filesystem::path m_pendingEditorScenePath;
+    std::filesystem::path m_currentEditorScenePath;
     mutable std::mutex m_loadingStatusMutex;
     std::string m_loadingStatus{"Preparing loading..."};
     bool m_loadingDecorationsHidden{false};

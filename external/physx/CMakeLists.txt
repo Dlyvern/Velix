@@ -65,8 +65,9 @@ if(NOT PHYSX_PREBUILT_FOUND)
     message(STATUS "Prebuilt PhysX not found. Building it manually...")
 
     if(WIN32)
+        file(TO_NATIVE_PATH "${CMAKE_CURRENT_LIST_DIR}/scripts/build_physx_windows.bat" PHYSX_WINDOWS_BUILD_SCRIPT)
         execute_process(
-            COMMAND ${CMAKE_CURRENT_LIST_DIR}/scripts/build_physx_windows.bat ${PHYSX_BUILD_TYPE}
+            COMMAND cmd /c call "${PHYSX_WINDOWS_BUILD_SCRIPT}" "${PHYSX_BUILD_TYPE}"
             WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
             RESULT_VARIABLE PHYSX_BUILD_RESULT
         )
@@ -79,7 +80,7 @@ if(NOT PHYSX_PREBUILT_FOUND)
     endif()
 
     if(NOT PHYSX_BUILD_RESULT EQUAL 0)
-        message(FATAL_ERROR "Failed to build PhysX")
+        message(FATAL_ERROR "Failed to build PhysX (exit code: ${PHYSX_BUILD_RESULT})")
     endif()
 
     foreach(lib IN LISTS PHYSX_LIBS_TO_CHECK)

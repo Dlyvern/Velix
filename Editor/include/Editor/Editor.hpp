@@ -71,6 +71,7 @@ public:
 
     //! Maybe we can do something better here
     void setScene(engine::Scene::SharedPtr scene);
+    void setCurrentScenePath(const std::filesystem::path &path);
 
     void setProject(const std::shared_ptr<Project> &project)
     {
@@ -85,6 +86,7 @@ public:
         m_projectScriptsRegister = nullptr;
         m_loadedGameModulePath.clear();
         m_currentProject = project;
+        m_currentScenePath.clear();
         invalidateModelDetailsCache();
         m_assetsPreviewSystem.setProject(project.get());
         m_terrainTools.setProjectRootPath(project ? std::filesystem::path(project->fullPath) : std::filesystem::path{});
@@ -321,6 +323,7 @@ private:
     TerrainTools m_terrainTools;
 
     void drawDocument();
+    std::filesystem::path resolveCurrentScenePath() const;
 
     ImGuiID m_centerDockId = 0;
     ImGuiID m_dockSpaceId = 0;
@@ -526,6 +529,7 @@ private:
     actions::EditorSceneHistory m_sceneActionHistory{};
     actions::EditorEntityClipboard m_entityClipboard{};
     engine::Scene::SharedPtr m_scene{nullptr};
+    std::filesystem::path m_currentScenePath;
     engine::Entity *m_selectedEntity{nullptr};
     std::optional<uint32_t> m_selectedMeshSlot;
     std::optional<uint32_t> m_lastScrolledMeshSlot; // tracks last slot we auto-scrolled to

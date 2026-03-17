@@ -321,6 +321,7 @@ bool EditorRuntime::init()
     m_stillLoadingTheScene = true;
 
     const std::string entryScenePath = m_project->entryScene;
+    m_pendingEditorScenePath = std::filesystem::path(entryScenePath).lexically_normal();
     m_loadingStartedAt = std::chrono::steady_clock::now();
     m_loadingSceneName = std::filesystem::path(entryScenePath).filename().string();
     if (m_loadingSceneName.empty())
@@ -366,6 +367,7 @@ bool EditorRuntime::init()
 
     m_editor->setScene(m_activeScene);
     m_editor->setProject(m_project);
+    m_editor->setCurrentScenePath(m_pendingEditorScenePath);
     m_editor->setProjectScriptsRegister(startupScriptsRegister, startupModulePath);
     m_editor->setRenderViewportOnly(true);
 
@@ -485,6 +487,7 @@ void EditorRuntime::openSceneFromFile(const std::filesystem::path &path)
         return;
 
     const std::string scenePath = path.string();
+    m_pendingEditorScenePath = path.lexically_normal();
     m_stillLoadingTheScene = true;
     m_loadingStartedAt = std::chrono::steady_clock::now();
     m_loadingSceneName = path.filename().string();
@@ -880,8 +883,10 @@ void EditorRuntime::tick(float deltaTime)
             if (loadedScene)
             {
                 m_editorScene = loadedScene;
+                m_currentEditorScenePath = m_pendingEditorScenePath;
                 switchActiveScene(m_editorScene);
-                VX_EDITOR_INFO_STREAM("Scene loading completed: " << m_project->entryScene << '\n');
+                m_editor->setCurrentScenePath(m_currentEditorScenePath);
+                VX_EDITOR_INFO_STREAM("Scene loading completed: " << m_currentEditorScenePath.string() << '\n');
             }
             else
             {

@@ -116,9 +116,12 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $cmakeRoot 'bin')
           Add-Content -Path $env:GITHUB_ENV -Value "VELIX_BUNDLED_CMAKE_DIR=$cmakeRoot"
 
-      - name: Configure and Build
+      - name: Configure
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DPHYSX_BUILD_TYPE=checked -DVulkan_ROOT="$env:VULKAN_SDK" -DVELIX_BUNDLED_CMAKE_DIR="$env:VELIX_BUNDLED_CMAKE_DIR"
+
+      - name: Build
+        run: |
           cmake --build build --config Release
 
       - name: Install to Staging Dir
