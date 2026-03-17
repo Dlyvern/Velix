@@ -98,6 +98,9 @@ void GraphicsPipelineManager::loadShaderModules()
     particleShader = std::make_shared<core::Shader>("./resources/shaders/particle.vert.spv", "./resources/shaders/particle.frag.spv");
     glassShader = std::make_shared<core::Shader>("./resources/shaders/glass_mesh.vert.spv", "./resources/shaders/glass.frag.spv");
     rtReflectionsShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/rt_reflections.frag.spv");
+    rtaoShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/rt_ao.frag.spv");
+    depthPrepassStaticShader  = std::make_shared<core::Shader>("./resources/shaders/gbuffer_static.vert.spv",  "./resources/shaders/empty.frag.spv");
+    depthPrepassSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_skinned.vert.spv", "./resources/shaders/empty.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -138,6 +141,9 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(particleShader);
     destroyShader(glassShader);
     destroyShader(rtReflectionsShader);
+    destroyShader(rtaoShader);
+    destroyShader(depthPrepassStaticShader);
+    destroyShader(depthPrepassSkinnedShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -252,6 +258,15 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::RTReflections:
         stages = rtReflectionsShader->getShaderStages();
         break;
+    case ShaderId::RTAO:
+        stages = rtaoShader->getShaderStages();
+        break;
+    case ShaderId::DepthPrepassStatic:
+        stages = depthPrepassStaticShader->getShaderStages();
+        break;
+    case ShaderId::DepthPrepassSkinned:
+        stages = depthPrepassSkinnedShader->getShaderStages();
+        break;
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
@@ -270,6 +285,11 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     auto inputAssembly = builders::GraphicsPipelineBuilder::inputAssemblyCI(key.topology);
     auto viewportState = builders::GraphicsPipelineBuilder::viewportCI({dummyVp}, {dummySc});
     auto rasterizer = builders::GraphicsPipelineBuilder::rasterizationCI(key.polygonMode);
+    rasterizer.depthClampEnable = key.depthClampEnable ? VK_TRUE : VK_FALSE;
+    rasterizer.depthBiasEnable = key.depthBiasEnable ? VK_TRUE : VK_FALSE;
+    rasterizer.depthBiasConstantFactor = key.depthBiasConstantFactor;
+    rasterizer.depthBiasSlopeFactor = key.depthBiasSlopeFactor;
+    rasterizer.depthBiasClamp = key.depthBiasClamp;
 
     switch (key.cull)
     {
@@ -289,7 +309,8 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     std::vector<VkVertexInputBindingDescription> vertexBindingDescriptions;
     std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions;
 
-    if (key.shader == ShaderId::GBufferSkinned || key.shader == ShaderId::SkinnedShadow)
+    if (key.shader == ShaderId::GBufferSkinned || key.shader == ShaderId::SkinnedShadow ||
+        key.shader == ShaderId::DepthPrepassSkinned)
     {
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::VertexSkinned))};
         vertexAttributeDescriptions = vertex::VertexSkinned::getAttributeDescriptions();
@@ -318,7 +339,8 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
              key.shader == ShaderId::SSAO || key.shader == ShaderId::SMAA ||
              key.shader == ShaderId::ContactShadow || key.shader == ShaderId::CinematicEffects ||
              key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||
-             key.shader == ShaderId::Particle || key.shader == ShaderId::RTReflections)
+             key.shader == ShaderId::Particle || key.shader == ShaderId::RTReflections ||
+             key.shader == ShaderId::RTAO)
     {
         // Fullscreen / billboard passes generate vertices procedurally in the vertex shader
         vertexBindingDescriptions = {};

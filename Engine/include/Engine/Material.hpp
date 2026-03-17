@@ -53,10 +53,18 @@ public:
         float alphaCutoff = 0.5f;
         float uvRotation = 0.0f; // degrees
         float ior = 1.5f;        // Index of Refraction (glass=1.5, water=1.33, diamond=2.4)
+
+        // Bindless texture indices — filled by RenderGraph when registering the material.
+        uint32_t albedoTexIdx{0};
+        uint32_t normalTexIdx{0};
+        uint32_t ormTexIdx{0};
+        uint32_t emissiveTexIdx{0};
     };
 
     Material(Texture::SharedPtr texture);
 
+    // Returns a per-frame descriptor set using the old per-material layout.
+    // Used by editor preview pass; GBuffer uses the bindless path instead.
     VkDescriptorSet getDescriptorSet(uint32_t frameIndex) const;
 
     void setAlbedoTexture(Texture::SharedPtr texture);
@@ -92,8 +100,6 @@ public:
     static void createDefaultMaterial(Texture::SharedPtr texture);
     static void deleteDefaultMaterial();
     static SharedPtr create(Texture::SharedPtr texture);
-
-    void uploadParams();
 
     const std::string &getCustomFragPath() const;
     void setCustomFragPath(const std::string &path);

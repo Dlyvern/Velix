@@ -1,0 +1,48 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform PC
+{
+    uint  batchCount;
+    uint  pad0;
+    uint  pad1;
+    uint  pad2;
+    vec4  planes[6];    // normalised Gribb-Hartmann frustum planes
+} u;
+
+layout(set = 0, binding = 0) readonly buffer BatchBoundsBuffer
+{
+    vec4 bounds[];
+};
+
+layout(set = 0, binding = 1) buffer DrawCommandBuffer
+{
+    uint cmds[];
+};
+
+void main()
+{
+    uint batchIdx = gl_GlobalInvocationID.x;
+    if (batchIdx >= u.batchCount)
+        return;
+
+    vec4 b = bounds[batchIdx];
+
+    // Radius <= 0 means no bounds data – always draw.
+    if (b.w <= 0.0)
+        return;
+
+    // Sphere-frustum intersection: centre must be no further than -radius behind any plane.
+    for (int i = 0; i < 6; ++i)
+    {
+        float dist = dot(u.planes[i].xyz, b.xyz) + u.planes[i].w;
+        if (dist < -b.w)
+        {
+            // Entirely outside this plane → cull.
+            cmds[batchIdx * 5u + 1u] = 0u;   // zero instanceCount
+            return;
+        }
+    }
+}

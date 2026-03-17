@@ -52,13 +52,14 @@ layout(set = 1, binding = 6) uniform sampler2DArray directionalShadowMaps;
 layout(set = 1, binding = 7) uniform sampler2DArray spotShadowMaps;
 layout(set = 1, binding = 8) uniform samplerCubeArray cubeShadowMaps;
 layout(set = 1, binding = 9) uniform sampler2D uSSAO;
+layout(set = 1, binding = 10) uniform sampler2DArray uRTShadowFactors;
 
 layout(push_constant) uniform LightingPC
 {
     float shadowAmbientStrength;
-    float padding0;
-    float padding1;
-    float padding2;
+    float shadowMode;           // 0.0 = shadow maps, 2.0 = RT pipeline texture
+    float rtShadowSamples;
+    float rtShadowPenumbraSize;
 } pc;
 
 vec3 reconstructViewPosition(vec2 uv, float depth)
@@ -93,8 +94,9 @@ float calculateDirectionalLightShadow(int cascadeIndex, vec3 worldPos, vec3 ligh
     float cosNL = max(dot(normalWorld, lightDirWorld), 0.0);
     float bias = max(0.0006 * (1.0 - cosNL), 0.00005);
 
+    float kernelScale = 1.0 + float(cascadeIndex) * 0.75;
     float shadow = 0.0;
-    vec2 texelSize = 1.0 / vec2(textureSize(directionalShadowMaps, 0).xy);
+    vec2 texelSize = (1.0 / vec2(textureSize(directionalShadowMaps, 0).xy)) * kernelScale;
     for (int x = -1; x <= 1; ++x)
     {
         for (int y = -1; y <= 1; ++y)
@@ -105,6 +107,40 @@ float calculateDirectionalLightShadow(int cascadeIndex, vec3 worldPos, vec3 ligh
     }
 
     return shadow / 9.0;
+}
+
+float getDirectionalShadowBlended(float viewDepth, vec3 worldPos, vec3 L_world, vec3 N_world)
+{
+    const float blendFraction = 0.20;
+
+    float cascadeStart[4] = float[4](0.0,
+        lightSpaceData.directionalCascadeSplits.x,
+        lightSpaceData.directionalCascadeSplits.y,
+        lightSpaceData.directionalCascadeSplits.z);
+    float cascadeEnd[4] = float[4](
+        lightSpaceData.directionalCascadeSplits.x,
+        lightSpaceData.directionalCascadeSplits.y,
+        lightSpaceData.directionalCascadeSplits.z,
+        lightSpaceData.directionalCascadeSplits.z * 4.0);
+
+    int cascade = selectDirectionalCascade(viewDepth);
+    float shadow = calculateDirectionalLightShadow(cascade, worldPos, L_world, N_world);
+
+    if (cascade < 3)
+    {
+        float rangeStart = cascadeStart[cascade];
+        float rangeEnd   = cascadeEnd[cascade];
+        float blendStart = mix(rangeStart, rangeEnd, 1.0 - blendFraction);
+        if (viewDepth > blendStart)
+        {
+            float t = clamp((viewDepth - blendStart) / max(rangeEnd - blendStart, 0.0001), 0.0, 1.0);
+            t = smoothstep(0.0, 1.0, t);
+            float shadowNext = calculateDirectionalLightShadow(cascade + 1, worldPos, L_world, N_world);
+            shadow = mix(shadow, shadowNext, t);
+        }
+    }
+
+    return shadow;
 }
 
 float calculateSpotLightShadow(int shadowIndex, vec3 worldPos, vec3 lightDirWorld, vec3 normalWorld)
@@ -186,6 +222,75 @@ vec3 computeSpecular(vec3 N, vec3 V, vec3 L, vec3 specularColor, float roughness
     return specularColor * specularStrength;
 }
 
+vec3 decodeNormal(vec3 encodedNormal)
+{
+    vec3 normal = encodedNormal * 2.0 - 1.0;
+    float normalLength = length(normal);
+    if (normalLength < 0.00001)
+        return vec3(0.0, 0.0, 1.0);
+    return normal / normalLength;
+}
+
+float sampleRTShadowFactor(int lightIndex, vec3 centerNormalView, vec3 centerViewPos)
+{
+    ivec3 shadowSize = textureSize(uRTShadowFactors, 0);
+    if (lightIndex < 0 || lightIndex >= shadowSize.z || shadowSize.x <= 0 || shadowSize.y <= 0)
+        return 0.0;
+
+    ivec2 fullResSize = textureSize(uDepth, 0);
+    if (shadowSize.xy == fullResSize)
+    {
+        ivec2 pixelCoord = clamp(ivec2(vUV * vec2(fullResSize)), ivec2(0), fullResSize - ivec2(1));
+        return texelFetch(uRTShadowFactors, ivec3(pixelCoord, lightIndex), 0).r;
+    }
+
+    vec2 shadowSizeF = vec2(shadowSize.xy);
+    vec2 shadowCoord = vUV * shadowSizeF - 0.5;
+    ivec2 baseCoord = ivec2(floor(shadowCoord));
+    vec2 fracCoord = fract(shadowCoord);
+
+    float weightedShadow = 0.0;
+    float weightSum = 0.0;
+
+    for (int y = 0; y <= 1; ++y)
+    {
+        for (int x = 0; x <= 1; ++x)
+        {
+            ivec2 tapCoord = clamp(baseCoord + ivec2(x, y), ivec2(0), shadowSize.xy - ivec2(1));
+            vec2 tapUV = (vec2(tapCoord) + 0.5) / shadowSizeF;
+
+            float bilinearWeight =
+                (x == 0 ? (1.0 - fracCoord.x) : fracCoord.x) *
+                (y == 0 ? (1.0 - fracCoord.y) : fracCoord.y);
+
+            float tapDepth = texture(uDepth, tapUV).r;
+            if (tapDepth >= 1.0)
+                continue;
+
+            vec3 tapNormalView = decodeNormal(texture(uGBufferNormal, tapUV).rgb);
+            vec3 tapViewPos = reconstructViewPosition(tapUV, tapDepth);
+
+            float normalWeight = exp(-(1.0 - clamp(dot(centerNormalView, tapNormalView), 0.0, 1.0)) / 0.08);
+            float depthSigma = max(0.2, 0.02 * abs(centerViewPos.z));
+            float depthWeight = exp(-abs(tapViewPos.z - centerViewPos.z) / depthSigma);
+            float weight = bilinearWeight * normalWeight * depthWeight;
+
+            if (weight <= 0.00001)
+                continue;
+
+            float tapShadow = texelFetch(uRTShadowFactors, ivec3(tapCoord, lightIndex), 0).r;
+            weightedShadow += tapShadow * weight;
+            weightSum += weight;
+        }
+    }
+
+    if (weightSum > 0.00001)
+        return weightedShadow / weightSum;
+
+    ivec2 nearestCoord = clamp(ivec2(floor(shadowCoord + 0.5)), ivec2(0), shadowSize.xy - ivec2(1));
+    return texelFetch(uRTShadowFactors, ivec3(nearestCoord, lightIndex), 0).r;
+}
+
 void main()
 {
     vec4 gN = texture(uGBufferNormal, vUV);
@@ -201,7 +306,7 @@ void main()
         return;
     }
 
-    vec3 N_view = normalize(gN.rgb * 2.0 - 1.0);
+    vec3 N_view = decodeNormal(gN.rgb);
     vec3 albedo = gA.rgb;
     float alpha = gA.a;
     float ao = clamp(gM.r * ssaoAO, 0.0, 1.0);
@@ -218,6 +323,7 @@ void main()
     vec3 lighting = vec3(0.0);
     float directionalShadowMax = 0.0;
     bool hasDirectionalLight = false;
+    const bool usePipelineRTShadows = pc.shadowMode > 1.5;
 
     int count = min(lightData.lightCount, MAX_LIGHT_COUNT);
     for (int i = 0; i < count; ++i)
@@ -242,9 +348,15 @@ void main()
 
             if (castsShadow)
             {
-                int cascadeIndex = selectDirectionalCascade(max(-P_view.z, 0.0));
-                vec3 L_world = normalize((camera.invView * vec4(L, 0.0)).xyz);
-                shadow = calculateDirectionalLightShadow(cascadeIndex, P_world, L_world, N_world);
+                if (usePipelineRTShadows)
+                {
+                    shadow = sampleRTShadowFactor(i, N_view, P_view);
+                }
+                else
+                {
+                    vec3 L_world = normalize((camera.invView * vec4(L, 0.0)).xyz);
+                    shadow = getDirectionalShadowBlended(max(-P_view.z, 0.0), P_world, L_world, N_world);
+                }
                 directionalShadowMax = max(directionalShadowMax, shadow);
             }
         }
@@ -261,8 +373,15 @@ void main()
 
             if (castsShadow)
             {
-                vec3 lightPosWorld = (camera.invView * vec4(light.position.xyz, 1.0)).xyz;
-                shadow = calculatePointLightShadow(shadowIndex, P_world, N_world, lightPosWorld, shadowFar, shadowNear);
+                if (usePipelineRTShadows)
+                {
+                    shadow = sampleRTShadowFactor(i, N_view, P_view);
+                }
+                else
+                {
+                    vec3 lightPosWorld = (camera.invView * vec4(light.position.xyz, 1.0)).xyz;
+                    shadow = calculatePointLightShadow(shadowIndex, P_world, N_world, lightPosWorld, shadowFar, shadowNear);
+                }
             }
         }
         else if (lightType == SPOT_LIGHT_TYPE)
@@ -285,8 +404,15 @@ void main()
 
             if (castsShadow)
             {
-                vec3 L_world = normalize((camera.invView * vec4(L, 0.0)).xyz);
-                shadow = calculateSpotLightShadow(shadowIndex, P_world, L_world, N_world);
+                if (usePipelineRTShadows)
+                {
+                    shadow = sampleRTShadowFactor(i, N_view, P_view);
+                }
+                else
+                {
+                    vec3 L_world = normalize((camera.invView * vec4(L, 0.0)).xyz);
+                    shadow = calculateSpotLightShadow(shadowIndex, P_world, L_world, N_world);
+                }
             }
         }
         else

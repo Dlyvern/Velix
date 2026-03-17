@@ -26,6 +26,7 @@ public:
         uint32_t customInstanceIndex{0u};
         uint8_t mask{0xFFu};
         bool forceOpaque{true};
+        bool disableTriangleFacingCull{false};
     };
 
     explicit RayTracingScene(uint32_t framesInFlight = 2u);

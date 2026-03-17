@@ -48,9 +48,11 @@ public:
     DescriptorPool::SharedPtr getPersistentDescriptorPool() const;
     bool hasBufferDeviceAddressSupport() const;
     bool hasAccelerationStructureSupport() const;
+    bool hasDepthClampSupport() const;
     bool hasRayQuerySupport() const;
     bool hasRayTracingPipelineSupport() const;
     bool hasRayTracingDeviceFeaturesEnabled() const;
+    const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &getRayTracingPipelineProperties() const;
 
     void cleanup();
 
@@ -152,6 +154,11 @@ private:
     RayTracingMode m_rayTracingMode{RayTracingMode::Disabled};
     RayTracingSupport m_rayTracingSupport{};
     bool m_bufferDeviceAddressSupported{false};
+    bool m_depthClampSupported{false};
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rayTracingPipelineProperties{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
+    VkPhysicalDeviceAccelerationStructurePropertiesKHR m_accelerationStructureProperties{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
 
     RayTracingSupport hasRTXSupport(VkPhysicalDevice physicalDevice);
 

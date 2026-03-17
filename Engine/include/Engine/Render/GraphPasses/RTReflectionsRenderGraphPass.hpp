@@ -2,11 +2,16 @@
 #define ELIX_RT_REFLECTIONS_RENDER_GRAPH_PASS_HPP
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
+#include "Core/Buffer.hpp"
 #include "Core/PipelineLayout.hpp"
 #include "Core/Sampler.hpp"
+#include "Core/ShaderHandler.hpp"
+#include "Engine/Skybox.hpp"
+#include "Engine/Texture.hpp"
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -23,10 +28,13 @@ public:
                                  std::vector<RGPResourceHandler> &materialHandlers,
                                  RGPResourceHandler &depthHandler);
 
+    void prepareRecord(const RenderGraphPassPerFrameData &data,
+                       const RenderGraphPassContext &renderContext) override;
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
 
     bool isEnabled() const override;
+    uint64_t getExecutionCacheKey(const RenderGraphPassContext &renderContext) const override;
 
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
 
@@ -34,6 +42,7 @@ public:
 
     void compile(renderGraph::RGPResourcesStorage &storage) override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
+    void cleanup() override;
 
     std::vector<RGPResourceHandler> &getOutput() { return m_outputHandlers; }
 
@@ -62,9 +71,36 @@ private:
 
     core::Sampler::SharedPtr m_sampler{nullptr};
     core::Sampler::SharedPtr m_depthSampler{nullptr};
+    std::vector<core::Buffer::SharedPtr> m_reflectionSceneBuffers;
+    std::vector<VkDeviceSize> m_reflectionSceneBufferSizes;
+    Texture::SharedPtr m_fallbackEnvironmentTexture{nullptr};
+    std::unique_ptr<Skybox> m_environmentSkybox{nullptr};
+    std::string m_requestedSkyboxHDRPath;
+    std::string m_loadedSkyboxHDRPath;
+    bool m_pendingSkyboxUpdate{true};
+
+    core::ShaderHandler m_raygenShader;
+    core::ShaderHandler m_missShader;
+    core::ShaderHandler m_closestHitShader;
+    core::Buffer::SharedPtr m_shaderBindingTable{nullptr};
+
+    VkPipeline m_rayTracingPipeline{VK_NULL_HANDLE};
+    VkStridedDeviceAddressRegionKHR m_raygenRegion{};
+    VkStridedDeviceAddressRegionKHR m_missRegion{};
+    VkStridedDeviceAddressRegionKHR m_hitRegion{};
+    VkStridedDeviceAddressRegionKHR m_callableRegion{};
+
+    bool canUsePipelinePath() const;
+    bool shouldUsePipelinePath() const;
+    void createRayTracingPipeline();
+    void createShaderBindingTable(uint32_t groupCount);
+    void destroyRayTracingPipeline();
+    void updateReflectionSceneBuffer(const RenderGraphPassPerFrameData &data, uint32_t frameIndex);
+    void ensureFallbackEnvironmentTexture();
+    void updateEnvironmentSkybox();
 };
 
-ELIX_NESTED_NAMESPACE_END
 ELIX_CUSTOM_NAMESPACE_END
+ELIX_NESTED_NAMESPACE_END
 
 #endif // ELIX_RT_REFLECTIONS_RENDER_GRAPH_PASS_HPP

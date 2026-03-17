@@ -120,6 +120,7 @@ void VulkanContext::createLogicalDevice()
         throw std::runtime_error("Selected GPU does not support imageCubeArray");
 
     m_bufferDeviceAddressSupported = supportedV12.bufferDeviceAddress == VK_TRUE;
+    m_depthClampSupported = supportedFeatures2.features.depthClamp == VK_TRUE;
 
     if (!supportedV13.dynamicRendering)
         throw std::runtime_error("Selected GPU does not support dynamicRendering");
@@ -190,7 +191,16 @@ void VulkanContext::createLogicalDevice()
         addExtensionIfMissing(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
         addExtensionIfMissing(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 
-        VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: Pipeline");
+        // Also enable ray query if available — allows inline ray tracing in fragment shaders
+        // alongside the ray tracing pipeline (used for RT reflections).
+        if (hasRQ && supportedRQ.rayQuery)
+        {
+            m_rayTracingSupport.rayQuery = true;
+            addExtensionIfMissing(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+            VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: Pipeline + RayQuery");
+        }
+        else
+            VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: Pipeline");
     }
     else if (m_bufferDeviceAddressSupported &&
              hasAS && hasRQ && hasDHO &&
@@ -209,6 +219,27 @@ void VulkanContext::createLogicalDevice()
     else
         VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: None");
 
+    m_rayTracingPipelineProperties = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
+    m_accelerationStructureProperties = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
+
+    VkPhysicalDeviceProperties2 properties2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+    properties2.pNext = nullptr;
+    m_rayTracingPipelineProperties.pNext = nullptr;
+    m_accelerationStructureProperties.pNext = nullptr;
+
+    if (hasRTP)
+    {
+        properties2.pNext = &m_rayTracingPipelineProperties;
+        if (hasAS)
+            m_rayTracingPipelineProperties.pNext = &m_accelerationStructureProperties;
+    }
+    else if (hasAS)
+    {
+        properties2.pNext = &m_accelerationStructureProperties;
+    }
+
+    vkGetPhysicalDeviceProperties2(m_physicalDevice, &properties2);
+
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtpFeatures{
@@ -219,13 +250,15 @@ void VulkanContext::createLogicalDevice()
     VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     features2.features.samplerAnisotropy = VK_TRUE;
     features2.features.imageCubeArray = VK_TRUE;
+    features2.features.depthClamp = m_depthClampSupported ? VK_TRUE : VK_FALSE;
 
     features2.features.fillModeNonSolid = supportedFeatures2.features.fillModeNonSolid;
     features2.features.independentBlend = supportedFeatures2.features.independentBlend;
 
     VkPhysicalDeviceVulkan12Features v12{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-    v12.bufferDeviceAddress = m_bufferDeviceAddressSupported ? VK_TRUE : VK_FALSE;
+    v12.bufferDeviceAddress            = m_bufferDeviceAddressSupported ? VK_TRUE : VK_FALSE;
+    v12.descriptorBindingPartiallyBound = supportedV12.descriptorBindingPartiallyBound;
 
     VkPhysicalDeviceVulkan13Features v13{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
@@ -243,7 +276,15 @@ void VulkanContext::createLogicalDevice()
 
         v13.pNext = &asFeatures;
         asFeatures.pNext = &rtpFeatures;
-        rtpFeatures.pNext = nullptr;
+
+        if (m_rayTracingSupport.rayQuery)
+        {
+            rqFeatures.rayQuery = VK_TRUE;
+            rtpFeatures.pNext = &rqFeatures;
+            rqFeatures.pNext = nullptr;
+        }
+        else
+            rtpFeatures.pNext = nullptr;
     }
     else if (m_rayTracingMode == RayTracingMode::RayQuery)
     {
@@ -364,6 +405,11 @@ bool VulkanContext::hasAccelerationStructureSupport() const
     return m_rayTracingMode != RayTracingMode::Disabled;
 }
 
+bool VulkanContext::hasDepthClampSupport() const
+{
+    return m_depthClampSupported;
+}
+
 bool VulkanContext::hasRayQuerySupport() const
 {
     return m_rayTracingSupport.rayQuery;
@@ -377,6 +423,11 @@ bool VulkanContext::hasRayTracingPipelineSupport() const
 bool VulkanContext::hasRayTracingDeviceFeaturesEnabled() const
 {
     return m_rayTracingMode != RayTracingMode::Disabled;
+}
+
+const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &VulkanContext::getRayTracingPipelineProperties() const
+{
+    return m_rayTracingPipelineProperties;
 }
 
 uint32_t VulkanContext::getGraphicsFamily() const

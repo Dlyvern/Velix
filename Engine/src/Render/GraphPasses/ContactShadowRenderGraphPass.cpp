@@ -139,6 +139,9 @@ void ContactShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr command
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);
     vkCmdSetScissor(commandBuffer->vk(), 0, 1, &m_scissor);
 
+    if (data.drawBatches.empty())
+        return;
+
     GraphicsPipelineKey key{};
     key.shader         = ShaderId::ContactShadow;
     key.cull           = CullMode::None;

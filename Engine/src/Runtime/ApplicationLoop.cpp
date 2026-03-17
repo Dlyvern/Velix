@@ -91,14 +91,14 @@ int ApplicationLoop::run(const ApplicationConfig &applicationConfig, const Runti
     {
         ScopedTimer timer("Core init");
         if (!preInit(applicationConfig))
-            return 0;
+            return 1;
     }
 
     if (!runtimeFactory)
     {
         VX_DEV_ERROR_STREAM("Failed to start: runtime factory is not set\n");
         shutdown();
-        return 0;
+        return 1;
     }
 
     m_runtime = runtimeFactory(applicationConfig);
@@ -106,7 +106,7 @@ int ApplicationLoop::run(const ApplicationConfig &applicationConfig, const Runti
     {
         VX_DEV_ERROR_STREAM("Failed to start: runtime factory returned null runtime\n");
         shutdown();
-        return 0;
+        return 1;
     }
 
     {
@@ -115,7 +115,7 @@ int ApplicationLoop::run(const ApplicationConfig &applicationConfig, const Runti
         {
             VX_DEV_ERROR_STREAM("Runtime initialization failed\n");
             shutdown();
-            return 0;
+            return 1;
         }
     }
 
@@ -138,7 +138,7 @@ int ApplicationLoop::run(const ApplicationConfig &applicationConfig, const Runti
     loop();
     shutdown();
 
-    return 1;
+    return 0;
 }
 
 bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
@@ -209,6 +209,8 @@ void ApplicationLoop::loop()
 
     float lastFrame = 0.0f;
     float deltaTime = 0.0f;
+    float lastCacheSave = 0.0f;
+    constexpr float kCacheSaveInterval = 30.0f;
 
     while (m_window->isOpen())
     {
@@ -220,6 +222,12 @@ void ApplicationLoop::loop()
         scripting::beginFrame(deltaTime);
 
         m_runtime->tick(deltaTime);
+
+        if (currentFrame - lastCacheSave >= kCacheSaveInterval)
+        {
+            cache::GraphicsPipelineCache::saveCacheToFile(m_vulkanContext->getDevice(), m_graphicsPipelineCachePath);
+            lastCacheSave = currentFrame;
+        }
     }
 }
 

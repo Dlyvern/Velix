@@ -9,8 +9,11 @@
 #include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -18,6 +21,12 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 class IRenderGraphPass
 {
 public:
+    enum class ExecutionMode : uint8_t
+    {
+        DynamicRendering,
+        Direct
+    };
+
     struct RenderPassExecution
     {
         VkRect2D renderArea;
@@ -29,6 +38,7 @@ public:
         VkSampleCountFlagBits rasterizationSamples{VK_SAMPLE_COUNT_1_BIT};
 
         bool useDepth{true};
+        ExecutionMode mode{ExecutionMode::DynamicRendering};
 
         std::unordered_map<RGPResourceHandler, const RenderTarget *> targets;
 
@@ -53,10 +63,18 @@ public:
     virtual void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                         const RenderGraphPassContext &renderContext) = 0;
 
+    virtual uint64_t getExecutionCacheKey(const RenderGraphPassContext &) const
+    {
+        return 0u;
+    }
+
     /// Return false to skip the pass entirely this frame (no GPU work issued).
     /// The pass still participates in the dependency graph; skipping is purely a
     /// per-frame execution decision and requires no render-graph recompile.
     virtual bool isEnabled() const { return true; }
+
+    /// Return false for passes that touch thread-unsafe global state during command recording.
+    virtual bool canRecordInParallel() const { return true; }
 
     virtual std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const = 0;
 

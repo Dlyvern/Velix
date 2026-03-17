@@ -8,11 +8,18 @@
 #include "Engine/PluginSystem/PluginLoader.hpp"
 #include "Engine/Render/GraphPasses/BloomCompositeRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/BloomRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/DepthPrepassRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/FXAARenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/GBufferRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/LightingRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/ContactShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ParticleRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/PresentRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTAORenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTReflectionDenoiseRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTReflectionsRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTShadowDenoiseRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTShadowsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SSAORenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
@@ -50,6 +57,7 @@ private:
     bool loadProjectModule(std::string *errorMessage);
     bool extractPacket(std::string *errorMessage);
     void bindSceneToPasses();
+    void initRenderGraph();
     void syncViewportExtent();
     void refreshActiveCamera();
     void collectAndSubmitUIRenderData();
@@ -78,10 +86,17 @@ private:
     Camera::SharedPtr m_renderCamera{nullptr};
     std::unique_ptr<renderGraph::RenderGraph> m_renderGraph{nullptr};
 
+    renderGraph::DepthPrepassRenderGraphPass *m_depthPrepassRenderGraphPass{nullptr};
     renderGraph::GBufferRenderGraphPass *m_gBufferRenderGraphPass{nullptr};
     renderGraph::ShadowRenderGraphPass *m_shadowRenderGraphPass{nullptr};
+    renderGraph::RTShadowsRenderGraphPass *m_rtShadowsRenderGraphPass{nullptr};
+    renderGraph::RTShadowDenoiseRenderGraphPass *m_rtShadowDenoiseRenderGraphPass{nullptr};
     renderGraph::SSAORenderGraphPass *m_ssaoRenderGraphPass{nullptr};
+    renderGraph::RTAORenderGraphPass *m_rtaoRenderGraphPass{nullptr};
     renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
+    renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
+    renderGraph::RTReflectionsRenderGraphPass *m_rtReflectionsRenderGraphPass{nullptr};
+    renderGraph::RTReflectionDenoiseRenderGraphPass *m_rtReflectionDenoiseRenderGraphPass{nullptr};
     renderGraph::SkyLightRenderGraphPass *m_skyLightRenderGraphPass{nullptr};
     renderGraph::ParticleRenderGraphPass *m_particleRenderGraphPass{nullptr};
     renderGraph::BloomRenderGraphPass *m_bloomRenderGraphPass{nullptr};
@@ -93,6 +108,7 @@ private:
     renderGraph::PresentRenderGraphPass *m_presentRenderGraphPass{nullptr};
 
     VkExtent2D m_lastExtent{0u, 0u};
+    size_t m_renderGraphTopologyHash{0u};
     bool m_scriptsAttached{false};
     bool m_initialized{false};
 };

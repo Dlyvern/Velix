@@ -19,7 +19,13 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 bool SSAORenderGraphPass::isEnabled() const
 {
     const auto &s = RenderQualitySettings::getInstance();
-    return s.enablePostProcessing && (s.enableSSAO || s.enableGTAO);
+    if (!s.enablePostProcessing)
+        return false;
+    // RTAO supersedes SSAO when ray tracing is active
+    auto ctx = core::VulkanContext::getContext();
+    if (s.enableRayTracing && s.enableRTAO && ctx && ctx->hasRayQuerySupport())
+        return false;
+    return s.enableSSAO || s.enableGTAO;
 }
 
 namespace

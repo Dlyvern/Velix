@@ -93,7 +93,6 @@ bool ProjectConfig::load(const std::filesystem::path &projectRoot)
     RB("enable_smaa", m_enableSMAA);
     RB("enable_taa", m_enableTAA);
     RB("enable_cmaa", m_enableCMAA);
-    RF("taa_history_weight", m_taaHistoryWeight);
 
     RB("enable_post_processing", m_enablePostProcessing);
     RB("enable_vsync", m_enableVSync);
@@ -186,7 +185,6 @@ bool ProjectConfig::save(const std::filesystem::path &projectRoot) const
         {"enable_smaa", m_enableSMAA},
         {"enable_taa", m_enableTAA},
         {"enable_cmaa", m_enableCMAA},
-        {"taa_history_weight", m_taaHistoryWeight},
         {"enable_post_processing", m_enablePostProcessing},
         {"enable_vsync", m_enableVSync},
         {"enable_ray_tracing", m_enableRayTracing},
@@ -279,7 +277,6 @@ void ProjectConfig::applyRenderSettings() const
     rs.enableSMAA = m_enableSMAA;
     rs.enableTAA = m_enableTAA;
     rs.enableCMAA = m_enableCMAA;
-    rs.taaHistoryWeight = std::clamp(m_taaHistoryWeight, 0.0f, 1.0f);
     rs.enablePostProcessing = m_enablePostProcessing;
     rs.enableVSync = m_enableVSync;
     rs.enableRayTracing = m_enableRayTracing;
@@ -336,7 +333,6 @@ void ProjectConfig::captureRenderSettings()
     m_enableSMAA = rs.enableSMAA;
     m_enableTAA = rs.enableTAA;
     m_enableCMAA = rs.enableCMAA;
-    m_taaHistoryWeight = rs.taaHistoryWeight;
 
     m_enablePostProcessing = rs.enablePostProcessing;
     m_enableVSync = rs.enableVSync;

@@ -244,6 +244,17 @@ void RenderGraphProfiling::resolveFrameProfilingData(uint32_t frameIndex)
     if (frameProfilingData.gpuTimingAvailable)
         frameProfilingData.gpuWasteTimeMs = std::max(0.0, frameProfilingData.gpuFrameTimeMs - frameProfilingData.gpuTotalTimeMs);
 
+    frameProfilingData.cpuPrepareFrameMs = frameProfilingData.cpuWaitForFenceMs +
+                                           frameProfilingData.cpuCommandPoolResetMs +
+                                           frameProfilingData.cpuAcquireImageMs +
+                                           frameProfilingData.cpuRecompileMs +
+                                           frameProfilingData.cpuResolveProfilingMs;
+    frameProfilingData.cpuActualFrameMs = frameProfilingData.cpuTotalTimeMs +
+                                          frameProfilingData.cpuPrimaryEndMs +
+                                          frameProfilingData.cpuSubmitMs +
+                                          frameProfilingData.cpuPresentMs;
+    frameProfilingData.gpuActualFrameMs = frameProfilingData.gpuFrameTimeMs;
+
     m_lastFrameProfilingData = std::move(frameProfilingData);
 }
 
@@ -340,7 +351,10 @@ void RenderGraphProfiling::beginFrameGpuProfiling(VkCommandBuffer primaryCommand
 void RenderGraphProfiling::beginPassProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t,
                                               PassExecutionProfilingData &executionProfilingData, std::string_view passName)
 {
+    // Preserve draw calls counted during parallel secondary-CB recording before resetting.
+    const uint32_t savedDrawCalls = executionProfilingData.drawCalls;
     executionProfilingData = {};
+    executionProfilingData.drawCalls = savedDrawCalls;
     executionProfilingData.passName = passName.empty() ? "Unnamed pass" : std::string(passName);
 
     if (!isDetailedProfilingEnabled() ||

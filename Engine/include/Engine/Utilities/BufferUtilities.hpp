@@ -16,6 +16,8 @@ public:
                                   VkImageLayout dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t layerCount = 1, uint32_t baseLayer = 0,
                                   uint32_t mipLevel = 0);
     static void copyBuffer(core::Buffer &srcBuffer, core::Buffer &dstBuffer, core::CommandBuffer &commandBuffer, VkDeviceSize size);
+    static void copyBufferRegion(core::Buffer &srcBuffer, core::Buffer &dstBuffer, core::CommandBuffer &commandBuffer,
+                                 VkDeviceSize size, VkDeviceSize srcOffset, VkDeviceSize dstOffset);
 };
 
 ELIX_CUSTOM_NAMESPACE_END

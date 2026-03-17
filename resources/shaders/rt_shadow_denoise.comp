@@ -1,0 +1,106 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+const int MAX_LIGHT_COUNT = 16;
+const int KERNEL_RADIUS    = 3;   // 7×7 — sufficient quality, no spill with single-pass design
+
+layout(set = 0, binding = 0) uniform sampler2DArray uShadowInput;
+layout(set = 0, binding = 1) uniform sampler2D      uGBufferNormal;
+layout(set = 0, binding = 2) uniform sampler2D      uDepth;
+layout(set = 0, binding = 3, r16f) uniform writeonly image2DArray uShadowOutput;
+
+layout(push_constant) uniform RTShadowDenoisePC
+{
+    mat4 invProjection;
+    vec4 params0; // x=texelSize.x, y=texelSize.y, z=enabled, w=normalSigma
+    vec4 params1; // x=depthSigma, y=unused, z=activeRTShadowLayerCount
+} pc;
+
+vec3 decodeNormal(vec3 enc)
+{
+    vec3 n = enc * 2.0 - 1.0;
+    float l = length(n);
+    return (l < 0.00001) ? vec3(0.0, 0.0, 1.0) : n / l;
+}
+
+vec3 reconstructViewPos(vec2 uv, float depth)
+{
+    vec4 ndc     = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 viewPos = pc.invProjection * ndc;
+    return viewPos.xyz / max(viewPos.w, 0.000001);
+}
+
+void main()
+{
+    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec3 shadowSize = textureSize(uShadowInput, 0);
+    if (pixelCoord.x >= shadowSize.x || pixelCoord.y >= shadowSize.y)
+        return;
+
+    int layerCount = min(int(pc.params1.z + 0.5), min(shadowSize.z, MAX_LIGHT_COUNT));
+    if (layerCount <= 0)
+        return;
+
+    // Pass-through when denoising is disabled.
+    if (pc.params0.z < 0.5)
+    {
+        for (int layer = 0; layer < layerCount; ++layer)
+        {
+            float s = texelFetch(uShadowInput, ivec3(pixelCoord, layer), 0).r;
+            imageStore(uShadowOutput, ivec3(pixelCoord, layer), vec4(s, 0.0, 0.0, 1.0));
+        }
+        return;
+    }
+
+    vec2  centerUV    = (vec2(pixelCoord) + 0.5) * pc.params0.xy;
+    float centerDepth = texture(uDepth, centerUV).r;
+
+    if (centerDepth >= 1.0)
+    {
+        for (int layer = 0; layer < layerCount; ++layer)
+            imageStore(uShadowOutput, ivec3(pixelCoord, layer), vec4(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    vec3 centerNormal  = decodeNormal(texture(uGBufferNormal, centerUV).rgb);
+    vec3 centerViewPos = reconstructViewPos(centerUV, centerDepth);
+
+    // Single-pass bilateral filter.
+    for (int layer = 0; layer < layerCount; ++layer)
+    {
+        float accum     = 0.0;
+        float weightSum = 0.0;
+
+        for (int y = -KERNEL_RADIUS; y <= KERNEL_RADIUS; ++y)
+        {
+            for (int x = -KERNEL_RADIUS; x <= KERNEL_RADIUS; ++x)
+            {
+                ivec2 sampleCoord = clamp(pixelCoord + ivec2(x, y),
+                                          ivec2(0), shadowSize.xy - ivec2(1));
+                vec2  sampleUV    = (vec2(sampleCoord) + 0.5) * pc.params0.xy;
+                float sampleDepth = texture(uDepth, sampleUV).r;
+
+                if (sampleDepth >= 1.0)
+                    continue;
+
+                vec3  sampleNormal  = decodeNormal(texture(uGBufferNormal, sampleUV).rgb);
+                vec3  sampleViewPos = reconstructViewPos(sampleUV, sampleDepth);
+
+                float spatialWeight = exp(-0.18 * float(x * x + y * y));
+                float normalWeight  = exp(-(1.0 - clamp(dot(centerNormal, sampleNormal), 0.0, 1.0))
+                                           / max(pc.params0.w, 0.0001));
+                float depthWeight   = exp(-length(sampleViewPos - centerViewPos)
+                                           / max(pc.params1.x, 0.0001));
+                float weight        = spatialWeight * normalWeight * depthWeight;
+
+                float shadow = texelFetch(uShadowInput, ivec3(sampleCoord, layer), 0).r;
+                accum     += shadow * weight;
+                weightSum += weight;
+            }
+        }
+
+        float result = (weightSum > 0.00001) ? (accum / weightSum) : 0.0;
+        imageStore(uShadowOutput, ivec3(pixelCoord, layer), vec4(result, 0.0, 0.0, 1.0));
+    }
+}

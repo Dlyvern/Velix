@@ -23,6 +23,14 @@ public:
     static inline core::DescriptorSetLayout::SharedPtr cameraDescriptorSetLayout{nullptr};
     static inline core::DescriptorSetLayout::SharedPtr materialDescriptorSetLayout{nullptr};
 
+    // Bindless material set: binding 0 = sampler2D allTextures[], binding 1 = MaterialParams SSBO.
+    // Used by the GBuffer pass to eliminate all per-batch descriptor-set binds.
+    static inline VkDescriptorSetLayout bindlessMaterialSetLayout{VK_NULL_HANDLE};
+    static inline VkPipelineLayout      bindlessMeshPipelineLayout{VK_NULL_HANDLE};
+
+    static constexpr uint32_t MAX_BINDLESS_TEXTURES  = 4096;
+    static constexpr uint32_t MAX_BINDLESS_MATERIALS = 2048;
+
     static void initEngineShaderFamilies();
     static void cleanEngineShaderFamilies();
 };

@@ -19,12 +19,14 @@ LightingRenderGraphPass::LightingRenderGraphPass(RGPResourceHandler &shadowTextu
                                                  std::vector<RGPResourceHandler> &materialTextureHandlers,
                                                  std::vector<RGPResourceHandler> &emissiveTextureHandlers,
                                                  std::vector<RGPResourceHandler> &tangentAnisoTextureHandlers,
+                                                 std::vector<RGPResourceHandler> *rtShadowTextureHandlers,
                                                  std::vector<RGPResourceHandler> *aoTextureHandlers)
     : m_albedoTextureHandlers(albedoTextureHandlers),
       m_normalTextureHandlers(normalTextureHandlers),
       m_materialTextureHandlers(materialTextureHandlers),
       m_emissiveTextureHandlers(emissiveTextureHandlers),
       m_tangentAnisoTextureHandlers(tangentAnisoTextureHandlers),
+      m_rtShadowTextureHandlers(rtShadowTextureHandlers),
       m_depthTextureHandler(depthTextureHandler),
       m_shadowTextureHandler(shadowTextureHandler),
       m_cubeTextureHandler(cubeTextureHandler),
@@ -53,6 +55,21 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
         settings.rayTracingMode == RenderQualitySettings::RayTracingMode::RayQuery &&
         context &&
         context->hasRayQuerySupport();
+    const bool usePipelineRTShadows =
+        settings.enableRayTracing &&
+        settings.enableRTShadows &&
+        settings.rayTracingMode == RenderQualitySettings::RayTracingMode::Pipeline &&
+        context &&
+        context->hasRayTracingPipelineSupport() &&
+        m_rtShadowTextureHandlers &&
+        !m_rtShadowTextureHandlers->empty();
+
+    const bool usePrecomputedRTShadows =
+        settings.enableRayTracing &&
+        settings.enableRTShadows &&
+        m_rtShadowTextureHandlers &&
+        !m_rtShadowTextureHandlers->empty() &&
+        (usePipelineRTShadows || (useRayQueryLighting && context && context->hasRayQuerySupport()));
 
     key.shader = useRayQueryLighting ? ShaderId::LightingRayQuery : ShaderId::Lighting;
     key.cull = CullMode::None;
@@ -71,17 +88,19 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     struct LightingPC
     {
         float shadowAmbientStrength;
-        float enableRTShadows;      // 1.0 = ray query, 0.0 = shadow maps
+        float shadowMode;           // 0.0 = shadow maps, 1.0 = ray query, 2.0 = RT pipeline texture
         float rtShadowSamples;      // rays per light (1=hard, 4-16=soft)
         float rtShadowPenumbraSize; // virtual light radius → penumbra width
     };
 
     static_assert(sizeof(LightingPC) == 16, "LightingPC push constant must stay 16 bytes");
 
-    const bool rtShadowsActive = useRayQueryLighting && settings.enableRTShadows;
+    const float shadowMode = usePrecomputedRTShadows ? 2.0f
+                           : ((useRayQueryLighting && settings.enableRTShadows) ? 1.0f : 0.0f);
+    const bool rtShadowsActive = shadowMode > 0.5f;
     LightingPC pc{
         std::clamp(settings.shadowAmbientStrength, 0.0f, 1.0f),
-        rtShadowsActive ? 1.0f : 0.0f,
+        shadowMode,
         rtShadowsActive ? static_cast<float>(std::clamp(settings.rtShadowSamples, 1, 16)) : 1.0f,
         rtShadowsActive ? std::clamp(settings.rtShadowPenumbraSize, 0.0f, 2.0f) : 0.0f};
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout,
@@ -154,6 +173,11 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
         auto shadowTexture = storage.getTexture(m_shadowTextureHandler);
         auto cubeTexture = storage.getTexture(m_cubeTextureHandler);
         auto arrayTexture = storage.getTexture(m_arrayTextureHandler);
+        const RenderTarget *rtShadowTexture = nullptr;
+        if (m_rtShadowTextureHandlers && i < m_rtShadowTextureHandlers->size())
+            rtShadowTexture = storage.getTexture((*m_rtShadowTextureHandlers)[i]);
+        if (!rtShadowTexture)
+            rtShadowTexture = arrayTexture;
 
         // AO texture: use SSAO/GTAO output when available, otherwise fall back to normal texture (alpha=1).
         const RenderTarget *aoTexture = normalTexture;
@@ -177,6 +201,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                                       .addImage(arrayTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 7)
                                       .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 8)
                                       .addImage(aoTexture->vkImageView(), m_defaultSampler, aoLayout, 9)
+                                      .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
                                       .build(device, pool, m_descriptorSetLayout);
         }
         else
@@ -192,6 +217,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                 .addImage(arrayTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 7)
                 .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 8)
                 .addImage(aoTexture->vkImageView(), m_defaultSampler, aoLayout, 9)
+                .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
                 .update(device, m_descriptorSets[i]);
         }
     }
@@ -226,6 +252,9 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
         if (m_aoTextureHandlers && imageIndex < static_cast<int>(m_aoTextureHandlers->size()))
             builder.read((*m_aoTextureHandlers)[imageIndex], RGPTextureUsage::SAMPLED);
+
+        if (m_rtShadowTextureHandlers && imageIndex < static_cast<int>(m_rtShadowTextureHandlers->size()))
+            builder.read((*m_rtShadowTextureHandlers)[imageIndex], RGPTextureUsage::SAMPLED);
     }
 
     builder.read(m_depthTextureHandler, RGPTextureUsage::SAMPLED);
@@ -305,9 +334,16 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
     aoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     aoBinding.pImmutableSamplers = nullptr;
 
+    VkDescriptorSetLayoutBinding rtShadowBinding{};
+    rtShadowBinding.binding = 10;
+    rtShadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    rtShadowBinding.descriptorCount = 1;
+    rtShadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    rtShadowBinding.pImmutableSamplers = nullptr;
+
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{bindingNormal,
                                                                                                                       bindingAlbedo, bindingMaterial, bindingTangentAniso, bindingEmissive, bindingDepth,
-                                                                                                                      lightMapBinding, spotMapBinding, pointMapBinding, aoBinding});
+                                                                                                                      lightMapBinding, spotMapBinding, pointMapBinding, aoBinding, rtShadowBinding});
 
     VkPushConstantRange pcRange{};
     pcRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;

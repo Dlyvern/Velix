@@ -60,6 +60,12 @@ std::optional<shaderc_shader_kind> ShaderCompiler::shaderKindFromPath(const std:
         return shaderc_tess_control_shader;
     if (extension == ".tese")
         return shaderc_tess_evaluation_shader;
+    if (extension == ".rgen")
+        return shaderc_raygen_shader;
+    if (extension == ".rmiss")
+        return shaderc_miss_shader;
+    if (extension == ".rchit")
+        return shaderc_closesthit_shader;
 
     return std::nullopt;
 }

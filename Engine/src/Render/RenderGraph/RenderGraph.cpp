@@ -1,5 +1,6 @@
 #include "Engine/Render/RenderGraph/RenderGraph.hpp"
 #include "Core/VulkanContext.hpp"
+#include "Core/ShaderHandler.hpp"
 #include "Core/VulkanHelpers.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 #include "Engine/Render/ObjectIdEncoding.hpp"
@@ -72,6 +73,20 @@ struct LightSpaceMatrixUBO
         spotLightSpaceMatrices.fill(1.0f);
     }
 };
+
+namespace
+{
+    VkDeviceAddress getBufferDeviceAddress(const elix::core::Buffer &buffer)
+    {
+        auto context = elix::core::VulkanContext::getContext();
+        if (!context || !context->hasBufferDeviceAddressSupport())
+            return 0u;
+
+        VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+        addressInfo.buffer = buffer.vk();
+        return vkGetBufferDeviceAddress(context->getDevice(), &addressInfo);
+    }
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -203,6 +218,33 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         auto createdMesh = GPUMesh::createFromMesh(mesh);
         m_meshes[hashData] = createdMesh;
         m_meshLocalBoundsByHash[hashData] = computeMeshLocalBounds(mesh);
+
+        // Register static meshes in the unified geometry buffer for batched rendering.
+        const uint64_t localSkinnedHash = vertex::VertexTraits<vertex::VertexSkinned>::layout().hash;
+        if (createdMesh && mesh.vertexLayoutHash != localSkinnedHash &&
+            !mesh.vertexData.empty() && !mesh.indices.empty())
+        {
+            // Initialise lazily on first static mesh, using its vertex stride.
+            if (!m_staticUnifiedGeometry.isInitialized())
+                m_staticUnifiedGeometry.init(mesh.vertexStride, UNIFIED_VERTEX_BUFFER_SIZE, UNIFIED_INDEX_BUFFER_COUNT);
+
+            if (m_staticUnifiedGeometry.getVertexStride() == mesh.vertexStride)
+            {
+                int32_t  outVertexOffset = GPUMesh::INVALID_VERTEX_OFFSET;
+                uint32_t outFirstIndex   = 0;
+                if (m_staticUnifiedGeometry.registerMesh(mesh.vertexData.data(),
+                                                         static_cast<VkDeviceSize>(mesh.vertexData.size()),
+                                                         mesh.indices.data(),
+                                                         static_cast<uint32_t>(mesh.indices.size()),
+                                                         outVertexOffset, outFirstIndex))
+                {
+                    createdMesh->unifiedVertexOffset = outVertexOffset;
+                    createdMesh->unifiedFirstIndex   = outFirstIndex;
+                    createdMesh->inUnifiedBuffer     = true;
+                }
+            }
+        }
+
         return createdMesh;
     };
 
@@ -213,12 +255,15 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             return nullptr;
 
         auto instance = std::make_shared<GPUMesh>();
-        instance->indexBuffer = sharedGeometry->indexBuffer;
-        instance->vertexBuffer = sharedGeometry->vertexBuffer;
-        instance->indicesCount = sharedGeometry->indicesCount;
-        instance->indexType = sharedGeometry->indexType;
-        instance->vertexStride = sharedGeometry->vertexStride;
-        instance->vertexLayoutHash = sharedGeometry->vertexLayoutHash;
+        instance->indexBuffer          = sharedGeometry->indexBuffer;
+        instance->vertexBuffer         = sharedGeometry->vertexBuffer;
+        instance->indicesCount         = sharedGeometry->indicesCount;
+        instance->indexType            = sharedGeometry->indexType;
+        instance->vertexStride         = sharedGeometry->vertexStride;
+        instance->vertexLayoutHash     = sharedGeometry->vertexLayoutHash;
+        instance->unifiedVertexOffset  = sharedGeometry->unifiedVertexOffset;
+        instance->unifiedFirstIndex    = sharedGeometry->unifiedFirstIndex;
+        instance->inUnifiedBuffer      = sharedGeometry->inUnifiedBuffer;
 
         return instance;
     };
@@ -793,6 +838,9 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 p /= len;
         }
     }
+    // Store for GPU culling dispatch in begin().
+    m_lastFrustumPlanes          = frustumPlanes;
+    m_lastFrustumCullingEnabled  = enableFrustumCulling;
 
     auto sphereInsideFrustum = [&](const glm::vec3 &center, float radius) -> bool
     {
@@ -803,6 +851,11 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         }
         return true;
     };
+
+    const auto &sfcSettings     = RenderQualitySettings::getInstance();
+    const bool  enableSmallFeatureCulling = sfcSettings.enableSmallFeatureCulling;
+    const float sfcThreshold    = sfcSettings.smallFeatureCullingThreshold;
+    const float halfScreenHeight = m_perFrameData.swapChainViewport.height * 0.5f;
 
     std::vector<MeshDrawReference> drawReferences;
     drawReferences.reserve(m_perFrameData.drawItems.size() * 2);
@@ -838,6 +891,22 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             if (enableFrustumCulling && worldBoundsRadius > 0.0f &&
                 !sphereInsideFrustum(worldBoundsCenter, worldBoundsRadius))
                 continue;
+
+            // Screen-space size culling: skip meshes whose bounding sphere
+            // projects to less than smallFeatureCullingThreshold pixels.
+            // projection[1][1] is negative after the Vulkan Y-flip so take abs.
+            if (enableSmallFeatureCulling && worldBoundsRadius > 0.0f)
+            {
+                const glm::vec4 viewPos = view * glm::vec4(worldBoundsCenter, 1.0f);
+                const float depth = -viewPos.z; // positive = in front of camera
+                if (depth > 0.0f)
+                {
+                    const float projectedPixelRadius =
+                        worldBoundsRadius * std::abs(projection[1][1]) * halfScreenHeight / depth;
+                    if (projectedPixelRadius < sfcThreshold)
+                        continue;
+                }
+            }
 
             drawReferences.push_back(MeshDrawReference{
                 .entity = entity,
@@ -904,6 +973,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         core::VulkanContext::getContext()->hasAccelerationStructureSupport() &&
         core::VulkanContext::getContext()->hasBufferDeviceAddressSupport();
 
+    m_perFrameData.rtReflectionShadingInstances.clear();
+
     if (enableRayTracing)
     {
         std::vector<rayTracing::RayTracingScene::InstanceInput> rtInstances;
@@ -921,6 +992,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             const bool isAlphaBlend = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
             const bool isAlphaMask = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK) != 0u;
             const bool isLegacyGlass = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_LEGACY_GLASS) != 0u;
+            const bool isDoubleSided = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED) != 0u;
             if (isAlphaBlend || isAlphaMask || isLegacyGlass)
                 continue;
 
@@ -935,13 +1007,39 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             instance.geometryHash = geometryHash;
             instance.mesh = reference.mesh;
             instance.transform = reference.modelMatrix;
-            instance.customInstanceIndex = render::encodeObjectId(reference.entity->getId(), reference.meshIndex);
+            instance.customInstanceIndex = static_cast<uint32_t>(rtInstances.size());
             instance.mask = 0xFFu;
             instance.forceOpaque = true;
+            instance.disableTriangleFacingCull = isDoubleSided;
             rtInstances.push_back(std::move(instance));
         }
 
-        m_rayTracingScene.update(m_currentFrame, rtInstances, m_rayTracingGeometryCache);
+        if (m_rayTracingScene.update(m_currentFrame, rtInstances, m_rayTracingGeometryCache) &&
+            m_rayTracingScene.getInstanceCount(m_currentFrame) > 0)
+        {
+            m_perFrameData.rtReflectionShadingInstances.resize(rtInstances.size());
+
+            for (const auto &instance : rtInstances)
+            {
+                if (!instance.mesh || instance.customInstanceIndex >= m_perFrameData.rtReflectionShadingInstances.size())
+                    continue;
+
+                const auto *entry = m_rayTracingGeometryCache.find(instance.geometryHash);
+                if (!entry || !entry->rayTracedMesh || !entry->rayTracedMesh->vertexBuffer || !entry->rayTracedMesh->indexBuffer)
+                    continue;
+
+                auto &shadingInstance = m_perFrameData.rtReflectionShadingInstances[instance.customInstanceIndex];
+                shadingInstance.vertexAddress = getBufferDeviceAddress(*entry->rayTracedMesh->vertexBuffer);
+                shadingInstance.indexAddress = getBufferDeviceAddress(*entry->rayTracedMesh->indexBuffer);
+                shadingInstance.vertexStride = instance.mesh->vertexStride;
+                shadingInstance.material = instance.mesh->material ? instance.mesh->material->params()
+                                                                  : Material::getDefaultMaterial()->params();
+            }
+        }
+        else
+        {
+            m_perFrameData.rtReflectionShadingInstances.clear();
+        }
     }
     else
     {
@@ -953,6 +1051,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     m_perFrameData.perObjectInstances.reserve(drawReferences.size());
     m_perFrameData.drawBatches.clear();
     m_perFrameData.drawBatches.reserve(drawReferences.size());
+    m_perFrameData.batchBounds.clear();
+    m_perFrameData.batchBounds.reserve(drawReferences.size());
 
     for (auto &batches : m_perFrameData.directionalShadowDrawBatches)
         batches.clear();
@@ -978,12 +1078,26 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     {
         const uint32_t instanceIndex = static_cast<uint32_t>(m_perFrameData.perObjectInstances.size());
 
+        // Register material in the bindless system and update the CPU-side params buffer.
+        const uint32_t materialIndex = m_bindlessSet != VK_NULL_HANDLE && reference.material
+                                           ? getOrRegisterMaterial(reference.material.get())
+                                           : 0u;
+        if (m_bindlessSet != VK_NULL_HANDLE && reference.material && materialIndex < EngineShaderFamilies::MAX_BINDLESS_MATERIALS)
+        {
+            Material::GPUParams params = reference.material->params();
+            params.albedoTexIdx   = getOrRegisterTexture(reference.material->getAlbedoTexture().get());
+            params.normalTexIdx   = getOrRegisterTexture(reference.material->getNormalTexture().get());
+            params.ormTexIdx      = getOrRegisterTexture(reference.material->getOrmTexture().get());
+            params.emissiveTexIdx = getOrRegisterTexture(reference.material->getEmissiveTexture().get());
+            m_cpuMaterialParams[materialIndex] = params;
+        }
+
         PerObjectInstanceData instanceData{};
         instanceData.model = reference.modelMatrix;
         instanceData.objectInfo = glm::uvec4(
             render::encodeObjectId(reference.entity->getId(), reference.meshIndex),
             reference.drawItem->bonesOffset,
-            0u,
+            materialIndex,
             0u);
         m_perFrameData.perObjectInstances.push_back(instanceData);
 
@@ -996,6 +1110,22 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 lastBatch.firstInstance + lastBatch.instanceCount == instanceIndex)
             {
                 ++lastBatch.instanceCount;
+                // Expand the aggregate bounding sphere for this batch.
+                if (reference.worldBoundsRadius > 0.0f && !m_perFrameData.batchBounds.empty())
+                {
+                    GPUBatchBounds &bb = m_perFrameData.batchBounds.back();
+                    if (bb.radius <= 0.0f)
+                    {
+                        bb.center = reference.worldBoundsCenter;
+                        bb.radius = reference.worldBoundsRadius;
+                    }
+                    else
+                    {
+                        // Conservative union sphere: keep the original centre, grow radius to encompass the new instance.
+                        const float dist = glm::length(reference.worldBoundsCenter - bb.center);
+                        bb.radius = glm::max(bb.radius, dist + reference.worldBoundsRadius);
+                    }
+                }
                 continue;
             }
         }
@@ -1007,6 +1137,11 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         batch.firstInstance = instanceIndex;
         batch.instanceCount = 1;
         m_perFrameData.drawBatches.push_back(batch);
+
+        GPUBatchBounds bb{};
+        bb.center = reference.worldBoundsCenter;
+        bb.radius = reference.worldBoundsRadius;
+        m_perFrameData.batchBounds.push_back(bb);
     }
     std::vector<const MeshDrawReference *> shadowReferences;
     shadowReferences.reserve(drawReferences.size());
@@ -1077,8 +1212,24 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         return planes;
     };
 
+    // Derive the world-space size covered by one shadow-map texel from the
+    // cascade's VP matrix.  For an ortho shadow matrix M = P*V the length of
+    // the first column of M equals P[0][0] = 2/worldCoverageX, so:
+    //   worldCoverageX = 2 / |M[0].xyz|
+    //   texelWorldSize = worldCoverageX / shadowResolution
+    auto shadowTexelWorldSize = [&](const glm::mat4 &vp) -> float
+    {
+        const float scaleX = glm::length(glm::vec3(vp[0]));
+        if (scaleX < 1e-6f)
+            return 0.0f;
+        const float shadowRes = static_cast<float>(
+            std::max(1u, RenderQualitySettings::getInstance().getShadowResolution()));
+        return (2.0f / scaleX) / shadowRes;
+    };
+
     auto buildShadowBatches = [&](std::vector<DrawBatch> &outBatches,
-                                  const std::array<glm::vec4, 6> *cullPlanes)
+                                  const std::array<glm::vec4, 6> *cullPlanes,
+                                  float minMeshRadius = 0.0f)
     {
         outBatches.clear();
 
@@ -1102,6 +1253,11 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 if (outside)
                     continue;
             }
+
+            // Texel-size culling: skip meshes too small to contribute a visible
+            // shadow in this cascade (diameter < minMeshRadius * 2).
+            if (minMeshRadius > 0.0f && reference->worldBoundsRadius < minMeshRadius)
+                continue;
 
             const uint32_t instanceIndex = static_cast<uint32_t>(shadowPerObjectInstances.size());
             PerObjectInstanceData instanceData{};
@@ -1134,10 +1290,20 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         }
     };
 
+    // Texel coverage threshold: a mesh must project to at least this many
+    // texels in the cascade to be worth rendering.  Cascade 0 uses 0 (no
+    // filter) to keep near-shadow quality.  Higher cascades use progressively
+    // larger thresholds because their texels cover more world-space and small
+    // props genuinely contribute nothing.
+    constexpr float kTexelCoverageThreshold[] = {0.0f, 1.5f, 2.5f, 4.0f};
+
     for (uint32_t cascadeIndex = 0; cascadeIndex < m_perFrameData.activeDirectionalCascadeCount; ++cascadeIndex)
     {
-        const auto planes = extractLightFrustumPlanes(m_perFrameData.directionalLightSpaceMatrices[cascadeIndex]);
-        buildShadowBatches(m_perFrameData.directionalShadowDrawBatches[cascadeIndex], &planes);
+        const auto &vp     = m_perFrameData.directionalLightSpaceMatrices[cascadeIndex];
+        const auto  planes = extractLightFrustumPlanes(vp);
+        const float threshold = (cascadeIndex < 4) ? kTexelCoverageThreshold[cascadeIndex] : 4.0f;
+        const float minRadius = shadowTexelWorldSize(vp) * threshold;
+        buildShadowBatches(m_perFrameData.directionalShadowDrawBatches[cascadeIndex], &planes, minRadius);
     }
 
     for (uint32_t spotIndex = 0; spotIndex < m_perFrameData.activeSpotShadowCount; ++spotIndex)
@@ -1191,6 +1357,46 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
     m_perFrameData.perObjectDescriptorSet = m_perObjectDescriptorSets[m_currentFrame];
     m_perFrameData.shadowPerObjectDescriptorSet = m_shadowPerObjectDescriptorSets[m_currentFrame];
+
+    // ---- GPU culling buffers ----
+    if (!m_batchBoundsSSBOs.empty() && !m_indirectDrawBuffers.empty())
+    {
+        const uint32_t batchCount = static_cast<uint32_t>(m_perFrameData.drawBatches.size());
+
+        // Upload batch bounding spheres.
+        if (batchCount > 0)
+        {
+            glm::vec4 *boundsMapped = nullptr;
+            m_batchBoundsSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(boundsMapped));
+            for (uint32_t i = 0; i < batchCount; ++i)
+            {
+                const GPUBatchBounds &b  = m_perFrameData.batchBounds[i];
+                boundsMapped[i] = glm::vec4(b.center, b.radius);
+            }
+            m_batchBoundsSSBOs[m_currentFrame]->unmap();
+        }
+
+        // Write VkDrawIndexedIndirectCommand[] from current draw batches.
+        // The compute shader may zero out instanceCount for culled batches.
+        {
+            uint8_t *cmdMapped = nullptr;
+            m_indirectDrawBuffers[m_currentFrame]->map(reinterpret_cast<void *&>(cmdMapped));
+            for (uint32_t i = 0; i < batchCount; ++i)
+            {
+                const DrawBatch &batch = m_perFrameData.drawBatches[i];
+                VkDrawIndexedIndirectCommand cmd{};
+                cmd.indexCount    = batch.mesh ? batch.mesh->indicesCount : 0u;
+                cmd.instanceCount = batch.instanceCount;
+                cmd.firstIndex    = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedFirstIndex : 0u;
+                cmd.vertexOffset  = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedVertexOffset : 0;
+                cmd.firstInstance = 0u; // baseInstance comes from push constant
+                std::memcpy(cmdMapped + i * sizeof(VkDrawIndexedIndirectCommand), &cmd, sizeof(cmd));
+            }
+            m_indirectDrawBuffers[m_currentFrame]->unmap();
+        }
+
+        m_perFrameData.indirectDrawBuffer = m_indirectDrawBuffers[m_currentFrame]->vk();
+    }
 }
 
 void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime)
@@ -1201,6 +1407,17 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     m_perFrameData.previewCameraDescriptorSet = m_previewCameraDescriptorSets[m_currentFrame];
     m_perFrameData.deltaTime = deltaTime;
     m_perFrameData.elapsedTime += deltaTime;
+    m_perFrameData.unifiedStaticVertexBuffer = m_staticUnifiedGeometry.getVertexBuffer();
+    m_perFrameData.unifiedStaticIndexBuffer  = m_staticUnifiedGeometry.getIndexBuffer();
+
+    // Upload accumulated material params to the GPU SSBO and expose the bindless set.
+    if (m_materialParamsSSBO && m_nextMaterialSlot > 0)
+    {
+        const VkDeviceSize uploadSize =
+            static_cast<VkDeviceSize>(m_nextMaterialSlot) * sizeof(Material::GPUParams);
+        m_materialParamsSSBO->upload(m_cpuMaterialParams.data(), uploadSize);
+    }
+    m_perFrameData.bindlessDescriptorSet = m_bindlessSet;
 
     CameraUBO cameraUBO{};
 
@@ -1251,6 +1468,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     m_perFrameData.activeDirectionalCascadeCount = 0;
     m_perFrameData.activeSpotShadowCount = 0;
     m_perFrameData.activePointShadowCount = 0;
+    m_perFrameData.activeRTShadowLayerCount = 0;
     m_perFrameData.directionalLightDirection = glm::vec3(0.0f, -1.0f, 0.0f);
     m_perFrameData.directionalLightStrength = 0.0f;
     m_perFrameData.hasDirectionalLight = false;
@@ -1371,26 +1589,44 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
                         cascadeCenter += corner;
                     cascadeCenter /= static_cast<float>(corners.size());
 
+                    // Sphere-bound the sub-frustum so the ortho extents are camera-rotation-independent.
+                    // This prevents the light projection from resizing as the camera rotates, which
+                    // would cause the shadow map texels to shift and produce flickering seam lines.
+                    float radius = 0.0f;
+                    for (const auto &corner : corners)
+                        radius = std::max(radius, glm::length(corner - cascadeCenter));
+
+                    // Snap radius to a texel-world-size multiple so it never changes mid-frame.
+                    const float shadowResolutionF = static_cast<float>(RenderQualitySettings::getInstance().getShadowResolution());
+                    const float texelWorldSize = (2.0f * radius) / shadowResolutionF;
+                    if (texelWorldSize > 0.0f)
+                        radius = std::ceil(radius / texelWorldSize) * texelWorldSize;
+
                     glm::vec3 lightUp = (std::abs(glm::dot(dirWorld, glm::vec3(0, 1, 0))) > 0.95f)
                                             ? glm::vec3(0, 0, 1)
                                             : glm::vec3(0, 1, 0);
-                    const float lightDistance = splitFar + 50.0f;
+                    const float lightDistance = radius + 50.0f;
                     glm::mat4 lightView = glm::lookAt(cascadeCenter - dirWorld * lightDistance, cascadeCenter, lightUp);
 
-                    glm::vec3 minBounds(std::numeric_limits<float>::max());
-                    glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
-
-                    for (const auto &corner : corners)
-                    {
-                        glm::vec3 cornerLight = glm::vec3(lightView * glm::vec4(corner, 1.0f));
-                        minBounds = glm::min(minBounds, cornerLight);
-                        maxBounds = glm::max(maxBounds, cornerLight);
-                    }
-
                     constexpr float zPadding = 25.0f;
-                    const float cascadeNear = std::max(0.1f, -maxBounds.z - zPadding);
-                    const float cascadeFar = std::max(cascadeNear + 0.1f, -minBounds.z + zPadding);
-                    glm::mat4 lightProj = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, cascadeNear, cascadeFar);
+                    const float cascadeNear = std::max(0.1f, lightDistance - radius - zPadding);
+                    const float cascadeFar  = std::max(cascadeNear + 0.1f, lightDistance + radius + zPadding);
+                    glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, cascadeNear, cascadeFar);
+
+                    // Texel snapping: project the world origin into light NDC, round to the nearest
+                    // texel, then apply the offset back to the projection.  This eliminates sub-texel
+                    // shadow-map shimmer as the camera translates.
+                    {
+                        glm::mat4 lightMatrix = lightProj * lightView;
+                        glm::vec4 shadowOrigin = lightMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                        const float halfRes = shadowResolutionF * 0.5f;
+                        shadowOrigin *= halfRes;
+                        glm::vec4 roundedOrigin = glm::round(shadowOrigin);
+                        glm::vec4 snapOffset = (roundedOrigin - shadowOrigin) / halfRes;
+                        snapOffset.z = 0.0f;
+                        snapOffset.w = 0.0f;
+                        lightProj[3] += snapOffset;
+                    }
                     glm::mat4 lightMatrix = lightProj * lightView;
 
                     m_perFrameData.directionalLightSpaceMatrices[cascadeIndex] = lightMatrix;
@@ -1407,6 +1643,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
 
                 m_perFrameData.activeDirectionalCascadeCount = configuredCascadeCount;
                 ssboData->lights[i].shadowInfo.x = 1.0f;
+                m_perFrameData.activeRTShadowLayerCount = std::max(m_perFrameData.activeRTShadowLayerCount, static_cast<uint32_t>(i + 1));
                 directionalShadowAssigned = true;
             }
         }
@@ -1434,6 +1671,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
                 }
 
                 ssboData->lights[i].shadowInfo = glm::vec4(1.0f, static_cast<float>(pointShadowIndex), farPlane, nearPlane);
+                m_perFrameData.activeRTShadowLayerCount = std::max(m_perFrameData.activeRTShadowLayerCount, static_cast<uint32_t>(i + 1));
             }
         }
         else if (auto spotLight = dynamic_cast<SpotLight *>(lightComponent.get()))
@@ -1468,6 +1706,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
                 m_perFrameData.spotLightSpaceMatrices[spotShadowIndex] = lightMatrix;
                 lightSpaceMatrixUBO.spotLightSpaceMatrices[spotShadowIndex] = lightMatrix;
                 ssboData->lights[i].shadowInfo = glm::vec4(1.0f, static_cast<float>(spotShadowIndex), farPlane, 0.0f);
+                m_perFrameData.activeRTShadowLayerCount = std::max(m_perFrameData.activeRTShadowLayerCount, static_cast<uint32_t>(i + 1));
             }
         }
     }
@@ -1780,6 +2019,7 @@ bool RenderGraph::begin()
     m_passContextData.activeDirectionalShadowCount = m_perFrameData.activeDirectionalCascadeCount;
     m_passContextData.activeSpotShadowCount = m_perFrameData.activeSpotShadowCount;
     m_passContextData.activePointShadowCount = m_perFrameData.activePointShadowCount;
+    m_passContextData.activeRTShadowLayerCount = m_perFrameData.activeRTShadowLayerCount;
 
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
         renderGraphPass->prepareRecord(m_perFrameData, m_passContextData);
@@ -1801,6 +2041,57 @@ bool RenderGraph::begin()
         std::exception_ptr recordException{nullptr};
     };
 
+    const auto recordPendingExecution = [&](PendingRenderExecution &pending)
+    {
+        const auto &execution = *pending.execution;
+
+        try
+        {
+            if (execution.mode == IRenderGraphPass::ExecutionMode::DynamicRendering)
+            {
+                VkCommandBufferInheritanceRenderingInfo inheritanceRenderingInfo{
+                    VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO};
+                inheritanceRenderingInfo.colorAttachmentCount = static_cast<uint32_t>(execution.colorsRenderingItems.size());
+                inheritanceRenderingInfo.pColorAttachmentFormats = execution.colorFormats.data();
+                inheritanceRenderingInfo.depthAttachmentFormat = execution.depthFormat;
+                inheritanceRenderingInfo.viewMask = 0;
+                inheritanceRenderingInfo.rasterizationSamples = execution.rasterizationSamples;
+                inheritanceRenderingInfo.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
+
+                VkCommandBufferInheritanceInfo inheritanceInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+                inheritanceInfo.pNext = &inheritanceRenderingInfo;
+                inheritanceInfo.subpass = 0;
+
+                if (!pending.secondaryCommandBuffer->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inheritanceInfo))
+                    throw std::runtime_error("Failed to begin secondary command buffer");
+            }
+            else if (!pending.secondaryCommandBuffer->begin())
+            {
+                throw std::runtime_error("Failed to begin secondary command buffer");
+            }
+
+            RenderGraphPassContext executionContext = m_passContextData;
+            executionContext.executionIndex = pending.executionIndex;
+
+            if (detailedProfilingEnabled)
+            {
+                profiling::ScopedDrawCallCounter scopedDrawCallCounter(pending.profilingData.drawCalls);
+                pending.pass->record(pending.secondaryCommandBuffer, m_perFrameData, executionContext);
+            }
+            else
+            {
+                pending.pass->record(pending.secondaryCommandBuffer, m_perFrameData, executionContext);
+            }
+
+            if (!pending.secondaryCommandBuffer->end())
+                throw std::runtime_error("Failed to end secondary command buffer");
+        }
+        catch (...)
+        {
+            pending.recordException = std::current_exception();
+        }
+    };
+
     std::vector<PendingRenderExecution> pendingExecutions;
     pendingExecutions.reserve(MAX_RENDER_JOBS);
 
@@ -1813,7 +2104,8 @@ bool RenderGraph::begin()
                               cachedData.imageIndex == m_passContextData.currentImageIndex &&
                               cachedData.directionalShadowCount == m_passContextData.activeDirectionalShadowCount &&
                               cachedData.spotShadowCount == m_passContextData.activeSpotShadowCount &&
-                              cachedData.pointShadowCount == m_passContextData.activePointShadowCount;
+                              cachedData.pointShadowCount == m_passContextData.activePointShadowCount &&
+                              cachedData.executionCacheKey == renderGraphPass->getExecutionCacheKey(m_passContextData);
         if (!cacheHit)
             buildExecutionCacheForPass(passIndex);
 
@@ -1839,64 +2131,46 @@ bool RenderGraph::begin()
         ++passIndex;
     }
 
-    if (!pendingExecutions.empty())
+    std::vector<size_t> parallelExecutionIndices;
+    std::vector<size_t> serialExecutionIndices;
+    parallelExecutionIndices.reserve(pendingExecutions.size());
+    serialExecutionIndices.reserve(pendingExecutions.size());
+
+    for (size_t pendingIndex = 0; pendingIndex < pendingExecutions.size(); ++pendingIndex)
     {
-        const size_t recordingThreadCount = std::min<std::size_t>(pendingExecutions.size(), ThreadPoolManager::instance().getMaxThreads());
+        if (pendingExecutions[pendingIndex].pass->canRecordInParallel())
+            parallelExecutionIndices.push_back(pendingIndex);
+        else
+            serialExecutionIndices.push_back(pendingIndex);
+    }
+
+    if (!parallelExecutionIndices.empty())
+    {
+        const size_t recordingThreadCount = std::min<std::size_t>(parallelExecutionIndices.size(), ThreadPoolManager::instance().getMaxThreads());
         ThreadPoolManager::instance().parallelFor(
-            pendingExecutions.size(),
+            parallelExecutionIndices.size(),
             [&](std::size_t beginIndex, std::size_t endIndex)
             {
-                for (std::size_t pendingIndex = beginIndex; pendingIndex < endIndex; ++pendingIndex)
+                for (std::size_t rangeIndex = beginIndex; rangeIndex < endIndex; ++rangeIndex)
                 {
-                    auto &pending = pendingExecutions[pendingIndex];
-                    const auto &execution = *pending.execution;
-
-                    try
-                    {
-                        VkCommandBufferInheritanceRenderingInfo inheritanceRenderingInfo{
-                            VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO};
-                        inheritanceRenderingInfo.colorAttachmentCount = static_cast<uint32_t>(execution.colorsRenderingItems.size());
-                        inheritanceRenderingInfo.pColorAttachmentFormats = execution.colorFormats.data();
-                        inheritanceRenderingInfo.depthAttachmentFormat = execution.depthFormat;
-                        inheritanceRenderingInfo.viewMask = 0;
-                        inheritanceRenderingInfo.rasterizationSamples = execution.rasterizationSamples;
-                        inheritanceRenderingInfo.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
-
-                        VkCommandBufferInheritanceInfo inheritanceInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-                        inheritanceInfo.pNext = &inheritanceRenderingInfo;
-                        inheritanceInfo.subpass = 0;
-
-                        if (!pending.secondaryCommandBuffer->begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inheritanceInfo))
-                            throw std::runtime_error("Failed to begin secondary command buffer");
-
-                        RenderGraphPassContext executionContext = m_passContextData;
-                        executionContext.executionIndex = pending.executionIndex;
-
-                        if (detailedProfilingEnabled)
-                        {
-                            profiling::ScopedDrawCallCounter scopedDrawCallCounter(pending.profilingData.drawCalls);
-                            pending.pass->record(pending.secondaryCommandBuffer, m_perFrameData, executionContext);
-                        }
-                        else
-                        {
-                            pending.pass->record(pending.secondaryCommandBuffer, m_perFrameData, executionContext);
-                        }
-
-                        if (!pending.secondaryCommandBuffer->end())
-                            throw std::runtime_error("Failed to end secondary command buffer");
-                    }
-                    catch (...)
-                    {
-                        pending.recordException = std::current_exception();
-                    }
+                    auto &pending = pendingExecutions[parallelExecutionIndices[rangeIndex]];
+                    recordPendingExecution(pending);
                 }
             },
             recordingThreadCount);
     }
 
+    for (const size_t pendingIndex : serialExecutionIndices)
+        recordPendingExecution(pendingExecutions[pendingIndex]);
+
     const auto &primaryCommandBuffer = m_commandBuffers.at(m_currentFrame);
 
     primaryCommandBuffer->begin();
+
+    // GPU frustum culling — zeroes instanceCount for batches outside the view frustum.
+    // Must run before any render pass that reads VkDrawIndexedIndirectCommand[].
+    dispatchGpuCulling(primaryCommandBuffer->vk());
+
     m_renderGraphProfiling->beginFrameGpuProfiling(primaryCommandBuffer->vk(), m_currentFrame);
 
     for (auto &pending : pendingExecutions)
@@ -1905,14 +2179,6 @@ bool RenderGraph::begin()
             std::rethrow_exception(pending.recordException);
 
         const auto &execution = *pending.execution;
-
-        VkRenderingInfo renderingInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
-        renderingInfo.renderArea = execution.renderArea;
-        renderingInfo.layerCount = 1;
-        renderingInfo.colorAttachmentCount = static_cast<uint32_t>(execution.colorsRenderingItems.size());
-        renderingInfo.pColorAttachments = execution.colorsRenderingItems.data();
-        renderingInfo.pDepthAttachment = execution.useDepth ? &execution.depthRenderingItem : VK_NULL_HANDLE;
-        renderingInfo.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
 
         m_renderGraphProfiling->beginPassProfiling(primaryCommandBuffer->vk(), m_currentFrame, pending.profilingData, pending.passName);
 
@@ -1925,9 +2191,24 @@ bool RenderGraph::begin()
         firstDep.pImageMemoryBarriers = pending.preBarriers->data();
         vkCmdPipelineBarrier2(primaryCommandBuffer, &firstDep);
 
-        vkCmdBeginRendering(primaryCommandBuffer, &renderingInfo);
-        vkCmdExecuteCommands(primaryCommandBuffer->vk(), 1, pending.secondaryCommandBuffer->pVk());
-        vkCmdEndRendering(primaryCommandBuffer->vk());
+        if (execution.mode == IRenderGraphPass::ExecutionMode::DynamicRendering)
+        {
+            VkRenderingInfo renderingInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
+            renderingInfo.renderArea = execution.renderArea;
+            renderingInfo.layerCount = 1;
+            renderingInfo.colorAttachmentCount = static_cast<uint32_t>(execution.colorsRenderingItems.size());
+            renderingInfo.pColorAttachments = execution.colorsRenderingItems.data();
+            renderingInfo.pDepthAttachment = execution.useDepth ? &execution.depthRenderingItem : VK_NULL_HANDLE;
+            renderingInfo.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
+
+            vkCmdBeginRendering(primaryCommandBuffer, &renderingInfo);
+            vkCmdExecuteCommands(primaryCommandBuffer->vk(), 1, pending.secondaryCommandBuffer->pVk());
+            vkCmdEndRendering(primaryCommandBuffer->vk());
+        }
+        else
+        {
+            vkCmdExecuteCommands(primaryCommandBuffer->vk(), 1, pending.secondaryCommandBuffer->pVk());
+        }
 
         VkDependencyInfo secondDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
         secondDep.imageMemoryBarrierCount = static_cast<uint32_t>(pending.postBarriers->size());
@@ -2200,6 +2481,7 @@ void RenderGraph::buildExecutionCacheForPass(size_t sortedPassIndex)
     cached.directionalShadowCount = m_passContextData.activeDirectionalShadowCount;
     cached.spotShadowCount = m_passContextData.activeSpotShadowCount;
     cached.pointShadowCount = m_passContextData.activePointShadowCount;
+    cached.executionCacheKey = pass->getExecutionCacheKey(m_passContextData);
 
     const size_t execCount = cached.executions.size();
     cached.preBarriers.resize(execCount);
@@ -2444,6 +2726,268 @@ void RenderGraph::createRenderGraphResources()
 
     sortRenderGraphPasses();
     m_renderGraphProfiling->syncDetailedProfilingMode();
+
+    createGpuCullingPipeline();
+    createBindlessResources();
+}
+
+void RenderGraph::createBindlessResources()
+{
+    if (EngineShaderFamilies::bindlessMaterialSetLayout == VK_NULL_HANDLE)
+        return; // ShaderFamily not initialised yet
+
+    // Descriptor pool (must have UPDATE_AFTER_BIND for the texture array binding).
+    {
+        VkDescriptorPoolSize sizes[2];
+        sizes[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sizes[0].descriptorCount = EngineShaderFamilies::MAX_BINDLESS_TEXTURES;
+        sizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        sizes[1].descriptorCount = 1;
+
+        VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        poolCI.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+        poolCI.maxSets       = 1;
+        poolCI.poolSizeCount = 2;
+        poolCI.pPoolSizes    = sizes;
+
+        vkCreateDescriptorPool(m_device, &poolCI, nullptr, &m_bindlessPool);
+    }
+
+    // Allocate the single global bindless descriptor set.
+    {
+        VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        allocInfo.descriptorPool     = m_bindlessPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts        = &EngineShaderFamilies::bindlessMaterialSetLayout;
+
+        vkAllocateDescriptorSets(m_device, &allocInfo, &m_bindlessSet);
+    }
+
+    // Material params SSBO (CPU_TO_GPU — re-uploaded each frame).
+    const VkDeviceSize ssboSize =
+        static_cast<VkDeviceSize>(EngineShaderFamilies::MAX_BINDLESS_MATERIALS) * sizeof(Material::GPUParams);
+
+    m_materialParamsSSBO = core::Buffer::createShared(ssboSize,
+                                                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                                       core::memory::MemoryUsage::CPU_TO_GPU);
+    m_cpuMaterialParams.resize(EngineShaderFamilies::MAX_BINDLESS_MATERIALS);
+
+    // Write the SSBO buffer descriptor to binding 1.
+    {
+        VkDescriptorBufferInfo bufInfo{};
+        bufInfo.buffer = m_materialParamsSSBO->vk();
+        bufInfo.offset = 0;
+        bufInfo.range  = ssboSize;
+
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet          = m_bindlessSet;
+        write.dstBinding      = 1;
+        write.dstArrayElement = 0;
+        write.descriptorCount = 1;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo     = &bufInfo;
+
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    }
+}
+
+uint32_t RenderGraph::getOrRegisterTexture(Texture *tex)
+{
+    if (!tex)
+        tex = Texture::getDefaultWhiteTexture().get();
+
+    auto it = m_textureRegistry.find(tex);
+    if (it != m_textureRegistry.end())
+        return it->second;
+
+    if (m_nextTextureSlot >= EngineShaderFamilies::MAX_BINDLESS_TEXTURES)
+    {
+        VX_ENGINE_WARNING_STREAM("BindlessTextureRegistry: MAX_BINDLESS_TEXTURES reached, returning slot 0");
+        return 0;
+    }
+
+    const uint32_t slot = m_nextTextureSlot++;
+    m_textureRegistry[tex] = slot;
+
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageView   = tex->vkImageView();
+    imageInfo.sampler     = tex->vkSampler();
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet          = m_bindlessSet;
+    write.dstBinding      = 0;
+    write.dstArrayElement = slot;
+    write.descriptorCount = 1;
+    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo      = &imageInfo;
+
+    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    return slot;
+}
+
+uint32_t RenderGraph::getOrRegisterMaterial(Material *mat)
+{
+    auto it = m_materialRegistry.find(mat);
+    if (it != m_materialRegistry.end())
+        return it->second;
+
+    if (m_nextMaterialSlot >= EngineShaderFamilies::MAX_BINDLESS_MATERIALS)
+    {
+        VX_ENGINE_WARNING_STREAM("BindlessMaterialRegistry: MAX_BINDLESS_MATERIALS reached, returning slot 0");
+        return 0;
+    }
+
+    const uint32_t slot  = m_nextMaterialSlot++;
+    m_materialRegistry[mat] = slot;
+    return slot;
+}
+
+void RenderGraph::createGpuCullingPipeline()
+{
+    // ---- Buffers (one per frame in flight) ----
+    constexpr VkDeviceSize boundsBufferSize = static_cast<VkDeviceSize>(MAX_GPU_CULL_BATCHES) * sizeof(glm::vec4);
+    constexpr VkDeviceSize indirectBufferSize = static_cast<VkDeviceSize>(MAX_GPU_CULL_BATCHES) * sizeof(VkDrawIndexedIndirectCommand);
+
+    m_batchBoundsSSBOs.reserve(MAX_FRAMES_IN_FLIGHT);
+    m_indirectDrawBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        m_batchBoundsSSBOs.push_back(core::Buffer::createShared(
+            boundsBufferSize,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            core::memory::MemoryUsage::CPU_TO_GPU));
+
+        m_indirectDrawBuffers.push_back(core::Buffer::createShared(
+            indirectBufferSize,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+            core::memory::MemoryUsage::CPU_TO_GPU));
+    }
+
+    // ---- Descriptor set layout: binding 0 = bounds SSBO, binding 1 = draw-command SSBO ----
+    const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
+        {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+    }};
+
+    VkDescriptorSetLayoutCreateInfo dslCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    dslCI.bindingCount = static_cast<uint32_t>(bindings.size());
+    dslCI.pBindings    = bindings.data();
+    if (vkCreateDescriptorSetLayout(m_device, &dslCI, nullptr, &m_gpuCullDescriptorSetLayout) != VK_SUCCESS)
+    {
+        VX_ENGINE_ERROR_STREAM("GPU culling: failed to create descriptor set layout\n");
+        return;
+    }
+
+    // ---- Descriptor pool (2 storage-buffer descriptors per frame) ----
+    const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT * 2u};
+    VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    poolCI.maxSets       = MAX_FRAMES_IN_FLIGHT;
+    poolCI.poolSizeCount = 1;
+    poolCI.pPoolSizes    = &poolSize;
+    if (vkCreateDescriptorPool(m_device, &poolCI, nullptr, &m_gpuCullDescriptorPool) != VK_SUCCESS)
+    {
+        VX_ENGINE_ERROR_STREAM("GPU culling: failed to create descriptor pool\n");
+        return;
+    }
+
+    // ---- Allocate one descriptor set per frame ----
+    m_gpuCullDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        allocInfo.descriptorPool     = m_gpuCullDescriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts        = &m_gpuCullDescriptorSetLayout;
+        if (vkAllocateDescriptorSets(m_device, &allocInfo, &m_gpuCullDescriptorSets[i]) != VK_SUCCESS)
+        {
+            VX_ENGINE_ERROR_STREAM("GPU culling: failed to allocate descriptor set for frame " << i << "\n");
+            return;
+        }
+
+        const VkDescriptorBufferInfo boundsBI{m_batchBoundsSSBOs[i]->vk(), 0, VK_WHOLE_SIZE};
+        const VkDescriptorBufferInfo cmdBI{m_indirectDrawBuffers[i]->vk(), 0, VK_WHOLE_SIZE};
+
+        const std::array<VkWriteDescriptorSet, 2> writes{{
+            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_gpuCullDescriptorSets[i], 0, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &boundsBI, nullptr},
+            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_gpuCullDescriptorSets[i], 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &cmdBI,    nullptr},
+        }};
+        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+
+    // ---- Pipeline layout (1 descriptor set + push constants) ----
+    const VkPushConstantRange pcRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(GpuCullPushConstants)};
+    VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    plCI.setLayoutCount         = 1;
+    plCI.pSetLayouts            = &m_gpuCullDescriptorSetLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges    = &pcRange;
+    if (vkCreatePipelineLayout(m_device, &plCI, nullptr, &m_gpuCullPipelineLayout) != VK_SUCCESS)
+    {
+        VX_ENGINE_ERROR_STREAM("GPU culling: failed to create pipeline layout\n");
+        return;
+    }
+
+    // ---- Load compute shader SPV ----
+    core::ShaderHandler computeShader;
+    computeShader.loadFromFile("resources/shaders/gpu_cull.comp.spv", core::ShaderStage::COMPUTE);
+    if (computeShader.getModule() == VK_NULL_HANDLE)
+    {
+        VX_ENGINE_ERROR_STREAM("GPU culling: failed to load gpu_cull.comp.spv\n");
+        return;
+    }
+
+    // ---- Compute pipeline ----
+    VkComputePipelineCreateInfo cpCI{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    cpCI.stage  = computeShader.getInfo();
+    cpCI.layout = m_gpuCullPipelineLayout;
+    if (vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &cpCI, nullptr, &m_gpuCullPipeline) != VK_SUCCESS)
+    {
+        VX_ENGINE_ERROR_STREAM("GPU culling: failed to create compute pipeline\n");
+        return;
+    }
+}
+
+void RenderGraph::dispatchGpuCulling(VkCommandBuffer cmd)
+{
+    (void)cmd;
+    // Disabled for now: this path has been causing camera-motion instability in the
+    // main scene rendering, where batches can disappear for a frame and leave the
+    // scene briefly black. The CPU-side visibility filtering still runs.
+    return;
+
+    if (m_gpuCullPipeline == VK_NULL_HANDLE)
+        return;
+
+    const uint32_t batchCount = static_cast<uint32_t>(m_perFrameData.drawBatches.size());
+    if (batchCount == 0)
+        return;
+
+    GpuCullPushConstants pc{};
+    pc.batchCount = batchCount;
+    std::copy(m_lastFrustumPlanes.begin(), m_lastFrustumPlanes.end(), pc.planes);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_gpuCullPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_gpuCullPipelineLayout,
+                            0, 1, &m_gpuCullDescriptorSets[m_currentFrame], 0, nullptr);
+    vkCmdPushConstants(cmd, m_gpuCullPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                       0, sizeof(GpuCullPushConstants), &pc);
+
+    const uint32_t groupCount = (batchCount + 63u) / 64u;
+    vkCmdDispatch(cmd, groupCount, 1, 1);
+
+    // Barrier: compute writes to indirect buffer → draw indirect reads it.
+    VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    barrier.srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+    barrier.dstStageMask  = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
+    barrier.dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers    = &barrier;
+    vkCmdPipelineBarrier2(cmd, &dep);
 }
 
 void RenderGraph::cleanResources()
@@ -2508,6 +3052,46 @@ void RenderGraph::cleanResources()
     m_renderGraphPassesStorage.cleanup();
     m_rayTracingScene.clear();
     m_rayTracingGeometryCache.clear();
+
+    // GPU frustum-culling pipeline resources.
+    if (m_gpuCullPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(m_device, m_gpuCullPipeline, nullptr);
+        m_gpuCullPipeline = VK_NULL_HANDLE;
+    }
+    if (m_gpuCullPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(m_device, m_gpuCullPipelineLayout, nullptr);
+        m_gpuCullPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (m_gpuCullDescriptorSetLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(m_device, m_gpuCullDescriptorSetLayout, nullptr);
+        m_gpuCullDescriptorSetLayout = VK_NULL_HANDLE;
+    }
+    if (m_gpuCullDescriptorPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(m_device, m_gpuCullDescriptorPool, nullptr);
+        m_gpuCullDescriptorPool = VK_NULL_HANDLE;
+    }
+    m_gpuCullDescriptorSets.clear();
+    m_batchBoundsSSBOs.clear();
+    m_indirectDrawBuffers.clear();
+
+    // Bindless material resources.
+    m_materialParamsSSBO.reset();
+    m_cpuMaterialParams.clear();
+    m_textureRegistry.clear();
+    m_materialRegistry.clear();
+    m_nextTextureSlot  = 0;
+    m_nextMaterialSlot = 0;
+    if (m_bindlessPool != VK_NULL_HANDLE)
+    {
+        // Descriptor sets allocated from the pool are freed with it.
+        vkDestroyDescriptorPool(m_device, m_bindlessPool, nullptr);
+        m_bindlessPool = VK_NULL_HANDLE;
+        m_bindlessSet  = VK_NULL_HANDLE;
+    }
 }
 
 ELIX_CUSTOM_NAMESPACE_END

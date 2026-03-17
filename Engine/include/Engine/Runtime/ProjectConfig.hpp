@@ -46,7 +46,6 @@ private:
     bool m_enableSMAA{false};
     bool m_enableTAA{false};
     bool m_enableCMAA{false};
-    float m_taaHistoryWeight{0.9f};
 
     bool m_enablePostProcessing{true};
     bool m_enableVSync{false};

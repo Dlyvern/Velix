@@ -92,7 +92,7 @@ void main()
     vec3 lightDirView = vec3(0.0, -1.0, 0.0); // default: straight down
     for (int i = 0; i < lightData.lightCount && i < MAX_LIGHT_COUNT; ++i)
     {
-        if (int(lightData.lights[i].parameters.x) == DIRECTIONAL_LIGHT_TYPE)
+        if (int(lightData.lights[i].parameters.w) == DIRECTIONAL_LIGHT_TYPE)
         {
             // direction is world-space; bring to view space
             vec4 d = lightData.lights[i].direction;
@@ -112,7 +112,8 @@ void main()
     vec3 stepVec = (-lightDirView) * (pc.rayLength / float(pc.steps));
 
     float shadow    = 0.0;
-    vec3  samplePos = P_view + N_view * 0.02; // tiny bias off surface
+    float stepLength = pc.rayLength / max(float(pc.steps), 1.0);
+    vec3  samplePos = P_view + N_view * 0.04 + (-lightDirView) * stepLength;
 
     for (int i = 0; i < pc.steps; ++i)
     {
@@ -123,12 +124,24 @@ void main()
             break;
 
         float sceneDepth   = texture(uDepth, sampleUV).r;
+        if (sceneDepth >= 0.9999)
+            continue;
+
         vec3  sceneViewPos = reconstructViewPos(sampleUV, sceneDepth);
+        vec3  sampleNormal = normalize(texture(uGBufferNormal, sampleUV).rgb * 2.0 - 1.0);
 
         float depthDiff = samplePos.z - sceneViewPos.z;
+        float travel = length(samplePos - P_view);
+        float thickness = mix(0.01, 0.06, clamp(travel / max(pc.rayLength, 0.0001), 0.0, 1.0));
+        float normalAgreement = clamp(dot(N_view, sampleNormal), 0.0, 1.0);
 
-        // Hit: ray penetrated the surface (samplePos is farther from camera)
-        if (depthDiff < 0.0 && depthDiff > -0.5)
+        // Reject self-shadowing on the same smooth surface. The old test accepted
+        // a huge depth window and produced dark camera-dependent bands on spheres.
+        if (normalAgreement > 0.985 && depthDiff < -0.001 && depthDiff > -thickness * 0.5)
+            continue;
+
+        // Hit: ray penetrated a nearby surface thickness in screen space.
+        if (depthDiff < -0.001 && depthDiff > -thickness)
         {
             // Fade shadow toward the end of the ray for soft falloff
             float t    = float(i) / float(pc.steps - 1);

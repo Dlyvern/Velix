@@ -26,9 +26,15 @@
 #include "Engine/Render/GraphPasses/ParticleRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ContactShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/CinematicEffectsRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/DepthPrepassRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTReflectionsRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTShadowDenoiseRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTShadowsRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTAORenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTReflectionDenoiseRenderGraphPass.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <future>
 #include <mutex>
@@ -91,8 +97,11 @@ private:
     std::unique_ptr<engine::shaders::ShaderHotReloader> m_shaderHotReloader{nullptr};
 
     PreviewAssetsRenderGraphPass *m_previewAssetsRenderGraphPass{nullptr};
+    engine::renderGraph::DepthPrepassRenderGraphPass *m_depthPrepassRenderGraphPass{nullptr};
     engine::renderGraph::GBufferRenderGraphPass *m_gBufferRenderGraphPass{nullptr};
     engine::renderGraph::ShadowRenderGraphPass *m_shadowRenderGraphPass{nullptr};
+    engine::renderGraph::RTShadowsRenderGraphPass *m_rtShadowsRenderGraphPass{nullptr};
+    engine::renderGraph::RTShadowDenoiseRenderGraphPass *m_rtShadowDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
     engine::renderGraph::SkyLightRenderGraphPass *m_skyLightRenderGraphPass{nullptr};
     engine::renderGraph::BloomRenderGraphPass *m_bloomRenderGraphPass{nullptr};
@@ -103,6 +112,8 @@ private:
     engine::renderGraph::SMAAPassRenderGraphPass *m_smaaRenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionsRenderGraphPass *m_rtReflectionsRenderGraphPass{nullptr};
+    engine::renderGraph::RTAORenderGraphPass *m_rtaoRenderGraphPass{nullptr};
+    engine::renderGraph::RTReflectionDenoiseRenderGraphPass *m_rtReflectionDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_cinematicEffectsRenderGraphPass{nullptr};
     SelectionOverlayRenderGraphPass *m_selectionOverlayRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_uiRenderGraphPass{nullptr};
@@ -110,8 +121,11 @@ private:
     ImGuiRenderGraphPass *m_imGuiRenderGraphPass{nullptr};
     engine::renderGraph::ParticleRenderGraphPass *m_particleRenderGraphPass{nullptr};
 
+    engine::renderGraph::DepthPrepassRenderGraphPass *m_gameDepthPrepassRenderGraphPass{nullptr};
     engine::renderGraph::GBufferRenderGraphPass *m_gameGBufferRenderGraphPass{nullptr};
     engine::renderGraph::ShadowRenderGraphPass *m_gameShadowRenderGraphPass{nullptr};
+    engine::renderGraph::RTShadowsRenderGraphPass *m_gameRTShadowsRenderGraphPass{nullptr};
+    engine::renderGraph::RTShadowDenoiseRenderGraphPass *m_gameRTShadowDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::SSAORenderGraphPass *m_gameSSAORenderGraphPass{nullptr};
     engine::renderGraph::LightingRenderGraphPass *m_gameLightingRenderGraphPass{nullptr};
     engine::renderGraph::SkyLightRenderGraphPass *m_gameSkyLightRenderGraphPass{nullptr};
@@ -123,11 +137,15 @@ private:
     engine::renderGraph::SMAAPassRenderGraphPass *m_gameSMAARenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_gameContactShadowRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionsRenderGraphPass *m_gameRTReflectionsRenderGraphPass{nullptr};
+    engine::renderGraph::RTAORenderGraphPass *m_gameRtaoRenderGraphPass{nullptr};
+    engine::renderGraph::RTReflectionDenoiseRenderGraphPass *m_gameRtReflectionDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_gameCinematicEffectsRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_gameUIRenderGraphPass{nullptr};
 
     VkExtent2D m_lastEditorRenderExtent{0u, 0u};
     VkExtent2D m_lastGameRenderExtent{0u, 0u};
+    size_t m_editorRenderGraphTopologyHash{0u};
+    size_t m_gameViewportRenderGraphTopologyHash{0u};
 
     bool m_shouldUpdate{false};
     bool m_isPlaySessionActive{false};

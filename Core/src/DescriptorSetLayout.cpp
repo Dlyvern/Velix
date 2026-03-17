@@ -10,6 +10,26 @@ DescriptorSetLayout::DescriptorSetLayout(VkDevice device, const std::vector<VkDe
     createVk(bindings);
 }
 
+DescriptorSetLayout::DescriptorSetLayout(VkDevice device,
+                                         const std::vector<VkDescriptorSetLayoutBinding> &bindings,
+                                         const std::vector<VkDescriptorBindingFlags> &bindingFlags) : m_device(device)
+{
+    ELIX_VK_CREATE_GUARD()
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+    flagsInfo.bindingCount  = static_cast<uint32_t>(bindingFlags.size());
+    flagsInfo.pBindingFlags = bindingFlags.data();
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutInfo.pNext        = &flagsInfo;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings    = bindings.data();
+
+    VX_VK_CHECK(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_handle));
+
+    ELIX_VK_CREATE_GUARD_DONE()
+}
+
 void DescriptorSetLayout::createVk(const std::vector<VkDescriptorSetLayoutBinding> &bindings)
 {
     ELIX_VK_CREATE_GUARD()

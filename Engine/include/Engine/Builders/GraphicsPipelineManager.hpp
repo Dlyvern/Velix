@@ -61,6 +61,9 @@ private:
     static inline core::Shader::SharedPtr particleShader{nullptr};
     static inline core::Shader::SharedPtr glassShader{nullptr};
     static inline core::Shader::SharedPtr rtReflectionsShader{nullptr};
+    static inline core::Shader::SharedPtr rtaoShader{nullptr};
+    static inline core::Shader::SharedPtr depthPrepassStaticShader{nullptr};
+    static inline core::Shader::SharedPtr depthPrepassSkinnedShader{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

@@ -26,6 +26,11 @@ namespace
             return VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                    VK_IMAGE_USAGE_SAMPLED_BIT;
 
+        case elix::engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT_STORAGE:
+            return VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                   VK_IMAGE_USAGE_STORAGE_BIT |
+                   VK_IMAGE_USAGE_SAMPLED_BIT;
+
         case elix::engine::renderGraph::RGPTextureUsage::DEPTH_STENCIL:
             return VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                    VK_IMAGE_USAGE_SAMPLED_BIT;

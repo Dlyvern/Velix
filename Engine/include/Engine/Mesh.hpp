@@ -71,6 +71,13 @@ struct GPUMesh
 
     Material::SharedPtr material{nullptr};
 
+    // Unified geometry buffer registration (set when the mesh is registered
+    // in UnifiedGeometryBuffer; INVALID_VERTEX_OFFSET means not registered).
+    static constexpr int32_t INVALID_VERTEX_OFFSET = INT32_MIN;
+    int32_t  unifiedVertexOffset{INVALID_VERTEX_OFFSET}; // vertex index offset in unified VB
+    uint32_t unifiedFirstIndex{0};                        // index offset in unified IB
+    bool     inUnifiedBuffer{false};
+
     GPUMesh() = default;
 
     static std::shared_ptr<GPUMesh> create(const std::vector<uint8_t> &vertexData, std::vector<uint32_t> indices, core::CommandPool::SharedPtr commandPool = nullptr)

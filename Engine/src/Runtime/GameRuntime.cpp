@@ -32,6 +32,12 @@
 
 namespace
 {
+    template <typename TValue>
+    void hashCombine(size_t &seed, const TValue &value)
+    {
+        seed ^= std::hash<TValue>{}(value) + 0x9e3779b97f4a7c15ULL + (seed << 6u) + (seed >> 2u);
+    }
+
     std::filesystem::path normalizeAbsolutePath(const std::filesystem::path &path)
     {
         std::error_code errorCode;
@@ -59,6 +65,22 @@ namespace
 #else
         return "";
 #endif
+    }
+
+    size_t renderGraphTopologyHash()
+    {
+        const auto &settings = elix::engine::RenderQualitySettings::getInstance();
+        const auto context = elix::core::VulkanContext::getContext();
+        const bool supportsRayQuery = context && context->hasRayQuerySupport();
+        const bool supportsRayPipeline = context && context->hasRayTracingPipelineSupport();
+        const bool supportsAnyRT = supportsRayQuery || supportsRayPipeline;
+
+        size_t seed = 0u;
+        hashCombine(seed, settings.enablePostProcessing);
+        hashCombine(seed, settings.enableRayTracing && settings.enableRTShadows && supportsAnyRT);
+        hashCombine(seed, settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT);
+        hashCombine(seed, settings.enableRayTracing && settings.enableRTAO && supportsRayQuery);
+        return seed;
     }
 } // namespace
 
@@ -132,62 +154,8 @@ bool GameRuntime::init()
 
     scripting::setActiveScene(m_scene.get());
 
-    m_renderGraph = std::make_unique<renderGraph::RenderGraph>(true);
-
-    m_gBufferRenderGraphPass = m_renderGraph->addPass<renderGraph::GBufferRenderGraphPass>();
-    m_shadowRenderGraphPass = m_renderGraph->addPass<renderGraph::ShadowRenderGraphPass>();
-
-    m_ssaoRenderGraphPass = m_renderGraph->addPass<renderGraph::SSAORenderGraphPass>(
-        m_gBufferRenderGraphPass->getDepthTextureHandler(),
-        m_gBufferRenderGraphPass->getNormalTextureHandlers());
-
-    m_lightingRenderGraphPass = m_renderGraph->addPass<renderGraph::LightingRenderGraphPass>(
-        m_shadowRenderGraphPass->getDirectionalShadowHandler(),
-        m_gBufferRenderGraphPass->getDepthTextureHandler(),
-        m_shadowRenderGraphPass->getCubeShadowHandler(),
-        m_shadowRenderGraphPass->getSpotShadowHandler(),
-        m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
-        m_gBufferRenderGraphPass->getNormalTextureHandlers(),
-        m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
-        m_gBufferRenderGraphPass->getEmissiveTextureHandlers(),
-        m_gBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
-        &m_ssaoRenderGraphPass->getAOHandlers());
-
-    m_skyLightRenderGraphPass = m_renderGraph->addPass<renderGraph::SkyLightRenderGraphPass>(
-        m_lightingRenderGraphPass->getOutput(),
-        m_gBufferRenderGraphPass->getDepthTextureHandler());
-
-    m_particleRenderGraphPass = m_renderGraph->addPass<renderGraph::ParticleRenderGraphPass>(
-        m_skyLightRenderGraphPass->getOutput(),
-        &m_gBufferRenderGraphPass->getDepthTextureHandler());
-
-    m_bloomRenderGraphPass = m_renderGraph->addPass<renderGraph::BloomRenderGraphPass>(
-        m_particleRenderGraphPass->getHandlers());
-
-    m_tonemapRenderGraphPass = m_renderGraph->addPass<renderGraph::TonemapRenderGraphPass>(
-        m_particleRenderGraphPass->getHandlers());
-
-    m_bloomCompositeRenderGraphPass = m_renderGraph->addPass<renderGraph::BloomCompositeRenderGraphPass>(
-        m_tonemapRenderGraphPass->getHandlers(),
-        m_bloomRenderGraphPass->getHandlers());
-
-    m_fxaaRenderGraphPass = m_renderGraph->addPass<renderGraph::FXAARenderGraphPass>(
-        m_bloomCompositeRenderGraphPass->getHandlers());
-
-    m_smaaRenderGraphPass = m_renderGraph->addPass<renderGraph::SMAAPassRenderGraphPass>(
-        m_fxaaRenderGraphPass->getHandlers());
-
-    m_uiRenderGraphPass = m_renderGraph->addPass<renderGraph::UIRenderGraphPass>(
-        m_smaaRenderGraphPass->getHandlers());
-
-    m_presentRenderGraphPass = m_renderGraph->addPass<renderGraph::PresentRenderGraphPass>(
-        m_uiRenderGraphPass->getHandlers());
-
-    bindSceneToPasses();
-
-    m_renderGraph->setup();
-    m_renderGraph->createRenderGraphResources();
-    syncViewportExtent();
+    initRenderGraph();
+    m_renderGraphTopologyHash = renderGraphTopologyHash();
 
     forEachScriptComponent([](ScriptComponent *scriptComponent)
                            {
@@ -230,8 +198,154 @@ void GameRuntime::tick(float deltaTime)
     if (m_shadowRenderGraphPass)
         m_shadowRenderGraphPass->syncQualitySettings();
 
+    const size_t currentTopologyHash = renderGraphTopologyHash();
+    if (currentTopologyHash != m_renderGraphTopologyHash)
+    {
+        initRenderGraph();
+        m_renderGraphTopologyHash = currentTopologyHash;
+    }
+
     m_renderGraph->prepareFrame(m_renderCamera, m_scene.get(), deltaTime);
     m_renderGraph->draw();
+}
+
+void GameRuntime::initRenderGraph()
+{
+    if (m_renderGraph)
+        m_renderGraph->cleanResources();
+
+    m_renderGraph = std::make_unique<renderGraph::RenderGraph>(true);
+
+    m_depthPrepassRenderGraphPass = nullptr;
+    m_gBufferRenderGraphPass = nullptr;
+    m_shadowRenderGraphPass = nullptr;
+    m_rtShadowsRenderGraphPass = nullptr;
+    m_rtShadowDenoiseRenderGraphPass = nullptr;
+    m_ssaoRenderGraphPass = nullptr;
+    m_rtaoRenderGraphPass = nullptr;
+    m_lightingRenderGraphPass = nullptr;
+    m_contactShadowRenderGraphPass = nullptr;
+    m_skyLightRenderGraphPass = nullptr;
+    m_rtReflectionsRenderGraphPass = nullptr;
+    m_rtReflectionDenoiseRenderGraphPass = nullptr;
+    m_particleRenderGraphPass = nullptr;
+    m_bloomRenderGraphPass = nullptr;
+    m_tonemapRenderGraphPass = nullptr;
+    m_bloomCompositeRenderGraphPass = nullptr;
+    m_fxaaRenderGraphPass = nullptr;
+    m_smaaRenderGraphPass = nullptr;
+    m_uiRenderGraphPass = nullptr;
+    m_presentRenderGraphPass = nullptr;
+
+    const auto &settings = RenderQualitySettings::getInstance();
+    const auto context = core::VulkanContext::getContext();
+    const bool supportsRayQuery = context && context->hasRayQuerySupport();
+    const bool supportsRayPipeline = context && context->hasRayTracingPipelineSupport();
+    const bool supportsAnyRT = supportsRayQuery || supportsRayPipeline;
+    const bool useRTShadows = settings.enableRayTracing && settings.enableRTShadows && supportsAnyRT;
+    const bool useRTAO = settings.enableRayTracing && settings.enableRTAO && supportsRayQuery;
+    const bool useRTReflections = settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT;
+
+    m_gBufferRenderGraphPass = m_renderGraph->addPass<renderGraph::GBufferRenderGraphPass>();
+    m_shadowRenderGraphPass = m_renderGraph->addPass<renderGraph::ShadowRenderGraphPass>();
+
+    m_ssaoRenderGraphPass = m_renderGraph->addPass<renderGraph::SSAORenderGraphPass>(
+        m_gBufferRenderGraphPass->getDepthTextureHandler(),
+        m_gBufferRenderGraphPass->getNormalTextureHandlers());
+
+    if (useRTShadows)
+    {
+        m_rtShadowsRenderGraphPass = m_renderGraph->addPass<renderGraph::RTShadowsRenderGraphPass>(
+            m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler());
+        m_rtShadowDenoiseRenderGraphPass = m_renderGraph->addPass<renderGraph::RTShadowDenoiseRenderGraphPass>(
+            m_rtShadowsRenderGraphPass->getOutput(),
+            m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler());
+    }
+
+    if (useRTAO)
+    {
+        m_rtaoRenderGraphPass = m_renderGraph->addPass<renderGraph::RTAORenderGraphPass>(
+            m_gBufferRenderGraphPass->getDepthTextureHandler(),
+            m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_ssaoRenderGraphPass->getAOHandlers());
+    }
+
+    auto *rtShadowHandlers = m_rtShadowDenoiseRenderGraphPass ? &m_rtShadowDenoiseRenderGraphPass->getOutput() : nullptr;
+    auto *aoHandlers = m_rtaoRenderGraphPass ? &m_rtaoRenderGraphPass->getAOHandlers()
+                                             : &m_ssaoRenderGraphPass->getAOHandlers();
+
+    m_lightingRenderGraphPass = m_renderGraph->addPass<renderGraph::LightingRenderGraphPass>(
+        m_shadowRenderGraphPass->getDirectionalShadowHandler(),
+        m_gBufferRenderGraphPass->getDepthTextureHandler(),
+        m_shadowRenderGraphPass->getCubeShadowHandler(),
+        m_shadowRenderGraphPass->getSpotShadowHandler(),
+        m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
+        m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+        m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gBufferRenderGraphPass->getEmissiveTextureHandlers(),
+        m_gBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
+        rtShadowHandlers,
+        aoHandlers);
+
+    m_contactShadowRenderGraphPass = m_renderGraph->addPass<renderGraph::ContactShadowRenderGraphPass>(
+        m_lightingRenderGraphPass->getOutput(),
+        m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+        m_gBufferRenderGraphPass->getDepthTextureHandler());
+
+    m_skyLightRenderGraphPass = m_renderGraph->addPass<renderGraph::SkyLightRenderGraphPass>(
+        m_contactShadowRenderGraphPass->getOutput(),
+        m_gBufferRenderGraphPass->getDepthTextureHandler());
+
+    auto *sceneColorInput = &m_skyLightRenderGraphPass->getOutput();
+    if (useRTReflections)
+    {
+        m_rtReflectionsRenderGraphPass = m_renderGraph->addPass<renderGraph::RTReflectionsRenderGraphPass>(
+            *sceneColorInput,
+            m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
+            m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler());
+        m_rtReflectionDenoiseRenderGraphPass = m_renderGraph->addPass<renderGraph::RTReflectionDenoiseRenderGraphPass>(
+            m_rtReflectionsRenderGraphPass->getOutput(),
+            m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler());
+        sceneColorInput = &m_rtReflectionDenoiseRenderGraphPass->getOutput();
+    }
+
+    m_particleRenderGraphPass = m_renderGraph->addPass<renderGraph::ParticleRenderGraphPass>(
+        *sceneColorInput,
+        &m_gBufferRenderGraphPass->getDepthTextureHandler());
+
+    m_bloomRenderGraphPass = m_renderGraph->addPass<renderGraph::BloomRenderGraphPass>(
+        m_particleRenderGraphPass->getHandlers());
+
+    m_tonemapRenderGraphPass = m_renderGraph->addPass<renderGraph::TonemapRenderGraphPass>(
+        m_particleRenderGraphPass->getHandlers());
+
+    m_bloomCompositeRenderGraphPass = m_renderGraph->addPass<renderGraph::BloomCompositeRenderGraphPass>(
+        m_tonemapRenderGraphPass->getHandlers(),
+        m_bloomRenderGraphPass->getHandlers());
+
+    m_fxaaRenderGraphPass = m_renderGraph->addPass<renderGraph::FXAARenderGraphPass>(
+        m_bloomCompositeRenderGraphPass->getHandlers());
+
+    m_smaaRenderGraphPass = m_renderGraph->addPass<renderGraph::SMAAPassRenderGraphPass>(
+        m_fxaaRenderGraphPass->getHandlers());
+
+    m_uiRenderGraphPass = m_renderGraph->addPass<renderGraph::UIRenderGraphPass>(
+        m_smaaRenderGraphPass->getHandlers());
+
+    m_presentRenderGraphPass = m_renderGraph->addPass<renderGraph::PresentRenderGraphPass>(
+        m_uiRenderGraphPass->getHandlers());
+
+    bindSceneToPasses();
+
+    m_renderGraph->setup();
+    m_renderGraph->createRenderGraphResources();
+    m_lastExtent = {0u, 0u};
+    syncViewportExtent();
 }
 
 void GameRuntime::shutdown()
@@ -511,10 +625,20 @@ void GameRuntime::syncViewportExtent()
 
     if (m_gBufferRenderGraphPass)
         m_gBufferRenderGraphPass->setExtent(extent);
+    if (m_rtShadowsRenderGraphPass)
+        m_rtShadowsRenderGraphPass->setExtent(extent);
+    if (m_rtShadowDenoiseRenderGraphPass)
+        m_rtShadowDenoiseRenderGraphPass->setExtent(extent);
     if (m_ssaoRenderGraphPass)
         m_ssaoRenderGraphPass->setExtent(extent);
     if (m_lightingRenderGraphPass)
         m_lightingRenderGraphPass->setExtent(extent);
+    if (m_contactShadowRenderGraphPass)
+        m_contactShadowRenderGraphPass->setExtent(extent);
+    if (m_rtReflectionsRenderGraphPass)
+        m_rtReflectionsRenderGraphPass->setExtent(extent);
+    if (m_rtReflectionDenoiseRenderGraphPass)
+        m_rtReflectionDenoiseRenderGraphPass->setExtent(extent);
     if (m_skyLightRenderGraphPass)
         m_skyLightRenderGraphPass->setExtent(extent);
     if (m_particleRenderGraphPass)

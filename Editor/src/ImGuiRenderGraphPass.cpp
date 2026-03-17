@@ -11,8 +11,15 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
+#include <mutex>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
+
+namespace
+{
+    std::mutex g_imguiBackendMutex;
+    core::DescriptorPool::SharedPtr g_imguiDescriptorPool{nullptr};
+}
 
 ImGuiRenderGraphPass::ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
                                            engine::renderGraph::RGPResourceHandler &objectIdTextureHandler)
@@ -116,15 +123,17 @@ void ImGuiRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder &build
 
 void ImGuiRenderGraphPass::initImGui()
 {
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    std::lock_guard<std::mutex> lock(g_imguiBackendMutex);
+
+    if (ImGui::GetCurrentContext() == nullptr)
+    {
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+    }
 
     ImGuiIO &io = ImGui::GetIO();
-    (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-
     io.ConfigDockingWithShift = false;
     io.ConfigWindowsResizeFromEdges = true;
 
@@ -137,47 +146,58 @@ void ImGuiRenderGraphPass::initImGui()
         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
 
-    std::vector<VkDescriptorPoolSize> descriptorPoolSizes = {
-        {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
-        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
-        {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+    if (io.BackendPlatformUserData == nullptr)
+    {
+        ImGui_ImplGlfw_InitForVulkan(core::VulkanContext::getContext()->getSwapchain()->getWindow().getRawHandler(), true);
+    }
 
-    m_imguiDescriptorPool = core::DescriptorPool::createShared(m_device, descriptorPoolSizes, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT);
+    if (io.BackendRendererUserData == nullptr)
+    {
+        if (!g_imguiDescriptorPool)
+        {
+            std::vector<VkDescriptorPoolSize> descriptorPoolSizes = {
+                {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+                {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+                {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+                {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+                {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+                {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+                {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+                {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+                {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
 
-    ImGui_ImplGlfw_InitForVulkan(core::VulkanContext::getContext()->getSwapchain()->getWindow().getRawHandler(), true);
+            g_imguiDescriptorPool = core::DescriptorPool::createShared(
+                m_device, descriptorPoolSizes, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT);
+        }
 
-    ImGui_ImplVulkan_InitInfo imguiInitInfo{};
-    imguiInitInfo.Instance = core::VulkanContext::getContext()->getInstance();
-    imguiInitInfo.PhysicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
-    imguiInitInfo.Device = core::VulkanContext::getContext()->getDevice();
-    imguiInitInfo.QueueFamily = core::VulkanContext::getContext()->getGraphicsFamily();
-    imguiInitInfo.Queue = core::VulkanContext::getContext()->getGraphicsQueue();
-    imguiInitInfo.PipelineCache = VK_NULL_HANDLE;
-    imguiInitInfo.DescriptorPool = m_imguiDescriptorPool;
-    imguiInitInfo.MinImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
-    imguiInitInfo.ImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
-    imguiInitInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    imguiInitInfo.PipelineInfoMain.Subpass = 0;
-    imguiInitInfo.CheckVkResultFn = nullptr;
-    imguiInitInfo.Allocator = nullptr;
+        ImGui_ImplVulkan_InitInfo imguiInitInfo{};
+        imguiInitInfo.Instance = core::VulkanContext::getContext()->getInstance();
+        imguiInitInfo.PhysicalDevice = core::VulkanContext::getContext()->getPhysicalDevice();
+        imguiInitInfo.Device = core::VulkanContext::getContext()->getDevice();
+        imguiInitInfo.QueueFamily = core::VulkanContext::getContext()->getGraphicsFamily();
+        imguiInitInfo.Queue = core::VulkanContext::getContext()->getGraphicsQueue();
+        imguiInitInfo.PipelineCache = VK_NULL_HANDLE;
+        imguiInitInfo.DescriptorPool = g_imguiDescriptorPool;
+        imguiInitInfo.MinImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
+        imguiInitInfo.ImageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
+        imguiInitInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        imguiInitInfo.PipelineInfoMain.Subpass = 0;
+        imguiInitInfo.CheckVkResultFn = nullptr;
+        imguiInitInfo.Allocator = nullptr;
 
-    imguiInitInfo.UseDynamicRendering = true;
-    imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+        imguiInitInfo.UseDynamicRendering = true;
+        imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
 
-    VkFormat format = m_colorFormat;
-    imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &format;
+        VkFormat format = m_colorFormat;
+        imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &format;
 
-    ImGui_ImplVulkan_Init(&imguiInitInfo);
+        ImGui_ImplVulkan_Init(&imguiInitInfo);
+    }
 
+    m_imguiDescriptorPool = g_imguiDescriptorPool;
     m_editor->initStyle();
 }
 
@@ -285,10 +305,23 @@ void ImGuiRenderGraphPass::cleanup()
 
     m_gameViewportDescriptorSets.clear();
     m_gameViewportImageViews.clear();
+}
 
-    ImGui_ImplVulkan_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
+void ImGuiRenderGraphPass::shutdownPersistentImGuiBackend()
+{
+    std::lock_guard<std::mutex> lock(g_imguiBackendMutex);
+
+    if (ImGui::GetCurrentContext() == nullptr)
+        return;
+
+    ImGuiIO &io = ImGui::GetIO();
+    if (io.BackendRendererUserData != nullptr)
+        ImGui_ImplVulkan_Shutdown();
+    if (io.BackendPlatformUserData != nullptr)
+        ImGui_ImplGlfw_Shutdown();
+
     ImGui::DestroyContext();
+    g_imguiDescriptorPool.reset();
 }
 
 ELIX_NESTED_NAMESPACE_END

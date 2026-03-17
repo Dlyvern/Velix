@@ -67,6 +67,7 @@ namespace
             hashing::hash(seed, instance.customInstanceIndex);
             hashing::hash(seed, static_cast<uint32_t>(instance.mask));
             hashing::hash(seed, static_cast<uint32_t>(instance.forceOpaque));
+            hashing::hash(seed, static_cast<uint32_t>(instance.disableTriangleFacingCull));
             for (int column = 0; column < 4; ++column)
                 for (int row = 0; row < 4; ++row)
                     hashing::hash(seed, std::hash<float>{}(instance.transform[column][row]));
@@ -122,7 +123,11 @@ bool RayTracingScene::update(uint32_t frameIndex,
         vkInstance.instanceCustomIndex = instance.customInstanceIndex;
         vkInstance.mask = instance.mask;
         vkInstance.instanceShaderBindingTableRecordOffset = 0u;
-        vkInstance.flags = instance.forceOpaque ? VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR : 0u;
+        vkInstance.flags = 0u;
+        if (instance.forceOpaque)
+            vkInstance.flags |= VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
+        if (instance.disableTriangleFacingCull)
+            vkInstance.flags |= VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         vkInstance.accelerationStructureReference = blas->deviceAddress();
         vkInstances.push_back(vkInstance);
     }

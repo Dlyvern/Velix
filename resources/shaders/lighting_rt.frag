@@ -55,11 +55,12 @@ layout(set = 1, binding = 6) uniform sampler2DArray directionalShadowMaps;
 layout(set = 1, binding = 7) uniform sampler2DArray spotShadowMaps;
 layout(set = 1, binding = 8) uniform samplerCubeArray cubeShadowMaps;
 layout(set = 1, binding = 9) uniform sampler2D uSSAO;
+layout(set = 1, binding = 10) uniform sampler2DArray uRTShadows;
 
 layout(push_constant) uniform LightingPC
 {
     float shadowAmbientStrength;
-    float enableRTShadows;      // 1.0 = ray query shadows, 0.0 = shadow maps
+    float shadowMode;           // 0.0 = shadow maps, 1.0 = ray query inline (unused), 2.0 = precomputed RT shadow array
     float rtShadowSamples;      // number of rays per light (1 = hard, 4-16 = soft)
     float rtShadowPenumbraSize; // virtual light radius — larger = wider penumbra
 } pc;
@@ -240,6 +241,39 @@ float calculateDirectionalLightShadow(int cascadeIndex, vec3 worldPos, vec3 ligh
     return shadow / 9.0;
 }
 
+float getDirectionalShadowBlended(float viewDepth, vec3 worldPos, vec3 L_world, vec3 N_world)
+{
+    const float blendFraction = 0.15;
+
+    float cascadeStart[4] = float[4](0.0,
+        lightSpaceData.directionalCascadeSplits.x,
+        lightSpaceData.directionalCascadeSplits.y,
+        lightSpaceData.directionalCascadeSplits.z);
+    float cascadeEnd[4] = float[4](
+        lightSpaceData.directionalCascadeSplits.x,
+        lightSpaceData.directionalCascadeSplits.y,
+        lightSpaceData.directionalCascadeSplits.z,
+        lightSpaceData.directionalCascadeSplits.z * 4.0);
+
+    int cascade = selectDirectionalCascade(viewDepth);
+    float shadow = calculateDirectionalLightShadow(cascade, worldPos, L_world, N_world);
+
+    if (cascade < 3)
+    {
+        float rangeStart = cascadeStart[cascade];
+        float rangeEnd   = cascadeEnd[cascade];
+        float blendStart = mix(rangeStart, rangeEnd, 1.0 - blendFraction);
+        if (viewDepth > blendStart)
+        {
+            float t = clamp((viewDepth - blendStart) / max(rangeEnd - blendStart, 0.0001), 0.0, 1.0);
+            float shadowNext = calculateDirectionalLightShadow(cascade + 1, worldPos, L_world, N_world);
+            shadow = mix(shadow, shadowNext, t);
+        }
+    }
+
+    return shadow;
+}
+
 float calculateSpotLightShadow(int shadowIndex, vec3 worldPos, vec3 lightDirWorld, vec3 normalWorld)
 {
     if (shadowIndex < 0 || shadowIndex >= MAX_SPOT_SHADOWS) return 0.0;
@@ -335,7 +369,7 @@ void main()
     vec3 P_world = (camera.invView * vec4(P_view, 1.0)).xyz;
     vec3 N_world = normalize((camera.invView * vec4(N_view, 0.0)).xyz);
 
-    const bool useRT = pc.enableRTShadows > 0.5;
+    const bool useRT = pc.shadowMode > 0.5;
 
     vec3 lighting = vec3(0.0);
     float directionalShadowMax = 0.0;
@@ -367,18 +401,11 @@ void main()
             {
                 if (useRT)
                 {
-                    float NdotL = max(dot(N_view, L), 0.0);
-                    int   nSamp = max(int(pc.rtShadowSamples), 1);
-                    // Directional: jitter the direction on a cone.
-                    // penumbraSize controls the angular spread of the sun disk.
-                    shadow = traceSoftShadowDir(shadowOrigin(P_world, N_world, NdotL),
-                                               L_world, 10000.0,
-                                               pc.rtShadowPenumbraSize, nSamp);
+                    shadow = texture(uRTShadows, vec3(vUV, float(i))).r;
                 }
                 else
                 {
-                    int cascadeIndex = selectDirectionalCascade(max(-P_view.z, 0.0));
-                    shadow = calculateDirectionalLightShadow(cascadeIndex, P_world, L_world, N_world);
+                    shadow = getDirectionalShadowBlended(max(-P_view.z, 0.0), P_world, L_world, N_world);
                 }
                 directionalShadowMax = max(directionalShadowMax, shadow);
             }
@@ -398,14 +425,7 @@ void main()
             {
                 if (useRT)
                 {
-                    vec3  lightPosWorld = (camera.invView * vec4(light.position.xyz, 1.0)).xyz;
-                    float NdotL        = max(dot(N_view, L), 0.0);
-                    int   nSamp        = max(int(pc.rtShadowSamples), 1);
-                    // Point light: jitter the target point on a disk around
-                    // the light — physically models a spherical light source.
-                    shadow = traceSoftShadowPoint(shadowOrigin(P_world, N_world, NdotL),
-                                                 lightPosWorld,
-                                                 pc.rtShadowPenumbraSize, nSamp);
+                    shadow = texture(uRTShadows, vec3(vUV, float(i))).r;
                 }
                 else
                 {
@@ -436,14 +456,7 @@ void main()
             {
                 if (useRT)
                 {
-                    vec3  lightPosWorld = (camera.invView * vec4(light.position.xyz, 1.0)).xyz;
-                    float NdotL        = max(dot(N_view, L), 0.0);
-                    int   nSamp        = max(int(pc.rtShadowSamples), 1);
-                    // Spot light: same disk-jitter as point light — the
-                    // cone cutoff already handles the spot shape.
-                    shadow = traceSoftShadowPoint(shadowOrigin(P_world, N_world, NdotL),
-                                                 lightPosWorld,
-                                                 pc.rtShadowPenumbraSize, nSamp);
+                    shadow = texture(uRTShadows, vec3(vUV, float(i))).r;
                 }
                 else
                 {

@@ -125,6 +125,9 @@ namespace
         hashCombine(seed, settings.enableRayTracing);
         hashCombine(seed, settings.enableRTShadows);
         hashCombine(seed, settings.enableRTReflections);
+        hashCombine(seed, settings.enableRTAO);
+        hashCombine(seed, settings.rtaoRadius);
+        hashCombine(seed, settings.rtaoSamples);
         hashCombine(seed, static_cast<uint32_t>(settings.rayTracingMode));
         hashCombine(seed, settings.rtShadowSamples);
         hashCombine(seed, settings.rtShadowPenumbraSize);
@@ -138,6 +141,8 @@ namespace
         hashCombine(seed, settings.bloomStrength);
         hashCombine(seed, settings.renderScale);
         hashCombine(seed, static_cast<uint32_t>(settings.anisotropyMode));
+        hashCombine(seed, settings.enableSmallFeatureCulling);
+        hashCombine(seed, settings.smallFeatureCullingThreshold);
         hashCombine(seed, settings.enableSSAO);
         hashCombine(seed, settings.ssaoRadius);
         hashCombine(seed, settings.ssaoBias);
@@ -149,7 +154,6 @@ namespace
         hashCombine(seed, settings.useBentNormals);
         hashCombine(seed, settings.shadowAmbientStrength);
         hashCombine(seed, settings.enableTAA);
-        hashCombine(seed, settings.taaHistoryWeight);
         hashCombine(seed, settings.enableSMAA);
         hashCombine(seed, settings.enableCMAA);
         hashCombine(seed, settings.enableColorGrading);
@@ -3355,6 +3359,15 @@ void Editor::drawRenderSettings()
     ImGui::DragFloat("Render Scale", &settings.renderScale, 0.01f, 0.25f, 2.0f, "%.2f");
     ImGui::SetItemTooltip("1.0 = native resolution. Values below 1 reduce quality but improve performance.");
 
+    ImGui::SeparatorText("Culling");
+    ImGui::Checkbox("Small Feature Culling", &settings.enableSmallFeatureCulling);
+    ImGui::SetItemTooltip("Skip meshes whose bounding sphere projects to fewer pixels than the threshold.\nReduces draw calls for dense scenes (chairs, bottles, wires, etc.).");
+    if (settings.enableSmallFeatureCulling)
+    {
+        ImGui::DragFloat("Min Projected Radius (px)", &settings.smallFeatureCullingThreshold, 0.1f, 0.5f, 16.0f, "%.1f px");
+        ImGui::SetItemTooltip("Minimum projected bounding-sphere radius in screen pixels before a mesh is culled.\n2 px = nearly invisible. Increase for more aggressive culling.");
+    }
+
     ImGui::SeparatorText("Ray Tracing");
     const auto context = core::VulkanContext::getContext();
     const bool supportsRayQuery = context && context->hasRayQuerySupport();
@@ -3413,6 +3426,16 @@ void Editor::drawRenderSettings()
             ImGui::SetItemTooltip("Rays per light. 1=hard shadow, 4-8=soft, 16=high quality.");
             ImGui::SliderFloat("Penumbra Size##rt", &settings.rtShadowPenumbraSize, 0.0f, 2.0f, "%.3f");
             ImGui::SetItemTooltip("Virtual light radius. Larger = wider, softer penumbra.");
+            ImGui::Unindent();
+        }
+        ImGui::Checkbox("RT AO", &settings.enableRTAO);
+        if (settings.enableRTAO)
+        {
+            ImGui::Indent();
+            ImGui::SliderFloat("AO Radius##rtao", &settings.rtaoRadius, 0.1f, 5.0f, "%.2f");
+            ImGui::SetItemTooltip("World-space occlusion search radius.");
+            ImGui::SliderInt("AO Samples##rtao", &settings.rtaoSamples, 1, 16, "%d");
+            ImGui::SetItemTooltip("Rays per pixel. Higher = smoother, slower.");
             ImGui::Unindent();
         }
         ImGui::Checkbox("RT Reflections", &settings.enableRTReflections);
@@ -7628,48 +7651,31 @@ void Editor::drawBenchmark()
     }
     ImGui::SetItemTooltip("OFF: minimal benchmark (FPS + frame time). ON: full render-graph CPU/GPU timings.");
 
+    // --- Summary (always shown when profiling is enabled) ---
+    ImGui::Separator();
+    ImGui::Text("VRAM: %ld MB   RAM: %ld MB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM(),
+                                               core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
+    ImGui::Text("Draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
+    ImGui::Separator();
+
+    ImGui::Text("CPU prepare frame : %.3f ms", m_renderGraphProfilingData.cpuPrepareFrameMs);
+    ImGui::SetItemTooltip("Fence wait + command pool reset + image acquire + recompile");
+    ImGui::TextDisabled("  incl. GPU sync wait: %.3f ms", m_renderGraphProfilingData.cpuWaitForFenceMs);
+    ImGui::Text("CPU actual frame  : %.3f ms", m_renderGraphProfilingData.cpuActualFrameMs);
+    ImGui::SetItemTooltip("All pass recording + primary CB end + submit + present");
+
+    if (m_renderGraphProfilingData.gpuTimingAvailable)
+        ImGui::Text("GPU actual frame  : %.3f ms", m_renderGraphProfilingData.gpuActualFrameMs);
+    else
+        ImGui::TextDisabled("GPU actual frame  : unavailable");
+
     if (!detailedRenderProfiling)
     {
-        ImGui::TextDisabled("Detailed profiling disabled.");
+        ImGui::TextDisabled("Enable Detailed Render Profiling for per-pass breakdown.");
     }
     else
     {
-        ImGui::Text("VRAM usage: %ld MB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM());
-        ImGui::Text("RAM usage: %ld MB", core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
-        const auto gpuProperties = core::VulkanContext::getContext()->getPhysicalDevicePoperties();
-        if (gpuProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
-            ImGui::TextDisabled("Integrated GPU detected: VRAM value reflects shared memory usage.");
         ImGui::Separator();
-        ImGui::Text("Render Graph (frame #%llu)", static_cast<unsigned long long>(m_renderGraphProfilingData.frameIndex));
-        ImGui::Text("Total draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
-        ImGui::Text("Total CPU frame time: %.3f ms", m_renderGraphProfilingData.cpuFrameTimeMs);
-        ImGui::Text("Total CPU pass time: %.3f ms", m_renderGraphProfilingData.cpuTotalTimeMs);
-        ImGui::Text("CPU wait (fence): %.3f ms", m_renderGraphProfilingData.cpuWaitForFenceMs);
-        ImGui::Text("CPU wait (acquire): %.3f ms", m_renderGraphProfilingData.cpuAcquireImageMs);
-        ImGui::Text("CPU submit: %.3f ms", m_renderGraphProfilingData.cpuSubmitMs);
-        ImGui::Text("CPU wait (present): %.3f ms", m_renderGraphProfilingData.cpuPresentMs);
-        ImGui::Text("CPU sync total: %.3f ms", m_renderGraphProfilingData.cpuSyncTimeMs);
-        ImGui::Text("CPU recompile: %.3f ms", m_renderGraphProfilingData.cpuRecompileMs);
-        ImGui::Text("CPU cmd pool reset: %.3f ms", m_renderGraphProfilingData.cpuCommandPoolResetMs);
-        ImGui::Text("CPU primary CB end: %.3f ms", m_renderGraphProfilingData.cpuPrimaryEndMs);
-        ImGui::Text("CPU resolve profiling: %.3f ms", m_renderGraphProfilingData.cpuResolveProfilingMs);
-        ImGui::Text("CPU unaccounted: %.3f ms", m_renderGraphProfilingData.cpuWasteTimeMs);
-
-        if (m_renderGraphProfilingData.gpuTimingAvailable)
-        {
-            ImGui::Text("Total GPU frame time: %.3f ms", m_renderGraphProfilingData.gpuFrameTimeMs);
-            ImGui::Text("Total GPU pass time: %.3f ms", m_renderGraphProfilingData.gpuTotalTimeMs);
-            ImGui::Text("GPU waste (non-pass): %.3f ms", m_renderGraphProfilingData.gpuWasteTimeMs);
-        }
-        else
-            ImGui::TextDisabled("GPU timing unavailable on this GPU/queue");
-
-        const double renderGraphFrameMs = m_renderGraphProfilingData.gpuTimingAvailable
-                                              ? std::max(m_renderGraphProfilingData.cpuFrameTimeMs, m_renderGraphProfilingData.gpuFrameTimeMs)
-                                              : m_renderGraphProfilingData.cpuFrameTimeMs;
-        if (renderGraphFrameMs > 0.0)
-            ImGui::Text("RenderGraph theoretical FPS: %.1f", 1000.0 / renderGraphFrameMs);
-
         if (ImGui::BeginTable("RenderGraphPassStats", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY))
         {
             ImGui::TableSetupColumn("Pass");

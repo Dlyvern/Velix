@@ -1,5 +1,7 @@
 #include "Engine/Render/GraphPasses/GBufferRenderGraphPass.hpp"
 
+#include "Core/VulkanContext.hpp"
+
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 #include "Engine/Shaders/ShaderFamily.hpp"
@@ -11,6 +13,9 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 namespace
 {
+    constexpr float kSharedDepthBiasConstantFactor = -0.25f;
+    constexpr float kSharedDepthBiasSlopeFactor = 0.0f;
+
     struct ModelPushConstant
     {
         uint32_t baseInstance{0};
@@ -45,19 +50,40 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
         if (batches.empty())
             return;
 
-        const auto pipelineLayout = EngineShaderFamilies::meshShaderFamily.pipelineLayout;
+        // Bindless GBuffer pipeline layout (Set 1 = bindless texture array + material SSBO).
+        const auto pipelineLayout = EngineShaderFamilies::bindlessMeshPipelineLayout
+                                        ? EngineShaderFamilies::bindlessMeshPipelineLayout
+                                        : static_cast<VkPipelineLayout>(
+                                              EngineShaderFamilies::meshShaderFamily.pipelineLayout);
 
-        auto makeKey = [](bool skinned, bool alphaBlend, bool twoSided) -> GraphicsPipelineKey
+        // Bind the global bindless descriptor set once at Set 1 — never rebind per batch.
+        if (data.bindlessDescriptorSet != VK_NULL_HANDLE)
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                                    1, 1, &data.bindlessDescriptorSet, 0, nullptr);
+
+        auto makeKey = [&](bool skinned, bool alphaBlend, bool alphaMask, bool twoSided) -> GraphicsPipelineKey
         {
             GraphicsPipelineKey key{};
             key.shader = skinned ? ShaderId::GBufferSkinned : ShaderId::GBufferStatic;
             key.blend = alphaBlend ? BlendMode::AlphaBlend : BlendMode::None;
             key.cull = twoSided ? CullMode::None : CullMode::Back;
             key.depthTest = true;
-            key.depthWrite = !alphaBlend;
-            key.depthCompare = VK_COMPARE_OP_LESS;
             key.polygonMode = VK_POLYGON_MODE_FILL;
             key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            key.pipelineLayout = pipelineLayout;
+
+            // When a depth prepass has already written depth for fully-opaque objects,
+            // use LESS_OR_EQUAL + no write to eliminate overdraw while tolerating the tiny
+            // floating-point precision delta between two vertex-shader runs (EQUAL causes
+            // holes in curved surfaces like spheres where depth values differ by 1 ULP).
+            // Alpha-blend and alpha-masked objects skip the depth prepass and still use LESS.
+            const bool depthPrepassCovered = m_hasExternalDepth && !alphaBlend && !alphaMask;
+            key.depthWrite   = !alphaBlend && !depthPrepassCovered;
+            key.depthCompare = depthPrepassCovered ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
+            key.depthClampEnable = depthPrepassCovered && core::VulkanContext::getContext()->hasDepthClampSupport();
+            key.depthBiasEnable = depthPrepassCovered;
+            key.depthBiasConstantFactor = depthPrepassCovered ? kSharedDepthBiasConstantFactor : 0.0f;
+            key.depthBiasSlopeFactor = depthPrepassCovered ? kSharedDepthBiasSlopeFactor : 0.0f;
             return key;
         };
 
@@ -68,9 +94,10 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
         {
             const uint32_t materialFlags = batch.material ? batch.material->params().flags : 0u;
             const bool alphaBlend = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
-            const bool twoSided = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED) != 0u;
+            const bool alphaMask  = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK)  != 0u;
+            const bool twoSided   = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED) != 0u;
 
-            GraphicsPipelineKey key = makeKey(batch.skinned, alphaBlend, twoSided);
+            GraphicsPipelineKey key = makeKey(batch.skinned, alphaBlend, alphaMask, twoSided);
 
             if (!batch.material->getCustomFragPath().empty())
                 key.customFragSpvPath = batch.material->getCustomFragPath();
@@ -88,14 +115,28 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             return pipeline;
         };
 
+        // If the unified static geometry buffer is available and all static batches are
+        // registered in it, bind the unified VB/IB once before the loop to avoid per-batch
+        // vertex/index buffer rebinds (the biggest source of CPU draw overhead).
+        const bool hasUnifiedGeometry =
+            data.unifiedStaticVertexBuffer != VK_NULL_HANDLE &&
+            data.unifiedStaticIndexBuffer  != VK_NULL_HANDLE;
+
+        VkBuffer boundUnifiedVB = VK_NULL_HANDLE;
+        VkBuffer boundUnifiedIB = VK_NULL_HANDLE;
+
         VkPipeline boundPipeline = VK_NULL_HANDLE;
         VkBuffer boundVertexBuffer = VK_NULL_HANDLE;
         VkBuffer boundIndexBuffer = VK_NULL_HANDLE;
-        VkDescriptorSet boundMaterialSet = VK_NULL_HANDLE;
 
+        const bool hasIndirectBuffer = data.indirectDrawBuffer != VK_NULL_HANDLE;
+
+        uint32_t batchIndex = 0;
         for (const auto &batch : batches)
         {
-            if (!batch.mesh || !batch.material || batch.instanceCount == 0)
+            const uint32_t thisBatchIdx = batchIndex++;
+
+            if (!batch.mesh || !batch.material)
                 continue;
 
             const VkPipeline batchPipeline = getPipelineForBatch(batch);
@@ -107,38 +148,91 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
                 vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
                                         2, 1, &data.perObjectDescriptorSet, 0, nullptr);
                 boundPipeline = batchPipeline;
-                boundMaterialSet = VK_NULL_HANDLE;
+                // Pipeline change resets the active VB/IB tracking so we rebind below.
+                boundVertexBuffer = VK_NULL_HANDLE;
+                boundIndexBuffer  = VK_NULL_HANDLE;
+                boundUnifiedVB    = VK_NULL_HANDLE;
+                boundUnifiedIB    = VK_NULL_HANDLE;
             }
 
-            const VkBuffer vb = batch.mesh->vertexBuffer;
-            if (vb != boundVertexBuffer)
+            // Use the unified buffer path for static meshes that were registered in it.
+            const bool useUnified = hasUnifiedGeometry && !batch.skinned && batch.mesh->inUnifiedBuffer;
+
+            if (useUnified)
             {
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &offset);
-                boundVertexBuffer = vb;
+                if (data.unifiedStaticVertexBuffer != boundUnifiedVB)
+                {
+                    const VkDeviceSize offset = 0;
+                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &data.unifiedStaticVertexBuffer, &offset);
+                    boundUnifiedVB    = data.unifiedStaticVertexBuffer;
+                    boundVertexBuffer = VK_NULL_HANDLE; // invalidate per-mesh tracking
+                }
+                if (data.unifiedStaticIndexBuffer != boundUnifiedIB)
+                {
+                    vkCmdBindIndexBuffer(commandBuffer, data.unifiedStaticIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+                    boundUnifiedIB    = data.unifiedStaticIndexBuffer;
+                    boundIndexBuffer  = VK_NULL_HANDLE;
+                }
+            }
+            else
+            {
+                // Per-mesh fallback path (skinned, or not yet in unified buffer).
+                if (boundUnifiedVB != VK_NULL_HANDLE || boundUnifiedIB != VK_NULL_HANDLE)
+                {
+                    // Switched from unified → per-mesh; force rebind.
+                    boundVertexBuffer = VK_NULL_HANDLE;
+                    boundIndexBuffer  = VK_NULL_HANDLE;
+                    boundUnifiedVB    = VK_NULL_HANDLE;
+                    boundUnifiedIB    = VK_NULL_HANDLE;
+                }
+
+                const VkBuffer vb = batch.mesh->vertexBuffer;
+                if (vb != boundVertexBuffer)
+                {
+                    const VkDeviceSize offset = 0;
+                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &offset);
+                    boundVertexBuffer = vb;
+                }
+
+                const VkBuffer ib = batch.mesh->indexBuffer;
+                if (ib != boundIndexBuffer)
+                {
+                    vkCmdBindIndexBuffer(commandBuffer, ib, 0, batch.mesh->indexType);
+                    boundIndexBuffer = ib;
+                }
             }
 
-            const VkBuffer ib = batch.mesh->indexBuffer;
-            if (ib != boundIndexBuffer)
-            {
-                vkCmdBindIndexBuffer(commandBuffer, ib, 0, batch.mesh->indexType);
-                boundIndexBuffer = ib;
-            }
-
-            const VkDescriptorSet materialSet = batch.material->getDescriptorSet(renderContext.currentFrame);
-            if (materialSet != boundMaterialSet)
-            {
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
-                                        1, 1, &materialSet, 0, nullptr);
-                boundMaterialSet = materialSet;
-            }
+            // Per-batch material bind eliminated — the bindless descriptor set at Set 1
+            // covers all materials; shaders index via fragMaterialIndex from instance data.
 
             const ModelPushConstant pushConstant{.baseInstance = batch.firstInstance, .padding = {0,0,0}, .time = data.elapsedTime};
             vkCmdPushConstants(commandBuffer, pipelineLayout,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, sizeof(ModelPushConstant), &pushConstant);
 
-            profiling::cmdDrawIndexed(commandBuffer, batch.mesh->indicesCount, batch.instanceCount, 0, 0, 0);
+            // When using the unified buffer, supply each mesh's stored vertex/index offsets
+            // so the GPU reads from the correct region of the shared buffer.
+            const uint32_t firstIndex   = useUnified ? batch.mesh->unifiedFirstIndex   : 0u;
+            const int32_t  vertexOffset = useUnified ? batch.mesh->unifiedVertexOffset : 0;
+
+            // GPU-driven path: use the indirect buffer written by the compute culling pass.
+            // The GPU may have zeroed instanceCount for culled batches, so this also
+            // implicitly handles frustum culling without CPU readback.
+            const bool useIndirect = useUnified && hasIndirectBuffer;
+            if (useIndirect)
+            {
+                const VkDeviceSize indirectOffset =
+                    static_cast<VkDeviceSize>(thisBatchIdx) * sizeof(VkDrawIndexedIndirectCommand);
+                vkCmdDrawIndexedIndirect(commandBuffer, data.indirectDrawBuffer,
+                                         indirectOffset, 1, sizeof(VkDrawIndexedIndirectCommand));
+            }
+            else
+            {
+                if (batch.instanceCount == 0)
+                    continue;
+                profiling::cmdDrawIndexed(commandBuffer, batch.mesh->indicesCount, batch.instanceCount,
+                                          firstIndex, vertexOffset, 0);
+            }
         }
     };
 
@@ -198,7 +292,10 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     VkRenderingAttachmentInfo depthAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     depthAttachment.imageView = m_depthRenderTarget->vkImageView();
     depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    // When using a depth prepass the buffer is already filled — load it.
+    // Opaque objects use EQUAL test + no write, so STORE is still needed
+    // (alpha-masked/transparent objects still write depth with LESS).
+    depthAttachment.loadOp = m_hasExternalDepth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.clearValue = m_clearValues[6];
 
@@ -282,8 +379,20 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     m_objectIdTextureHandler = builder.createTexture(objectIdTextureDescription);
     builder.write(m_objectIdTextureHandler, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC);
 
-    m_depthTextureHandler = builder.createTexture(depthTextureDescription);
-    builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+    if (m_hasExternalDepth && m_externalDepthHandlerPtr)
+    {
+        // Dereference the live pointer — by the time GBuffer's setup() runs,
+        // the depth prepass (added earlier, lower id) has already assigned its
+        // handler ID via builder.createTexture().
+        m_depthTextureHandler = *m_externalDepthHandlerPtr;
+        builder.read(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+        builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+    }
+    else
+    {
+        m_depthTextureHandler = builder.createTexture(depthTextureDescription);
+        builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+    }
 
     const int imageCount = static_cast<int>(core::VulkanContext::getContext()->getSwapchain()->getImages().size());
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)

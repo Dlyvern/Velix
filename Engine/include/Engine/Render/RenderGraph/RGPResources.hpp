@@ -18,6 +18,7 @@ enum class RGPTextureUsage
 {
     SAMPLED,
     COLOR_ATTACHMENT,
+    COLOR_ATTACHMENT_STORAGE,
     DEPTH_STENCIL,
 
     // RAW VULKAN FOR NOW

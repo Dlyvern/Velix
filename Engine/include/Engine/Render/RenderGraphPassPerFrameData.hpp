@@ -40,7 +40,15 @@ struct DrawItem
 struct PerObjectInstanceData
 {
     glm::mat4 model{1.0f};
-    glm::uvec4 objectInfo{0u}; // x = objectId, y = bonesOffset, z/w = reserved
+    glm::uvec4 objectInfo{0u}; // x = objectId, y = bonesOffset, z = materialIndex, w = reserved
+};
+
+// World-space bounding sphere for a draw batch (aggregate of all instances).
+// Uploaded to GPU for compute-shader frustum culling.
+struct GPUBatchBounds
+{
+    glm::vec3 center{0.0f};
+    float     radius{0.0f};  // <= 0 means "always visible" (no bounds data)
 };
 
 struct DrawBatch
@@ -50,6 +58,17 @@ struct DrawBatch
     bool skinned{false};
     uint32_t firstInstance{0};
     uint32_t instanceCount{0};
+};
+
+struct RTReflectionShadingInstanceData
+{
+    uint64_t vertexAddress{0u};
+    uint64_t indexAddress{0u};
+    uint32_t vertexStride{0u};
+    uint32_t padding0{0u};
+    uint32_t padding1{0u};
+    uint32_t padding2{0u};
+    Material::GPUParams material{};
 };
 
 class AdditionalPerFrameData
@@ -67,6 +86,7 @@ public:
     uint32_t activeDirectionalShadowCount{0};
     uint32_t activeSpotShadowCount{0};
     uint32_t activePointShadowCount{0};
+    uint32_t activeRTShadowLayerCount{0};
 };
 
 struct ShadowConstants
@@ -83,6 +103,7 @@ public:
     std::unordered_map<Entity *, DrawItem> drawItems;
     std::vector<PerObjectInstanceData> perObjectInstances;
     std::vector<DrawBatch> drawBatches;
+    std::vector<RTReflectionShadingInstanceData> rtReflectionShadingInstances;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_DIRECTIONAL_CASCADES> directionalShadowDrawBatches;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_SPOT_SHADOWS> spotShadowDrawBatches;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES> pointShadowDrawBatches;
@@ -102,6 +123,7 @@ public:
     uint32_t activeDirectionalCascadeCount{0};
     uint32_t activeSpotShadowCount{0};
     uint32_t activePointShadowCount{0};
+    uint32_t activeRTShadowLayerCount{0};
     VkViewport swapChainViewport;
     VkRect2D swapChainScissor;
 
@@ -119,6 +141,24 @@ public:
     glm::mat4 previewProjection;
 
     std::string skyboxHDRPath;
+
+    // Per-batch bounding spheres for GPU frustum culling (parallel to drawBatches).
+    std::vector<GPUBatchBounds> batchBounds;
+
+    // GPU indirect draw buffer (VkDrawIndexedIndirectCommand[]), one entry per drawBatch.
+    // Written by CPU each frame, then optionally modified by the GPU culling compute pass.
+    // VK_NULL_HANDLE when not yet initialised.
+    VkBuffer indirectDrawBuffer{VK_NULL_HANDLE};
+
+    // Unified geometry buffer handles (VK_NULL_HANDLE when not available).
+    // GBuffer binds these once instead of rebinding per-batch when all static
+    // batches use the unified layout.
+    VkBuffer unifiedStaticVertexBuffer{VK_NULL_HANDLE};
+    VkBuffer unifiedStaticIndexBuffer{VK_NULL_HANDLE};
+
+    // Bindless material descriptor set — holds all textures (binding 0) and
+    // the MaterialParams SSBO (binding 1). Bound once at Set 1 in GBuffer.
+    VkDescriptorSet bindlessDescriptorSet{VK_NULL_HANDLE};
 };
 
 ELIX_NESTED_NAMESPACE_END

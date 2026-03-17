@@ -19,11 +19,7 @@ void RigidBodyComponent::update(float deltaTime)
 void RigidBodyComponent::setKinematic(bool isKinematic)
 {
     if (m_rigidActor->is<physx::PxRigidDynamic>())
-    {
-        m_rigidActor->is<physx::PxRigidDynamic>()->setRigidBodyFlag(
-            physx::PxRigidBodyFlag::eKINEMATIC, isKinematic);
-        // isKinematic = isKinematic;
-    }
+        m_rigidActor->is<physx::PxRigidDynamic>()->setRigidBodyFlag(physx::PxRigidBodyFlag::eKINEMATIC, isKinematic);
 }
 
 bool RigidBodyComponent::isKinematic() const

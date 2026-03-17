@@ -27,7 +27,9 @@ public:
     void compile(engine::renderGraph::RGPResourcesStorage &storage) override;
     void record(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data,
                 const engine::RenderGraphPassContext &renderContext) override;
+    bool canRecordInParallel() const override { return false; }
     std::vector<RenderPassExecution> getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const override;
+    static void shutdownPersistentImGuiBackend();
 
     void setViewportImages(const std::vector<VkImageView> &imageViews);
     void setGameViewportImages(const std::vector<VkImageView> &imageViews, bool hasGameCamera, uint32_t renderedImageIndex);

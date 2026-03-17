@@ -38,6 +38,10 @@ enum class ShaderId : uint8_t
     Particle,
     Glass,
     RTReflections,
+    RTAO,
+    RTShadowsRayQuery,
+    DepthPrepassStatic,
+    DepthPrepassSkinned,
     None
 };
 
@@ -75,6 +79,11 @@ struct GraphicsPipelineKey
     bool depthTest{true};
     bool depthWrite{true};
     VkCompareOp depthCompare{VK_COMPARE_OP_LESS};
+    bool depthClampEnable{false};
+    bool depthBiasEnable{false};
+    float depthBiasConstantFactor{0.0f};
+    float depthBiasSlopeFactor{0.0f};
+    float depthBiasClamp{0.0f};
     VkPolygonMode polygonMode{VK_POLYGON_MODE_FILL};
     VkPrimitiveTopology topology{VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
     VkSampleCountFlagBits rasterizationSamples{VK_SAMPLE_COUNT_1_BIT};
@@ -95,6 +104,11 @@ struct GraphicsPipelineKey
                depthTest == o.depthTest &&
                depthWrite == o.depthWrite &&
                depthCompare == o.depthCompare &&
+               depthClampEnable == o.depthClampEnable &&
+               depthBiasEnable == o.depthBiasEnable &&
+               depthBiasConstantFactor == o.depthBiasConstantFactor &&
+               depthBiasSlopeFactor == o.depthBiasSlopeFactor &&
+               depthBiasClamp == o.depthBiasClamp &&
                polygonMode == o.polygonMode &&
                topology == o.topology &&
                rasterizationSamples == o.rasterizationSamples &&
@@ -117,6 +131,11 @@ struct GraphicsPipelineKeyHash
         hashing::hash(data, static_cast<bool>(k.depthTest));
         hashing::hash(data, static_cast<bool>(k.depthWrite));
         hashing::hash(data, static_cast<uint32_t>(k.depthCompare));
+        hashing::hash(data, static_cast<bool>(k.depthClampEnable));
+        hashing::hash(data, static_cast<bool>(k.depthBiasEnable));
+        hashing::hash(data, std::hash<float>{}(k.depthBiasConstantFactor));
+        hashing::hash(data, std::hash<float>{}(k.depthBiasSlopeFactor));
+        hashing::hash(data, std::hash<float>{}(k.depthBiasClamp));
         hashing::hash(data, static_cast<uint32_t>(k.polygonMode));
         hashing::hash(data, static_cast<uint32_t>(k.topology));
         hashing::hash(data, static_cast<uint32_t>(k.rasterizationSamples));

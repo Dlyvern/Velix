@@ -65,6 +65,9 @@ public:
     bool enableRayTracing{false};
     bool enableRTShadows{false};
     bool enableRTReflections{false};
+    bool enableRTAO{false};
+    float rtaoRadius{1.5f};
+    int   rtaoSamples{4};
     RayTracingMode rayTracingMode{RayTracingMode::RayQuery};
     int   rtShadowSamples{4};           // rays per light: 1=hard, 4=default soft, 16=high quality
     float rtShadowPenumbraSize{0.05f};  // virtual light radius in world units → penumbra width
@@ -94,7 +97,6 @@ public:
     float shadowAmbientStrength{0.5f};
 
     bool enableTAA{false};
-    float taaHistoryWeight{0.9f};
 
     bool enableSMAA{false};
     bool enableCMAA{false};
@@ -104,6 +106,11 @@ public:
     float colorGradingContrast{1.0f};
     float colorGradingTemperature{0.0f};
     float colorGradingTint{0.0f};
+
+    // Screen-space size culling: skip meshes whose projected bounding sphere
+    // is smaller than this radius (in pixels).  2 px = nearly invisible detail.
+    bool  enableSmallFeatureCulling{true};
+    float smallFeatureCullingThreshold{2.0f};
 
     bool enableContactShadows{false};
     float contactShadowLength{0.5f};

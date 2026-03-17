@@ -32,8 +32,7 @@ bool AccelerationStructure::createInternal(VkAccelerationStructureTypeKHR type, 
     if (!m_buffer)
         return false;
 
-    VkAccelerationStructureCreateInfoKHR createInfo{
-        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+    VkAccelerationStructureCreateInfoKHR createInfo{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
     createInfo.buffer = m_buffer->vk();
     createInfo.offset = 0u;
     createInfo.size = size;

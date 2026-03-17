@@ -296,6 +296,14 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     VkBuffer   boundVertexBuffer = VK_NULL_HANDLE;
     VkBuffer   boundIndexBuffer  = VK_NULL_HANDLE;
 
+    // The light-space matrix is constant for the whole cascade — push it once.
+    // Per draw we only need to update baseInstance (offset 64, 4 bytes).
+    {
+        LightSpaceMatrixPushConstant initial{.lightSpaceMatrix = activeLightSpaceMatrix, .baseInstance = 0};
+        vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                           0, sizeof(LightSpaceMatrixPushConstant), &initial);
+    }
+
     for (const auto &batch : *executionBatches)
     {
         if (!batch.mesh || batch.instanceCount == 0)
@@ -323,12 +331,10 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
             boundIndexBuffer = ib;
         }
 
-        LightSpaceMatrixPushConstant lightSpaceMatrixPushConstant{
-            .lightSpaceMatrix = activeLightSpaceMatrix,
-            .baseInstance = batch.firstInstance};
-
-        vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(LightSpaceMatrixPushConstant),
-                           &lightSpaceMatrixPushConstant);
+        // Only update the per-draw baseInstance (offset 64, 4 bytes).
+        vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                           offsetof(LightSpaceMatrixPushConstant, baseInstance), sizeof(uint32_t),
+                           &batch.firstInstance);
         profiling::cmdDrawIndexed(commandBuffer, batch.mesh->indicesCount, batch.instanceCount, 0, 0, 0);
     }
 }

@@ -15,6 +15,7 @@ class DescriptorSetBuilder
 public:
     static DescriptorSetBuilder begin();
     DescriptorSetBuilder& addImage(VkImageView imageView, VkSampler sampler, VkImageLayout imageLayout, uint32_t binding);
+    DescriptorSetBuilder& addStorageImage(VkImageView imageView, VkImageLayout imageLayout, uint32_t binding);
     DescriptorSetBuilder& addBuffer(core::Buffer::SharedPtr buffer, VkDeviceSize range, uint32_t binding, VkDescriptorType descriptorType);
     DescriptorSetBuilder& addAccelerationStructure(VkAccelerationStructureKHR accelerationStructure, uint32_t binding);
 
@@ -37,6 +38,7 @@ private:
         VkSampler sampler{VK_NULL_HANDLE};
         VkImageLayout imageLayout{VK_IMAGE_LAYOUT_UNDEFINED};
         uint32_t binding{0};
+        VkDescriptorType descriptorType{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
     };
 
     struct AccelerationStructureInfo

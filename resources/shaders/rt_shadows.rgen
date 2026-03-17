@@ -1,0 +1,299 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+const int DIRECTIONAL_LIGHT_TYPE = 0;
+const int SPOT_LIGHT_TYPE = 1;
+const int POINT_LIGHT_TYPE = 2;
+const int MAX_LIGHT_COUNT = 16;
+const float PI = 3.14159265359;
+
+struct Light
+{
+    vec4 position;
+    vec4 direction;
+    vec4 colorStrength;
+    vec4 parameters;
+    vec4 shadowInfo;
+};
+
+layout(set = 0, binding = 0) uniform CameraUBO
+{
+    mat4 view;
+    mat4 projection;
+    mat4 invView;
+    mat4 invProjection;
+} camera;
+
+layout(std430, set = 0, binding = 2) readonly buffer LightSSBO
+{
+    int lightCount;
+    Light lights[];
+} lightData;
+
+layout(set = 0, binding = 3) uniform accelerationStructureEXT uTLAS;
+
+layout(set = 1, binding = 0) uniform sampler2D uGBufferNormal;
+layout(set = 1, binding = 1) uniform sampler2D uDepth;
+layout(set = 1, binding = 2, r16f) uniform image2DArray uShadowOutput;
+
+layout(push_constant) uniform RTShadowsPC
+{
+    float enableRTShadows;
+    float rtShadowSamples;
+    float rtShadowPenumbraSize;
+    float activeRTShadowLayerCount;
+} pc;
+
+struct ShadowPayload
+{
+    uint occluded;
+};
+
+layout(location = 0) rayPayloadEXT ShadowPayload payload;
+
+void buildOrthonormalBasis(vec3 n, out vec3 tangent, out vec3 bitangent)
+{
+    if (n.z < -0.9999)
+    {
+        tangent = vec3(0.0, -1.0, 0.0);
+        bitangent = vec3(-1.0, 0.0, 0.0);
+        return;
+    }
+
+    float a = 1.0 / (1.0 + n.z);
+    float b = -n.x * n.y * a;
+    tangent = vec3(1.0 - n.x * n.x * a, b, -n.x);
+    bitangent = vec3(b, 1.0 - n.y * n.y * a, -n.y);
+}
+
+float hash13(vec3 p3)
+{
+    p3 = fract(p3 * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+// Anchor the soft-shadow rotation to the shaded surface instead of the screen
+// so camera motion does not make the pattern crawl across the scene.
+float stableShadowNoise(vec3 worldPos, int lightIndex)
+{
+    vec3 lightSeed = vec3(
+        float(lightIndex) * 0.61803398875,
+        float(lightIndex) * 1.41421356237,
+        float(lightIndex) * 2.23606797750);
+    return hash13(worldPos + lightSeed);
+}
+
+vec2 vogelDiskSample(int sampleIndex, int samplesCount, float phi)
+{
+    const float goldenAngle = 2.4;
+    float r = sqrt(float(sampleIndex) + 0.5) / sqrt(float(samplesCount));
+    float theta = float(sampleIndex) * goldenAngle + phi;
+    return vec2(r * cos(theta), r * sin(theta));
+}
+
+vec3 reconstructViewPosition(vec2 uv, float depth)
+{
+    vec4 ndc = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 viewPos = camera.invProjection * ndc;
+    return viewPos.xyz / max(viewPos.w, 0.000001);
+}
+
+float traceShadowRay(vec3 origin, vec3 direction, float tMax)
+{
+    payload.occluded = 0u;
+
+    traceRayEXT(
+        uTLAS,
+        gl_RayFlagsTerminateOnFirstHitEXT |
+        gl_RayFlagsOpaqueEXT |
+        gl_RayFlagsCullBackFacingTrianglesEXT,
+        0xFF,
+        0,
+        0,
+        0,
+        origin,
+        0.001,
+        direction,
+        tMax,
+        0);
+
+    return payload.occluded != 0u ? 1.0 : 0.0;
+}
+
+float traceSoftShadowDir(vec3 origin, vec3 baseDir, float tMax, float penumbraSize, int numSamples, float rotationNoise)
+{
+    if (numSamples <= 1)
+        return traceShadowRay(origin, baseDir, tMax);
+
+    vec3 tangent;
+    vec3 bitangent;
+    buildOrthonormalBasis(baseDir, tangent, bitangent);
+
+    float phi = rotationNoise * 2.0 * PI;
+    float shadow = 0.0;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        vec2 disk = vogelDiskSample(i, numSamples, phi) * penumbraSize;
+        vec3 jitteredDir = normalize(baseDir + tangent * disk.x + bitangent * disk.y);
+        shadow += traceShadowRay(origin, jitteredDir, tMax);
+    }
+
+    return shadow / float(numSamples);
+}
+
+float traceSoftShadowPoint(vec3 origin, vec3 lightPosWorld, float penumbraSize, int numSamples, float rotationNoise)
+{
+    vec3 toLight = lightPosWorld - origin;
+    float distanceToLight = length(toLight);
+    vec3 baseDir = toLight / max(distanceToLight, 0.0001);
+
+    if (numSamples <= 1)
+        return traceShadowRay(origin, baseDir, distanceToLight * 0.999);
+
+    vec3 tangent;
+    vec3 bitangent;
+    buildOrthonormalBasis(baseDir, tangent, bitangent);
+
+    float phi = rotationNoise * 2.0 * PI;
+    float shadow = 0.0;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        vec2 disk = vogelDiskSample(i, numSamples, phi) * penumbraSize;
+        vec3 jitteredTarget = lightPosWorld + tangent * disk.x + bitangent * disk.y;
+        vec3 jitteredDir = jitteredTarget - origin;
+        float jitteredDist = length(jitteredDir);
+        shadow += traceShadowRay(origin, jitteredDir / max(jitteredDist, 0.0001), jitteredDist * 0.999);
+    }
+
+    return shadow / float(numSamples);
+}
+
+vec3 shadowOrigin(vec3 worldPos, vec3 normalWorld, vec3 lightDirWorld, float NdotL)
+{
+    vec3 offsetNormal = dot(normalWorld, lightDirWorld) >= 0.0 ? normalWorld : -normalWorld;
+    float normalBias = mix(0.03, 0.008, clamp(NdotL, 0.0, 1.0));
+    float directionBias = mix(0.0025, 0.0005, clamp(NdotL, 0.0, 1.0));
+    return worldPos + offsetNormal * normalBias + lightDirWorld * directionBias;
+}
+
+void writeShadowLayer(ivec2 pixelCoord, int layer, float shadow)
+{
+    imageStore(uShadowOutput, ivec3(pixelCoord, layer), vec4(shadow, 0.0, 0.0, 1.0));
+}
+
+void clearShadowLayers(ivec2 pixelCoord, int layerCount)
+{
+    for (int layer = 0; layer < layerCount; ++layer)
+        writeShadowLayer(pixelCoord, layer, 0.0);
+}
+
+void main()
+{
+    ivec2 pixelCoord = ivec2(gl_LaunchIDEXT.xy);
+    vec2 launchSize = vec2(gl_LaunchSizeEXT.xy);
+    vec2 uv = (vec2(pixelCoord) + 0.5) / launchSize;
+
+    int count = min(lightData.lightCount, min(int(pc.activeRTShadowLayerCount + 0.5), MAX_LIGHT_COUNT));
+    if (count > 0)
+        clearShadowLayers(pixelCoord, count);
+
+    if (pc.enableRTShadows < 0.5)
+        return;
+
+    float depth = texture(uDepth, uv).r;
+    if (depth >= 1.0)
+        return;
+
+    vec3 N_view = normalize(texture(uGBufferNormal, uv).rgb * 2.0 - 1.0);
+    vec3 P_view = reconstructViewPosition(uv, depth);
+    vec3 P_world = (camera.invView * vec4(P_view, 1.0)).xyz;
+    vec3 N_world = normalize((camera.invView * vec4(N_view, 0.0)).xyz);
+
+    if (count <= 0)
+        return;
+    int sampleCount = max(int(pc.rtShadowSamples), 1);
+
+    for (int i = 0; i < count; ++i)
+    {
+        Light light = lightData.lights[i];
+        if (light.shadowInfo.x <= 0.5)
+            continue;
+
+        int lightType = int(light.parameters.w);
+        float shadow = 0.0;
+
+        if (lightType == DIRECTIONAL_LIGHT_TYPE)
+        {
+            vec3 L_view = normalize(-light.direction.xyz);
+            float NdotL = max(dot(N_view, L_view), 0.0);
+            if (NdotL > 0.0)
+            {
+                vec3 L_world = normalize((camera.invView * vec4(L_view, 0.0)).xyz);
+                float rotationNoise = stableShadowNoise(P_world, i);
+                shadow = traceSoftShadowDir(
+                    shadowOrigin(P_world, N_world, L_world, NdotL),
+                    L_world,
+                    10000.0,
+                    pc.rtShadowPenumbraSize,
+                    sampleCount,
+                    rotationNoise);
+            }
+        }
+        else if (lightType == POINT_LIGHT_TYPE)
+        {
+            vec3 toLight = light.position.xyz - P_view;
+            float distanceToLight = length(toLight);
+            if (distanceToLight > 0.0)
+            {
+                vec3 L_view = toLight / distanceToLight;
+                float NdotL = max(dot(N_view, L_view), 0.0);
+                float radius = max(light.parameters.z, 0.0001);
+                float attenuation = clamp(1.0 - (distanceToLight / radius), 0.0, 1.0);
+                if (NdotL > 0.0 && attenuation > 0.0)
+                {
+                    vec3 lightPosWorld = (camera.invView * vec4(light.position.xyz, 1.0)).xyz;
+                    float rotationNoise = stableShadowNoise(P_world, i);
+                    shadow = traceSoftShadowPoint(
+                        shadowOrigin(P_world, N_world, normalize(lightPosWorld - P_world), NdotL),
+                        lightPosWorld,
+                        pc.rtShadowPenumbraSize,
+                        sampleCount,
+                        rotationNoise);
+                }
+            }
+        }
+        else if (lightType == SPOT_LIGHT_TYPE)
+        {
+            vec3 toLight = light.position.xyz - P_view;
+            float distanceToLight = length(toLight);
+            if (distanceToLight > 0.0)
+            {
+                vec3 L_view = toLight / distanceToLight;
+                float NdotL = max(dot(N_view, L_view), 0.0);
+                float radius = max(light.parameters.z, 0.0001);
+                float attenuation = clamp(1.0 - (distanceToLight / radius), 0.0, 1.0);
+                float theta = dot(L_view, normalize(-light.direction.xyz));
+                float innerCutoff = light.parameters.x;
+                float outerCutoff = light.parameters.y;
+                float epsilon = max(innerCutoff - outerCutoff, 0.0001);
+                float spot = clamp((theta - outerCutoff) / epsilon, 0.0, 1.0);
+                if (NdotL > 0.0 && attenuation > 0.0 && spot > 0.0)
+                {
+                    vec3 lightPosWorld = (camera.invView * vec4(light.position.xyz, 1.0)).xyz;
+                    float rotationNoise = stableShadowNoise(P_world, i);
+                    shadow = traceSoftShadowPoint(
+                        shadowOrigin(P_world, N_world, normalize(lightPosWorld - P_world), NdotL),
+                        lightPosWorld,
+                        pc.rtShadowPenumbraSize,
+                        sampleCount,
+                        rotationNoise);
+                }
+            }
+        }
+
+        writeShadowLayer(pixelCoord, i, shadow);
+    }
+}

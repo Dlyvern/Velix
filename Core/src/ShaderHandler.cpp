@@ -33,6 +33,30 @@ ELIX_NESTED_NAMESPACE_BEGIN(core)
 
 ShaderHandler::ShaderHandler() = default;
 
+namespace
+{
+    VkShaderStageFlagBits toVkShaderStage(ShaderStage shaderStage)
+    {
+        switch (shaderStage)
+        {
+        case ShaderStage::VERTEX:
+            return VK_SHADER_STAGE_VERTEX_BIT;
+        case ShaderStage::FRAGMENT:
+            return VK_SHADER_STAGE_FRAGMENT_BIT;
+        case ShaderStage::COMPUTE:
+            return VK_SHADER_STAGE_COMPUTE_BIT;
+        case ShaderStage::RAYGEN:
+            return VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+        case ShaderStage::MISS:
+            return VK_SHADER_STAGE_MISS_BIT_KHR;
+        case ShaderStage::CLOSEST_HIT:
+            return VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+        }
+
+        throw std::runtime_error("Unsupported shader stage");
+    }
+}
+
 void ShaderHandler::destroyVk()
 {
     if (m_shaderModule)
@@ -53,19 +77,7 @@ void ShaderHandler::loadFromFile(const std::string &path, ShaderStage shaderStag
     auto buffer = readSpirvFile(path);
 
     m_shaderModule = createShaderModule(buffer);
-
-    switch (shaderStage)
-    {
-    case ShaderStage::VERTEX:
-        m_shaderStage = VK_SHADER_STAGE_VERTEX_BIT;
-        break;
-    case ShaderStage::FRAGMENT:
-        m_shaderStage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        break;
-    case ShaderStage::COMPUTE:
-        m_shaderStage = VK_SHADER_STAGE_COMPUTE_BIT;
-        break;
-    }
+    m_shaderStage = toVkShaderStage(shaderStage);
 
     createInfo();
 }
@@ -74,19 +86,7 @@ void ShaderHandler::loadFromFile(const std::string &path, ShaderStage shaderStag
 void ShaderHandler::loadFromCode(const std::vector<uint32_t> &code, ShaderStage shaderStage)
 {
     m_shaderModule = createShaderModule(code);
-
-    switch (shaderStage)
-    {
-    case ShaderStage::VERTEX:
-        m_shaderStage = VK_SHADER_STAGE_VERTEX_BIT;
-        break;
-    case ShaderStage::FRAGMENT:
-        m_shaderStage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        break;
-    case ShaderStage::COMPUTE:
-        m_shaderStage = VK_SHADER_STAGE_COMPUTE_BIT;
-        break;
-    }
+    m_shaderStage = toVkShaderStage(shaderStage);
 
     createInfo();
 }

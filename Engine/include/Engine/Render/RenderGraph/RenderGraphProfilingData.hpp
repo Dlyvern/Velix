@@ -23,6 +23,12 @@ struct RenderGraphFrameProfilingData
 {
     uint64_t frameIndex{0};
     uint32_t totalDrawCalls{0};
+
+    double cpuPrepareFrameMs{0.0}; // fence wait + pool reset + acquire + recompile + resolve profiling
+    double cpuActualFrameMs{0.0};  // all pass recording + primary CB end + submit + present
+    double gpuActualFrameMs{0.0};  // GPU timestamp: frame start → end
+
+    // Detailed breakdown (kept for the per-pass table / debugging)
     double cpuFrameTimeMs{0.0};
     double cpuTotalTimeMs{0.0};
     double cpuWaitForFenceMs{0.0};
@@ -32,7 +38,6 @@ struct RenderGraphFrameProfilingData
     double cpuPresentMs{0.0};
     double cpuSyncTimeMs{0.0};
     double cpuWasteTimeMs{0.0};
-    // Breakdown of the unaccounted time — sum of these is subtracted from cpuWasteTimeMs.
     double cpuCommandPoolResetMs{0.0};
     double cpuPrimaryEndMs{0.0};
     double cpuResolveProfilingMs{0.0};

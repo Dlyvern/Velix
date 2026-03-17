@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "includePath": [
+                "${workspaceFolder}/Engine/include/**",
+                "${workspaceFolder}/Core/include/**",
+                "${workspaceFolder}/Editor/include/**",
+                "${workspaceFolder}/VelixSDK/include/**",
+                "${workspaceFolder}/external/glm/**",
+                "${workspaceFolder}/external/imgui/**",
+                "${workspaceFolder}/external/volk/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c11",
+            "cppStandard": "c++20",
+            "intelliSenseMode": "clang-x64"
+        }
+    ],
+    "version": 4
+}

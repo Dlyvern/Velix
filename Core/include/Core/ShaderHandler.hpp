@@ -13,7 +13,10 @@ enum class ShaderStage
 {
     VERTEX,
     FRAGMENT,
-    COMPUTE
+    COMPUTE,
+    RAYGEN,
+    MISS,
+    CLOSEST_HIT
 };
 
 class ShaderHandler

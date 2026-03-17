@@ -18,6 +18,8 @@ class DescriptorSetLayout
 
 public:
     DescriptorSetLayout(VkDevice device, const std::vector<VkDescriptorSetLayoutBinding> &bindings);
+    DescriptorSetLayout(VkDevice device, const std::vector<VkDescriptorSetLayoutBinding> &bindings,
+                        const std::vector<VkDescriptorBindingFlags> &bindingFlags);
     void createVk(const std::vector<VkDescriptorSetLayoutBinding> &bindings);
     ~DescriptorSetLayout();
 

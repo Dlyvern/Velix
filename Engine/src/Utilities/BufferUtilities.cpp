@@ -40,5 +40,16 @@ void BufferUtilities::copyBuffer(core::Buffer &srcBuffer, core::Buffer &dstBuffe
     vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
 }
 
+void BufferUtilities::copyBufferRegion(core::Buffer &srcBuffer, core::Buffer &dstBuffer, core::CommandBuffer &commandBuffer,
+                                       VkDeviceSize size, VkDeviceSize srcOffset, VkDeviceSize dstOffset)
+{
+    VkBufferCopy copyRegion{
+        .srcOffset = srcOffset,
+        .dstOffset = dstOffset,
+        .size = size};
+
+    vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+}
+
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END

@@ -1,0 +1,90 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+const int KERNEL_RADIUS = 2; // 5x5 bilateral filter
+
+layout(set = 0, binding = 0) uniform sampler2D       uReflectionInput;
+layout(set = 0, binding = 1) uniform sampler2D       uGBufferNormal;
+layout(set = 0, binding = 2) uniform sampler2D       uDepth;
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D uReflectionOutput;
+
+layout(push_constant) uniform RTReflectionDenoisePC
+{
+    mat4 invProjection;
+    vec4 params0; // x=texelSize.x, y=texelSize.y, z=enabled, w=normalSigma
+    vec4 params1; // x=depthSigma
+} pc;
+
+vec3 decodeNormal(vec3 enc)
+{
+    vec3 n = enc * 2.0 - 1.0;
+    float l = length(n);
+    return (l < 0.00001) ? vec3(0.0, 0.0, 1.0) : n / l;
+}
+
+vec3 reconstructViewPos(vec2 uv, float depth)
+{
+    vec4 ndc = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 vp  = pc.invProjection * ndc;
+    return vp.xyz / max(vp.w, 0.000001);
+}
+
+void main()
+{
+    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 imgSize    = imageSize(uReflectionOutput);
+
+    if (pixelCoord.x >= imgSize.x || pixelCoord.y >= imgSize.y)
+        return;
+
+    vec2  centerUV    = (vec2(pixelCoord) + 0.5) * pc.params0.xy;
+    float centerDepth = texture(uDepth, centerUV).r;
+
+    // Pass-through: disabled or sky pixel.
+    if (pc.params0.z < 0.5 || centerDepth >= 1.0)
+    {
+        vec4 raw = texelFetch(uReflectionInput, pixelCoord, 0);
+        imageStore(uReflectionOutput, pixelCoord, raw);
+        return;
+    }
+
+    vec3 centerNormal  = decodeNormal(texture(uGBufferNormal, centerUV).rgb);
+    vec3 centerViewPos = reconstructViewPos(centerUV, centerDepth);
+
+    vec4  accumColor = vec4(0.0);
+    float weightSum  = 0.0;
+
+    for (int y = -KERNEL_RADIUS; y <= KERNEL_RADIUS; ++y)
+    {
+        for (int x = -KERNEL_RADIUS; x <= KERNEL_RADIUS; ++x)
+        {
+            ivec2 sampleCoord = clamp(pixelCoord + ivec2(x, y), ivec2(0), imgSize - ivec2(1));
+            vec2  sampleUV    = (vec2(sampleCoord) + 0.5) * pc.params0.xy;
+            float sampleDepth = texture(uDepth, sampleUV).r;
+
+            if (sampleDepth >= 1.0)
+                continue;
+
+            vec3 sampleNormal  = decodeNormal(texture(uGBufferNormal, sampleUV).rgb);
+            vec3 sampleViewPos = reconstructViewPos(sampleUV, sampleDepth);
+
+            float spatialWeight = exp(-0.5 * float(x * x + y * y));
+            float normalWeight  = exp(-(1.0 - clamp(dot(centerNormal, sampleNormal), 0.0, 1.0))
+                                        / max(pc.params0.w, 0.0001));
+            float depthWeight   = exp(-length(sampleViewPos - centerViewPos)
+                                        / max(pc.params1.x, 0.0001));
+            float weight        = spatialWeight * normalWeight * depthWeight;
+
+            vec4 sampleColor = texelFetch(uReflectionInput, sampleCoord, 0);
+            accumColor  += sampleColor * weight;
+            weightSum   += weight;
+        }
+    }
+
+    vec4 result = (weightSum > 0.00001)
+        ? (accumColor / weightSum)
+        : texelFetch(uReflectionInput, pixelCoord, 0);
+
+    imageStore(uReflectionOutput, pixelCoord, result);
+}

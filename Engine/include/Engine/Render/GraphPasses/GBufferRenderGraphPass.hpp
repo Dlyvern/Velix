@@ -11,6 +11,16 @@ class GBufferRenderGraphPass : public IRenderGraphPass
 public:
     GBufferRenderGraphPass();
 
+    /// Call before setup() to tell GBuffer to reuse an already-written depth buffer
+    /// (e.g. from a DepthPrepassRenderGraphPass) instead of creating its own.
+    /// A pointer is stored so that GBuffer's setup() dereferences the live ID
+    /// after the prepass has already assigned it via builder.createTexture().
+    void setExternalDepthHandler(RGPResourceHandler &handler)
+    {
+        m_externalDepthHandlerPtr = &handler;
+        m_hasExternalDepth = true;
+    }
+
     void record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
 
@@ -54,6 +64,10 @@ private:
 
     RGPResourceHandler m_depthTextureHandler;
     RGPResourceHandler m_objectIdTextureHandler;
+
+    // External depth prepass support
+    bool                m_hasExternalDepth{false};
+    RGPResourceHandler *m_externalDepthHandlerPtr{nullptr};
 };
 
 ELIX_CUSTOM_NAMESPACE_END

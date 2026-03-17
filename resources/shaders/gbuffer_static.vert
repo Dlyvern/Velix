@@ -16,7 +16,7 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
 struct InstanceData
 {
     mat4 model;
-    uvec4 objectInfo; // x = objectId, y = bonesOffset, z/w = reserved
+    uvec4 objectInfo; // x = objectId, y = bonesOffset, z = materialIndex, w = reserved
 };
 
 layout(std430, set = 2, binding = 1) readonly buffer InstanceDataSSBO
@@ -36,6 +36,7 @@ layout(location = 2) out vec3 fragPositionView;
 layout(location = 3) out vec3 fragTangentView;
 layout(location = 4) out vec3 fragBitangentView;
 layout(location = 5) out flat uint fragObjectId;
+layout(location = 6) out flat uint fragMaterialIndex;
 
 void main()
 {
@@ -43,7 +44,8 @@ void main()
     InstanceData instanceData = instanceDataBuffer.instances[instanceIndex];
 
     mat4 modelMatrix = instanceData.model;
-    fragObjectId = instanceData.objectInfo.x;
+    fragObjectId      = instanceData.objectInfo.x;
+    fragMaterialIndex = instanceData.objectInfo.z;
 
     fragUV = inTextures;
 

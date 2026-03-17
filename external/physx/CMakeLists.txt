@@ -66,13 +66,13 @@ if(NOT PHYSX_PREBUILT_FOUND)
 
     if(WIN32)
         execute_process(
-            COMMAND ${CMAKE_CURRENT_LIST_DIR}/scripts/build_physx_windows.bat
+            COMMAND ${CMAKE_CURRENT_LIST_DIR}/scripts/build_physx_windows.bat ${PHYSX_BUILD_TYPE}
             WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
             RESULT_VARIABLE PHYSX_BUILD_RESULT
         )
     elseif(UNIX)
         execute_process(
-            COMMAND bash ${CMAKE_CURRENT_LIST_DIR}/scripts/build_physx_linux.sh
+            COMMAND bash ${CMAKE_CURRENT_LIST_DIR}/scripts/build_physx_linux.sh ${PHYSX_BUILD_TYPE}
             WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
             RESULT_VARIABLE PHYSX_BUILD_RESULT
         )
@@ -81,6 +81,12 @@ if(NOT PHYSX_PREBUILT_FOUND)
     if(NOT PHYSX_BUILD_RESULT EQUAL 0)
         message(FATAL_ERROR "Failed to build PhysX")
     endif()
+
+    foreach(lib IN LISTS PHYSX_LIBS_TO_CHECK)
+        if(NOT EXISTS "${lib}")
+            message(FATAL_ERROR "PhysX build completed, but the expected library is still missing: ${lib}")
+        endif()
+    endforeach()
 else()
     message(STATUS "Using prebuilt PhysX from ${PHYSX_LIB_DIR}")
 endif()

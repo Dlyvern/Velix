@@ -37,6 +37,19 @@ DescriptorSetBuilder& DescriptorSetBuilder::addImage(VkImageView imageView, VkSa
     return *this;
 }
 
+DescriptorSetBuilder& DescriptorSetBuilder::addStorageImage(VkImageView imageView, VkImageLayout imageLayout, uint32_t binding)
+{
+    ImageInfo imageInfo{};
+    imageInfo.imageLayout = imageLayout;
+    imageInfo.imageView = imageView;
+    imageInfo.binding = binding;
+    imageInfo.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+
+    m_imageInfos.push_back(std::move(imageInfo));
+
+    return *this;
+}
+
 DescriptorSetBuilder& DescriptorSetBuilder::addAccelerationStructure(VkAccelerationStructureKHR accelerationStructure, uint32_t binding)
 {
     AccelerationStructureInfo accelerationStructureInfo{};
@@ -113,7 +126,7 @@ void DescriptorSetBuilder::createWriters(VkDescriptorSet dstSet,
 
         VkWriteDescriptorSet& writer = writers.emplace_back();
         writer.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writer.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writer.descriptorType = image.descriptorType;
         writer.descriptorCount = 1;
         writer.dstArrayElement = 0;
         writer.pImageInfo = &descriptorImageInfo;
