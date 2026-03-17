@@ -1527,6 +1527,18 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
                 m_perFrameData.skyLightEnabled = directionalLight->skyLightEnabled;
                 m_perFrameData.directionalLightStrength = directionalLight->skyLightEnabled ? directionalLight->strength : 0.0f;
                 directionalDataAssigned = true;
+
+                if (directionalLight->skyLightEnabled)
+                {
+                    const float sunH  = glm::clamp(glm::dot(dirWorld, glm::vec3(0.0f, 1.0f, 0.0f)), -1.0f, 1.0f);
+                    const float horizF = 1.0f - glm::smoothstep(0.18f, 0.55f, sunH);
+                    const float belowH = 1.0f - glm::smoothstep(-0.18f, 0.02f, sunH);
+                    glm::vec3 dynColor = glm::mix(glm::vec3(1.00f, 0.96f, 0.89f),
+                                                  glm::vec3(1.00f, 0.57f, 0.24f), horizF);
+                    dynColor = glm::mix(dynColor, glm::vec3(1.00f, 0.38f, 0.15f), belowH * 0.75f);
+                    directionalLight->color = dynColor;
+                    ssboData->lights[i].colorStrength = glm::vec4(dynColor, lightComponent->strength);
+                }
             }
 
             if (directionalLight->castsShadows && !directionalShadowAssigned)

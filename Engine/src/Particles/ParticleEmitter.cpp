@@ -2,6 +2,7 @@
 #include "Engine/Particles/Modules/SpawnModule.hpp"
 
 #include <algorithm>
+#include <cstdint>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -71,6 +72,35 @@ void ParticleEmitter::update(float deltaTime, const glm::vec3 &worldPosition)
 
     if (spawn && !spawn->loop && m_time >= spawn->duration && m_aliveCount == 0)
         m_playing = false;
+}
+
+void ParticleEmitter::setPhysicsScene(PhysicsScene *scene)
+{
+    for (auto &[_, mod] : m_modules)
+        mod->setPhysicsScene(scene);
+}
+
+void ParticleEmitter::spawnParticleAt(const glm::vec3 &worldPos, uint32_t count)
+{
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        const uint32_t idx = allocateParticle();
+        if (idx == UINT32_MAX)
+            return;
+
+        Particle &p = m_particles[idx];
+        p = Particle{};
+        p.alive = true;
+        p.age   = 0.0f;
+
+        // Apply spawn modules (sets velocity, color, lifetime, size etc.)
+        // then override position so shape doesn't overwrite our world pos.
+        applySpawnModules(p, worldPos);
+        p.position = worldPos;
+
+        ++m_aliveCount;
+        m_dirty = true;
+    }
 }
 
 void ParticleEmitter::play()

@@ -3,6 +3,8 @@
 
 #include "Engine/Particles/ParticleEmitter.hpp"
 
+#include "Engine/Physics/PhysicsScene.hpp"
+
 #include <glm/glm.hpp>
 
 #include <memory>
@@ -28,6 +30,9 @@ public:
 
     /// Called every frame by ParticleSystemComponent.
     void update(float deltaTime, const glm::vec3 &worldPosition);
+
+    /// Injects the physics scene into all emitters so CollisionModules can raycast.
+    void setPhysicsScene(PhysicsScene *scene);
 
     void play();
     void stop();

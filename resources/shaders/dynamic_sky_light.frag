@@ -59,6 +59,47 @@ float fbm(vec2 p)
     return value;
 }
 
+// ---------------------------------------------------------------------------
+// 3-D noise — used for seamless cloud sampling on the sky sphere.
+// The old 2-D flat-plate projection (dir.xz / denom) had discontinuities
+// at the 6 cube-face boundaries, producing visible rectangular seams.
+// ---------------------------------------------------------------------------
+
+float hash3(vec3 p)
+{
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+float noise3(vec3 p)
+{
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+
+    return mix(
+        mix(mix(hash3(i),                 hash3(i + vec3(1,0,0)), u.x),
+            mix(hash3(i + vec3(0,1,0)),   hash3(i + vec3(1,1,0)), u.x), u.y),
+        mix(mix(hash3(i + vec3(0,0,1)),   hash3(i + vec3(1,0,1)), u.x),
+            mix(hash3(i + vec3(0,1,1)),   hash3(i + vec3(1,1,1)), u.x), u.y),
+        u.z);
+}
+
+float fbm3(vec3 p)
+{
+    float value = 0.0;
+    float amp   = 0.5;
+    float freq  = 1.0;
+    for (int i = 0; i < 4; ++i)
+    {
+        value += amp * noise3(p * freq);
+        freq  *= 2.1;
+        amp   *= 0.5;
+    }
+    return value;
+}
+
 float hash21(vec2 p)
 {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -157,18 +198,20 @@ vec3 getSkyGradient(vec3 dir, vec3 sunDir, float sunHeight)
 
 float cloudMask(vec3 dir)
 {
-    float denom = max(dir.y + 0.15, 0.05);
-    vec2  uv    = dir.xz / denom;
-    uv += vec2(TIME_SECONDS * CLOUD_SPEED * 0.01, TIME_SECONDS * CLOUD_SPEED * 0.005);
+    // Sample directly on the unit-sphere direction — no cube-face seams.
+    // Wind offset applied in world-space X/Z so clouds drift horizontally.
+    vec3 uv = normalize(dir);
+    uv.x += TIME_SECONDS * CLOUD_SPEED * 0.01;
+    uv.z += TIME_SECONDS * CLOUD_SPEED * 0.005;
 
     float c = 0.0;
-    c += fbm(uv * 0.30) * 0.55;
-    c += fbm(uv * 0.75) * 0.30;
-    c += fbm(uv * 1.60) * 0.15;
+    c += fbm3(uv * 3.50) * 0.55;
+    c += fbm3(uv * 7.50) * 0.30;
+    c += fbm3(uv * 16.0) * 0.15;
 
     c = c * 0.5 + 0.5;
-    float threshold = mix(0.88, 0.22, CLOUD_COVERAGE);
-    float softness  = mix(0.22, 0.05, CLOUD_DENSITY);
+    float threshold = mix(0.78, 0.38, CLOUD_COVERAGE);
+    float softness  = mix(0.18, 0.06, CLOUD_DENSITY);
     c = smoothstep(threshold - softness, threshold + softness, c);
     c *= smoothstep(-0.05, 0.22, dir.y);
 

@@ -7,6 +7,7 @@
 #include "Engine/Particles/Modules/SizeOverLifetimeModule.hpp"
 #include "Engine/Particles/Modules/ForceModule.hpp"
 #include "Engine/Particles/Modules/RendererModule.hpp"
+#include "Engine/Particles/Modules/CollisionModule.hpp"
 
 #include <algorithm>
 
@@ -37,6 +38,12 @@ void ParticleSystem::removeEmitter(const std::string &emitterName)
         m_emitters.end());
 }
 
+void ParticleSystem::setPhysicsScene(PhysicsScene *scene)
+{
+    for (auto &emitter : m_emitters)
+        emitter->setPhysicsScene(scene);
+}
+
 void ParticleSystem::update(float deltaTime, const glm::vec3 &worldPosition)
 {
     if (!m_playing || m_paused)
@@ -44,6 +51,27 @@ void ParticleSystem::update(float deltaTime, const glm::vec3 &worldPosition)
 
     for (auto &emitter : m_emitters)
         emitter->update(deltaTime, worldPosition);
+
+    // Transfer collision hit positions to splash emitters.
+    for (auto &emitter : m_emitters)
+    {
+        auto *collMod = emitter->getModule<CollisionModule>();
+        if (!collMod || !collMod->isEnabled())
+            continue;
+
+        const auto &hits = collMod->getHitPositions();
+        if (hits.empty())
+            continue;
+
+        auto *splashEmitter = getEmitter(collMod->splashEmitterName);
+        if (splashEmitter)
+        {
+            for (const auto &hitPos : hits)
+                splashEmitter->spawnParticleAt(hitPos, collMod->splashCount);
+        }
+
+        collMod->clearHits();
+    }
 }
 
 void ParticleSystem::play()

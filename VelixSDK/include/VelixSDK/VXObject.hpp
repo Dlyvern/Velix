@@ -112,6 +112,63 @@ public:
         engine::scripting::clearDontDestroyOnLoad(getOuter());
     }
 
+    // --- Transform helpers (operate on this entity) ---
+
+    glm::vec3 getWorldPosition() const
+    {
+        return engine::scripting::getWorldPosition(getOuter());
+    }
+
+    void setWorldPosition(const glm::vec3 &position)
+    {
+        engine::scripting::setWorldPosition(getOuter(), position);
+    }
+
+    glm::quat getWorldRotation() const
+    {
+        return engine::scripting::getWorldRotation(getOuter());
+    }
+
+    void setWorldRotation(const glm::quat &rotation)
+    {
+        engine::scripting::setWorldRotation(getOuter(), rotation);
+    }
+
+    glm::vec3 getForwardVector() const
+    {
+        return engine::scripting::getForwardVector(getOuter());
+    }
+
+    glm::vec3 getRightVector() const
+    {
+        return engine::scripting::getRightVector(getOuter());
+    }
+
+    glm::vec3 getUpVector() const
+    {
+        return engine::scripting::getUpVector(getOuter());
+    }
+
+    // --- Physics helpers (operate on this entity) ---
+
+    void addImpulse(const glm::vec3 &impulse)
+    {
+        engine::scripting::addImpulse(getOuter(), impulse);
+    }
+
+    void addForce(const glm::vec3 &force)
+    {
+        engine::scripting::addForce(getOuter(), force);
+    }
+
+    // --- Physics queries ---
+
+    bool raycast(const glm::vec3 &origin, const glm::vec3 &direction, float maxDistance,
+                 engine::PhysicsRaycastHit *outHit = nullptr) const
+    {
+        return engine::scripting::raycast(origin, direction, maxDistance, outHit, getScene());
+    }
+
     static float deltaTime() { return engine::Time::instance().deltaTime(); }
     static float totalTime() { return engine::Time::instance().totalTime(); }
     static float scaledDeltaTime() { return engine::Time::instance().scaledDeltaTime(); }

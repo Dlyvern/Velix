@@ -93,30 +93,10 @@ jobs:
       - name: Setup MSVC Developer Environment (early, needed for PhysX build)
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Cache PhysX Windows Binaries
-        uses: actions/cache@v4
-        id: physx-windows-cache
+      - name: Setup Python for PhysX project generation
+        uses: actions/setup-python@v5
         with:
-          path: external/physx/lib/windows/checked
-          key: physx-windows-vc17-checked-${{ hashFiles('external/physx/scripts/build_physx_windows.bat') }}-${{ hashFiles('external/physx/PhysX/physx/source/CMakeLists.txt') }}
-
-      - name: Build PhysX
-        if: steps.physx-windows-cache.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          call external\physx\scripts\build_physx_windows.bat checked
-          if errorlevel 1 (
-            echo [VelixFlow] PhysX build failed
-            exit /b 1
-          )
-
-      - name: Install Vulkan SDK
-        run: |
-          curl -Lo vulkan-sdk.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
-          ./vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install
-          $sdkPath = Get-ChildItem "C:\VulkanSDK" -Directory | Select-Object -Last 1 -ExpandProperty FullName
-          echo "VULKAN_SDK=$sdkPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          echo "VULKAN_SDK is set to: $sdkPath"
+          python-version: '3.x'
 
       - name: Download Portable CMake (Windows)
         shell: pwsh
@@ -138,6 +118,31 @@ jobs:
 
           Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $cmakeRoot 'bin')
           Add-Content -Path $env:GITHUB_ENV -Value "VELIX_BUNDLED_CMAKE_DIR=$cmakeRoot"
+
+      - name: Install Vulkan SDK
+        run: |
+          curl -Lo vulkan-sdk.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
+          ./vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install
+          $sdkPath = Get-ChildItem "C:\VulkanSDK" -Directory | Select-Object -Last 1 -ExpandProperty FullName
+          echo "VULKAN_SDK=$sdkPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          echo "VULKAN_SDK is set to: $sdkPath"
+
+      - name: Cache PhysX Windows Binaries
+        uses: actions/cache@v4
+        id: physx-windows-cache
+        with:
+          path: external/physx/lib/windows/checked
+          key: physx-windows-vc17-checked-${{ hashFiles('external/physx/scripts/build_physx_windows.bat') }}
+
+      - name: Build PhysX
+        if: steps.physx-windows-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          call external\physx\scripts\build_physx_windows.bat checked
+          if errorlevel 1 (
+            echo [VelixFlow] PhysX build failed
+            exit /b 1
+          )
 
       - name: Configure
         run: |

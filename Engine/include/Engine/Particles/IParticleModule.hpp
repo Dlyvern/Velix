@@ -8,6 +8,7 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 struct Particle;
+class PhysicsScene;
 
 enum class ParticleModuleType : uint8_t
 {
@@ -18,6 +19,7 @@ enum class ParticleModuleType : uint8_t
     SizeOverLifetime,
     Force,
     Renderer,
+    Collision,
     Custom
 };
 
@@ -31,6 +33,8 @@ public:
     virtual void onParticleSpawn(Particle & /*particle*/) {}
 
     virtual void onParticleUpdate(Particle & /*particle*/, float /*deltaTime*/) {}
+
+    virtual void setPhysicsScene(PhysicsScene * /*scene*/) {}
 
     bool isEnabled() const { return m_enabled; }
     void setEnabled(bool value) { m_enabled = value; }

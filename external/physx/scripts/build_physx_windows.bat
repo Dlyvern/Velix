@@ -41,10 +41,11 @@ if not exist "%PHYSX_SOLUTION%" (
 )
 
 echo [VelixFlow] Building PhysX in %PHYSX_BUILD_TYPE% mode...
-msbuild "%PHYSX_SOLUTION%" /p:Configuration=%PHYSX_MSBUILD_CONFIGURATION% /maxcpucount /t:Rebuild /v:m
+msbuild "%PHYSX_SOLUTION%" /p:Configuration=%PHYSX_MSBUILD_CONFIGURATION% /maxcpucount /t:Build /v:m
+set MSBUILD_EXIT=%ERRORLEVEL%
 
-if errorlevel 1 (
-    echo [VelixFlow] Error: Failed to build PhysX
+if %MSBUILD_EXIT% NEQ 0 (
+    echo [VelixFlow] Error: Failed to build PhysX (MSBuild exit code: %MSBUILD_EXIT%)
     popd
     exit /b 1
 )

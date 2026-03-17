@@ -24,6 +24,8 @@
 #include "Engine/Components/Transform2DComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 
+#include <glm/gtc/quaternion.hpp>
+
 #include <string_view>
 #include <vector>
 
@@ -292,6 +294,107 @@ RenderQualitySettings *getRenderQualitySettings()
 const RenderQualitySettings *getRenderQualitySettingsConst()
 {
     return &RenderQualitySettings::getInstance();
+}
+
+bool raycast(const glm::vec3 &origin, const glm::vec3 &direction, float maxDistance,
+             PhysicsRaycastHit *outHit, Scene *scene)
+{
+    auto *targetScene = resolveScene(scene);
+    if (!targetScene)
+        return false;
+
+    return targetScene->getPhysicsScene().raycast(origin, direction, maxDistance, outHit);
+}
+
+void addImpulse(Entity *entity, const glm::vec3 &impulse)
+{
+    if (!entity)
+        return;
+
+    if (auto *rb = entity->getComponent<RigidBodyComponent>())
+        rb->applyImpulse(impulse);
+}
+
+void addForce(Entity *entity, const glm::vec3 &force)
+{
+    if (!entity)
+        return;
+
+    if (auto *rb = entity->getComponent<RigidBodyComponent>())
+        rb->addForce(force);
+}
+
+glm::vec3 getWorldPosition(Entity *entity)
+{
+    if (!entity)
+        return glm::vec3{0.0f};
+
+    if (auto *t = entity->getComponent<Transform3DComponent>())
+        return t->getWorldPosition();
+
+    return glm::vec3{0.0f};
+}
+
+void setWorldPosition(Entity *entity, const glm::vec3 &position)
+{
+    if (!entity)
+        return;
+
+    if (auto *t = entity->getComponent<Transform3DComponent>())
+        t->setWorldPosition(position);
+}
+
+glm::quat getWorldRotation(Entity *entity)
+{
+    if (!entity)
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+
+    if (auto *t = entity->getComponent<Transform3DComponent>())
+        return t->getWorldRotation();
+
+    return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+}
+
+void setWorldRotation(Entity *entity, const glm::quat &rotation)
+{
+    if (!entity)
+        return;
+
+    if (auto *t = entity->getComponent<Transform3DComponent>())
+        t->setWorldRotation(rotation);
+}
+
+glm::vec3 getForwardVector(Entity *entity)
+{
+    if (!entity)
+        return glm::vec3{0.0f, 0.0f, -1.0f};
+
+    if (auto *t = entity->getComponent<Transform3DComponent>())
+        return glm::normalize(t->getWorldRotation() * glm::vec3{0.0f, 0.0f, -1.0f});
+
+    return glm::vec3{0.0f, 0.0f, -1.0f};
+}
+
+glm::vec3 getRightVector(Entity *entity)
+{
+    if (!entity)
+        return glm::vec3{1.0f, 0.0f, 0.0f};
+
+    if (auto *t = entity->getComponent<Transform3DComponent>())
+        return glm::normalize(t->getWorldRotation() * glm::vec3{1.0f, 0.0f, 0.0f});
+
+    return glm::vec3{1.0f, 0.0f, 0.0f};
+}
+
+glm::vec3 getUpVector(Entity *entity)
+{
+    if (!entity)
+        return glm::vec3{0.0f, 1.0f, 0.0f};
+
+    if (auto *t = entity->getComponent<Transform3DComponent>())
+        return glm::normalize(t->getWorldRotation() * glm::vec3{0.0f, 1.0f, 0.0f});
+
+    return glm::vec3{0.0f, 1.0f, 0.0f};
 }
 
 ELIX_CUSTOM_NAMESPACE_END

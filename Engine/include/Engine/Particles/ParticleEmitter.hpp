@@ -4,6 +4,8 @@
 #include "Engine/Particles/ParticleTypes.hpp"
 #include "Engine/Particles/IParticleModule.hpp"
 
+#include "Engine/Physics/PhysicsScene.hpp"
+
 #include <glm/glm.hpp>
 
 #include <memory>
@@ -59,6 +61,13 @@ public:
     }
 
     void update(float deltaTime, const glm::vec3 &worldPosition);
+
+    /// Propagates the physics scene pointer to all modules that support collision.
+    void setPhysicsScene(PhysicsScene *scene);
+
+    /// Spawns a burst of particles at an explicit world position, bypassing the emitter's
+    /// shape module. Used for splash effects driven by CollisionModule hit positions.
+    void spawnParticleAt(const glm::vec3 &worldPos, uint32_t count = 1);
 
     void play();
     void stop();

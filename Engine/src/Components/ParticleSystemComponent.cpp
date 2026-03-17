@@ -1,6 +1,8 @@
 #include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Entity.hpp"
+#include "Engine/Scripting/VelixAPI.hpp"
+#include "Engine/Scene.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -33,6 +35,9 @@ void ParticleSystemComponent::update(float dt)
         if (auto *transform = entity->getComponent<Transform3DComponent>())
             worldPos = transform->getWorldPosition();
     }
+
+    if (auto *scene = scripting::getActiveScene())
+        m_particleSystem->setPhysicsScene(&scene->getPhysicsScene());
 
     m_particleSystem->update(dt, worldPos);
 }

@@ -2,9 +2,12 @@
 #define ELIX_VELIX_API_HPP
 
 #include "Core/Macros.hpp"
+#include "Engine/Physics/PhysicsScene.hpp"
 
 #include <cstdint>
 #include <string>
+#include <glm/vec3.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class Scene;
@@ -24,17 +27,14 @@ ELIX_NESTED_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(scripting)
 
-// --- Scene / window ---
 void setActiveScene(Scene *scene);
 Scene *const getActiveScene();
 
 void setActiveWindow(platform::Window *window);
 platform::Window *const getActiveWindow();
 
-// --- Per-frame tick (call after pollEvents, before runtime->tick()) ---
 void beginFrame(float deltaTime);
 
-// --- Entities ---
 Entity *spawnEntity(const char *name, Scene *scene = nullptr);
 bool destroyEntity(Entity *entity, Scene *scene = nullptr);
 Entity *findEntityById(uint32_t id, Scene *scene = nullptr);
@@ -44,28 +44,34 @@ Entity *getEntityByIndex(uint64_t index, Scene *scene = nullptr);
 
 std::string getEntityName(const Entity *entity);
 
-// --- Components ---
 ECS *getEntitySingleComponent(Entity *entity, const char *componentTypeName);
 uint64_t getEntityComponentsCount(Entity *entity, const char *componentTypeName);
 ECS *getEntityComponentByIndex(Entity *entity, const char *componentTypeName, uint64_t index);
 bool entityHasComponent(Entity *entity, const char *componentTypeName);
 
-// --- Scene transitions (queued; safe to call during update()) ---
-// Full reload: replace the current scene (DontDestroyOnLoad entities survive).
 void loadScene(const char *filePath);
-// Additive: merge entities from filePath into the current scene.
 void loadSceneAdditive(const char *filePath);
-// Unload all entities that have the given tag.
 void unloadGroup(const char *tag);
-// Mark an entity to survive full scene loads.
 void setDontDestroyOnLoad(Entity *entity);
-// Remove the DontDestroyOnLoad mark.
 void clearDontDestroyOnLoad(Entity *entity);
 
-// --- Subsystems ---
 InputManager &getInputManager();
 RenderQualitySettings *getRenderQualitySettings();
 const RenderQualitySettings *getRenderQualitySettingsConst();
+
+bool raycast(const glm::vec3 &origin, const glm::vec3 &direction, float maxDistance,
+             PhysicsRaycastHit *outHit = nullptr, Scene *scene = nullptr);
+
+void addImpulse(Entity *entity, const glm::vec3 &impulse);
+void addForce(Entity *entity, const glm::vec3 &force);
+
+glm::vec3 getWorldPosition(Entity *entity);
+void setWorldPosition(Entity *entity, const glm::vec3 &position);
+glm::quat getWorldRotation(Entity *entity);
+void setWorldRotation(Entity *entity, const glm::quat &rotation);
+glm::vec3 getForwardVector(Entity *entity);
+glm::vec3 getRightVector(Entity *entity);
+glm::vec3 getUpVector(Entity *entity);
 
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
