@@ -134,6 +134,16 @@ jobs:
           path: external/physx/lib/windows/checked
           key: physx-windows-vc17-checked-${{ hashFiles('external/physx/scripts/build_physx_windows.bat') }}
 
+      - name: Verify build environment
+        if: steps.physx-windows-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          echo [VelixFlow] == Build environment ==
+          python --version
+          where python
+          where msbuild
+          msbuild /version /nologo
+
       - name: Build PhysX
         if: steps.physx-windows-cache.outputs.cache-hit != 'true'
         shell: cmd

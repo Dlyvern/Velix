@@ -26,10 +26,15 @@ set "PHYSX_BUILD_OUTPUT="
 
 pushd "%PHYSX_ROOT%"
 
+echo [VelixFlow] Python version:
+python --version 2>&1 || echo [VelixFlow] WARNING: python not found in PATH
+
 echo [VelixFlow] Generating Visual Studio project files...
-call generate_projects.bat %PHYSX_PRESET%
+call generate_projects.bat %PHYSX_PRESET% 2>&1
 if errorlevel 1 (
     echo [VelixFlow] Error: Failed to generate PhysX Visual Studio projects
+    echo [VelixFlow] Available presets:
+    dir /b compiler 2>nul
     popd
     exit /b 1
 )
@@ -41,7 +46,7 @@ if not exist "%PHYSX_SOLUTION%" (
 )
 
 echo [VelixFlow] Building PhysX in %PHYSX_BUILD_TYPE% mode...
-msbuild "%PHYSX_SOLUTION%" /p:Configuration=%PHYSX_MSBUILD_CONFIGURATION% /maxcpucount /t:Build /v:m
+msbuild "%PHYSX_SOLUTION%" /p:Configuration=%PHYSX_MSBUILD_CONFIGURATION% /maxcpucount /t:Build /v:n /nologo
 set MSBUILD_EXIT=%ERRORLEVEL%
 
 if %MSBUILD_EXIT% NEQ 0 (
