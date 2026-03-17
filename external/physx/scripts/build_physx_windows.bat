@@ -49,19 +49,30 @@ if errorlevel 1 (
     exit /b 1
 )
 
-for /d %%D in ("%PHYSX_ROOT%\bin\win.x86_64.*.mt\%PHYSX_BUILD_TYPE%") do (
-    if not defined PHYSX_BUILD_OUTPUT set "PHYSX_BUILD_OUTPUT=%%~fD"
+for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysX_64.lib" 2^>nul') do (
+    set "PHYSX_BUILD_OUTPUT=%%~dpF"
+    goto :BUILD_OUTPUT_FOUND
 )
 
-if not defined PHYSX_BUILD_OUTPUT (
-    for /d %%D in ("%PHYSX_ROOT%\bin\win.x86_64.*.md\%PHYSX_BUILD_TYPE%") do (
-        if not defined PHYSX_BUILD_OUTPUT set "PHYSX_BUILD_OUTPUT=%%~fD"
-    )
+for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysX_static_64.lib" 2^>nul') do (
+    set "PHYSX_BUILD_OUTPUT=%%~dpF"
+    goto :BUILD_OUTPUT_FOUND
+)
+
+for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysXFoundation_64.lib" 2^>nul') do (
+    set "PHYSX_BUILD_OUTPUT=%%~dpF"
+    goto :BUILD_OUTPUT_FOUND
+)
+
+:BUILD_OUTPUT_FOUND
+if defined PHYSX_BUILD_OUTPUT (
+    for %%D in ("%PHYSX_BUILD_OUTPUT%\.") do set "PHYSX_BUILD_OUTPUT=%%~fD"
 )
 
 if not defined PHYSX_BUILD_OUTPUT (
     echo [VelixFlow] Error: PhysX build output directory was not found under "%PHYSX_ROOT%\bin"
     dir /b "%PHYSX_ROOT%\bin" 2>nul
+    dir /b /s "%PHYSX_ROOT%\bin\*.lib" 2>nul
     popd
     exit /b 1
 )
