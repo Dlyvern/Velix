@@ -268,6 +268,26 @@ namespace
         return makeUniquePathWithExtension(directory, baseName, ".elixmat");
     }
 
+    std::filesystem::path makeUniqueFolderPath(const std::filesystem::path &directory, const std::string &baseName)
+    {
+        std::filesystem::path candidate = directory / baseName;
+
+        if (!std::filesystem::exists(candidate))
+            return candidate;
+
+        uint32_t suffix = 1;
+
+        while (true)
+        {
+            candidate = directory / (baseName + " " + std::to_string(suffix));
+
+            if (!std::filesystem::exists(candidate))
+                return candidate;
+
+            ++suffix;
+        }
+    }
+
     std::filesystem::path makeUniqueDuplicatePath(const std::filesystem::path &sourcePath)
     {
         const auto parentPath = sourcePath.parent_path();
@@ -456,6 +476,12 @@ void AssetsWindow::draw()
 
     if (ImGui::BeginPopup("CreateNewSomething"))
     {
+        if (ImGui::Button("Folder"))
+        {
+            createFolder(m_currentDirectory);
+            ImGui::CloseCurrentPopup();
+        }
+
         if (ImGui::Button("Material"))
         {
             const auto newMaterialPath = makeUniqueMaterialPath(m_currentDirectory, "NewMaterial");
@@ -588,6 +614,11 @@ void AssetsWindow::drawSearchBar()
 
         std::strncpy(m_importDestinationBuffer, destinationPath.lexically_normal().string().c_str(), sizeof(m_importDestinationBuffer) - 1);
     }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("New Folder"))
+        createFolder(m_currentDirectory);
 
     ImGui::SameLine();
 
@@ -979,14 +1010,7 @@ void AssetsWindow::drawAssetGrid()
                 if (ImGui::BeginMenu("Create"))
                 {
                     if (ImGui::MenuItem("New Folder"))
-                    {
-                        std::filesystem::path newFolder = m_contextAssetPath / "New Folder";
-                        int suffix = 1;
-                        while (std::filesystem::exists(newFolder))
-                            newFolder = m_contextAssetPath / ("New Folder " + std::to_string(suffix++));
-                        std::filesystem::create_directory(newFolder);
-                        refreshTree();
-                    }
+                        createFolder(m_contextAssetPath);
                     ImGui::EndMenu();
                 }
                 ImGui::Separator();
@@ -1683,6 +1707,27 @@ bool AssetsWindow::duplicateAsset(const std::filesystem::path &path)
 
     setSelectedAssetPath(duplicatePath);
     refreshTree();
+    return true;
+}
+
+bool AssetsWindow::createFolder(const std::filesystem::path &directory)
+{
+    if (directory.empty() || !std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
+        return false;
+
+    const auto folderPath = makeUniqueFolderPath(directory, "New Folder");
+
+    std::error_code errorCode;
+    std::filesystem::create_directory(folderPath, errorCode);
+    if (errorCode)
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to create folder: " << folderPath << " (" << errorCode.message() << ")\n");
+        return false;
+    }
+
+    setSelectedAssetPath(folderPath);
+    refreshTree();
+    startRenamingAsset(folderPath);
     return true;
 }
 

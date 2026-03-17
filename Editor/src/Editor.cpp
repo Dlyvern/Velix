@@ -6245,7 +6245,7 @@ void Editor::rebuildModelDetailsCache(const engine::ModelAsset &modelAsset,
                                                    m_modelTextureManualOverrides,
                                                    resolved,
                                                    textureSearchDirectory,
-                                                   true);
+                                                   false);
     };
 
     auto collectUnresolvedPath = [&](const std::string &texturePath)
@@ -6258,7 +6258,7 @@ void Editor::rebuildModelDetailsCache(const engine::ModelAsset &modelAsset,
                                             m_modelTextureManualOverrides,
                                             resolved,
                                             textureSearchDirectory,
-                                            true);
+                                            false);
 
         if (!resolved && !texturePath.empty())
             unresolvedTexturePaths.insert(texturePath);
@@ -6930,7 +6930,7 @@ void Editor::drawAssetDetails()
                                                                                                 previewOverrides,
                                                                                                 remappedResolved,
                                                                                                 textureSearchDirectory,
-                                                                                                true);
+                                                                                                false);
                     if (remappedResolved && !resolvedPreviewPath.empty())
                     {
                         remappedPathString = resolvedPreviewPath;
@@ -7018,7 +7018,7 @@ void Editor::drawAssetDetails()
                                                                                     m_modelTextureManualOverrides,
                                                                                     previewResolved,
                                                                                     textureSearchDirectory,
-                                                                                    true);
+                                                                                    false);
                 ImGui::TextWrapped("Preview: %s", previewPath.empty() ? "<None>" : previewPath.c_str());
                 ImGui::TextDisabled("%s", previewResolved ? "Status: Resolved" : "Status: Unresolved");
             }

@@ -97,6 +97,7 @@ private:
     bool renameAsset(const std::filesystem::path &path, const std::string &newName);
     bool deleteAsset(const std::filesystem::path &path);
     bool duplicateAsset(const std::filesystem::path &path);
+    bool createFolder(const std::filesystem::path &directory);
     bool createMaterialFromTexture(const std::filesystem::path &texturePath);
     void setSelectedAssetPath(const std::filesystem::path &path);
 

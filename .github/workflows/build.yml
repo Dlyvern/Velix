@@ -73,6 +73,12 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
+      - name: Enable Windows Long Paths
+        shell: pwsh
+        run: |
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1
+          git config --global core.longpaths true
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -84,6 +90,26 @@ jobs:
           git submodule update --init --recursive
           git submodule status
 
+      - name: Setup MSVC Developer Environment (early, needed for PhysX build)
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache PhysX Windows Binaries
+        uses: actions/cache@v4
+        id: physx-windows-cache
+        with:
+          path: external/physx/lib/windows/checked
+          key: physx-windows-vc17-checked-${{ hashFiles('external/physx/scripts/build_physx_windows.bat') }}-${{ hashFiles('external/physx/PhysX/physx/source/CMakeLists.txt') }}
+
+      - name: Build PhysX
+        if: steps.physx-windows-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          call external\physx\scripts\build_physx_windows.bat checked
+          if errorlevel 1 (
+            echo [VelixFlow] PhysX build failed
+            exit /b 1
+          )
+
       - name: Install Vulkan SDK
         run: |
           curl -Lo vulkan-sdk.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
@@ -91,9 +117,6 @@ jobs:
           $sdkPath = Get-ChildItem "C:\VulkanSDK" -Directory | Select-Object -Last 1 -ExpandProperty FullName
           echo "VULKAN_SDK=$sdkPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           echo "VULKAN_SDK is set to: $sdkPath"
-
-      - name: Setup MSVC Developer Environment
-        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Download Portable CMake (Windows)
         shell: pwsh

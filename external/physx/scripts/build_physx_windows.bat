@@ -81,7 +81,7 @@ echo [VelixFlow] Using PhysX build output from %PHYSX_BUILD_OUTPUT%
 echo [VelixFlow] Copying built PhysX binaries to %PHYSX_LIB_OUTPUT%...
 mkdir "%PHYSX_LIB_OUTPUT%" 2>nul
 
-robocopy "%PHYSX_BUILD_OUTPUT%" "%PHYSX_LIB_OUTPUT%" *.lib *.dll *.pdb /njh /njs /ndl /nc /ns /np >nul
+robocopy "%PHYSX_BUILD_OUTPUT%" "%PHYSX_LIB_OUTPUT%" *.lib *.dll *.pdb /njh /njs /ndl /nc /ns /np
 set ROBOCOPY_EXIT=%ERRORLEVEL%
 if %ROBOCOPY_EXIT% GEQ 8 (
     echo [VelixFlow] Error: Failed to copy PhysX binaries (robocopy exit %ROBOCOPY_EXIT%)

@@ -1073,25 +1073,25 @@ std::optional<TextureAsset> AssetsLoader::loadTexture(const std::string &path)
     }
 
     const std::filesystem::path serializedPath = toTextureAssetPath(sourcePath);
-    if (needsReimport(sourcePath, serializedPath))
+    if (!needsReimport(sourcePath, serializedPath))
     {
-        auto importedTexture = importTextureFromSource(sourcePath.string());
-        if (!importedTexture.has_value())
-            return std::nullopt;
+        if (auto serializedTexture = serializer.readTexture(serializedPath.string()); serializedTexture.has_value())
+            return serializedTexture;
 
-        importedTexture->assetPath = serializedPath.string();
-        if (!serializer.writeTexture(importedTexture.value(), serializedPath.string()))
-        {
-            VX_ENGINE_WARNING_STREAM("Failed to serialize texture asset. Returning imported source texture: " << sourcePath.string() << '\n');
-            return importedTexture;
-        }
+        VX_ENGINE_WARNING_STREAM("Serialized texture load failed. Falling back to source decode: " << serializedPath.string() << '\n');
     }
 
-    if (auto serializedTexture = serializer.readTexture(serializedPath.string()); serializedTexture.has_value())
-        return serializedTexture;
+    auto importedTexture = importTextureFromSource(sourcePath.string());
+    if (!importedTexture.has_value())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to import texture source asset: " << sourcePath.string() << '\n');
+        return std::nullopt;
+    }
 
-    VX_ENGINE_WARNING_STREAM("Serialized texture load failed. Falling back to source decode: " << sourcePath.string() << '\n');
-    return importTextureFromSource(sourcePath.string());
+    // Raw texture loads should not create serialized texture assets as a side effect.
+    // Explicit texture importing is handled by importTextureAsset().
+    importedTexture->assetPath = sourcePath.string();
+    return importedTexture;
 }
 
 Texture::SharedPtr AssetsLoader::createTextureGPU(const TextureAsset &textureAsset,
