@@ -625,8 +625,11 @@ void EditorRuntime::initEditorRenderGraph()
     m_smaaRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SMAAPassRenderGraphPass>(
         m_fxaaRenderGraphPass->getHandlers());
 
-    m_cinematicEffectsRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::CinematicEffectsRenderGraphPass>(
+    m_taaRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::TAARenderGraphPass>(
         m_smaaRenderGraphPass->getHandlers());
+
+    m_cinematicEffectsRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::CinematicEffectsRenderGraphPass>(
+        m_taaRenderGraphPass->getHandlers());
 
     m_selectionOverlayRenderGraphPass = m_renderGraph->addPass<SelectionOverlayRenderGraphPass>(
         m_editor,
@@ -769,8 +772,11 @@ void EditorRuntime::initGameViewportRenderGraph()
     m_gameSMAARenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SMAAPassRenderGraphPass>(
         m_gameFXAARenderGraphPass->getHandlers());
 
-    m_gameCinematicEffectsRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::CinematicEffectsRenderGraphPass>(
+    m_gameTAARenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::TAARenderGraphPass>(
         m_gameSMAARenderGraphPass->getHandlers());
+
+    m_gameCinematicEffectsRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::CinematicEffectsRenderGraphPass>(
+        m_gameTAARenderGraphPass->getHandlers());
 
     m_gameUIRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::UIRenderGraphPass>(
         m_gameCinematicEffectsRenderGraphPass->getHandlers());
@@ -1044,6 +1050,7 @@ void EditorRuntime::applyEditorViewportExtent(uint32_t width, uint32_t height)
     m_bloomCompositeRenderGraphPass->setExtent(extent);
     m_fxaaRenderGraphPass->setExtent(extent);
     m_smaaRenderGraphPass->setExtent(extent);
+    m_taaRenderGraphPass->setExtent(extent);
     m_contactShadowRenderGraphPass->setExtent(extent);
     m_cinematicEffectsRenderGraphPass->setExtent(extent);
     m_selectionOverlayRenderGraphPass->setExtent(extent);
@@ -1077,6 +1084,7 @@ void EditorRuntime::applyGameViewportExtent(uint32_t width, uint32_t height)
     m_gameBloomCompositeRenderGraphPass->setExtent(extent);
     m_gameFXAARenderGraphPass->setExtent(extent);
     m_gameSMAARenderGraphPass->setExtent(extent);
+    m_gameTAARenderGraphPass->setExtent(extent);
     m_gameContactShadowRenderGraphPass->setExtent(extent);
     m_gameCinematicEffectsRenderGraphPass->setExtent(extent);
     m_gameUIRenderGraphPass->setExtent(extent);

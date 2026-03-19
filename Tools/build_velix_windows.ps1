@@ -1,51 +1,327 @@
 $ErrorActionPreference = "Stop"
 
-$Root = Get-Location
-$Tools = "$Root\tools"
-$Build = "$Root\build"
-$Output = "$Root\output"
-
-New-Item -ItemType Directory -Force -Path $Tools, $Build, $Output | Out-Null
-
-$CMakeVersion = "4.2.3"
-$LLVMVersion  = "18.1.8"
-
-function Download($url, $out) {
-    Write-Host "Downloading $url"
-    Invoke-WebRequest -Uri $url -OutFile $out
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {
 }
 
-$cmakeZip = "$Tools\cmake.zip"
-Download "https://github.com/Kitware/CMake/releases/download/v$CMakeVersion/cmake-$CMakeVersion-windows-x86_64.zip" $cmakeZip
-Expand-Archive $cmakeZip $Tools -Force
-$CMakeDir = Get-ChildItem $Tools | Where-Object { $_.Name -like "cmake*" } | Select-Object -First 1
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = Split-Path -Parent $ScriptDir
 
-$ninjaExe = "$Tools\ninja.exe"
-Download "https://github.com/ninja-build/ninja/releases/latest/download/ninja-win.zip" "$Tools\ninja.zip"
-Expand-Archive "$Tools\ninja.zip" $Tools -Force
+$BuildDir = Join-Path $Root "build"
+$OutputDir = Join-Path $Root "output"
+$ToolCacheDir = Join-Path $Root ".velix-tools"
+$DownloadsDir = Join-Path $ToolCacheDir "downloads"
+$CMakeExtractDir = Join-Path $ToolCacheDir "cmake"
+$NinjaDir = Join-Path $ToolCacheDir "ninja"
+$VulkanInstallDir = Join-Path $ToolCacheDir "vulkan"
 
-$llvmExe = "$Tools\llvm.exe"
-Download "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVMVersion/LLVM-$LLVMVersion-win64.exe" $llvmExe
+$CMakeVersion = "4.2.3"
+$NinjaDownloadUrl = "https://github.com/ninja-build/ninja/releases/latest/download/ninja-win.zip"
+$VulkanDownloadUrl = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe"
+$BuildType = "Release"
 
-Start-Process -Wait -FilePath $llvmExe -ArgumentList "/S", "/D=$Tools\llvm"
+function Show-Usage {
+    Write-Host "Usage:"
+    Write-Host "  ./Tools/build_velix_windows.ps1 --build-all"
+    Write-Host "  ./Tools/build_velix_windows.ps1 --build-clean"
+    Write-Host "  ./Tools/build_velix_windows.ps1 --build"
+    Write-Host ""
+    Write-Host "Modes:"
+    Write-Host "  --build-all   Redownload local build tools, remove build/output, then configure, build and install."
+    Write-Host "  --build-clean Reuse local build tools, remove build/output, then configure, build and install."
+    Write-Host "  --build       Reuse local build tools and existing build directory when possible, then build and install."
+    Write-Host ""
+    Write-Host "Note: Visual Studio Build Tools with Desktop C++ support must already be installed."
+}
 
-$vulkanExe = "$Tools\vulkan.exe"
-Download "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe" $vulkanExe
+function Write-Step([string]$Message) {
+    Write-Host "==> $Message"
+}
 
-Start-Process -Wait -FilePath $vulkanExe -ArgumentList "--accept-licenses --default-answer --confirm-command install --root $Tools\vulkan"
+function Remove-DirectoryIfExists([string]$Path) {
+    if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Recurse -Force
+    }
+}
 
-$env:PATH = "$($CMakeDir.FullName)\bin;$Tools;$Tools\llvm\bin;$Tools\vulkan\Bin;$env:PATH"
-$env:VULKAN_SDK = "$Tools\vulkan"
+function Ensure-Directory([string]$Path) {
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+}
 
-cmake -S ../ -B $Build -G Ninja `
-  -DCMAKE_C_COMPILER=clang-cl `
-  -DCMAKE_CXX_COMPILER=clang-cl `
-  -DCMAKE_BUILD_TYPE=Release
+function Download-File([string]$Url, [string]$OutFile, [switch]$Force) {
+    if ((-not $Force) -and (Test-Path -LiteralPath $OutFile)) {
+        Write-Step "Using cached download $OutFile"
+        return
+    }
 
-cmake --build $Build
+    Ensure-Directory (Split-Path -Parent $OutFile)
+    Write-Step "Downloading $Url"
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile
+}
 
-Copy-Item "$Build\bin\*" $Output -Recurse -Force
+function Find-DirectoryContainingFile([string]$RootPath, [string]$RelativeFile) {
+    if (-not (Test-Path -LiteralPath $RootPath)) {
+        return $null
+    }
 
-Remove-Item $Tools -Recurse -Force
+    $rootItem = Get-Item -LiteralPath $RootPath
+    $rootCandidate = Join-Path $rootItem.FullName $RelativeFile
+    if (Test-Path -LiteralPath $rootCandidate) {
+        return $rootItem.FullName
+    }
 
-Write-Host "Build complete. Output in: $Output"
+    $directories = Get-ChildItem -LiteralPath $RootPath -Directory -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object FullName
+
+    foreach ($directory in $directories) {
+        $candidate = Join-Path $directory.FullName $RelativeFile
+        if (Test-Path -LiteralPath $candidate) {
+            return $directory.FullName
+        }
+    }
+
+    return $null
+}
+
+function Ensure-CMake([switch]$ForceRefresh) {
+    $cmakeExe = Find-DirectoryContainingFile $CMakeExtractDir "bin\cmake.exe"
+    if ((-not $ForceRefresh) -and $cmakeExe) {
+        return $cmakeExe
+    }
+
+    Write-Step "Preparing bundled CMake $CMakeVersion"
+    Remove-DirectoryIfExists $CMakeExtractDir
+    Ensure-Directory $CMakeExtractDir
+
+    $cmakeZip = Join-Path $DownloadsDir "cmake-$CMakeVersion-windows-x86_64.zip"
+    $cmakeUrl = "https://github.com/Kitware/CMake/releases/download/v$CMakeVersion/cmake-$CMakeVersion-windows-x86_64.zip"
+    Download-File $cmakeUrl $cmakeZip -Force:$ForceRefresh
+    Expand-Archive -Path $cmakeZip -DestinationPath $CMakeExtractDir -Force
+
+    $cmakeRoot = Find-DirectoryContainingFile $CMakeExtractDir "bin\cmake.exe"
+    if (-not $cmakeRoot) {
+        throw "Bundled CMake was downloaded, but cmake.exe was not found under $CMakeExtractDir"
+    }
+
+    return $cmakeRoot
+}
+
+function Ensure-Ninja([switch]$ForceRefresh) {
+    $ninjaExe = Join-Path $NinjaDir "ninja.exe"
+    if ((-not $ForceRefresh) -and (Test-Path -LiteralPath $ninjaExe)) {
+        return $ninjaExe
+    }
+
+    Write-Step "Preparing bundled Ninja"
+    Remove-DirectoryIfExists $NinjaDir
+    Ensure-Directory $NinjaDir
+
+    $ninjaZip = Join-Path $DownloadsDir "ninja-win.zip"
+    Download-File $NinjaDownloadUrl $ninjaZip -Force:$ForceRefresh
+    Expand-Archive -Path $ninjaZip -DestinationPath $NinjaDir -Force
+
+    if (-not (Test-Path -LiteralPath $ninjaExe)) {
+        throw "Bundled Ninja was downloaded, but ninja.exe was not found at $ninjaExe"
+    }
+
+    return $ninjaExe
+}
+
+function Ensure-VulkanSdk([switch]$ForceRefresh) {
+    $sdkRoot = Find-DirectoryContainingFile $VulkanInstallDir "Include\vulkan\vulkan.h"
+    if ((-not $ForceRefresh) -and $sdkRoot) {
+        if (-not (Test-Path -LiteralPath (Join-Path $sdkRoot "Bin\glslangValidator.exe"))) {
+            throw "Vulkan SDK was found at $sdkRoot, but Bin\glslangValidator.exe is missing."
+        }
+        return $sdkRoot
+    }
+
+    Write-Step "Preparing bundled Vulkan SDK"
+    Remove-DirectoryIfExists $VulkanInstallDir
+    Ensure-Directory $VulkanInstallDir
+
+    $vulkanInstaller = Join-Path $DownloadsDir "vulkan-sdk.exe"
+    Download-File $VulkanDownloadUrl $vulkanInstaller -Force:$ForceRefresh
+
+    Start-Process -Wait -FilePath $vulkanInstaller -ArgumentList @(
+        "--accept-licenses",
+        "--default-answer",
+        "--confirm-command",
+        "install",
+        "--root", $VulkanInstallDir
+    )
+
+    $sdkRoot = Find-DirectoryContainingFile $VulkanInstallDir "Include\vulkan\vulkan.h"
+    if (-not $sdkRoot) {
+        throw "Bundled Vulkan SDK was installed, but no SDK root containing Include\vulkan\vulkan.h was found under $VulkanInstallDir"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $sdkRoot "Bin\glslangValidator.exe"))) {
+        throw "Bundled Vulkan SDK was installed at $sdkRoot, but Bin\glslangValidator.exe is missing."
+    }
+
+    return $sdkRoot
+}
+
+function Import-VisualStudioBuildEnvironment {
+    if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
+        Write-Step "Using existing MSVC environment from PATH"
+        return
+    }
+
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere)) {
+        throw "MSVC tools were not found on PATH and vswhere.exe was not found at $vswhere. Install Visual Studio Build Tools with Desktop C++ support."
+    }
+
+    $vsInstallPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $vsInstallPath) {
+        throw "Visual Studio Build Tools with the C++ workload were not found."
+    }
+
+    $vsDevCmd = Join-Path $vsInstallPath "Common7\Tools\VsDevCmd.bat"
+    if (-not (Test-Path -LiteralPath $vsDevCmd)) {
+        throw "VsDevCmd.bat was not found at $vsDevCmd"
+    }
+
+    Write-Step "Importing MSVC build environment from $vsDevCmd"
+    $environmentLines = cmd.exe /s /c "`"$vsDevCmd`" -no_logo -arch=x64 -host_arch=x64 >nul && set"
+    foreach ($line in $environmentLines) {
+        if ($line -match "^(.*?)=(.*)$") {
+            if ($matches[1].StartsWith("=")) {
+                continue
+            }
+            Set-Item -Path "Env:$($matches[1])" -Value $matches[2]
+        }
+    }
+
+    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+        throw "MSVC environment import completed, but cl.exe is still not available."
+    }
+}
+
+function Configure-Build([string]$CMakeRoot, [string]$NinjaExe, [string]$VulkanSdkRoot) {
+    Ensure-Directory $BuildDir
+
+    $cmakeExe = Join-Path $CMakeRoot "bin\cmake.exe"
+    $configureArgs = @(
+        "-S", $Root,
+        "-B", $BuildDir,
+        "-G", "Ninja",
+        "-DCMAKE_BUILD_TYPE=$BuildType",
+        "-DCMAKE_MAKE_PROGRAM=$NinjaExe",
+        "-DVELIX_BUNDLED_CMAKE_DIR=$CMakeRoot",
+        "-DVulkan_ROOT=$VulkanSdkRoot",
+        "-DCMAKE_INSTALL_PREFIX=$OutputDir"
+    )
+
+    Write-Step "Configuring project"
+    & $cmakeExe @configureArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "CMake configure failed"
+    }
+}
+
+function Build-Project([string]$CMakeRoot) {
+    $cmakeExe = Join-Path $CMakeRoot "bin\cmake.exe"
+
+    Write-Step "Building project"
+    & $cmakeExe --build $BuildDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "Build failed"
+    }
+}
+
+function Install-Project([string]$CMakeRoot) {
+    $cmakeExe = Join-Path $CMakeRoot "bin\cmake.exe"
+    Ensure-Directory $OutputDir
+
+    Write-Step "Installing build output to $OutputDir"
+    & $cmakeExe --install $BuildDir --prefix $OutputDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "Install failed"
+    }
+}
+
+function Parse-Mode([string[]]$Arguments) {
+    $selectedMode = $null
+
+    foreach ($argument in $Arguments) {
+        switch ($argument) {
+            "--build-all" {
+                if ($selectedMode) { throw "Only one build mode may be specified." }
+                $selectedMode = "build-all"
+            }
+            "--build-clean" {
+                if ($selectedMode) { throw "Only one build mode may be specified." }
+                $selectedMode = "build-clean"
+            }
+            "--build" {
+                if ($selectedMode) { throw "Only one build mode may be specified." }
+                $selectedMode = "build"
+            }
+            "--help" {
+                Show-Usage
+                exit 0
+            }
+            "-h" {
+                Show-Usage
+                exit 0
+            }
+            default {
+                throw "Unknown argument: $argument"
+            }
+        }
+    }
+
+    if (-not $selectedMode) {
+        return "build"
+    }
+
+    return $selectedMode
+}
+
+$Mode = Parse-Mode $args
+
+$forceToolRefresh = $Mode -eq "build-all"
+$cleanBuild = $Mode -eq "build-all" -or $Mode -eq "build-clean"
+
+Ensure-Directory $DownloadsDir
+
+if ($forceToolRefresh) {
+    Write-Step "Refreshing local Windows tool cache"
+    Remove-DirectoryIfExists $ToolCacheDir
+    Ensure-Directory $DownloadsDir
+}
+
+if ($cleanBuild) {
+    Write-Step "Removing previous build artifacts"
+    Remove-DirectoryIfExists $BuildDir
+    Remove-DirectoryIfExists $OutputDir
+}
+
+$cmakeRoot = Ensure-CMake -ForceRefresh:$forceToolRefresh
+$ninjaExe = Ensure-Ninja -ForceRefresh:$forceToolRefresh
+$vulkanSdkRoot = Ensure-VulkanSdk -ForceRefresh:$forceToolRefresh
+
+Import-VisualStudioBuildEnvironment
+
+$env:PATH = "$($CMakeRoot)\bin;$NinjaDir;$vulkanSdkRoot\Bin;$env:PATH"
+$env:VULKAN_SDK = $vulkanSdkRoot
+
+$cacheFile = Join-Path $BuildDir "CMakeCache.txt"
+$needsConfigure = $cleanBuild -or (-not (Test-Path -LiteralPath $cacheFile))
+
+if ($needsConfigure) {
+    Configure-Build -CMakeRoot $cmakeRoot -NinjaExe $ninjaExe -VulkanSdkRoot $vulkanSdkRoot
+} else {
+    Write-Step "Reusing existing CMake build directory at $BuildDir"
+}
+
+Build-Project -CMakeRoot $cmakeRoot
+Install-Project -CMakeRoot $cmakeRoot
+
+Write-Step "Build complete"
+Write-Host "Build directory: $BuildDir"
+Write-Host "Installed output: $OutputDir"
+Write-Host "Local tools cache: $ToolCacheDir"

@@ -86,7 +86,7 @@ vec2 getUV(MaterialGPUParams mat)
     return uv;
 }
 
-vec3 getNormalView(vec2 uv, MaterialGPUParams mat)
+vec3 getNormalView(vec3 normalTS, MaterialGPUParams mat)
 {
     vec3 N = normalize(fragNormalView);
     vec3 T = normalize(fragTangentView);
@@ -97,9 +97,8 @@ vec3 getNormalView(vec2 uv, MaterialGPUParams mat)
 
     mat3 TBN = mat3(T, B, N);
 
-    vec3 normalTS = texture(allTextures[nonuniformEXT(mat.normalTexIdx)], uv).xyz * 2.0 - 1.0;
-    normalTS.xy  *= mat.normalScale;
-    normalTS      = normalize(normalTS);
+    normalTS.xy *= mat.normalScale;
+    normalTS     = normalize(normalTS);
 
     return normalize(TBN * normalTS);
 }
@@ -141,26 +140,27 @@ void main()
 
     vec3 emissive = texture(allTextures[nonuniformEXT(mat.emissiveTexIdx)], uv).rgb * mat.emissiveFactor.rgb;
 
+    vec3 normalSample = texture(allTextures[nonuniformEXT(mat.normalTexIdx)], uv).xyz * 2.0 - 1.0;
+
     vec3  orm      = texture(allTextures[nonuniformEXT(mat.ormTexIdx)], uv).rgb;
     float ao       = mix(1.0, orm.r, mat.aoStrength);
     float roughness = clamp(orm.g * mat.roughnessFactor, 0.04, 1.0);
     float metallic  = clamp(orm.b * mat.metallicFactor,  0.0,  1.0);
 
     {
-        vec3 normalRaw = texture(allTextures[nonuniformEXT(mat.normalTexIdx)], uv).xyz * 2.0 - 1.0;
-        vec3 dnx = dFdxFine(normalRaw);
-        vec3 dny = dFdyFine(normalRaw);
+        vec3 dnx = dFdxFine(normalSample);
+        vec3 dny = dFdyFine(normalSample);
         float variance = dot(dnx, dnx) + dot(dny, dny);
 
         float dzx = dFdxFine(gl_FragCoord.z);
         float dzy = dFdyFine(gl_FragCoord.z);
         float edgeFactor = 1.0 - smoothstep(0.0001, 0.005, abs(dzx) + abs(dzy));
 
-        float kernelRoughness = min(2.0 * variance * edgeFactor, 1.0);
+        float kernelRoughness = min(0.5 * variance * edgeFactor, 0.3);
         roughness = sqrt(clamp(roughness * roughness + kernelRoughness, 0.0, 1.0));
     }
 
-    vec3 N    = getNormalView(uv, mat);
+    vec3 N    = getNormalView(normalSample, mat);
     vec3 encN = N * 0.5 + 0.5;
 
     outGBufferNormal      = vec4(encN, 1.0);

@@ -21,6 +21,7 @@
 #include "Engine/Render/GraphPasses/RTShadowDenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTShadowsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/TAARenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SSAORenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SkyLightRenderGraphPass.hpp"
@@ -104,6 +105,7 @@ private:
     renderGraph::BloomCompositeRenderGraphPass *m_bloomCompositeRenderGraphPass{nullptr};
     renderGraph::FXAARenderGraphPass *m_fxaaRenderGraphPass{nullptr};
     renderGraph::SMAAPassRenderGraphPass *m_smaaRenderGraphPass{nullptr};
+    renderGraph::TAARenderGraphPass      *m_taaRenderGraphPass{nullptr};
     renderGraph::UIRenderGraphPass *m_uiRenderGraphPass{nullptr};
     renderGraph::PresentRenderGraphPass *m_presentRenderGraphPass{nullptr};
 

@@ -95,6 +95,8 @@ namespace
         DDSPixelPacking packing{DDSPixelPacking::None};
         bool compressed{false};
         std::vector<uint8_t> topLevelBytes;
+        // Mip levels 1..N-1 (only populated for compressed DDS with embedded mip chain).
+        std::vector<std::vector<uint8_t>> mipChain;
     };
 
     std::string toLowerCopy(std::string text)
@@ -530,6 +532,31 @@ namespace
                 std::swap(outResult.topLevelBytes[byteOffset + 0u], outResult.topLevelBytes[byteOffset + 2u]);
         }
 
+        if (compressed && header.mipMapCount > 1u)
+        {
+            const uint32_t blockBytes = compressedBlockByteSize(parsedFormat);
+            size_t mipOffset = offset + topLevelSize;
+            uint32_t mipW = header.width;
+            uint32_t mipH = header.height;
+
+            for (uint32_t mipIdx = 1u; mipIdx < header.mipMapCount; ++mipIdx)
+            {
+                mipW = std::max(1u, mipW / 2u);
+                mipH = std::max(1u, mipH / 2u);
+
+                const uint32_t blocksWide = std::max(1u, (mipW + 3u) / 4u);
+                const uint32_t blocksHigh = std::max(1u, (mipH + 3u) / 4u);
+                const size_t mipSize = static_cast<size_t>(blocksWide) * static_cast<size_t>(blocksHigh) * static_cast<size_t>(blockBytes);
+
+                if (mipOffset + mipSize > fileBytes.size())
+                    break; // truncated file — stop, don't fail
+
+                outResult.mipChain.emplace_back(fileBytes.begin() + static_cast<std::ptrdiff_t>(mipOffset),
+                                                fileBytes.begin() + static_cast<std::ptrdiff_t>(mipOffset + mipSize));
+                mipOffset += mipSize;
+            }
+        }
+
         return true;
     }
 
@@ -755,6 +782,7 @@ std::optional<TextureAsset> AssetsLoader::importTextureFromSource(const std::str
         textureAsset.channels = 4u;
         textureAsset.vkFormat = static_cast<uint32_t>(ddsResult.format);
         textureAsset.pixels = std::move(ddsResult.topLevelBytes);
+        textureAsset.mipChain = std::move(ddsResult.mipChain);
         textureAsset.encoding = ddsResult.compressed ? TextureAsset::PixelEncoding::COMPRESSED_GPU : TextureAsset::PixelEncoding::RGBA8;
 
         return textureAsset;
@@ -1134,12 +1162,14 @@ Texture::SharedPtr AssetsLoader::createTextureGPU(const TextureAsset &textureAss
     }
 
     auto texture = std::make_shared<Texture>();
+    const std::vector<std::vector<uint8_t>> *mipChain = textureAsset.mipChain.empty() ? nullptr : &textureAsset.mipChain;
     if (!texture->createFromMemory(textureAsset.pixels.data(),
                                    textureAsset.pixels.size(),
                                    textureAsset.width,
                                    textureAsset.height,
                                    format,
-                                   textureAsset.channels))
+                                   textureAsset.channels,
+                                   mipChain))
         return nullptr;
 
     return texture;

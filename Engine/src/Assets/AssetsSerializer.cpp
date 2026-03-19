@@ -495,6 +495,13 @@ bool AssetsSerializer::writeTexture(const TextureAsset &textureAsset, const std:
         !writeBytes(payloadStream, storedPixels))
         return false;
 
+    const uint8_t extraMipCount = static_cast<uint8_t>(std::min(textureAsset.mipChain.size(), static_cast<size_t>(255u)));
+    for (uint8_t i = 0u; i < extraMipCount; ++i)
+    {
+        if (!writeBytes(payloadStream, textureAsset.mipChain[i]))
+            return false;
+    }
+
     const std::string payload = payloadStream.str();
 
     std::error_code directoryError;
@@ -510,7 +517,7 @@ bool AssetsSerializer::writeTexture(const TextureAsset &textureAsset, const std:
         return false;
     }
 
-    if (!writeHeader(stream, Asset::AssetType::TEXTURE, static_cast<uint64_t>(payload.size()), compressionAlgorithm))
+    if (!writeHeader(stream, Asset::AssetType::TEXTURE, static_cast<uint64_t>(payload.size()), compressionAlgorithm, extraMipCount))
         return false;
 
     stream.write(payload.data(), static_cast<std::streamsize>(payload.size()));
@@ -649,6 +656,20 @@ std::optional<TextureAsset> AssetsSerializer::readTexture(const std::string &pat
         }
 
         textureAsset.pixels = std::move(decompressedPixels);
+    }
+
+    const uint8_t extraMipCount = header.reserved[1];
+    if (extraMipCount > 0u)
+    {
+        textureAsset.mipChain.resize(extraMipCount);
+        for (uint8_t i = 0u; i < extraMipCount; ++i)
+        {
+            if (!readBytes(stream, textureAsset.mipChain[i]))
+            {
+                textureAsset.mipChain.resize(i);
+                break;
+            }
+        }
     }
 
     if (textureAsset.assetPath.empty())

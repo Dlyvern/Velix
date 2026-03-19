@@ -42,6 +42,7 @@ enum class ShaderId : uint8_t
     RTShadowsRayQuery,
     DepthPrepassStatic,
     DepthPrepassSkinned,
+    TAA,
     None
 };
 

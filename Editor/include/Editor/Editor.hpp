@@ -11,6 +11,7 @@
 #include "Editor/Project.hpp"
 #include "Editor/Notification.hpp"
 #include "Editor/Actions/EditorActionHistory.hpp"
+#include "Editor/Panels/MaterialEditor.hpp"
 #include "Engine/Render/RenderTarget.hpp"
 
 #include "TextEditor.h"
@@ -41,14 +42,6 @@
 #include "Editor/Terrain/TerrainTools.hpp"
 
 #include <filesystem>
-
-namespace ax
-{
-    namespace NodeEditor
-    {
-        struct EditorContext;
-    }
-}
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -90,6 +83,8 @@ public:
         invalidateModelDetailsCache();
         m_assetsPreviewSystem.setProject(project.get());
         m_terrainTools.setProjectRootPath(project ? std::filesystem::path(project->fullPath) : std::filesystem::path{});
+        if (m_materialEditor)
+            m_materialEditor->setProject(project.get());
 
         if (m_assetsWindow)
             m_assetsWindow->setProject(project.get());
@@ -241,6 +236,7 @@ public:
     void saveProjectConfig();
 
 private:
+    std::unique_ptr<MaterialEditor> m_materialEditor{nullptr};
     std::unordered_map<std::string, std::vector<DrawFn>> m_drawQueue;
     bool m_renderOnlyViewport{false};
 
@@ -291,16 +287,6 @@ private:
     bool performRedoAction();
     bool performCopyAction();
     bool performPasteAction();
-
-    struct OpenMaterialEditor
-    {
-        std::filesystem::path path;
-        bool open = true;
-        bool dirty = false;
-        bool confirmCloseRequested = false;
-    };
-
-    std::vector<OpenMaterialEditor> m_openMaterialEditors;
 
     TextEditor m_textEditor;
     std::filesystem::path m_openDocumentPath;
@@ -366,87 +352,6 @@ private:
         CAPSULE_RADIUS_Z,
         CAPSULE_HEIGHT
     };
-
-    struct MaterialEditorUIState
-    {
-        struct DynamicColorNode
-        {
-            int nodeId = 0;
-            int outputPinId = 0;
-            int linkId = 0;
-            bool linkToEmissiveActive = false;
-            glm::vec3 color{1.0f, 1.0f, 1.0f};
-            float strength{1.0f};
-            glm::vec2 spawnPosition{0.0f, 0.0f};
-            bool pendingPlacement = false;
-            bool removeRequested = false;
-        };
-
-        bool openTexturePopup = false;
-        std::string texturePopupSlot; // "Albedo", "Normal", "ORM", "Emissive"
-        char textureFilter[128] = "";
-        bool openColorPopup = false;
-        int colorPopupSlot = 0; // 0-none, 1-baseColor, 2-emissive
-
-        bool nodeEditorInitialized = false;
-        ax::NodeEditor::EditorContext *nodeEditorContext = nullptr;
-
-        int mappingNodeId = 1;
-        int texturesNodeId = 2;
-        int principledNodeId = 3;
-        int outputNodeId = 4;
-        int colorNodeId = 5;
-
-        int mappingOutVectorPinId = 11;
-        int texturesInVectorPinId = 12;
-
-        int texturesOutAlbedoPinId = 21;
-        int texturesOutNormalPinId = 22;
-        int texturesOutOrmPinId = 23;
-        int texturesOutEmissivePinId = 24;
-
-        int principledInAlbedoPinId = 31;
-        int principledInNormalPinId = 32;
-        int principledInOrmPinId = 33;
-        int principledInEmissivePinId = 34;
-        int principledOutBsdfPinId = 35;
-
-        int outputInSurfacePinId = 41;
-        int colorOutPinId = 51;
-
-        int linkMappingId = 101;
-        int linkAlbedoId = 102;
-        int linkNormalId = 103;
-        int linkOrmId = 104;
-        int linkEmissiveId = 105;
-        int linkOutputId = 106;
-        int linkColorToEmissiveId = 107;
-
-        bool linkMappingActive = true;
-        bool linkAlbedoActive = false;
-        bool linkNormalActive = false;
-        bool linkOrmActive = false;
-        bool linkEmissiveActive = false;
-        bool linkOutputActive = true;
-        bool linkColorToEmissiveActive = false;
-
-        bool customShaderInitialized = false;
-        bool customShaderPanelOpen = false;
-        TextEditor customFunctionsEditor;
-        TextEditor customExpressionEditor;
-        std::string customShaderLastError;
-        bool customShaderHasError = false;
-
-        glm::vec3 colorNodeValue{1.0f, 1.0f, 1.0f};
-        float colorNodeStrength{1.0f};
-
-        int nextDynamicColorNodeId = 5000;
-        int nextDynamicColorPinId = 6000;
-        int nextDynamicColorLinkId = 7000;
-        std::vector<DynamicColorNode> dynamicColorNodes;
-    };
-
-    std::unordered_map<std::string, MaterialEditorUIState> m_materialEditorUiState;
 
     void handleInput();
     bool hasUnsavedSceneChanges();

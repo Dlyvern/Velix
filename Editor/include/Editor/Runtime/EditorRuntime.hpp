@@ -18,6 +18,7 @@
 #include "Engine/Render/GraphPasses/FXAARenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SSAORenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/TAARenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/PreviewAssetsRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/SelectionOverlayRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/EditorBillboardRenderGraphPass.hpp"
@@ -112,6 +113,7 @@ private:
     engine::renderGraph::FXAARenderGraphPass *m_fxaaRenderGraphPass{nullptr};
     engine::renderGraph::SSAORenderGraphPass *m_ssaoRenderGraphPass{nullptr};
     engine::renderGraph::SMAAPassRenderGraphPass *m_smaaRenderGraphPass{nullptr};
+    engine::renderGraph::TAARenderGraphPass *m_taaRenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionsRenderGraphPass *m_rtReflectionsRenderGraphPass{nullptr};
     engine::renderGraph::RTAORenderGraphPass *m_rtaoRenderGraphPass{nullptr};
@@ -137,6 +139,7 @@ private:
     engine::renderGraph::BloomCompositeRenderGraphPass *m_gameBloomCompositeRenderGraphPass{nullptr};
     engine::renderGraph::FXAARenderGraphPass *m_gameFXAARenderGraphPass{nullptr};
     engine::renderGraph::SMAAPassRenderGraphPass *m_gameSMAARenderGraphPass{nullptr};
+    engine::renderGraph::TAARenderGraphPass *m_gameTAARenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_gameContactShadowRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionsRenderGraphPass *m_gameRTReflectionsRenderGraphPass{nullptr};
     engine::renderGraph::RTAORenderGraphPass *m_gameRtaoRenderGraphPass{nullptr};

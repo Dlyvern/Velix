@@ -24,7 +24,8 @@ public:
     static uint32_t packRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
     void createFromPixels(uint32_t pixels = 0xFFFFFFFF, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB);
-    bool createFromMemory(const void *pixels, size_t byteCount, uint32_t width, uint32_t height, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB, uint32_t channels = 4);
+    bool createFromMemory(const void *pixels, size_t byteCount, uint32_t width, uint32_t height, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB, uint32_t channels = 4,
+                          const std::vector<std::vector<uint8_t>> *mipChain = nullptr);
 
     void freePixels();
 

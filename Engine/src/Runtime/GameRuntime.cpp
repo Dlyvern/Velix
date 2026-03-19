@@ -234,6 +234,7 @@ void GameRuntime::initRenderGraph()
     m_bloomCompositeRenderGraphPass = nullptr;
     m_fxaaRenderGraphPass = nullptr;
     m_smaaRenderGraphPass = nullptr;
+    m_taaRenderGraphPass = nullptr;
     m_uiRenderGraphPass = nullptr;
     m_presentRenderGraphPass = nullptr;
 
@@ -334,8 +335,11 @@ void GameRuntime::initRenderGraph()
     m_smaaRenderGraphPass = m_renderGraph->addPass<renderGraph::SMAAPassRenderGraphPass>(
         m_fxaaRenderGraphPass->getHandlers());
 
-    m_uiRenderGraphPass = m_renderGraph->addPass<renderGraph::UIRenderGraphPass>(
+    m_taaRenderGraphPass = m_renderGraph->addPass<renderGraph::TAARenderGraphPass>(
         m_smaaRenderGraphPass->getHandlers());
+
+    m_uiRenderGraphPass = m_renderGraph->addPass<renderGraph::UIRenderGraphPass>(
+        m_taaRenderGraphPass->getHandlers());
 
     m_presentRenderGraphPass = m_renderGraph->addPass<renderGraph::PresentRenderGraphPass>(
         m_uiRenderGraphPass->getHandlers());
@@ -653,6 +657,8 @@ void GameRuntime::syncViewportExtent()
         m_fxaaRenderGraphPass->setExtent(extent);
     if (m_smaaRenderGraphPass)
         m_smaaRenderGraphPass->setExtent(extent);
+    if (m_taaRenderGraphPass)
+        m_taaRenderGraphPass->setExtent(extent);
     if (m_uiRenderGraphPass)
         m_uiRenderGraphPass->setExtent(extent);
     if (m_presentRenderGraphPass)

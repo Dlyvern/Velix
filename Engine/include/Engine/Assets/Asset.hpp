@@ -50,6 +50,7 @@ public:
     PixelEncoding encoding{PixelEncoding::RGBA8};
     uint32_t vkFormat{0};
     std::vector<uint8_t> pixels;
+    std::vector<std::vector<uint8_t>> mipChain;
 };
 
 class ModelAsset : public IAsset

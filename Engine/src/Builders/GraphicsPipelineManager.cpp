@@ -101,6 +101,7 @@ void GraphicsPipelineManager::loadShaderModules()
     rtaoShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/rt_ao.frag.spv");
     depthPrepassStaticShader  = std::make_shared<core::Shader>("./resources/shaders/gbuffer_static.vert.spv",  "./resources/shaders/empty.frag.spv");
     depthPrepassSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_skinned.vert.spv", "./resources/shaders/empty.frag.spv");
+    taaShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/taa.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -144,6 +145,7 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(rtaoShader);
     destroyShader(depthPrepassStaticShader);
     destroyShader(depthPrepassSkinnedShader);
+    destroyShader(taaShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -267,6 +269,9 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::DepthPrepassSkinned:
         stages = depthPrepassSkinnedShader->getShaderStages();
         break;
+    case ShaderId::TAA:
+        stages = taaShader->getShaderStages();
+        break;
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
@@ -337,6 +342,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
              key.shader == ShaderId::FXAA || key.shader == ShaderId::BloomExtract ||
              key.shader == ShaderId::BloomComposite ||
              key.shader == ShaderId::SSAO || key.shader == ShaderId::SMAA ||
+             key.shader == ShaderId::TAA ||
              key.shader == ShaderId::ContactShadow || key.shader == ShaderId::CinematicEffects ||
              key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||
              key.shader == ShaderId::Particle || key.shader == ShaderId::RTReflections ||

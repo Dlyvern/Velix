@@ -715,7 +715,8 @@ bool Texture::generateMipmaps(core::CommandBuffer::SharedPtr commandBuffer)
     return true;
 }
 
-bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t width, uint32_t height, VkFormat format, uint32_t channels)
+bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t width, uint32_t height, VkFormat format, uint32_t channels,
+                               const std::vector<std::vector<uint8_t>> *mipChain)
 {
     if (!pixels || byteCount == 0u || width == 0u || height == 0u)
     {
@@ -786,7 +787,18 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
         m_device = vulkanContext->getDevice();
 
         const bool compressed = isCompressedFormat(uploadFormat);
-        if (!compressed)
+        // Never use a pre-built mip chain for BC-compressed textures: many DDS exporters
+        // ship incorrect or low-quality mip data that causes visible
+        // corruption (rainbow block artifacts) when the GPU samples lower mip levels.
+        // Vulkan cannot regenerate mipmaps for compressed formats via vkCmdBlitImage,
+        // so we just use mip 0 only (maxLod=0) for all BC textures.
+        const bool hasMipChain = (!compressed && mipChain != nullptr && !mipChain->empty());
+
+        if (hasMipChain)
+        {
+            m_mipLevels = 1u + static_cast<uint32_t>(mipChain->size());
+        }
+        else if (!compressed)
         {
             const size_t expectedSize = expectedUncompressedByteSize(uploadWidth, uploadHeight, uploadFormat);
             if (expectedSize != 0u && uploadByteCount < expectedSize)
@@ -806,12 +818,27 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
             .width = uploadWidth,
             .height = uploadHeight};
 
-        const VkDeviceSize imageSize = static_cast<VkDeviceSize>(uploadByteCount);
-        auto stagingBuffer = core::Buffer::createShared(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
-        stagingBuffer->upload(uploadPixels, imageSize);
+        // When a pre-built mip chain is provided, pack all mip data into one staging buffer
+        VkDeviceSize totalStagingSize = static_cast<VkDeviceSize>(uploadByteCount);
+        if (hasMipChain)
+            for (const auto &mip : *mipChain)
+                totalStagingSize += static_cast<VkDeviceSize>(mip.size());
+
+        auto stagingBuffer = core::Buffer::createShared(totalStagingSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
+        stagingBuffer->upload(uploadPixels, static_cast<VkDeviceSize>(uploadByteCount));
+
+        if (hasMipChain)
+        {
+            VkDeviceSize mipStagingOffset = static_cast<VkDeviceSize>(uploadByteCount);
+            for (const auto &mip : *mipChain)
+            {
+                stagingBuffer->upload(mip.data(), static_cast<VkDeviceSize>(mip.size()), mipStagingOffset);
+                mipStagingOffset += static_cast<VkDeviceSize>(mip.size());
+            }
+        }
 
         VkImageUsageFlags imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        if (m_mipLevels > 1u)
+        if (m_mipLevels > 1u && !hasMipChain)
             imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
         m_image = core::Image::createShared(extent,
@@ -845,23 +872,42 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
         firstDependency.pImageMemoryBarriers = &firstBarrier;
         vkCmdPipelineBarrier2(commandBuffer, &firstDependency);
 
-        VkBufferImageCopy region{};
-        region.bufferOffset = 0;
-        region.bufferRowLength = 0;
-        region.bufferImageHeight = 0;
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.mipLevel = 0;
-        region.imageSubresource.baseArrayLayer = 0;
-        region.imageSubresource.layerCount = 1;
-        region.imageOffset = {0, 0, 0};
-        region.imageExtent = {uploadWidth, uploadHeight, 1};
-        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer->vk(), m_image->vk(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-        bool wasTransitionedToSRC = generateMipmaps(commandBuffer);
-
-        if (!wasTransitionedToSRC)
+        if (hasMipChain)
         {
-            auto secondBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+            // Upload all mip levels from the staging buffer in one call
+            std::vector<VkBufferImageCopy> regions;
+            regions.reserve(m_mipLevels);
+
+            VkDeviceSize bufOffset = 0u;
+            uint32_t mipW = uploadWidth;
+            uint32_t mipH = uploadHeight;
+            // mip 0
+            VkBufferImageCopy r0{};
+            r0.bufferOffset = bufOffset;
+            r0.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
+            r0.imageExtent = {mipW, mipH, 1u};
+            regions.push_back(r0);
+            bufOffset += static_cast<VkDeviceSize>(uploadByteCount);
+
+            for (uint32_t mipIdx = 0u; mipIdx < static_cast<uint32_t>(mipChain->size()); ++mipIdx)
+            {
+                mipW = std::max(1u, mipW / 2u);
+                mipH = std::max(1u, mipH / 2u);
+
+                VkBufferImageCopy r{};
+                r.bufferOffset = bufOffset;
+                r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mipIdx + 1u, 0u, 1u};
+                r.imageExtent = {mipW, mipH, 1u};
+                regions.push_back(r);
+                bufOffset += static_cast<VkDeviceSize>((*mipChain)[mipIdx].size());
+            }
+
+            vkCmdCopyBufferToImage(commandBuffer, stagingBuffer->vk(), m_image->vk(),
+                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                   static_cast<uint32_t>(regions.size()), regions.data());
+
+            // Transition all mip levels to SHADER_READ_ONLY in one barrier.
+            auto finalBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
                 *m_image,
                 VK_ACCESS_2_TRANSFER_WRITE_BIT,
                 VK_ACCESS_2_SHADER_READ_BIT,
@@ -869,12 +915,46 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+                {VK_IMAGE_ASPECT_COLOR_BIT, 0u, m_mipLevels, 0u, 1u});
 
-            VkDependencyInfo secondDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-            secondDependency.imageMemoryBarrierCount = 1;
-            secondDependency.pImageMemoryBarriers = &secondBarrier;
-            vkCmdPipelineBarrier2(commandBuffer, &secondDependency);
+            VkDependencyInfo finalDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            finalDependency.imageMemoryBarrierCount = 1;
+            finalDependency.pImageMemoryBarriers = &finalBarrier;
+            vkCmdPipelineBarrier2(commandBuffer, &finalDependency);
+        }
+        else
+        {
+            VkBufferImageCopy region{};
+            region.bufferOffset = 0;
+            region.bufferRowLength = 0;
+            region.bufferImageHeight = 0;
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.mipLevel = 0;
+            region.imageSubresource.baseArrayLayer = 0;
+            region.imageSubresource.layerCount = 1;
+            region.imageOffset = {0, 0, 0};
+            region.imageExtent = {uploadWidth, uploadHeight, 1};
+            vkCmdCopyBufferToImage(commandBuffer, stagingBuffer->vk(), m_image->vk(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+            bool wasTransitionedToSRC = generateMipmaps(commandBuffer);
+
+            if (!wasTransitionedToSRC)
+            {
+                auto secondBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+                    *m_image,
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                    VK_ACCESS_2_SHADER_READ_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                    {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+
+                VkDependencyInfo secondDependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+                secondDependency.imageMemoryBarrierCount = 1;
+                secondDependency.pImageMemoryBarriers = &secondBarrier;
+                vkCmdPipelineBarrier2(commandBuffer, &secondDependency);
+            }
         }
 
         commandBuffer->end();
@@ -895,6 +975,7 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
             throw std::runtime_error("Failed to create image view: " + core::helpers::vulkanResultToString(result));
 
         const auto [anisotropyEnabled, anisotropyLevel] = resolveTextureAnisotropy();
+        const float mipLodBias = (m_mipLevels > 1u) ? RenderQualitySettings::getInstance().textureMipBias : 0.0f;
 
         m_sampler = core::Sampler::createShared(
             VK_FILTER_LINEAR,
@@ -906,7 +987,7 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
             anisotropyLevel,
             VK_FALSE,
             VK_FALSE,
-            0.0f,
+            mipLodBias,
             0.0f,
             static_cast<float>(m_mipLevels - 1u));
 
