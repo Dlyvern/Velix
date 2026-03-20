@@ -18,14 +18,12 @@ LightingRenderGraphPass::LightingRenderGraphPass(RGPResourceHandler &shadowTextu
                                                  std::vector<RGPResourceHandler> &normalTextureHandlers,
                                                  std::vector<RGPResourceHandler> &materialTextureHandlers,
                                                  std::vector<RGPResourceHandler> &emissiveTextureHandlers,
-                                                 std::vector<RGPResourceHandler> &tangentAnisoTextureHandlers,
                                                  std::vector<RGPResourceHandler> *rtShadowTextureHandlers,
                                                  std::vector<RGPResourceHandler> *aoTextureHandlers)
     : m_albedoTextureHandlers(albedoTextureHandlers),
       m_normalTextureHandlers(normalTextureHandlers),
       m_materialTextureHandlers(materialTextureHandlers),
       m_emissiveTextureHandlers(emissiveTextureHandlers),
-      m_tangentAnisoTextureHandlers(tangentAnisoTextureHandlers),
       m_rtShadowTextureHandlers(rtShadowTextureHandlers),
       m_depthTextureHandler(depthTextureHandler),
       m_shadowTextureHandler(shadowTextureHandler),
@@ -36,6 +34,7 @@ LightingRenderGraphPass::LightingRenderGraphPass(RGPResourceHandler &shadowTextu
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
 
     this->setDebugName("Lighting render graph pass");
+    outputs.color.setOwner(this);
 
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
 }
@@ -168,7 +167,6 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
         auto albedoTexture = storage.getTexture(m_albedoTextureHandlers[i]);
         auto materialTexture = storage.getTexture(m_materialTextureHandlers[i]);
         auto emissiveTexture = storage.getTexture(m_emissiveTextureHandlers[i]);
-        auto tangentAnisoTexture = storage.getTexture(m_tangentAnisoTextureHandlers[i]);
         auto depthTexture = storage.getTexture(m_depthTextureHandler);
         auto shadowTexture = storage.getTexture(m_shadowTextureHandler);
         auto cubeTexture = storage.getTexture(m_cubeTextureHandler);
@@ -179,13 +177,21 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
         if (!rtShadowTexture)
             rtShadowTexture = arrayTexture;
 
-        // AO texture: use SSAO/GTAO output when available, otherwise fall back to normal texture (alpha=1).
-        const RenderTarget *aoTexture = normalTexture;
+        // AO texture: use SSAO/RTAO output when available, otherwise fall back to a white texture.
+        const RenderTarget *aoTexture = nullptr;
+        VkImageView aoImageView = VK_NULL_HANDLE;
+        VkSampler aoSampler = m_defaultSampler;
         VkImageLayout aoLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         if (m_aoTextureHandlers && i < m_aoTextureHandlers->size())
         {
             aoTexture = storage.getTexture((*m_aoTextureHandlers)[i]);
-            aoLayout  = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            if (aoTexture)
+                aoImageView = aoTexture->vkImageView();
+        }
+        if (aoImageView == VK_NULL_HANDLE && m_defaultWhiteTexture)
+        {
+            aoImageView = m_defaultWhiteTexture->vkImageView();
+            aoSampler = m_defaultWhiteTexture->vkSampler();
         }
 
         if (!m_descriptorSetsInitialized)
@@ -194,13 +200,12 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                                       .addImage(normalTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
                                       .addImage(albedoTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
                                       .addImage(materialTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
-                                      .addImage(tangentAnisoTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 3)
                                       .addImage(emissiveTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 4)
                                       .addImage(depthTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 5)
                                       .addImage(shadowTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 6)
                                       .addImage(arrayTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 7)
                                       .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 8)
-                                      .addImage(aoTexture->vkImageView(), m_defaultSampler, aoLayout, 9)
+                                      .addImage(aoImageView, aoSampler, aoLayout, 9)
                                       .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
                                       .build(device, pool, m_descriptorSetLayout);
         }
@@ -210,13 +215,12 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                 .addImage(normalTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
                 .addImage(albedoTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
                 .addImage(materialTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
-                .addImage(tangentAnisoTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 3)
                 .addImage(emissiveTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 4)
                 .addImage(depthTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 5)
                 .addImage(shadowTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 6)
                 .addImage(arrayTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 7)
                 .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 8)
-                .addImage(aoTexture->vkImageView(), m_defaultSampler, aoLayout, 9)
+                .addImage(aoImageView, aoSampler, aoLayout, 9)
                 .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
                 .update(device, m_descriptorSets[i]);
         }
@@ -248,7 +252,6 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
         builder.read(m_normalTextureHandlers[imageIndex], RGPTextureUsage::SAMPLED);
         builder.read(m_materialTextureHandlers[imageIndex], RGPTextureUsage::SAMPLED);
         builder.read(m_emissiveTextureHandlers[imageIndex], RGPTextureUsage::SAMPLED);
-        builder.read(m_tangentAnisoTextureHandlers[imageIndex], RGPTextureUsage::SAMPLED);
 
         if (m_aoTextureHandlers && imageIndex < static_cast<int>(m_aoTextureHandlers->size()))
             builder.read((*m_aoTextureHandlers)[imageIndex], RGPTextureUsage::SAMPLED);
@@ -256,6 +259,7 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
         if (m_rtShadowTextureHandlers && imageIndex < static_cast<int>(m_rtShadowTextureHandlers->size()))
             builder.read((*m_rtShadowTextureHandlers)[imageIndex], RGPTextureUsage::SAMPLED);
     }
+    outputs.color.set(m_colorTextureHandler);
 
     builder.read(m_depthTextureHandler, RGPTextureUsage::SAMPLED);
     builder.read(m_shadowTextureHandler, RGPTextureUsage::SAMPLED);
@@ -284,13 +288,6 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
     bindingMaterial.descriptorCount = 1;
     bindingMaterial.pImmutableSamplers = nullptr;
     bindingMaterial.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutBinding bindingTangentAniso{};
-    bindingTangentAniso.binding = 3;
-    bindingTangentAniso.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindingTangentAniso.descriptorCount = 1;
-    bindingTangentAniso.pImmutableSamplers = nullptr;
-    bindingTangentAniso.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutBinding bindingEmissive{};
     bindingEmissive.binding = 4;
@@ -342,7 +339,7 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
     rtShadowBinding.pImmutableSamplers = nullptr;
 
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{bindingNormal,
-                                                                                                                      bindingAlbedo, bindingMaterial, bindingTangentAniso, bindingEmissive, bindingDepth,
+                                                                                                                      bindingAlbedo, bindingMaterial, bindingEmissive, bindingDepth,
                                                                                                                       lightMapBinding, spotMapBinding, pointMapBinding, aoBinding, rtShadowBinding});
 
     VkPushConstantRange pcRange{};
@@ -359,6 +356,7 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
     m_defaultSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
     m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
                                             VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE, VK_COMPARE_OP_ALWAYS, VK_SAMPLER_MIPMAP_MODE_LINEAR);
+    m_defaultWhiteTexture = Texture::getDefaultWhiteTexture();
 }
 
 ELIX_CUSTOM_NAMESPACE_END

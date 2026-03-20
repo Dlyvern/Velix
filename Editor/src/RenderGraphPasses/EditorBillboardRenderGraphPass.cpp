@@ -224,9 +224,6 @@ void EditorBillboardRenderGraphPass::record(core::CommandBuffer::SharedPtr comma
                                             const engine::RenderGraphPassPerFrameData &data,
                                             const engine::RenderGraphPassContext &renderContext)
 {
-    if (!m_scene)
-        return;
-
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);
     vkCmdSetScissor(commandBuffer->vk(), 0, 1, &m_scissor);
 
@@ -252,6 +249,9 @@ void EditorBillboardRenderGraphPass::record(core::CommandBuffer::SharedPtr comma
     vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                             m_pipelineLayout, 0, 1, &passthroughDescriptorSet, 0, nullptr);
     engine::renderGraph::profiling::cmdDraw(commandBuffer, 3, 1, 0, 0);
+
+    if (!m_showBillboards || !m_scene)
+        return;
 
     engine::GraphicsPipelineKey billboardKey{};
     billboardKey.shader = engine::ShaderId::Billboard;
@@ -375,6 +375,11 @@ void EditorBillboardRenderGraphPass::setExtent(VkExtent2D extent)
 void EditorBillboardRenderGraphPass::setScene(std::shared_ptr<engine::Scene> scene)
 {
     m_scene = std::move(scene);
+}
+
+void EditorBillboardRenderGraphPass::setBillboardsVisible(bool visible)
+{
+    m_showBillboards = visible;
 }
 
 void EditorBillboardRenderGraphPass::setIconTexturePath(std::string texturePath)

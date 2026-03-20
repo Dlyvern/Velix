@@ -192,7 +192,7 @@ public:
     }
 
 private:
-    static constexpr uint16_t MAX_FRAMES_IN_FLIGHT = 1;
+    static constexpr uint16_t MAX_FRAMES_IN_FLIGHT = 2;
     static constexpr uint32_t MAX_RENDER_JOBS = 64;
 
     VkDevice m_device{VK_NULL_HANDLE};

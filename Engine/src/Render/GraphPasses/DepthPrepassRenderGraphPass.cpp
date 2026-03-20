@@ -28,6 +28,7 @@ DepthPrepassRenderGraphPass::DepthPrepassRenderGraphPass()
 {
     m_depthClear.depthStencil = {1.0f, 0};
     setDebugName("Depth Prepass");
+    outputs.depth.setOwner(this);
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
 }
 
@@ -54,6 +55,7 @@ void DepthPrepassRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builde
 
     m_depthTextureHandler = builder.createTexture(depthDesc);
     builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+    outputs.depth.set(m_depthTextureHandler);
 }
 
 void DepthPrepassRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)

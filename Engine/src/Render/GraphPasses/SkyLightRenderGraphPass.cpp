@@ -16,6 +16,7 @@ SkyLightRenderGraphPass::SkyLightRenderGraphPass(std::vector<RGPResourceHandler>
       m_depthTextureHandler(depthTextureHandler)
 {
     setDebugName("Sky light render graph pass");
+    outputs.color.setOwner(this);
 
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
 }
@@ -174,6 +175,7 @@ void SkyLightRenderGraphPass::setup(RGPResourcesBuilder &builder)
         builder.write(input, RGPTextureUsage::COLOR_ATTACHMENT);
         m_colorTextureHandler.push_back(input);
     }
+    outputs.color.set(m_colorTextureHandler);
 
     builder.read(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
 

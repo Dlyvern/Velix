@@ -33,8 +33,14 @@ public:
 
     void compile(renderGraph::RGPResourcesStorage &storage) override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
+    void freeResources() override;
 
     std::vector<RGPResourceHandler> &getHandlers() { return m_outputHandlers; }
+
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> color;
+    } outputs;
 
 private:
     std::vector<RGPResourceHandler> &m_inputHandlers;

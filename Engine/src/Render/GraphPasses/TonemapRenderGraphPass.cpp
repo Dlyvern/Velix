@@ -24,6 +24,7 @@ struct TonemapPC
 TonemapRenderGraphPass::TonemapRenderGraphPass(std::vector<RGPResourceHandler> &hdrInputHandlers) : m_hdrInputHandlers(hdrInputHandlers)
 {
     setDebugName("Tonemap render graph pass");
+    outputs.color.setOwner(this);
 
     m_clearValues[0].color = {0.f, 0.f, 0.f, 1.f};
 
@@ -53,6 +54,7 @@ void TonemapRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         m_colorTextureHandler.push_back(h);
         builder.write(h, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
     }
+    outputs.color.set(m_colorTextureHandler);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 

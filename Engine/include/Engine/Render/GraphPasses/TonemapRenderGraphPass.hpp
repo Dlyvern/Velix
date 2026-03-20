@@ -35,6 +35,11 @@ public:
         return m_colorTextureHandler;
     }
 
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> color;
+    } outputs;
+
 private:
     std::array<VkClearValue, 1> m_clearValues;
 

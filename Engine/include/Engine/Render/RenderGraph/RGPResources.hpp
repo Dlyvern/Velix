@@ -20,14 +20,12 @@ enum class RGPTextureUsage
     COLOR_ATTACHMENT,
     COLOR_ATTACHMENT_STORAGE,
     DEPTH_STENCIL,
-
-    // RAW VULKAN FOR NOW
     COLOR_ATTACHMENT_TRANSFER_SRC
 };
 
 struct RGPResourceHandler
 {
-    uint32_t id;
+    uint32_t id{UINT32_MAX};
 
     operator uint32_t() const { return id; }
 
@@ -35,6 +33,65 @@ struct RGPResourceHandler
     {
         return id == other.id;
     }
+
+    bool isValid() const { return id != UINT32_MAX; }
+};
+
+using SingleHandle = RGPResourceHandler;
+using MultiHandle = std::vector<RGPResourceHandler>;
+
+class IRenderGraphPass;
+
+template <typename T>
+class RGPOutputSlot
+{
+public:
+    void set(T handle)
+    {
+        m_handles = std::move(handle);
+    }
+
+    const T &get() const
+    {
+        return m_handles;
+    }
+
+    IRenderGraphPass *const getOwner() const
+    {
+        return m_owner;
+    }
+
+    void setOwner(IRenderGraphPass *owner)
+    {
+        m_owner = owner;
+    }
+
+private:
+    T m_handles;
+    IRenderGraphPass *m_owner{nullptr};
+};
+
+template <typename T>
+class RGPInputSlot
+{
+public:
+    void connectFrom(const RGPOutputSlot<T> &slot)
+    {
+        m_source = &slot;
+    }
+
+    const T &get() const
+    {
+        return m_source->get();
+    }
+
+    bool isConnected() const
+    {
+        return m_source != nullptr;
+    }
+
+private:
+    const RGPOutputSlot<T> *m_source{nullptr};
 };
 
 struct RGPResourceAccess
@@ -74,13 +131,13 @@ public:
     PROPERTY_FULL(VkExtent2D, Extent)
     PROPERTY_FULL_DEFAULT(bool, IsSwapChainTarget, false);
     PROPERTY_FULL_DEFAULT(std::function<VkExtent2D()>, CustomExtentFunction, nullptr); // If not nullptr, Extent field will be ignored
-    PROPERTY_FULL_DEFAULT(bool, IsDepenedOnSwapChainSize, false);                      // On swap chain resize this resource will be re-created with swap chain extent
     PROPERTY_FULL_DEFAULT(VkImageLayout, InitialLayout, VK_IMAGE_LAYOUT_UNDEFINED);
     PROPERTY_FULL_DEFAULT(VkImageLayout, FinalLayout, VK_IMAGE_LAYOUT_UNDEFINED);
     PROPERTY_FULL_DEFAULT(VkSampleCountFlagBits, SampleCount, VK_SAMPLE_COUNT_1_BIT);
     PROPERTY_FULL_DEFAULT(uint32_t, ArrayLayers, 1);
     PROPERTY_FULL_DEFAULT(VkImageCreateFlags, Flags, 0);
     PROPERTY_FULL_DEFAULT(VkImageViewType, ImageViewtype, VK_IMAGE_VIEW_TYPE_2D);
+    PROPERTY_FULL_DEFAULT(bool, Aliasable, true);
 };
 
 ELIX_CUSTOM_NAMESPACE_END

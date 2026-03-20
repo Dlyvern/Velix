@@ -43,8 +43,14 @@ public:
     void compile(renderGraph::RGPResourcesStorage &storage) override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
     void cleanup() override;
+    void freeResources() override;
 
     std::vector<RGPResourceHandler> &getOutput() { return m_outputHandlers; }
+
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> color;
+    } outputs;
 
 private:
     std::array<VkClearValue, 1> m_clearValues;

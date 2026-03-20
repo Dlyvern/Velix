@@ -32,8 +32,14 @@ public:
 
     void compile(renderGraph::RGPResourcesStorage &storage) override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
+    void freeResources() override;
 
     std::vector<RGPResourceHandler> &getHandlers() { return m_bloomHandlers; }
+
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> bloom;
+    } outputs;
 
 private:
     std::array<VkClearValue, 1> m_clearValues;

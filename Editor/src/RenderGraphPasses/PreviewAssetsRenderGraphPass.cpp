@@ -71,6 +71,7 @@ void PreviewAssetsRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilde
     colorTextureDescription.setExtent(m_extent);
     colorTextureDescription.setInitialLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     colorTextureDescription.setFinalLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    colorTextureDescription.setAliasable(false);
 
     for (int index = 0; index < MAX_RENDER_JOBS; ++index)
     {
@@ -95,8 +96,8 @@ void PreviewAssetsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
     engine::GraphicsPipelineKey key{};
     key.shader = engine::ShaderId::PreviewMesh;
     key.cull = engine::CullMode::Back;
-    key.depthTest = true;
-    key.depthWrite = true;
+    key.depthTest = false;
+    key.depthWrite = false;
     key.depthCompare = VK_COMPARE_OP_LESS;
     key.polygonMode = VK_POLYGON_MODE_FILL;
     key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;

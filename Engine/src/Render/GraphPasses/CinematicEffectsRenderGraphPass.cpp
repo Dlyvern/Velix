@@ -33,6 +33,7 @@ CinematicEffectsRenderGraphPass::CinematicEffectsRenderGraphPass(std::vector<RGP
     : m_inputHandlers(inputHandlers)
 {
     setDebugName("Cinematic Effects render graph pass");
+    outputs.color.setOwner(this);
     m_clearValues[0].color = {0.f, 0.f, 0.f, 1.f};
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
 }
@@ -57,6 +58,7 @@ void CinematicEffectsRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &bu
         m_outputHandlers.push_back(h);
         builder.write(h, RGPTextureUsage::COLOR_ATTACHMENT);
     }
+    outputs.color.set(m_outputHandlers);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 

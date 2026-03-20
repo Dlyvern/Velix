@@ -5,6 +5,7 @@
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 #include "Engine/Render/ObjectIdEncoding.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
+#include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
 
 #include <iostream>
 #include <array>
@@ -19,6 +20,8 @@
 #include <cfloat>
 #include <exception>
 #include <filesystem>
+#include <sstream>
+#include <fstream>
 
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
@@ -30,6 +33,7 @@
 
 #include "Engine/Utilities/AsyncGpuUpload.hpp"
 #include "Engine/Utilities/ImageUtilities.hpp"
+#include "Engine/Shaders/ShaderCompiler.hpp"
 #include "Engine/Shaders/ShaderFamily.hpp"
 #include "Engine/Threads/ThreadPoolManager.hpp"
 
@@ -76,6 +80,58 @@ struct LightSpaceMatrixUBO
 
 namespace
 {
+    template <typename TValue>
+    void hashCombine(size_t &seed, const TValue &value)
+    {
+        seed ^= std::hash<TValue>{}(value) + 0x9e3779b97f4a7c15ULL + (seed << 6u) + (seed >> 2u);
+    }
+
+    struct TextureAliasSignature
+    {
+        VkExtent2D extent{0u, 0u};
+        elix::engine::renderGraph::RGPTextureUsage usage{elix::engine::renderGraph::RGPTextureUsage::SAMPLED};
+        VkFormat format{VK_FORMAT_UNDEFINED};
+        VkImageLayout initialLayout{VK_IMAGE_LAYOUT_UNDEFINED};
+        VkImageLayout finalLayout{VK_IMAGE_LAYOUT_UNDEFINED};
+        VkSampleCountFlagBits sampleCount{VK_SAMPLE_COUNT_1_BIT};
+        uint32_t arrayLayers{1u};
+        VkImageCreateFlags flags{0u};
+        VkImageViewType viewType{VK_IMAGE_VIEW_TYPE_2D};
+
+        bool operator==(const TextureAliasSignature &other) const
+        {
+            return extent.width == other.extent.width &&
+                   extent.height == other.extent.height &&
+                   usage == other.usage &&
+                   format == other.format &&
+                   initialLayout == other.initialLayout &&
+                   finalLayout == other.finalLayout &&
+                   sampleCount == other.sampleCount &&
+                   arrayLayers == other.arrayLayers &&
+                   flags == other.flags &&
+                   viewType == other.viewType;
+        }
+    };
+
+    struct TextureAliasSignatureHasher
+    {
+        size_t operator()(const TextureAliasSignature &signature) const noexcept
+        {
+            size_t seed = 0u;
+            hashCombine(seed, signature.extent.width);
+            hashCombine(seed, signature.extent.height);
+            hashCombine(seed, static_cast<uint32_t>(signature.usage));
+            hashCombine(seed, static_cast<uint32_t>(signature.format));
+            hashCombine(seed, static_cast<uint32_t>(signature.initialLayout));
+            hashCombine(seed, static_cast<uint32_t>(signature.finalLayout));
+            hashCombine(seed, static_cast<uint32_t>(signature.sampleCount));
+            hashCombine(seed, signature.arrayLayers);
+            hashCombine(seed, signature.flags);
+            hashCombine(seed, static_cast<uint32_t>(signature.viewType));
+            return seed;
+        }
+    };
+
     VkDeviceAddress getBufferDeviceAddress(const elix::core::Buffer &buffer)
     {
         auto context = elix::core::VulkanContext::getContext();
@@ -90,6 +146,14 @@ namespace
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
+
+RenderGraph::~RenderGraph()
+{
+    if (m_device != VK_NULL_HANDLE &&
+        m_renderGraphProfiling != nullptr &&
+        core::VulkanContext::getContext() != nullptr)
+        cleanResources();
+}
 
 RenderGraph::RenderGraph(bool presentToSwapchain) : m_presentToSwapchain(presentToSwapchain)
 {
@@ -129,7 +193,6 @@ RenderGraph::RenderGraph(bool presentToSwapchain) : m_presentToSwapchain(present
 
 void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling)
 {
-
     const auto &sceneEntities = scene->getEntities();
 
     static std::size_t lastEntitiesSize = 0;
@@ -230,8 +293,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
             if (m_staticUnifiedGeometry.getVertexStride() == mesh.vertexStride)
             {
-                int32_t  outVertexOffset = GPUMesh::INVALID_VERTEX_OFFSET;
-                uint32_t outFirstIndex   = 0;
+                int32_t outVertexOffset = GPUMesh::INVALID_VERTEX_OFFSET;
+                uint32_t outFirstIndex = 0;
                 if (m_staticUnifiedGeometry.registerMesh(mesh.vertexData.data(),
                                                          static_cast<VkDeviceSize>(mesh.vertexData.size()),
                                                          mesh.indices.data(),
@@ -239,8 +302,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                                                          outVertexOffset, outFirstIndex))
                 {
                     createdMesh->unifiedVertexOffset = outVertexOffset;
-                    createdMesh->unifiedFirstIndex   = outFirstIndex;
-                    createdMesh->inUnifiedBuffer     = true;
+                    createdMesh->unifiedFirstIndex = outFirstIndex;
+                    createdMesh->inUnifiedBuffer = true;
                 }
             }
         }
@@ -255,15 +318,15 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             return nullptr;
 
         auto instance = std::make_shared<GPUMesh>();
-        instance->indexBuffer          = sharedGeometry->indexBuffer;
-        instance->vertexBuffer         = sharedGeometry->vertexBuffer;
-        instance->indicesCount         = sharedGeometry->indicesCount;
-        instance->indexType            = sharedGeometry->indexType;
-        instance->vertexStride         = sharedGeometry->vertexStride;
-        instance->vertexLayoutHash     = sharedGeometry->vertexLayoutHash;
-        instance->unifiedVertexOffset  = sharedGeometry->unifiedVertexOffset;
-        instance->unifiedFirstIndex    = sharedGeometry->unifiedFirstIndex;
-        instance->inUnifiedBuffer      = sharedGeometry->inUnifiedBuffer;
+        instance->indexBuffer = sharedGeometry->indexBuffer;
+        instance->vertexBuffer = sharedGeometry->vertexBuffer;
+        instance->indicesCount = sharedGeometry->indicesCount;
+        instance->indexType = sharedGeometry->indexType;
+        instance->vertexStride = sharedGeometry->vertexStride;
+        instance->vertexLayoutHash = sharedGeometry->vertexLayoutHash;
+        instance->unifiedVertexOffset = sharedGeometry->unifiedVertexOffset;
+        instance->unifiedFirstIndex = sharedGeometry->unifiedFirstIndex;
+        instance->inUnifiedBuffer = sharedGeometry->inUnifiedBuffer;
 
         return instance;
     };
@@ -420,6 +483,95 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         return std::to_string(seed);
     };
 
+    auto ensureCustomMaterialShaderPath = [&](const CPUMaterial &materialCPU) -> std::string
+    {
+        if (materialCPU.customExpression.empty())
+        {
+            if (!materialCPU.customShaderHash.empty())
+                return "./resources/shaders/material_cache/" + materialCPU.customShaderHash + ".spv";
+            return {};
+        }
+
+        std::ifstream templateFile("./resources/shaders/gbuffer_static_template.frag_template");
+        if (!templateFile.is_open())
+        {
+            VX_ENGINE_WARNING_STREAM("Failed to open custom material shader template. Falling back to default material shader.\n");
+            return {};
+        }
+
+        std::stringstream templateBuffer;
+        templateBuffer << templateFile.rdbuf();
+        std::string templateSrc = templateBuffer.str();
+
+        const std::string funcMarker = "// [FUNCTIONS]\n";
+        const std::string exprMarker = "// [EXPRESSION]\n";
+        std::string functions;
+        std::string expression = materialCPU.customExpression;
+
+        const size_t functionsPos = materialCPU.customExpression.find(funcMarker);
+        const size_t expressionPos = materialCPU.customExpression.find(exprMarker);
+        if (functionsPos != std::string::npos && expressionPos != std::string::npos && expressionPos >= functionsPos + funcMarker.size())
+        {
+            functions = materialCPU.customExpression.substr(functionsPos + funcMarker.size(), expressionPos - functionsPos - funcMarker.size());
+            expression = materialCPU.customExpression.substr(expressionPos + exprMarker.size());
+        }
+
+        auto replaceFirst = [](std::string &textValue, const std::string &from, const std::string &to)
+        {
+            const size_t pos = textValue.find(from);
+            if (pos != std::string::npos)
+                textValue.replace(pos, from.size(), to);
+        };
+
+        replaceFirst(templateSrc, "// <<ELIX_CUSTOM_FUNCTIONS>>", functions);
+        replaceFirst(templateSrc, "// <<ELIX_CUSTOM_EXPRESSION>>", expression);
+
+        constexpr uint64_t kFnvOffset = 14695981039346656037ull;
+        constexpr uint64_t kFnvPrime = 1099511628211ull;
+        uint64_t hash = kFnvOffset;
+        const std::string hashInput = std::string("gbuffer_layout_v2\n") + functions + "\n" + expression;
+        for (unsigned char c : hashInput)
+        {
+            hash ^= c;
+            hash *= kFnvPrime;
+        }
+
+        std::error_code ec;
+        std::filesystem::create_directories("./resources/shaders/material_cache", ec);
+        const std::string spvPath = "./resources/shaders/material_cache/" + std::to_string(hash) + ".spv";
+
+        if (!std::filesystem::exists(spvPath))
+        {
+            try
+            {
+                const auto spirv = shaders::ShaderCompiler::compileGLSL(
+                    templateSrc, shaderc_glsl_fragment_shader, shaders::ShaderCompiler::ShaderCompilerFlagBits::EDEFAULT, "custom_material.frag");
+
+                std::ofstream outputFile(spvPath, std::ios::binary | std::ios::trunc);
+                if (!outputFile.is_open())
+                {
+                    VX_ENGINE_WARNING_STREAM("Failed to open custom material shader cache file: " << spvPath << "\n");
+                    return {};
+                }
+
+                outputFile.write(reinterpret_cast<const char *>(spirv.data()), static_cast<std::streamsize>(spirv.size() * sizeof(uint32_t)));
+                outputFile.close();
+                if (!outputFile.good())
+                {
+                    VX_ENGINE_WARNING_STREAM("Failed to write custom material shader cache file: " << spvPath << "\n");
+                    return {};
+                }
+            }
+            catch (const std::exception &exception)
+            {
+                VX_ENGINE_WARNING_STREAM("Failed to compile custom material shader: " << exception.what() << "\n");
+                return {};
+            }
+        }
+
+        return spvPath;
+    };
+
     auto createMaterialFromCpuData = [&](const CPUMaterial &materialCPU, const std::filesystem::path &materialAssetFilePath) -> Material::SharedPtr
     {
         auto albedoTexture = loadTextureForMaterial(materialCPU.albedoTexture, VK_FORMAT_R8G8B8A8_SRGB, materialAssetFilePath);
@@ -457,8 +609,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         material->setUVRotation(materialCPU.uvRotation);
         material->setIor(materialCPU.ior);
 
-        if (!materialCPU.customShaderHash.empty())
-            material->setCustomFragPath("./resources/shaders/material_cache/" + materialCPU.customShaderHash + ".spv");
+        if (const std::string customFragPath = ensureCustomMaterialShaderPath(materialCPU); !customFragPath.empty())
+            material->setCustomFragPath(customFragPath);
 
         return material;
     };
@@ -839,8 +991,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         }
     }
     // Store for GPU culling dispatch in begin().
-    m_lastFrustumPlanes          = frustumPlanes;
-    m_lastFrustumCullingEnabled  = enableFrustumCulling;
+    m_lastFrustumPlanes = frustumPlanes;
+    m_lastFrustumCullingEnabled = enableFrustumCulling;
 
     auto sphereInsideFrustum = [&](const glm::vec3 &center, float radius) -> bool
     {
@@ -852,9 +1004,9 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         return true;
     };
 
-    const auto &sfcSettings     = RenderQualitySettings::getInstance();
-    const bool  enableSmallFeatureCulling = sfcSettings.enableSmallFeatureCulling;
-    const float sfcThreshold    = sfcSettings.smallFeatureCullingThreshold;
+    const auto &sfcSettings = RenderQualitySettings::getInstance();
+    const bool enableSmallFeatureCulling = sfcSettings.enableSmallFeatureCulling;
+    const float sfcThreshold = sfcSettings.smallFeatureCullingThreshold;
     const float halfScreenHeight = m_perFrameData.swapChainViewport.height * 0.5f;
 
     std::vector<MeshDrawReference> drawReferences;
@@ -1033,7 +1185,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 shadingInstance.indexAddress = getBufferDeviceAddress(*entry->rayTracedMesh->indexBuffer);
                 shadingInstance.vertexStride = instance.mesh->vertexStride;
                 shadingInstance.material = instance.mesh->material ? instance.mesh->material->params()
-                                                                  : Material::getDefaultMaterial()->params();
+                                                                   : Material::getDefaultMaterial()->params();
             }
         }
         else
@@ -1085,9 +1237,9 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         if (m_bindlessSet != VK_NULL_HANDLE && reference.material && materialIndex < EngineShaderFamilies::MAX_BINDLESS_MATERIALS)
         {
             Material::GPUParams params = reference.material->params();
-            params.albedoTexIdx   = getOrRegisterTexture(reference.material->getAlbedoTexture().get());
-            params.normalTexIdx   = getOrRegisterTexture(reference.material->getNormalTexture().get());
-            params.ormTexIdx      = getOrRegisterTexture(reference.material->getOrmTexture().get());
+            params.albedoTexIdx = getOrRegisterTexture(reference.material->getAlbedoTexture().get());
+            params.normalTexIdx = getOrRegisterTexture(reference.material->getNormalTexture().get());
+            params.ormTexIdx = getOrRegisterTexture(reference.material->getOrmTexture().get());
             params.emissiveTexIdx = getOrRegisterTexture(reference.material->getEmissiveTexture().get());
             m_cpuMaterialParams[materialIndex] = params;
         }
@@ -1299,8 +1451,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
     for (uint32_t cascadeIndex = 0; cascadeIndex < m_perFrameData.activeDirectionalCascadeCount; ++cascadeIndex)
     {
-        const auto &vp     = m_perFrameData.directionalLightSpaceMatrices[cascadeIndex];
-        const auto  planes = extractLightFrustumPlanes(vp);
+        const auto &vp = m_perFrameData.directionalLightSpaceMatrices[cascadeIndex];
+        const auto planes = extractLightFrustumPlanes(vp);
         const float threshold = (cascadeIndex < 4) ? kTexelCoverageThreshold[cascadeIndex] : 4.0f;
         const float minRadius = shadowTexelWorldSize(vp) * threshold;
         buildShadowBatches(m_perFrameData.directionalShadowDrawBatches[cascadeIndex], &planes, minRadius);
@@ -1370,7 +1522,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             m_batchBoundsSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(boundsMapped));
             for (uint32_t i = 0; i < batchCount; ++i)
             {
-                const GPUBatchBounds &b  = m_perFrameData.batchBounds[i];
+                const GPUBatchBounds &b = m_perFrameData.batchBounds[i];
                 boundsMapped[i] = glm::vec4(b.center, b.radius);
             }
             m_batchBoundsSSBOs[m_currentFrame]->unmap();
@@ -1385,10 +1537,10 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             {
                 const DrawBatch &batch = m_perFrameData.drawBatches[i];
                 VkDrawIndexedIndirectCommand cmd{};
-                cmd.indexCount    = batch.mesh ? batch.mesh->indicesCount : 0u;
+                cmd.indexCount = batch.mesh ? batch.mesh->indicesCount : 0u;
                 cmd.instanceCount = batch.instanceCount;
-                cmd.firstIndex    = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedFirstIndex : 0u;
-                cmd.vertexOffset  = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedVertexOffset : 0;
+                cmd.firstIndex = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedFirstIndex : 0u;
+                cmd.vertexOffset = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedVertexOffset : 0;
                 cmd.firstInstance = 0u; // baseInstance comes from push constant
                 std::memcpy(cmdMapped + i * sizeof(VkDrawIndexedIndirectCommand), &cmd, sizeof(cmd));
             }
@@ -1408,7 +1560,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     m_perFrameData.deltaTime = deltaTime;
     m_perFrameData.elapsedTime += deltaTime;
     m_perFrameData.unifiedStaticVertexBuffer = m_staticUnifiedGeometry.getVertexBuffer();
-    m_perFrameData.unifiedStaticIndexBuffer  = m_staticUnifiedGeometry.getIndexBuffer();
+    m_perFrameData.unifiedStaticIndexBuffer = m_staticUnifiedGeometry.getIndexBuffer();
 
     // Upload accumulated material params to the GPU SSBO and expose the bindless set.
     if (m_materialParamsSSBO && m_nextMaterialSlot > 0)
@@ -1530,7 +1682,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
 
                 if (directionalLight->skyLightEnabled)
                 {
-                    const float sunH  = glm::clamp(glm::dot(dirWorld, glm::vec3(0.0f, 1.0f, 0.0f)), -1.0f, 1.0f);
+                    const float sunH = glm::clamp(glm::dot(dirWorld, glm::vec3(0.0f, 1.0f, 0.0f)), -1.0f, 1.0f);
                     const float horizF = 1.0f - glm::smoothstep(0.18f, 0.55f, sunH);
                     const float belowH = 1.0f - glm::smoothstep(-0.18f, 0.02f, sunH);
                     glm::vec3 dynColor = glm::mix(glm::vec3(1.00f, 0.96f, 0.89f),
@@ -1622,7 +1774,7 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
 
                     constexpr float zPadding = 25.0f;
                     const float cascadeNear = std::max(0.1f, lightDistance - radius - zPadding);
-                    const float cascadeFar  = std::max(cascadeNear + 0.1f, lightDistance + radius + zPadding);
+                    const float cascadeFar = std::max(cascadeNear + 0.1f, lightDistance + radius + zPadding);
                     glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, cascadeNear, cascadeFar);
 
                     // Texel snapping: project the world origin into light NDC, round to the nearest
@@ -1773,7 +1925,8 @@ void RenderGraph::recreateSwapChain()
     }
 
     for (const auto &[id, renderPass] : m_renderGraphPasses)
-        renderPass.renderGraphPass->compile(m_renderGraphPassesStorage);
+        if (renderPass.enabled)
+            renderPass.renderGraphPass->compile(m_renderGraphPassesStorage);
 
     invalidateAllExecutionCaches();
 }
@@ -1783,19 +1936,14 @@ bool RenderGraph::begin()
     utilities::AsyncGpuUpload::collectFinished(m_device);
     m_renderGraphProfiling->syncDetailedProfilingMode();
 
-    // NOTE: do NOT reset the slot yet — it still holds complete profiling data from the
-    // previous time this frame slot was used (2 frames ago). We resolve it below before
-    // overwriting it, so that all fields (commandPoolResetMs, primaryCbEndMs, submitMs,
-    // presentMs, etc.) are read correctly instead of as zeros.
     const bool detailedProfilingEnabled = m_renderGraphProfiling->isDetailedProfilingEnabled();
 
-    const VkResult waitForFenceResult = m_renderGraphProfiling->measureCpuStage(
-        m_currentFrame,
-        RenderGraphProfiling::CpuStage::WaitForFence,
-        [&]()
-        {
-            return vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
-        });
+    const VkResult waitForFenceResult = m_renderGraphProfiling->measureCpuStage(m_currentFrame, RenderGraphProfiling::CpuStage::WaitForFence,
+                                                                                [&]()
+                                                                                {
+                                                                                    return vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+                                                                                });
+
     const double currentFenceWaitMs = m_renderGraphProfiling->getCpuStageProfilingDataByFrame(m_currentFrame).waitForFenceMs;
 
     if (waitForFenceResult != VK_SUCCESS)
@@ -1883,14 +2031,18 @@ bool RenderGraph::begin()
         m_imageIndex = m_currentFrame % imageCount;
     }
 
+    for (const auto &[id, renderGraphPass] : m_renderGraphPasses)
+    {
+        if (auto *shadowPass = dynamic_cast<ShadowRenderGraphPass *>(renderGraphPass.renderGraphPass.get()))
+            shadowPass->syncActiveShadowCounts(m_perFrameData.activeSpotShadowCount, m_perFrameData.activePointShadowCount);
+    }
+
     std::vector<uint32_t> dirtyPassIds;
     dirtyPassIds.reserve(m_renderGraphPasses.size());
 
     for (const auto &[id, renderGraphPass] : m_renderGraphPasses)
-    {
         if (renderGraphPass.renderGraphPass->needsRecompilation())
             dirtyPassIds.push_back(renderGraphPass.id);
-    }
 
     if (!dirtyPassIds.empty())
     {
@@ -1900,127 +2052,13 @@ bool RenderGraph::begin()
             [&]()
             {
                 vkDeviceWaitIdle(m_device);
-
-                std::unordered_set<uint32_t> dirtyPassIdsSet(dirtyPassIds.begin(), dirtyPassIds.end());
-                std::unordered_set<uint32_t> passesToCompile;
-                std::queue<uint32_t> pendingPassIds;
+                compile();
 
                 for (const uint32_t dirtyPassId : dirtyPassIds)
-                    pendingPassIds.push(dirtyPassId);
-
-                while (!pendingPassIds.empty())
-                {
-                    const uint32_t passId = pendingPassIds.front();
-                    pendingPassIds.pop();
-
-                    if (!passesToCompile.insert(passId).second)
-                        continue;
-
-                    auto *passData = findRenderGraphPassById(passId);
-                    if (!passData)
-                    {
-                        VX_ENGINE_ERROR_STREAM("Failed to find pass while resolving recompilation dependencies: " << passId << '\n');
-                        continue;
-                    }
-
-                    for (const uint32_t dependentPassId : passData->outgoing)
-                        pendingPassIds.push(dependentPassId);
-                }
-
-                std::vector<RGPResourceHandler> resourcesToRecreate;
-                resourcesToRecreate.reserve(m_renderGraphPasses.size() * 2);
-                std::unordered_set<RGPResourceHandler> uniqueResources;
-
-                for (const uint32_t dirtyPassId : dirtyPassIdsSet)
-                {
-                    const auto *passData = findRenderGraphPassById(dirtyPassId);
-                    if (!passData)
-                        continue;
-
-                    for (const auto &write : passData->passInfo.writes)
-                    {
-                        if (uniqueResources.insert(write.resourceId).second)
-                            resourcesToRecreate.push_back(write.resourceId);
-                    }
-                }
-
-                auto barriers = m_renderGraphPassesCompiler.compile(resourcesToRecreate, m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
-
-                if (!barriers.empty())
-                {
-                    auto commandBuffer = core::CommandBuffer::create(*core::VulkanContext::getContext()->getGraphicsCommandPool());
-                    commandBuffer.begin();
-
-                    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-                    dep.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
-                    dep.pImageMemoryBarriers = barriers.data();
-
-                    vkCmdPipelineBarrier2(commandBuffer, &dep);
-
-                    commandBuffer.end();
-
-                    commandBuffer.submit(core::VulkanContext::getContext()->getGraphicsQueue());
-                    {
-                        std::lock_guard<std::mutex> queueLock(core::helpers::queueHostSyncMutex());
-                        vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
-                    }
-                }
-
-                auto findPassDataByPtr = [&](const IRenderGraphPass *passPtr) -> RenderGraphPassData *
-                {
-                    for (auto &[_, passData] : m_renderGraphPasses)
-                    {
-                        if (passData.renderGraphPass.get() == passPtr)
-                            return &passData;
-                    }
-
-                    return nullptr;
-                };
-
-                for (const auto *sortedPass : m_sortedRenderGraphPasses)
-                {
-                    auto *passData = findPassDataByPtr(sortedPass);
-                    if (!passData)
-                    {
-                        VX_ENGINE_ERROR_STREAM("Failed to find sorted pass while recompiling render graph\n");
-                        continue;
-                    }
-
-                    if (!passesToCompile.contains(passData->id))
-                        continue;
-
-                    passData->renderGraphPass->compile(m_renderGraphPassesStorage);
-                }
-
-                if (m_sortedRenderGraphPasses.empty())
-                {
-                    for (const uint32_t passId : passesToCompile)
-                    {
-                        auto *passData = findRenderGraphPassById(passId);
-                        if (!passData)
-                            continue;
-
-                        passData->renderGraphPass->compile(m_renderGraphPassesStorage);
-                    }
-                }
-
-                for (const uint32_t dirtyPassId : dirtyPassIdsSet)
                 {
                     auto *passData = findRenderGraphPassById(dirtyPassId);
                     if (passData)
                         passData->renderGraphPass->recompilationIsDone();
-                }
-
-                // Invalidate execution cache for any pass that was recompiled
-                // (its resources/image handles may have changed).
-                if (m_passExecutionCache.size() == m_sortedRenderGraphPasses.size())
-                {
-                    for (size_t i = 0; i < m_sortedRenderGraphPasses.size(); ++i)
-                    {
-                        auto *passData = findPassDataByPtr(m_sortedRenderGraphPasses[i]);
-                        if (passData && passesToCompile.contains(passData->id))
-                            m_passExecutionCache[i].valid = false;
-                    }
                 }
             });
     }
@@ -2314,11 +2352,7 @@ void RenderGraph::end()
             throw std::runtime_error("Failed to present swap chain image: " + core::helpers::vulkanResultToString(result));
     }
     else
-    {
         m_renderGraphProfiling->recordCpuStage(m_currentFrame, RenderGraphProfiling::CpuStage::Present, 0.0);
-    }
-
-    m_perFrameData.additionalData.clear();
 }
 
 void RenderGraph::draw()
@@ -2453,7 +2487,9 @@ void RenderGraph::sortRenderGraphPasses()
     }
 
     m_sortedRenderGraphPasses.clear();
+    m_sortedRenderGraphPassIds.clear();
     m_sortedRenderGraphPasses.reserve(sorted.size());
+    m_sortedRenderGraphPassIds.reserve(sorted.size());
 
     for (const auto &sortId : sorted)
     {
@@ -2465,14 +2501,131 @@ void RenderGraph::sortRenderGraphPasses()
             continue;
         }
 
+        if (!renderGraphPass->enabled)
+            continue; // Skip permanently-disabled passes (VRAM freed via disablePass<T>())
+
+        m_sortedRenderGraphPassIds.push_back(sortId);
         m_sortedRenderGraphPasses.push_back(renderGraphPass->renderGraphPass.get());
     }
 
-    // Sorted order changed — execution cache is keyed by sorted position, must be rebuilt.
     m_passExecutionCache.assign(m_sortedRenderGraphPasses.size(), CachedPassExecutionData{});
 
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
         VX_ENGINE_INFO_STREAM("Node: " << renderGraphPass->getDebugName());
+}
+
+std::unordered_map<RGPResourceHandler, RGPResourceHandler> RenderGraph::buildAliasedTextureRoots()
+{
+    struct TextureLifetime
+    {
+        RGPResourceHandler handler{};
+        TextureAliasSignature signature{};
+        int32_t firstUse{std::numeric_limits<int32_t>::max()};
+        int32_t lastUse{-1};
+        bool initialized{false};
+        bool aliasable{true};
+    };
+
+    struct AliasSlot
+    {
+        RGPResourceHandler root{};
+        int32_t lastUse{-1};
+    };
+
+    std::unordered_map<RGPResourceHandler, TextureLifetime> lifetimes;
+    lifetimes.reserve(m_renderGraphPasses.size() * 4);
+
+    for (size_t passIndex = 0; passIndex < m_sortedRenderGraphPassIds.size(); ++passIndex)
+    {
+        auto *passData = findRenderGraphPassById(m_sortedRenderGraphPassIds[passIndex]);
+        if (!passData || !passData->enabled)
+            continue;
+
+        const auto updateLifetime = [&](const RGPResourceAccess &access)
+        {
+            const auto *textureDescription = m_renderGraphPassesBuilder.getTextureDescription(access.resourceId);
+            if (!textureDescription || textureDescription->getIsSwapChainTarget() || !textureDescription->getAliasable())
+                return;
+
+            TextureAliasSignature signature{};
+            signature.extent = textureDescription->getCustomExtentFunction() ? textureDescription->getCustomExtentFunction()() : textureDescription->getExtent();
+            signature.usage = textureDescription->getUsage();
+            signature.format = textureDescription->getFormat();
+            signature.initialLayout = textureDescription->getInitialLayout();
+            signature.finalLayout = textureDescription->getFinalLayout();
+            signature.sampleCount = textureDescription->getSampleCount();
+            signature.arrayLayers = textureDescription->getArrayLayers();
+            signature.flags = textureDescription->getFlags();
+            signature.viewType = textureDescription->getImageViewtype();
+
+            auto &lifetime = lifetimes[access.resourceId];
+            if (!lifetime.initialized)
+            {
+                lifetime.handler = access.resourceId;
+                lifetime.signature = signature;
+                lifetime.firstUse = static_cast<int32_t>(passIndex);
+                lifetime.lastUse = static_cast<int32_t>(passIndex);
+                lifetime.initialized = true;
+                lifetime.aliasable = true;
+                return;
+            }
+
+            if (!(lifetime.signature == signature))
+            {
+                lifetime.aliasable = false;
+                return;
+            }
+
+            lifetime.lastUse = std::max(lifetime.lastUse, static_cast<int32_t>(passIndex));
+        };
+
+        for (const auto &read : passData->passInfo.reads)
+            updateLifetime(read);
+        for (const auto &write : passData->passInfo.writes)
+            updateLifetime(write);
+    }
+
+    std::vector<TextureLifetime> candidates;
+    candidates.reserve(lifetimes.size());
+    for (const auto &[_, lifetime] : lifetimes)
+    {
+        if (!lifetime.initialized || !lifetime.aliasable || lifetime.firstUse > lifetime.lastUse)
+            continue;
+
+        candidates.push_back(lifetime);
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const TextureLifetime &a, const TextureLifetime &b)
+              {
+                  if (a.firstUse != b.firstUse)
+                      return a.firstUse < b.firstUse;
+                  if (a.lastUse != b.lastUse)
+                      return a.lastUse < b.lastUse;
+                  return a.handler.id < b.handler.id;
+              });
+
+    std::unordered_map<TextureAliasSignature, std::vector<AliasSlot>, TextureAliasSignatureHasher> slotsBySignature;
+    std::unordered_map<RGPResourceHandler, RGPResourceHandler> aliasRoots;
+    aliasRoots.reserve(candidates.size());
+
+    for (const auto &candidate : candidates)
+    {
+        auto &slots = slotsBySignature[candidate.signature];
+        auto reusableIt = std::find_if(slots.begin(), slots.end(), [&](const AliasSlot &slot)
+                                       { return slot.lastUse < candidate.firstUse; });
+
+        if (reusableIt == slots.end())
+        {
+            aliasRoots[candidate.handler] = candidate.handler;
+            slots.push_back(AliasSlot{candidate.handler, candidate.lastUse});
+            continue;
+        }
+
+        aliasRoots[candidate.handler] = reusableIt->root;
+        reusableIt->lastUse = candidate.lastUse;
+    }
+
+    return aliasRoots;
 }
 
 void RenderGraph::invalidateAllExecutionCaches()
@@ -2548,9 +2701,11 @@ void RenderGraph::buildExecutionCacheForPass(size_t sortedPassIndex)
 
 void RenderGraph::compile()
 {
-    auto barriers = m_renderGraphPassesCompiler.compile(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
+    sortRenderGraphPasses();
+    m_renderGraphPassesStorage.cleanup();
 
-    // VX_ENGINE_INFO_STREAM("Memory before render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n');
+    const auto aliasRoots = buildAliasedTextureRoots();
+    auto barriers = m_renderGraphPassesCompiler.compile(m_renderGraphPassesBuilder, m_renderGraphPassesStorage, &aliasRoots);
 
     auto commandBuffer = core::CommandBuffer::create(*core::VulkanContext::getContext()->getGraphicsCommandPool());
     commandBuffer.begin();
@@ -2570,10 +2725,9 @@ void RenderGraph::compile()
     }
 
     for (const auto &[id, pass] : m_renderGraphPasses)
-        pass.renderGraphPass->compile(m_renderGraphPassesStorage);
+        if (pass.enabled)
+            pass.renderGraphPass->compile(m_renderGraphPassesStorage);
 
-    // Invalidate execution cache — resources may have been (re)allocated.
-    // It will be lazily rebuilt on the first frame using the new VkImage handles.
     invalidateAllExecutionCaches();
 
     if (m_presentToSwapchain && !m_hasWindowResizeCallback)
@@ -2582,8 +2736,6 @@ void RenderGraph::compile()
         core::VulkanContext::getContext()->getSwapchain()->getWindow().addResizeCallback([this](platform::Window *, int, int)
                                                                                          { m_swapchainResizeRequested.store(true, std::memory_order_relaxed); });
     }
-
-    // VX_ENGINE_INFO_STREAM("Memory after render graphs compile: " << core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM() << '\n');
 }
 
 void RenderGraph::createPreviewCameraDescriptorSets()
@@ -2751,16 +2903,16 @@ void RenderGraph::createBindlessResources()
     // Descriptor pool (must have UPDATE_AFTER_BIND for the texture array binding).
     {
         VkDescriptorPoolSize sizes[2];
-        sizes[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         sizes[0].descriptorCount = EngineShaderFamilies::MAX_BINDLESS_TEXTURES;
-        sizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         sizes[1].descriptorCount = 1;
 
         VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        poolCI.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-        poolCI.maxSets       = 1;
+        poolCI.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+        poolCI.maxSets = 1;
         poolCI.poolSizeCount = 2;
-        poolCI.pPoolSizes    = sizes;
+        poolCI.pPoolSizes = sizes;
 
         vkCreateDescriptorPool(m_device, &poolCI, nullptr, &m_bindlessPool);
     }
@@ -2768,9 +2920,9 @@ void RenderGraph::createBindlessResources()
     // Allocate the single global bindless descriptor set.
     {
         VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        allocInfo.descriptorPool     = m_bindlessPool;
+        allocInfo.descriptorPool = m_bindlessPool;
         allocInfo.descriptorSetCount = 1;
-        allocInfo.pSetLayouts        = &EngineShaderFamilies::bindlessMaterialSetLayout;
+        allocInfo.pSetLayouts = &EngineShaderFamilies::bindlessMaterialSetLayout;
 
         vkAllocateDescriptorSets(m_device, &allocInfo, &m_bindlessSet);
     }
@@ -2780,8 +2932,8 @@ void RenderGraph::createBindlessResources()
         static_cast<VkDeviceSize>(EngineShaderFamilies::MAX_BINDLESS_MATERIALS) * sizeof(Material::GPUParams);
 
     m_materialParamsSSBO = core::Buffer::createShared(ssboSize,
-                                                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                                       core::memory::MemoryUsage::CPU_TO_GPU);
+                                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                                      core::memory::MemoryUsage::CPU_TO_GPU);
     m_cpuMaterialParams.resize(EngineShaderFamilies::MAX_BINDLESS_MATERIALS);
 
     // Write the SSBO buffer descriptor to binding 1.
@@ -2789,15 +2941,15 @@ void RenderGraph::createBindlessResources()
         VkDescriptorBufferInfo bufInfo{};
         bufInfo.buffer = m_materialParamsSSBO->vk();
         bufInfo.offset = 0;
-        bufInfo.range  = ssboSize;
+        bufInfo.range = ssboSize;
 
         VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet          = m_bindlessSet;
-        write.dstBinding      = 1;
+        write.dstSet = m_bindlessSet;
+        write.dstBinding = 1;
         write.dstArrayElement = 0;
         write.descriptorCount = 1;
-        write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        write.pBufferInfo     = &bufInfo;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &bufInfo;
 
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     }
@@ -2822,17 +2974,17 @@ uint32_t RenderGraph::getOrRegisterTexture(Texture *tex)
     m_textureRegistry[tex] = slot;
 
     VkDescriptorImageInfo imageInfo{};
-    imageInfo.imageView   = tex->vkImageView();
-    imageInfo.sampler     = tex->vkSampler();
+    imageInfo.imageView = tex->vkImageView();
+    imageInfo.sampler = tex->vkSampler();
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet          = m_bindlessSet;
-    write.dstBinding      = 0;
+    write.dstSet = m_bindlessSet;
+    write.dstBinding = 0;
     write.dstArrayElement = slot;
     write.descriptorCount = 1;
-    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo      = &imageInfo;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageInfo;
 
     vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     return slot;
@@ -2850,7 +3002,7 @@ uint32_t RenderGraph::getOrRegisterMaterial(Material *mat)
         return 0;
     }
 
-    const uint32_t slot  = m_nextMaterialSlot++;
+    const uint32_t slot = m_nextMaterialSlot++;
     m_materialRegistry[mat] = slot;
     return slot;
 }
@@ -2885,7 +3037,7 @@ void RenderGraph::createGpuCullingPipeline()
 
     VkDescriptorSetLayoutCreateInfo dslCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     dslCI.bindingCount = static_cast<uint32_t>(bindings.size());
-    dslCI.pBindings    = bindings.data();
+    dslCI.pBindings = bindings.data();
     if (vkCreateDescriptorSetLayout(m_device, &dslCI, nullptr, &m_gpuCullDescriptorSetLayout) != VK_SUCCESS)
     {
         VX_ENGINE_ERROR_STREAM("GPU culling: failed to create descriptor set layout\n");
@@ -2895,9 +3047,9 @@ void RenderGraph::createGpuCullingPipeline()
     // ---- Descriptor pool (2 storage-buffer descriptors per frame) ----
     const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT * 2u};
     VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    poolCI.maxSets       = MAX_FRAMES_IN_FLIGHT;
+    poolCI.maxSets = MAX_FRAMES_IN_FLIGHT;
     poolCI.poolSizeCount = 1;
-    poolCI.pPoolSizes    = &poolSize;
+    poolCI.pPoolSizes = &poolSize;
     if (vkCreateDescriptorPool(m_device, &poolCI, nullptr, &m_gpuCullDescriptorPool) != VK_SUCCESS)
     {
         VX_ENGINE_ERROR_STREAM("GPU culling: failed to create descriptor pool\n");
@@ -2909,9 +3061,9 @@ void RenderGraph::createGpuCullingPipeline()
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
         VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        allocInfo.descriptorPool     = m_gpuCullDescriptorPool;
+        allocInfo.descriptorPool = m_gpuCullDescriptorPool;
         allocInfo.descriptorSetCount = 1;
-        allocInfo.pSetLayouts        = &m_gpuCullDescriptorSetLayout;
+        allocInfo.pSetLayouts = &m_gpuCullDescriptorSetLayout;
         if (vkAllocateDescriptorSets(m_device, &allocInfo, &m_gpuCullDescriptorSets[i]) != VK_SUCCESS)
         {
             VX_ENGINE_ERROR_STREAM("GPU culling: failed to allocate descriptor set for frame " << i << "\n");
@@ -2923,7 +3075,7 @@ void RenderGraph::createGpuCullingPipeline()
 
         const std::array<VkWriteDescriptorSet, 2> writes{{
             {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_gpuCullDescriptorSets[i], 0, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &boundsBI, nullptr},
-            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_gpuCullDescriptorSets[i], 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &cmdBI,    nullptr},
+            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_gpuCullDescriptorSets[i], 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &cmdBI, nullptr},
         }};
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
@@ -2931,10 +3083,10 @@ void RenderGraph::createGpuCullingPipeline()
     // ---- Pipeline layout (1 descriptor set + push constants) ----
     const VkPushConstantRange pcRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(GpuCullPushConstants)};
     VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    plCI.setLayoutCount         = 1;
-    plCI.pSetLayouts            = &m_gpuCullDescriptorSetLayout;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &m_gpuCullDescriptorSetLayout;
     plCI.pushConstantRangeCount = 1;
-    plCI.pPushConstantRanges    = &pcRange;
+    plCI.pPushConstantRanges = &pcRange;
     if (vkCreatePipelineLayout(m_device, &plCI, nullptr, &m_gpuCullPipelineLayout) != VK_SUCCESS)
     {
         VX_ENGINE_ERROR_STREAM("GPU culling: failed to create pipeline layout\n");
@@ -2952,7 +3104,7 @@ void RenderGraph::createGpuCullingPipeline()
 
     // ---- Compute pipeline ----
     VkComputePipelineCreateInfo cpCI{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-    cpCI.stage  = computeShader.getInfo();
+    cpCI.stage = computeShader.getInfo();
     cpCI.layout = m_gpuCullPipelineLayout;
     if (vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &cpCI, nullptr, &m_gpuCullPipeline) != VK_SUCCESS)
     {
@@ -2991,14 +3143,14 @@ void RenderGraph::dispatchGpuCulling(VkCommandBuffer cmd)
 
     // Barrier: compute writes to indirect buffer → draw indirect reads it.
     VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
-    barrier.srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
-    barrier.dstStageMask  = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
     barrier.dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
 
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     dep.memoryBarrierCount = 1;
-    dep.pMemoryBarriers    = &barrier;
+    dep.pMemoryBarriers = &barrier;
     vkCmdPipelineBarrier2(cmd, &dep);
 }
 
@@ -3095,14 +3247,102 @@ void RenderGraph::cleanResources()
     m_cpuMaterialParams.clear();
     m_textureRegistry.clear();
     m_materialRegistry.clear();
-    m_nextTextureSlot  = 0;
+    m_nextTextureSlot = 0;
     m_nextMaterialSlot = 0;
     if (m_bindlessPool != VK_NULL_HANDLE)
     {
         // Descriptor sets allocated from the pool are freed with it.
         vkDestroyDescriptorPool(m_device, m_bindlessPool, nullptr);
         m_bindlessPool = VK_NULL_HANDLE;
-        m_bindlessSet  = VK_NULL_HANDLE;
+        m_bindlessSet = VK_NULL_HANDLE;
+    }
+
+    // Sentinel: prevents ~RenderGraph() from calling cleanResources() a second time.
+    m_device = VK_NULL_HANDLE;
+}
+
+void RenderGraph::disablePassData(RenderGraphPassData &data)
+{
+    if (!data.enabled)
+        return;
+
+    // GPU sync — ensure no in-flight work touches this pass's resources.
+    {
+        std::lock_guard<std::mutex> queueLock(core::helpers::queueHostSyncMutex());
+        vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
+    }
+
+    // Let the pass clean up its descriptor sets and cached RenderTarget* pointers.
+    data.renderGraphPass->freeResources();
+
+    // Free the VRAM owned by this pass (its write-side resources).
+    for (const auto &access : data.passInfo.writes)
+    {
+        const auto *desc = m_renderGraphPassesBuilder.getTextureDescription(access.resourceId);
+        if (!desc)
+            continue;
+
+        if (desc->getIsSwapChainTarget())
+            m_renderGraphPassesStorage.removeSwapChainTexture(access.resourceId);
+        else
+            m_renderGraphPassesStorage.removeTexture(access.resourceId);
+    }
+
+    // Mark all downstream passes for recompile so they rebuild their descriptor sets
+    // (their bindings to this pass's output images are now stale).
+    for (const uint32_t downstreamId : data.outgoing)
+    {
+        auto *downstream = findRenderGraphPassById(downstreamId);
+        if (downstream)
+            downstream->renderGraphPass->requestRecompilation();
+    }
+
+    data.enabled = false;
+    sortRenderGraphPasses(); // Rebuild sorted list excluding this pass
+    invalidateAllExecutionCaches();
+}
+
+void RenderGraph::enablePassData(RenderGraphPassData &data)
+{
+    if (data.enabled)
+        return;
+
+    data.enabled = true;
+    data.renderGraphPass->requestRecompilation();
+    sortRenderGraphPasses(); // Rebuild sorted list including this pass again
+    invalidateAllExecutionCaches();
+}
+
+void RenderGraph::registerGroup(PassGroup group)
+{
+    m_passGroups[group.name] = std::move(group);
+}
+
+void RenderGraph::disableGroup(const std::string &name)
+{
+    auto it = m_passGroups.find(name);
+    if (it == m_passGroups.end())
+        return;
+
+    for (const auto &typeIdx : it->second.passes)
+    {
+        auto passIt = m_renderGraphPasses.find(typeIdx);
+        if (passIt != m_renderGraphPasses.end())
+            disablePassData(passIt->second);
+    }
+}
+
+void RenderGraph::enableGroup(const std::string &name)
+{
+    auto it = m_passGroups.find(name);
+    if (it == m_passGroups.end())
+        return;
+
+    for (const auto &typeIdx : it->second.passes)
+    {
+        auto passIt = m_renderGraphPasses.find(typeIdx);
+        if (passIt != m_renderGraphPasses.end())
+            enablePassData(passIt->second);
     }
 }
 

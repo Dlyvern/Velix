@@ -44,10 +44,12 @@ class RenderGraph
         RGPPassInfo passInfo;
         uint32_t indegree{0};           //*How many passes should run before me
         std::vector<uint32_t> outgoing; //*Which passes depend on me(Their ids)
+        bool enabled{true};             // false = skip draw + compile; VRAM freed via disablePass<T>()
     };
 
 public:
     explicit RenderGraph(bool presentToSwapchain = true);
+    ~RenderGraph();
 
     template <typename T, typename... Args>
     T *addPass(Args &&...args)
@@ -68,14 +70,50 @@ public:
         return ptr;
     }
 
-    void prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime);
-    void addAdditionalFrameData(const std::vector<AdditionalPerFrameData> &data)
+    template <typename T>
+    void connect(RGPOutputSlot<T> &from, RGPInputSlot<T> &to)
     {
-        if (data.empty())
-            return;
-
-        m_perFrameData.additionalData.insert(m_perFrameData.additionalData.begin(), data.begin(), data.end());
+        to.connectFrom(from);
+        m_connections.push_back({from.getOwner(), to.getOwner()});
     }
+
+    template <typename T>
+    T *getPass()
+    {
+        const auto type = std::type_index(typeid(T));
+        auto it = m_renderGraphPasses.find(type);
+        return it == m_renderGraphPasses.end() ? nullptr : static_cast<T *>(it->second.renderGraphPass.get());
+    }
+
+    template <typename T>
+    void disablePass()
+    {
+        const auto type = std::type_index(typeid(T));
+        auto it = m_renderGraphPasses.find(type);
+        if (it != m_renderGraphPasses.end())
+            disablePassData(it->second);
+    }
+
+    template <typename T>
+    void enablePass()
+    {
+        const auto type = std::type_index(typeid(T));
+        auto it = m_renderGraphPasses.find(type);
+        if (it != m_renderGraphPasses.end())
+            enablePassData(it->second);
+    }
+
+    struct PassGroup
+    {
+        std::string name;
+        std::vector<std::type_index> passes;
+    };
+
+    void registerGroup(PassGroup group);
+    void disableGroup(const std::string &name);
+    void enableGroup(const std::string &name);
+
+    void prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime);
 
     void draw();
     void setup();
@@ -90,38 +128,21 @@ public:
         return m_imageIndex;
     }
 
-    static constexpr uint16_t MAX_FRAMES_IN_FLIGHT = 1;
-
-    VkDescriptorPool getDescriptorPool() const
-    {
-        return m_descriptorPool;
-    }
+    static constexpr uint16_t MAX_FRAMES_IN_FLIGHT = 2;
 
     void createRenderGraphResources();
-
-    rayTracing::RayTracingGeometryCache &getRayTracingGeometryCache()
-    {
-        return m_rayTracingGeometryCache;
-    }
-
-    const rayTracing::RayTracingGeometryCache &getRayTracingGeometryCache() const
-    {
-        return m_rayTracingGeometryCache;
-    }
-
-    rayTracing::RayTracingScene &getRayTracingScene()
-    {
-        return m_rayTracingScene;
-    }
-
-    const rayTracing::RayTracingScene &getRayTracingScene() const
-    {
-        return m_rayTracingScene;
-    }
 
     void cleanResources();
 
 private:
+    struct RGPConnection
+    {
+        IRenderGraphPass *fromOwner{nullptr};
+        IRenderGraphPass *toOwner{nullptr};
+    };
+
+    std::vector<RGPConnection> m_connections;
+
     struct MeshLocalBounds
     {
         glm::vec3 center{0.0f};
@@ -148,6 +169,10 @@ private:
     static constexpr uint32_t MAX_RENDER_JOBS = 64;
 
     void sortRenderGraphPasses();
+    std::unordered_map<RGPResourceHandler, RGPResourceHandler> buildAliasedTextureRoots();
+
+    void disablePassData(RenderGraphPassData &data);
+    void enablePassData(RenderGraphPassData &data);
     void prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling);
 
     void recreateSwapChain();
@@ -162,6 +187,7 @@ private:
     void compile();
     std::unordered_map<std::type_index, RenderGraphPassData> m_renderGraphPasses;
     std::vector<IRenderGraphPass *> m_sortedRenderGraphPasses;
+    std::vector<uint32_t> m_sortedRenderGraphPassIds;
 
     VkDevice m_device{VK_NULL_HANDLE};
 
@@ -210,32 +236,29 @@ private:
 
     // Unified geometry buffer for static meshes – eliminates per-draw VB/IB rebinds.
     UnifiedGeometryBuffer m_staticUnifiedGeometry;
-    static constexpr VkDeviceSize  UNIFIED_VERTEX_BUFFER_SIZE = 512ULL * 1024 * 1024; // 512 MB
-    static constexpr uint32_t      UNIFIED_INDEX_BUFFER_COUNT = 64 * 1024 * 1024;     // 64 M indices
+    static constexpr VkDeviceSize UNIFIED_VERTEX_BUFFER_SIZE = 512ULL * 1024 * 1024; // 512 MB
+    static constexpr uint32_t UNIFIED_INDEX_BUFFER_COUNT = 64 * 1024 * 1024;         // 64 M indices
 
-    // ---- GPU frustum-culling compute pass ----
-    // Push constants layout (112 bytes, fits the 128-byte Vulkan minimum guarantee).
     struct GpuCullPushConstants
     {
-        uint32_t  batchCount;
-        uint32_t  pad[3];        // pad to align the vec4 array
-        glm::vec4 planes[6];     // normalised frustum planes
+        uint32_t batchCount;
+        uint32_t pad[3];     // pad to align the vec4 array
+        glm::vec4 planes[6]; // normalised frustum planes
     };
-    static_assert(sizeof(GpuCullPushConstants) <= 128, "GpuCullPushConstants exceeds push constant limit");
 
     static constexpr uint32_t MAX_GPU_CULL_BATCHES = 30000u;
 
     std::vector<core::Buffer::SharedPtr> m_batchBoundsSSBOs;    // vec4[] per batch
     std::vector<core::Buffer::SharedPtr> m_indirectDrawBuffers; // VkDrawIndexedIndirectCommand[]
-    std::vector<VkDescriptorSet>         m_gpuCullDescriptorSets;
+    std::vector<VkDescriptorSet> m_gpuCullDescriptorSets;
 
-    VkDescriptorPool      m_gpuCullDescriptorPool{VK_NULL_HANDLE};
+    VkDescriptorPool m_gpuCullDescriptorPool{VK_NULL_HANDLE};
     VkDescriptorSetLayout m_gpuCullDescriptorSetLayout{VK_NULL_HANDLE};
-    VkPipelineLayout      m_gpuCullPipelineLayout{VK_NULL_HANDLE};
-    VkPipeline            m_gpuCullPipeline{VK_NULL_HANDLE};
+    VkPipelineLayout m_gpuCullPipelineLayout{VK_NULL_HANDLE};
+    VkPipeline m_gpuCullPipeline{VK_NULL_HANDLE};
 
-    std::array<glm::vec4, 6> m_lastFrustumPlanes{};  // stored in prepareFrame, used in begin()
-    bool                     m_lastFrustumCullingEnabled{false};
+    std::array<glm::vec4, 6> m_lastFrustumPlanes{}; // stored in prepareFrame, used in begin()
+    bool m_lastFrustumCullingEnabled{false};
 
     void createGpuCullingPipeline();
     void dispatchGpuCulling(VkCommandBuffer cmd);
@@ -249,18 +272,14 @@ private:
 
     bool m_presentToSwapchain{true};
 
-    // ---- Bindless material system ----
-    // One global descriptor set holds all material textures (binding 0, array indexed by uint)
-    // and a SSBO of GPUParams (binding 1, indexed by materialIndex).
-    // GBuffer passes bind this set once per frame at Set 1, eliminating all per-batch material binds.
-    VkDescriptorPool  m_bindlessPool{VK_NULL_HANDLE};
-    VkDescriptorSet   m_bindlessSet{VK_NULL_HANDLE};
+    VkDescriptorPool m_bindlessPool{VK_NULL_HANDLE};
+    VkDescriptorSet m_bindlessSet{VK_NULL_HANDLE};
 
-    core::Buffer::SharedPtr              m_materialParamsSSBO;
-    std::vector<Material::GPUParams>     m_cpuMaterialParams; // CPU mirror, indexed by materialIndex
+    core::Buffer::SharedPtr m_materialParamsSSBO;
+    std::vector<Material::GPUParams> m_cpuMaterialParams; // CPU mirror, indexed by materialIndex
 
-    std::unordered_map<Texture  *, uint32_t> m_textureRegistry;   // texture ptr → slot in allTextures[]
-    std::unordered_map<Material *, uint32_t> m_materialRegistry;  // material ptr → materialIndex
+    std::unordered_map<Texture *, uint32_t> m_textureRegistry;   // texture ptr → slot in allTextures[]
+    std::unordered_map<Material *, uint32_t> m_materialRegistry; // material ptr → materialIndex
 
     uint32_t m_nextTextureSlot{0};
     uint32_t m_nextMaterialSlot{0};
@@ -283,9 +302,12 @@ private:
         std::vector<std::vector<VkImageMemoryBarrier2>> preBarriers;  // [executionIdx]
         std::vector<std::vector<VkImageMemoryBarrier2>> postBarriers; // [executionIdx]
     };
+
     std::vector<CachedPassExecutionData> m_passExecutionCache;
     void invalidateAllExecutionCaches();
     void buildExecutionCacheForPass(size_t sortedPassIndex);
+
+    std::unordered_map<std::string, PassGroup> m_passGroups;
 
     std::atomic<bool> m_swapchainResizeRequested{false};
     bool m_hasWindowResizeCallback{false};

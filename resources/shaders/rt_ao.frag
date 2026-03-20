@@ -4,7 +4,7 @@
 const float PI = 3.14159265359;
 
 layout(location = 0) in  vec2 vUV;
-layout(location = 0) out vec4 outAO; // rgba: bentNormal.xyz (encoded), a=AO
+layout(location = 0) out float outAO;
 
 // set 0 = cameraDescriptorSetLayout (binding 0=CameraUBO, 1=LightSpaceUBO, 2=LightSSBO, 3=TLAS)
 layout(set = 0, binding = 0) uniform CameraUBO
@@ -61,12 +61,12 @@ void main()
 
     if (depth >= 1.0)
     {
-        outAO = vec4(0.5, 0.5, 1.0, 1.0);
+        outAO = 1.0;
         return;
     }
     if (pc.enabled < 0.5)
     {
-        outAO = texture(uSSAO, vUV);
+        outAO = texture(uSSAO, vUV).r;
         return;
     }
 
@@ -85,7 +85,6 @@ void main()
 
     int   nSamples  = max(int(pc.aoSamples), 1);
     float occlusion = 0.0;
-    vec3  bentNormal = vec3(0.0);
 
     float px = gl_FragCoord.x;
     float py = gl_FragCoord.y;
@@ -112,22 +111,12 @@ void main()
 
         if (rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT)
         {
-            float tHit   = rayQueryGetIntersectionTEXT(rq, true);
+            float tHit = rayQueryGetIntersectionTEXT(rq, true);
             float falloff = 1.0 - clamp(tHit / pc.aoRadius, 0.0, 1.0);
-            occlusion   += falloff;
-        }
-        else
-        {
-            bentNormal += worldDir;
+            occlusion += falloff;
         }
     }
 
     occlusion /= float(nSamples);
-    float ao = clamp(1.0 - occlusion, 0.0, 1.0);
-
-    vec3 bn = (length(bentNormal) > 0.001)
-        ? normalize((camera.view * vec4(normalize(bentNormal), 0.0)).xyz)
-        : N_view;
-
-    outAO = vec4(bn * 0.5 + 0.5, ao);
+    outAO = clamp(1.0 - occlusion, 0.0, 1.0);
 }

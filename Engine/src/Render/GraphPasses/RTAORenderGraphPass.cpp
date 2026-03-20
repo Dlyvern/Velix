@@ -39,6 +39,7 @@ RTAORenderGraphPass::RTAORenderGraphPass(RGPResourceHandler &depthHandler,
 {
     setDebugName("RTAO render graph pass");
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    outputs.ao.setOwner(this);
 }
 
 void RTAORenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
@@ -59,6 +60,7 @@ void RTAORenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         m_outputHandlers.push_back(h);
         builder.write(h, RGPTextureUsage::COLOR_ATTACHMENT);
     }
+    outputs.ao.set(m_outputHandlers);
 
     for (uint32_t i = 0; i < imageCount; ++i)
         builder.read(m_ssaoHandlers[i], RGPTextureUsage::SAMPLED);
@@ -184,7 +186,7 @@ RTAORenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &rende
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue  = {.color = {0.5f, 0.5f, 1.0f, 1.0f}};
+    color.clearValue  = {.color = {1.0f, 0.0f, 0.0f, 0.0f}};
 
     exec.colorsRenderingItems = {color};
     exec.useDepth    = false;
@@ -202,6 +204,14 @@ void RTAORenderGraphPass::setExtent(VkExtent2D extent)
     m_viewport = {0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f};
     m_scissor  = {{0, 0}, extent};
     requestRecompilation();
+}
+
+void RTAORenderGraphPass::freeResources()
+{
+    m_outputTargets.clear();
+    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+    outputs.ao.set(MultiHandle{});
 }
 
 ELIX_CUSTOM_NAMESPACE_END

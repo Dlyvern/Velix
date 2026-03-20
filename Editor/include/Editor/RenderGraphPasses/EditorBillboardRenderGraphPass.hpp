@@ -41,6 +41,7 @@ public:
     void setLightIconTexturePath(std::string texturePath);
     void setAudioIconTexturePath(std::string texturePath);
     void setScene(std::shared_ptr<engine::Scene> scene);
+    void setBillboardsVisible(bool visible);
     std::vector<engine::renderGraph::RGPResourceHandler> &getHandlers() { return m_outputHandlers; }
 
 private:
@@ -70,6 +71,7 @@ private:
     std::array<VkDescriptorSet, 3> m_iconDescriptorSets{VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
     std::vector<VkDescriptorSet> m_passthroughDescriptorSets;
     bool m_passthroughSetsBuilt{false};
+    bool m_showBillboards{true};
 
     VkFormat   m_format{VK_FORMAT_UNDEFINED};
     VkExtent2D m_extent{};

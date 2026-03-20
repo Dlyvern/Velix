@@ -247,7 +247,7 @@ void GameRuntime::initRenderGraph()
     const bool useRTAO = settings.enableRayTracing && settings.enableRTAO && supportsRayQuery;
     const bool useRTReflections = settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT;
 
-    m_gBufferRenderGraphPass = m_renderGraph->addPass<renderGraph::GBufferRenderGraphPass>();
+    m_gBufferRenderGraphPass = m_renderGraph->addPass<renderGraph::GBufferRenderGraphPass>(false);
     m_shadowRenderGraphPass = m_renderGraph->addPass<renderGraph::ShadowRenderGraphPass>();
 
     m_ssaoRenderGraphPass = m_renderGraph->addPass<renderGraph::SSAORenderGraphPass>(
@@ -286,7 +286,6 @@ void GameRuntime::initRenderGraph()
         m_gBufferRenderGraphPass->getNormalTextureHandlers(),
         m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
         m_gBufferRenderGraphPass->getEmissiveTextureHandlers(),
-        m_gBufferRenderGraphPass->getTangentAnisoTextureHandlers(),
         rtShadowHandlers,
         aoHandlers);
 

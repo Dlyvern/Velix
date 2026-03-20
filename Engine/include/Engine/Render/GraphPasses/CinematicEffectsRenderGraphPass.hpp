@@ -33,6 +33,11 @@ public:
 
     std::vector<RGPResourceHandler> &getHandlers() { return m_outputHandlers; }
 
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> color;
+    } outputs;
+
 private:
     std::array<VkClearValue, 1> m_clearValues;
 

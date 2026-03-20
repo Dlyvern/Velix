@@ -87,6 +87,28 @@ const RenderTarget *RGPResourcesStorage::getTexture(const RGPResourceHandler &ha
     return it == m_textures.end() ? nullptr : it->second.get();
 }
 
+void RGPResourcesStorage::removeTexture(const RGPResourceHandler &handler)
+{
+    m_textures.erase(handler);
+}
+
+void RGPResourcesStorage::removeSwapChainTexture(const RGPResourceHandler &handler)
+{
+    m_swapChainTextures.erase(handler);
+}
+
+void RGPResourcesStorage::removeTextures(const std::vector<RGPResourceHandler> &handlers)
+{
+    for (const auto &h : handlers)
+        m_textures.erase(h);
+}
+
+void RGPResourcesStorage::removeSwapChainTextures(const std::vector<RGPResourceHandler> &handlers)
+{
+    for (const auto &h : handlers)
+        m_swapChainTextures.erase(h);
+}
+
 void RGPResourcesStorage::cleanup()
 {
     m_textures.clear();

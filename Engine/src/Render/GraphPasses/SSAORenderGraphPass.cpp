@@ -78,11 +78,12 @@ SSAORenderGraphPass::SSAORenderGraphPass(RGPResourceHandler &depthHandler,
 {
     setDebugName("SSAO render graph pass");
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    outputs.ao.setOwner(this);
 }
 
 void SSAORenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 {
-    m_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    m_format = VK_FORMAT_R8_UNORM;
 
     builder.read(m_depthHandler, RGPTextureUsage::SAMPLED);
 
@@ -102,6 +103,7 @@ void SSAORenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         m_outputHandlers.push_back(h);
         builder.write(h, RGPTextureUsage::COLOR_ATTACHMENT);
     }
+    outputs.ao.set(m_outputHandlers);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
@@ -246,7 +248,7 @@ SSAORenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &rende
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue = {.color = {0.5f, 0.5f, 1.0f, 1.0f}}; // bent=+Z, AO=1
+    color.clearValue = {.color = {1.0f, 0.0f, 0.0f, 0.0f}};
 
     exec.colorsRenderingItems = {color};
     exec.useDepth = false;
@@ -265,6 +267,14 @@ void SSAORenderGraphPass::setExtent(VkExtent2D extent)
     m_viewport = {0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f};
     m_scissor = {{0, 0}, extent};
     requestRecompilation();
+}
+
+void SSAORenderGraphPass::freeResources()
+{
+    m_outputTargets.clear();
+    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+    outputs.ao.set(MultiHandle{});
 }
 
 ELIX_CUSTOM_NAMESPACE_END

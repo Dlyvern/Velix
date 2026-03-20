@@ -4,13 +4,16 @@
 #include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
 
+#include <unordered_map>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 class RGPResourcesCompiler
 {
 public:
-    std::vector<VkImageMemoryBarrier2> compile(RGPResourcesBuilder &builder, RGPResourcesStorage &storage);
+    std::vector<VkImageMemoryBarrier2> compile(RGPResourcesBuilder &builder, RGPResourcesStorage &storage,
+                                               const std::unordered_map<RGPResourceHandler, RGPResourceHandler> *aliasRoots = nullptr);
     std::vector<VkImageMemoryBarrier2> compile(const std::vector<RGPResourceHandler> &resourcesIds, RGPResourcesBuilder &builder, RGPResourcesStorage &storage);
 
     std::vector<VkImageMemoryBarrier2> onSwapChainResized(RGPResourcesBuilder &builder, RGPResourcesStorage &storage);

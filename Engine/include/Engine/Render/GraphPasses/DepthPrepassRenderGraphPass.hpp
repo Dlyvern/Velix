@@ -22,6 +22,11 @@ public:
 
     RGPResourceHandler &getDepthTextureHandler() { return m_depthTextureHandler; }
 
+    struct Outputs
+    {
+        RGPOutputSlot<SingleHandle> depth;
+    } outputs;
+
 private:
     VkExtent2D m_extent{};
     VkViewport m_viewport{};

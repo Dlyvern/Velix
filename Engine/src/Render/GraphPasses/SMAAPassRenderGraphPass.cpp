@@ -40,6 +40,7 @@ SMAAPassRenderGraphPass::SMAAPassRenderGraphPass(std::vector<RGPResourceHandler>
     setDebugName("SMAA render graph pass");
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    outputs.color.setOwner(this);
 }
 
 void SMAAPassRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
@@ -63,6 +64,7 @@ void SMAAPassRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         m_outputHandlers.push_back(h);
         builder.write(h, RGPTextureUsage::COLOR_ATTACHMENT);
     }
+    outputs.color.set(m_outputHandlers);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
@@ -190,6 +192,14 @@ void SMAAPassRenderGraphPass::setExtent(VkExtent2D extent)
     m_viewport = {0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f};
     m_scissor = {{0, 0}, extent};
     requestRecompilation();
+}
+
+void SMAAPassRenderGraphPass::freeResources()
+{
+    m_outputTargets.clear();
+    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+    outputs.color.set(MultiHandle{});
 }
 
 ELIX_CUSTOM_NAMESPACE_END

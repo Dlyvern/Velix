@@ -24,6 +24,12 @@ public:
     RenderTarget *getSwapChainTexture(const RGPResourceHandler &handler, int imageIndex);
     RenderTarget *getTexture(const RGPResourceHandler &handler);
 
+    void removeTexture(const RGPResourceHandler &handler);
+
+    void removeSwapChainTexture(const RGPResourceHandler &handler);
+    void removeTextures(const std::vector<RGPResourceHandler> &handlers);
+    void removeSwapChainTextures(const std::vector<RGPResourceHandler> &handlers);
+
     void cleanup();
 
 private:

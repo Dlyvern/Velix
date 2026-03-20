@@ -2,6 +2,7 @@
 #define ELIX_LIGHTING_RENDER_GRAPH_PASS_HPP
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
+#include "Engine/Texture.hpp"
 #include "Core/PipelineLayout.hpp"
 #include "Core/Sampler.hpp"
 
@@ -17,7 +18,6 @@ public:
                             std::vector<RGPResourceHandler> &normalTextureHandlers,
                             std::vector<RGPResourceHandler> &materialTextureHandlers,
                             std::vector<RGPResourceHandler> &emissiveTextureHandlers,
-                            std::vector<RGPResourceHandler> &tangentAnisoTextureHandlers,
                             std::vector<RGPResourceHandler> *rtShadowTextureHandlers = nullptr,
                             std::vector<RGPResourceHandler> *aoTextureHandlers = nullptr);
 
@@ -35,6 +35,11 @@ public:
     {
         return m_colorTextureHandler;
     }
+
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> color;
+    } outputs;
 
 private:
     std::array<VkClearValue, 1> m_clearValues;
@@ -58,13 +63,13 @@ private:
     std::vector<RGPResourceHandler> &m_normalTextureHandlers;
     std::vector<RGPResourceHandler> &m_materialTextureHandlers;
     std::vector<RGPResourceHandler> &m_emissiveTextureHandlers;
-    std::vector<RGPResourceHandler> &m_tangentAnisoTextureHandlers;
 
     std::vector<RGPResourceHandler> *m_rtShadowTextureHandlers{nullptr}; // optional, binding 10
-    std::vector<RGPResourceHandler> *m_aoTextureHandlers{nullptr}; // optional, binding 7
+    std::vector<RGPResourceHandler> *m_aoTextureHandlers{nullptr}; // optional, binding 9
 
     core::Sampler::SharedPtr m_defaultSampler{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};
+    Texture::SharedPtr m_defaultWhiteTexture{nullptr};
 
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};

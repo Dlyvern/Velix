@@ -5,6 +5,8 @@
 
 #include "Engine/Utilities/ImageUtilities.hpp"
 
+#include <unordered_set>
+
 namespace
 {
     static VkImageLayout chooseBootstrapLayout(VkImageLayout initialLayout, VkImageLayout finalLayout)
@@ -37,6 +39,18 @@ namespace
         }
 
         return 0;
+    }
+
+    static elix::engine::renderGraph::RGPResourceHandler resolveAliasRoot(
+        const elix::engine::renderGraph::RGPResourceHandler &handler,
+        const std::unordered_map<elix::engine::renderGraph::RGPResourceHandler,
+                                 elix::engine::renderGraph::RGPResourceHandler> *aliasRoots)
+    {
+        if (!aliasRoots)
+            return handler;
+
+        const auto it = aliasRoots->find(handler);
+        return it == aliasRoots->end() ? handler : it->second;
     }
 
     static void chooseDstSync(VkImageLayout layout,
@@ -97,6 +111,7 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(const std::vect
     const auto &device = vulkanContext->getDevice();
 
     std::vector<VkImageMemoryBarrier2> barriers;
+    std::unordered_set<RenderTarget *> recreatedTargets;
 
     for (const auto &idHandler : resourcesIds)
     {
@@ -109,20 +124,36 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(const std::vect
             continue;
 
         auto *renderTarget = storage.getTexture(idHandler);
-        renderTarget->destroyVkImageView();
-        renderTarget->destroyVkImage();
+        if (!renderTarget)
+        {
+            const auto extent = textureDescription->getCustomExtentFunction() ? textureDescription->getCustomExtentFunction()() : textureDescription->getExtent();
+            auto newRenderTarget = std::make_shared<RenderTarget>(device, extent, textureDescription->getFormat(), toVkUsage(textureDescription->getUsage()),
+                                                                  utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription->getFormat()), core::memory::MemoryUsage::AUTO,
+                                                                  VK_IMAGE_TILING_OPTIMAL, textureDescription->getArrayLayers(), textureDescription->getFlags(),
+                                                                  textureDescription->getSampleCount());
+            newRenderTarget->createVkImageView(textureDescription->getImageViewtype());
+            storage.addTexture(idHandler, newRenderTarget);
+            renderTarget = newRenderTarget.get();
+        }
+        else
+        {
+            if (!recreatedTargets.insert(renderTarget).second)
+                continue;
 
-        auto extent = textureDescription->getCustomExtentFunction() ? textureDescription->getCustomExtentFunction()() : textureDescription->getExtent();
+            renderTarget->destroyVkImageView();
+            renderTarget->destroyVkImage();
 
-        renderTarget->createVkImage(extent, toVkUsage(textureDescription->getUsage()), core::memory::MemoryUsage::AUTO, textureDescription->getFormat(),
-                                    VK_IMAGE_TILING_OPTIMAL, textureDescription->getArrayLayers(), textureDescription->getFlags(),
-                                    textureDescription->getSampleCount());
-        renderTarget->createVkImageView(textureDescription->getImageViewtype());
+            const auto extent = textureDescription->getCustomExtentFunction() ? textureDescription->getCustomExtentFunction()() : textureDescription->getExtent();
+
+            renderTarget->createVkImage(extent, toVkUsage(textureDescription->getUsage()), core::memory::MemoryUsage::AUTO, textureDescription->getFormat(),
+                                        VK_IMAGE_TILING_OPTIMAL, textureDescription->getArrayLayers(), textureDescription->getFlags(),
+                                        textureDescription->getSampleCount());
+            renderTarget->createVkImageView(textureDescription->getImageViewtype());
+        }
 
         if (textureDescription->getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription->getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
             continue;
 
-        // Help to translate image from VK_IMAGE_LAYOUT_UNDEFINED
         const auto &image = storage.getTexture(idHandler);
 
         VkImageSubresourceRange subresourceRange{};
@@ -151,19 +182,18 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(const std::vect
     return barriers;
 }
 
-std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBuilder &builder, RGPResourcesStorage &storage)
+std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBuilder &builder, RGPResourcesStorage &storage,
+                                                              const std::unordered_map<RGPResourceHandler, RGPResourceHandler> *aliasRoots)
 {
     const auto &vulkanContext = core::VulkanContext::getContext();
     const auto &device = vulkanContext->getDevice();
 
     std::vector<VkImageMemoryBarrier2> barriers;
+    std::unordered_map<RGPResourceHandler, std::shared_ptr<RenderTarget>> aliasedRenderTargets;
+    std::unordered_set<RGPResourceHandler> bootstrappedRoots;
 
     for (const auto &[id, textureDescription] : builder.getAllTextureDescriptions())
     {
-        // TODO namespace above core::memory::MemoryUsage
-
-        // VkDeviceSize before = core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM();
-
         if (textureDescription.getIsSwapChainTarget())
         {
             const auto &swapChain = vulkanContext->getSwapchain();
@@ -180,8 +210,6 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
 
                 if (textureDescription.getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription.getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
                     continue;
-
-                // Help to translate image from VK_IMAGE_LAYOUT_UNDEFINED
 
                 VkImageSubresourceRange subresourceRange{};
                 subresourceRange.aspectMask = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat());
@@ -205,10 +233,15 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
 
                 barriers.push_back(barrier);
             }
+
+            continue;
         }
-        else
+
+        const RGPResourceHandler rootHandler = resolveAliasRoot(id, aliasRoots);
+        auto aliasedTargetIt = aliasedRenderTargets.find(rootHandler);
+        if (aliasedTargetIt == aliasedRenderTargets.end())
         {
-            auto extent = textureDescription.getCustomExtentFunction() ? textureDescription.getCustomExtentFunction()() : textureDescription.getExtent();
+            const VkExtent2D extent = textureDescription.getCustomExtentFunction() ? textureDescription.getCustomExtentFunction()() : textureDescription.getExtent();
 
             auto renderTarget = std::make_shared<RenderTarget>(device, extent, textureDescription.getFormat(), toVkUsage(textureDescription.getUsage()),
                                                                utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat()), core::memory::MemoryUsage::AUTO,
@@ -216,41 +249,38 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
                                                                textureDescription.getSampleCount());
             renderTarget->createVkImageView(textureDescription.getImageViewtype());
 
-            storage.addTexture(id, std::move(renderTarget));
-
-            if (textureDescription.getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription.getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
-                continue;
-
-            // Help to translate image from VK_IMAGE_LAYOUT_UNDEFINED
-            const auto &image = storage.getTexture(id);
-
-            VkImageSubresourceRange subresourceRange{};
-            subresourceRange.aspectMask = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat());
-            subresourceRange.baseMipLevel = 0;
-            subresourceRange.levelCount = 1;
-            subresourceRange.baseArrayLayer = 0;
-            subresourceRange.layerCount = textureDescription.getArrayLayers();
-
-            VkPipelineStageFlags2 srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
-            VkAccessFlags2 srcAccessMask = 0;
-            VkPipelineStageFlags2 dstStageMask;
-            VkAccessFlags2 dstAccessMask;
-
-            const VkImageLayout bootstrapLayout = chooseBootstrapLayout(textureDescription.getInitialLayout(), textureDescription.getFinalLayout());
-
-            chooseDstSync(bootstrapLayout, dstStageMask, dstAccessMask);
-
-            auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*image->getImage(), srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
-                                                                               bootstrapLayout, srcStageMask,
-                                                                               dstStageMask, subresourceRange);
-
-            barriers.push_back(barrier);
+            aliasedTargetIt = aliasedRenderTargets.emplace(rootHandler, std::move(renderTarget)).first;
         }
 
-        // VkDeviceSize after = core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM();
-        // VkDeviceSize delta = after - before;
-        // const std::string textureName = textureDescription.getIsSwapChainTarget() ? "swap chain" : "common";
-        // VX_ENGINE_INFO_STREAM("New " << textureName << " " << textureDescription.getDebugName() << " texture allocated " << delta << '\n');
+        storage.addTexture(id, aliasedTargetIt->second);
+
+        if (!bootstrappedRoots.insert(rootHandler).second)
+            continue;
+
+        if (textureDescription.getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription.getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
+            continue;
+
+        VkImageSubresourceRange subresourceRange{};
+        subresourceRange.aspectMask = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat());
+        subresourceRange.baseMipLevel = 0;
+        subresourceRange.levelCount = 1;
+        subresourceRange.baseArrayLayer = 0;
+        subresourceRange.layerCount = textureDescription.getArrayLayers();
+
+        VkPipelineStageFlags2 srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+        VkAccessFlags2 srcAccessMask = 0;
+        VkPipelineStageFlags2 dstStageMask;
+        VkAccessFlags2 dstAccessMask;
+
+        const VkImageLayout bootstrapLayout = chooseBootstrapLayout(textureDescription.getInitialLayout(), textureDescription.getFinalLayout());
+
+        chooseDstSync(bootstrapLayout, dstStageMask, dstAccessMask);
+
+        auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(*aliasedTargetIt->second->getImage(), srcAccessMask, dstAccessMask, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                                           bootstrapLayout, srcStageMask,
+                                                                           dstStageMask, subresourceRange);
+
+        barriers.push_back(barrier);
     }
 
     return barriers;

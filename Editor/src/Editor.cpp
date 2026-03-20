@@ -1772,7 +1772,7 @@ void Editor::drawGuizmo()
     }
 }
 
-void Editor::initStyle()
+void Editor::initStyle(bool imguiBackendRecreated)
 {
     ImGuiStyle &style = ImGui::GetStyle();
     ImVec4 *colors = style.Colors;
@@ -1880,9 +1880,13 @@ void Editor::initStyle()
     ImGuiIO &io = ImGui::GetIO();
     io.Fonts->AddFontFromFileTTF("./resources/fonts/JetBrainsMono-Regular.ttf", 16.0f);
 
-    m_resourceStorage.loadNeededResources();
+    m_resourceStorage.loadNeededResources(imguiBackendRecreated);
 
-    m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage, m_assetsPreviewSystem);
+    m_defaultSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
+    m_assetsPreviewSystem.refreshImguiDescriptors(m_defaultSampler ? m_defaultSampler->vk() : VK_NULL_HANDLE, imguiBackendRecreated);
+
+    if (!m_assetsWindow)
+        m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage, m_assetsPreviewSystem);
     m_assetsWindow->setOnMaterialOpenRequest([this](const std::filesystem::path &path)
                                              { openMaterialEditor(path); });
     m_assetsWindow->setOnTextAssetOpenRequest([this](const std::filesystem::path &path)
@@ -1938,6 +1942,9 @@ void Editor::initStyle()
                                               }
                                           } });
 
+    if (auto project = m_currentProject.lock())
+        m_assetsWindow->setProject(project.get());
+
     m_entityIdBuffer = core::Buffer::createShared(sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                   core::memory::MemoryUsage::CPU_TO_GPU);
 
@@ -1952,8 +1959,6 @@ void Editor::initStyle()
         window.setPosition(0, 0);
         window.setSize(mode->width, mode->height);
     }
-
-    m_defaultSampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 
     m_textEditor.SetPalette(TextEditor::GetDarkPalette());
     m_textEditor.SetShowWhitespaces(false);

@@ -80,6 +80,7 @@ private:
     int m_loadingPreviousWindowHeight{0};
 
     void initGameViewportRenderGraph();
+    void shutdownGameViewportRenderGraph();
     void initEditorRenderGraph();
     void switchActiveScene(const std::shared_ptr<engine::Scene> &scene);
     void onEditorModeChanged(Editor::EditorMode mode);

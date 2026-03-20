@@ -32,8 +32,14 @@ public:
         const RenderGraphPassContext &renderContext) const override;
 
     void setExtent(VkExtent2D extent);
+    void freeResources() override;
 
     std::vector<RGPResourceHandler> &getHandlers() { return m_outputHandlers; }
+
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> color;
+    } outputs;
 
 private:
     void initHistory(core::CommandBuffer::SharedPtr commandBuffer);

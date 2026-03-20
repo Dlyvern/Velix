@@ -58,7 +58,7 @@ public:
     Editor();
     ~Editor();
 
-    void initStyle();
+    void initStyle(bool imguiBackendRecreated = false);
 
     engine::Camera::SharedPtr getCurrentCamera();
 

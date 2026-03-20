@@ -1,7 +1,7 @@
 #version 450
 
 layout(location = 0) in  vec2 vUV;
-layout(location = 0) out vec4 outAOBent; // rgb=bent normal encoded, a=ao
+layout(location = 0) out float outAO;
 
 layout(set = 0, binding = 0) uniform sampler2D uNormal; // encoded view normal
 layout(set = 0, binding = 1) uniform sampler2D uDepth;  // hardware depth [0,1]
@@ -17,7 +17,7 @@ layout(push_constant) uniform PC
     mat4 invProjection;
     vec4 params0; // x=texelSize.x, y=texelSize.y, z=radius, w=bias
     vec4 params1; // x=strength, y=enabled, z=samples, w=gtaoEnabled
-    vec4 params2; // x=gtaoDirections, y=gtaoSteps, z=useBentNormals, w=reserved
+    vec4 params2; // x=gtaoDirections, y=gtaoSteps, z=reserved, w=reserved
 } pc;
 
 vec2 texelSize()
@@ -65,11 +65,6 @@ int gtaoSteps()
     return clamp(int(pc.params2.y + 0.5), 2, 8);
 }
 
-bool useBentNormals()
-{
-    return pc.params2.z > 0.5;
-}
-
 vec3 reconstructViewPos(vec2 uv, float depth)
 {
     vec4 clipPos = vec4(uv * 2.0 - 1.0, depth, 1.0);
@@ -81,14 +76,6 @@ vec3 decodeViewNormal(vec2 uv)
 {
     vec3 N = texture(uNormal, uv).xyz * 2.0 - 1.0;
     return normalize(N);
-}
-
-float hash11(float p)
-{
-    p = fract(p * 0.1031);
-    p *= p + 33.33;
-    p *= p + p;
-    return fract(p);
 }
 
 float hash21(vec2 p)
@@ -111,12 +98,11 @@ mat3 buildTBN(vec3 N)
     return mat3(T, B, N);
 }
 
-vec4 computeSSAO(vec3 fragPos, vec3 N, float depth)
+float computeSSAO(vec3 fragPos, vec3 N)
 {
     mat3 TBN = buildTBN(N);
     float occ = 0.0;
     float valid = 0.0;
-    vec3 bentAccum = vec3(0.0);
 
     const int count = 64;
     int activeSamples = sampleCount();
@@ -155,25 +141,18 @@ vec4 computeSSAO(vec3 fragPos, vec3 N, float depth)
         float w = NoDir * rangeWeight * isOccluder;
         occ += w;
         valid += 1.0;
-        bentAccum -= dir * w;
     }
 
-    float ao = 1.0;
-    if (valid > 0.0)
-        ao = 1.0 - clamp(pow(occ / valid, strength()), 0.0, 1.0);
+    if (valid <= 0.0)
+        return 1.0;
 
-    vec3 bentNormal = N;
-    if (useBentNormals() && valid > 0.0)
-        bentNormal = normalize(N + bentAccum / valid);
-
-    return vec4(bentNormal * 0.5 + 0.5, clamp(ao, 0.0, 1.0));
+    return 1.0 - clamp(pow(occ / valid, strength()), 0.0, 1.0);
 }
 
-vec4 computeGTAO(vec3 fragPos, vec3 N)
+float computeGTAO(vec3 fragPos, vec3 N)
 {
     float occ = 0.0;
     float valid = 0.0;
-    vec3 bentAccum = vec3(0.0);
 
     int dirCount = gtaoDirections();
     int stepCount = gtaoSteps();
@@ -213,36 +192,26 @@ vec4 computeGTAO(vec3 fragPos, vec3 N)
 
             occ += w;
             valid += 1.0;
-            bentAccum -= dirVS * w;
         }
     }
 
-    float ao = 1.0;
-    if (valid > 0.0)
-        ao = 1.0 - clamp(pow(occ / valid, strength()), 0.0, 1.0);
+    if (valid <= 0.0)
+        return 1.0;
 
-    vec3 bentNormal = N;
-    if (useBentNormals() && valid > 0.0)
-        bentNormal = normalize(N + bentAccum / valid);
-
-    return vec4(bentNormal * 0.5 + 0.5, clamp(ao, 0.0, 1.0));
+    return 1.0 - clamp(pow(occ / valid, strength()), 0.0, 1.0);
 }
 
 void main()
 {
     float depth = texture(uDepth, vUV).r;
-    vec3 N = decodeViewNormal(vUV);
-
     if (!enabled() || depth >= 0.9999)
     {
-        outAOBent = vec4(N * 0.5 + 0.5, 1.0);
+        outAO = 1.0;
         return;
     }
 
+    vec3 N = decodeViewNormal(vUV);
     vec3 fragPos = reconstructViewPos(vUV, depth);
 
-    if (gtaoEnabled())
-        outAOBent = computeGTAO(fragPos, N);
-    else
-        outAOBent = computeSSAO(fragPos, N, depth);
+    outAO = gtaoEnabled() ? computeGTAO(fragPos, N) : computeSSAO(fragPos, N);
 }

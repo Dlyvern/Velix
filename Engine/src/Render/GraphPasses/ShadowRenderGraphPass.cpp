@@ -24,6 +24,9 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 ShadowRenderGraphPass::ShadowRenderGraphPass()
 {
     this->setDebugName("Shadow render graph pass");
+    outputs.directionalShadow.setOwner(this);
+    outputs.spotShadow.setOwner(this);
+    outputs.cubeShadow.setOwner(this);
     m_clearValue.depthStencil = {1.0f, 0};
     updateDirectionalCascadeCountFromSettings();
     updateShadowExtentFromSettings();
@@ -65,6 +68,18 @@ void ShadowRenderGraphPass::syncQualitySettings()
     updateShadowExtentFromSettings();
 }
 
+void ShadowRenderGraphPass::syncActiveShadowCounts(uint32_t activeSpotCount, uint32_t activePointCount)
+{
+    const uint32_t desiredSpotCount = std::min(activeSpotCount, ShadowConstants::MAX_SPOT_SHADOWS);
+    const uint32_t desiredPointCount = std::min(activePointCount, ShadowConstants::MAX_POINT_SHADOWS);
+    if (desiredSpotCount != m_spotShadowCount || desiredPointCount != m_pointShadowCount)
+    {
+        m_spotShadowCount = desiredSpotCount;
+        m_pointShadowCount = desiredPointCount;
+        requestRecompilation();
+    }
+}
+
 void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
 {
     updateShadowExtentFromSettings();
@@ -81,7 +96,7 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
                                                     { return m_extent; });
     depthTextureDescription.setInitialLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     depthTextureDescription.setFinalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
-    depthTextureDescription.setArrayLayers(ShadowConstants::MAX_DIRECTIONAL_CASCADES);
+    depthTextureDescription.setArrayLayers(m_directionalCascadeCount);
     depthTextureDescription.setImageViewtype(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
 
     RGPTextureDescription cubeDepthTextureDescription(m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
@@ -90,7 +105,7 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
     cubeDepthTextureDescription.setCustomExtentFunction([this]
                                                         { return m_extent; });
     cubeDepthTextureDescription.setDebugName("__ELIX_CUBE_SHADOW_DEPTH_TEXTURE__");
-    cubeDepthTextureDescription.setArrayLayers(ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES);
+    cubeDepthTextureDescription.setArrayLayers(std::max(m_pointShadowCount, 1u) * ShadowConstants::POINT_SHADOW_FACES);
     cubeDepthTextureDescription.setFlags(VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
     cubeDepthTextureDescription.setImageViewtype(VK_IMAGE_VIEW_TYPE_CUBE_ARRAY);
 
@@ -100,7 +115,7 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
     arrayDepthTextureDescription.setCustomExtentFunction([this]
                                                          { return m_extent; });
     arrayDepthTextureDescription.setDebugName("__ELIX_ARRAY_SHADOW_DEPTH_TEXTURE__");
-    arrayDepthTextureDescription.setArrayLayers(ShadowConstants::MAX_SPOT_SHADOWS);
+    arrayDepthTextureDescription.setArrayLayers(std::max(m_spotShadowCount, 1u));
     arrayDepthTextureDescription.setImageViewtype(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
 
     builder.createTexture(depthTextureDescription, m_depthTextureHandler);
@@ -111,6 +126,10 @@ void ShadowRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
     builder.createTexture(arrayDepthTextureDescription, m_depthArrayTextureHandler);
     builder.write(m_depthArrayTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+
+    outputs.directionalShadow.set(m_depthTextureHandler);
+    outputs.spotShadow.set(m_depthArrayTextureHandler);
+    outputs.cubeShadow.set(m_depthCubeTextureHandler);
 }
 
 void ShadowRenderGraphPass::compile(RGPResourcesStorage &storage)
@@ -125,16 +144,16 @@ void ShadowRenderGraphPass::compile(RGPResourcesStorage &storage)
 
     m_executionInfos.clear();
     m_executionInfos.reserve(m_directionalCascadeCount +
-                             ShadowConstants::MAX_SPOT_SHADOWS +
-                             ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES);
+                             m_spotShadowCount +
+                             m_pointShadowCount * ShadowConstants::POINT_SHADOW_FACES);
 
     for (uint32_t cascadeIndex = 0; cascadeIndex < m_directionalCascadeCount; ++cascadeIndex)
         m_executionInfos.push_back(ShadowExecutionInfo{.type = ShadowExecutionType::Directional, .layer = cascadeIndex, .lightIndex = cascadeIndex, .faceIndex = 0});
 
-    for (uint32_t spotIndex = 0; spotIndex < ShadowConstants::MAX_SPOT_SHADOWS; ++spotIndex)
+    for (uint32_t spotIndex = 0; spotIndex < m_spotShadowCount; ++spotIndex)
         m_executionInfos.push_back(ShadowExecutionInfo{.type = ShadowExecutionType::Spot, .layer = spotIndex, .lightIndex = spotIndex, .faceIndex = 0});
 
-    for (uint32_t pointIndex = 0; pointIndex < ShadowConstants::MAX_POINT_SHADOWS; ++pointIndex)
+    for (uint32_t pointIndex = 0; pointIndex < m_pointShadowCount; ++pointIndex)
     {
         for (uint32_t face = 0; face < ShadowConstants::POINT_SHADOW_FACES; ++face)
         {
@@ -211,10 +230,10 @@ void ShadowRenderGraphPass::rebuildLayerViews()
         m_directionalLayerViews.push_back(createSingleLayerView(m_renderTarget, cascadeIndex));
 
     m_spotLayerViews.reserve(ShadowConstants::MAX_SPOT_SHADOWS);
-    for (uint32_t spotIndex = 0; spotIndex < ShadowConstants::MAX_SPOT_SHADOWS; ++spotIndex)
+    for (uint32_t spotIndex = 0; spotIndex < m_spotShadowCount; ++spotIndex)
         m_spotLayerViews.push_back(createSingleLayerView(m_arrayRenderTarget, spotIndex));
 
-    const uint32_t pointLayerCount = ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES;
+    const uint32_t pointLayerCount = m_pointShadowCount * ShadowConstants::POINT_SHADOW_FACES;
     m_pointLayerViews.reserve(pointLayerCount);
     for (uint32_t layer = 0; layer < pointLayerCount; ++layer)
         m_pointLayerViews.push_back(createSingleLayerView(m_cubeRenderTarget, layer));
@@ -342,8 +361,8 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
 std::vector<IRenderGraphPass::RenderPassExecution> ShadowRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const
 {
     const uint32_t activeDirectionalCount = std::min(renderContext.activeDirectionalShadowCount, m_directionalCascadeCount);
-    const uint32_t activeSpotCount = std::min(renderContext.activeSpotShadowCount, ShadowConstants::MAX_SPOT_SHADOWS);
-    const uint32_t activePointCount = std::min(renderContext.activePointShadowCount, ShadowConstants::MAX_POINT_SHADOWS);
+    const uint32_t activeSpotCount = std::min(renderContext.activeSpotShadowCount, m_spotShadowCount);
+    const uint32_t activePointCount = std::min(renderContext.activePointShadowCount, m_pointShadowCount);
     const uint32_t activeExecutionCount =
         activeDirectionalCount +
         activeSpotCount +

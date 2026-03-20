@@ -34,6 +34,7 @@ BloomRenderGraphPass::BloomRenderGraphPass(std::vector<RGPResourceHandler> &hdrI
     setDebugName("Bloom extract render graph pass");
     m_clearValues[0].color = {0.f, 0.f, 0.f, 1.f};
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    outputs.bloom.setOwner(this);
 }
 
 void BloomRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
@@ -55,6 +56,7 @@ void BloomRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         m_bloomHandlers.push_back(h);
         builder.write(h, RGPTextureUsage::COLOR_ATTACHMENT);
     }
+    outputs.bloom.set(m_bloomHandlers);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
@@ -172,6 +174,14 @@ void BloomRenderGraphPass::setExtent(VkExtent2D extent)
     m_viewport    = {0.0f, 0.0f, (float)m_bloomExtent.width, (float)m_bloomExtent.height, 0.0f, 1.0f};
     m_scissor     = {{0, 0}, m_bloomExtent};
     requestRecompilation();
+}
+
+void BloomRenderGraphPass::freeResources()
+{
+    m_bloomRenderTargets.clear();
+    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+    outputs.bloom.set(MultiHandle{});
 }
 
 ELIX_NESTED_NAMESPACE_END

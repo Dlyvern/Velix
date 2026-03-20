@@ -37,6 +37,18 @@ public:
     bool getShowAssetThumbnails() const;
     void setShowAssetThumbnails(bool enabled);
 
+    bool getShowModelAssetPreviews() const;
+    void setShowModelAssetPreviews(bool enabled);
+
+    bool getShowMaterialAssetPreviews() const;
+    void setShowMaterialAssetPreviews(bool enabled);
+
+    bool getShowTextureAssetPreviews() const;
+    void setShowTextureAssetPreviews(bool enabled);
+
+    bool getShowEditorBillboards() const;
+    void setShowEditorBillboards(bool enabled);
+
     bool getDetailedRenderProfilingEnabled() const;
     void setDetailedRenderProfilingEnabled(bool enabled);
 
@@ -57,6 +69,10 @@ private:
     std::filesystem::path m_configFilePath;
     std::string m_preferredIdeId{"vscode"};
     bool m_showAssetThumbnails{true};
+    bool m_showModelAssetPreviews{true};
+    bool m_showMaterialAssetPreviews{true};
+    bool m_showTextureAssetPreviews{true};
+    bool m_showEditorBillboards{true};
     bool m_detailedRenderProfilingEnabled{true};
     std::vector<IdeInfo> m_detectedIdes;
 };

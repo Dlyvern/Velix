@@ -22,6 +22,7 @@ RTReflectionDenoiseRenderGraphPass::RTReflectionDenoiseRenderGraphPass(
 {
     setDebugName("RT Reflection denoise render graph pass");
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    outputs.color.setOwner(this);
 }
 
 void RTReflectionDenoiseRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
@@ -47,6 +48,7 @@ void RTReflectionDenoiseRenderGraphPass::setup(renderGraph::RGPResourcesBuilder 
         m_outputHandlers.push_back(handler);
         builder.write(handler, RGPTextureUsage::COLOR_ATTACHMENT_STORAGE);
     }
+    outputs.color.set(m_outputHandlers);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
@@ -224,6 +226,14 @@ void RTReflectionDenoiseRenderGraphPass::destroyComputePipeline()
         m_computePipeline = VK_NULL_HANDLE;
     }
     m_computeShader.destroyVk();
+}
+
+void RTReflectionDenoiseRenderGraphPass::freeResources()
+{
+    m_outputRenderTargets.clear();
+    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+    outputs.color.set(MultiHandle{});
 }
 
 ELIX_CUSTOM_NAMESPACE_END

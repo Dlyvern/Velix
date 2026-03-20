@@ -68,9 +68,10 @@ public:
         return 0u;
     }
 
-    /// Return false to skip the pass entirely this frame (no GPU work issued).
-    /// The pass still participates in the dependency graph; skipping is purely a
-    /// per-frame execution decision and requires no render-graph recompile.
+    /// Dynamic feature toggle for the pass implementation.
+    /// RenderGraph keeps the pass in the execution chain; passes with downstream
+    /// consumers should handle the disabled state internally (typically as a
+    /// passthrough/no-op) instead of relying on graph-level skipping.
     virtual bool isEnabled() const { return true; }
 
     /// Return false for passes that touch thread-unsafe global state during command recording.
@@ -79,6 +80,12 @@ public:
     virtual std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const = 0;
 
     virtual void cleanup() {}
+
+    /// Free all GPU resources owned by this pass (VkImages, descriptor sets, etc.).
+    /// Called by RenderGraph::disablePass<T>() before removing the pass from the draw loop.
+    /// Does NOT destroy pipelines — those are format/layout dependent, not image dependent.
+    /// Default no-op so all existing passes compile without changes.
+    virtual void freeResources() {}
 
     virtual ~IRenderGraphPass() = default;
 

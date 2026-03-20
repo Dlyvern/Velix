@@ -632,6 +632,54 @@ void AssetsWindow::drawSearchBar()
 
     ImGui::SameLine();
 
+    if (ImGui::Button("Thumbnail Settings"))
+        ImGui::OpenPopup("AssetThumbnailSettingsPopup");
+
+    if (ImGui::BeginPopup("AssetThumbnailSettingsPopup"))
+    {
+        bool settingsChanged = false;
+
+        ImGui::TextUnformatted("Asset previews");
+
+        bool showModelPreviews = engineConfig.getShowModelAssetPreviews();
+        if (ImGui::Checkbox("Model Previews", &showModelPreviews))
+        {
+            engineConfig.setShowModelAssetPreviews(showModelPreviews);
+            settingsChanged = true;
+        }
+
+        bool showMaterialPreviews = engineConfig.getShowMaterialAssetPreviews();
+        if (ImGui::Checkbox("Material Previews", &showMaterialPreviews))
+        {
+            engineConfig.setShowMaterialAssetPreviews(showMaterialPreviews);
+            settingsChanged = true;
+        }
+
+        bool showTexturePreviews = engineConfig.getShowTextureAssetPreviews();
+        if (ImGui::Checkbox("Texture Previews", &showTexturePreviews))
+        {
+            engineConfig.setShowTextureAssetPreviews(showTexturePreviews);
+            settingsChanged = true;
+        }
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Viewport");
+
+        bool showEditorBillboards = engineConfig.getShowEditorBillboards();
+        if (ImGui::Checkbox("Editor Billboards", &showEditorBillboards))
+        {
+            engineConfig.setShowEditorBillboards(showEditorBillboards);
+            settingsChanged = true;
+        }
+
+        if (settingsChanged && !engineConfig.save())
+            VX_EDITOR_WARNING_STREAM("Failed to persist asset preview settings to engine config\n");
+
+        ImGui::EndPopup();
+    }
+
+    ImGui::SameLine();
+
     const float searchWidth = std::max(ImGui::GetContentRegionAvail().x - 100.0f, 120.0f);
 
     ImGui::SetNextItemWidth(searchWidth);
@@ -670,6 +718,9 @@ void AssetsWindow::drawTreeView()
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
                                    ImGuiTreeNodeFlags_OpenOnDoubleClick |
                                    ImGuiTreeNodeFlags_SpanFullWidth;
+
+        if (node == m_treeRoot.get())
+            flags |= ImGuiTreeNodeFlags_DefaultOpen;
 
         if (node->children.empty())
             flags |= ImGuiTreeNodeFlags_Leaf;
@@ -748,7 +799,7 @@ void AssetsWindow::drawAssetGrid()
 
             ImGui::BeginGroup();
 
-            VkDescriptorSet icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.tex.elixasset");
+            VkDescriptorSet icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/file.tex.elixasset");
             std::string filename = assetPath.filename().string();
             std::string extension = assetPath.extension().string();
             std::string extensionLower = toLowerCopy(extension);

@@ -176,9 +176,13 @@ bool EngineConfig::save() const
     }
 
     nlohmann::json json;
-    json["version"] = 5;
+    json["version"] = 6;
     json["preferred_ide"] = m_preferredIdeId;
     json["show_asset_thumbnails"] = m_showAssetThumbnails;
+    json["show_model_asset_previews"] = m_showModelAssetPreviews;
+    json["show_material_asset_previews"] = m_showMaterialAssetPreviews;
+    json["show_texture_asset_previews"] = m_showTextureAssetPreviews;
+    json["show_editor_billboards"] = m_showEditorBillboards;
     json["detailed_render_profiling"] = m_detailedRenderProfilingEnabled;
 
     std::ofstream file(m_configFilePath);
@@ -239,6 +243,46 @@ bool EngineConfig::getShowAssetThumbnails() const
 void EngineConfig::setShowAssetThumbnails(bool enabled)
 {
     m_showAssetThumbnails = enabled;
+}
+
+bool EngineConfig::getShowModelAssetPreviews() const
+{
+    return m_showModelAssetPreviews;
+}
+
+void EngineConfig::setShowModelAssetPreviews(bool enabled)
+{
+    m_showModelAssetPreviews = enabled;
+}
+
+bool EngineConfig::getShowMaterialAssetPreviews() const
+{
+    return m_showMaterialAssetPreviews;
+}
+
+void EngineConfig::setShowMaterialAssetPreviews(bool enabled)
+{
+    m_showMaterialAssetPreviews = enabled;
+}
+
+bool EngineConfig::getShowTextureAssetPreviews() const
+{
+    return m_showTextureAssetPreviews;
+}
+
+void EngineConfig::setShowTextureAssetPreviews(bool enabled)
+{
+    m_showTextureAssetPreviews = enabled;
+}
+
+bool EngineConfig::getShowEditorBillboards() const
+{
+    return m_showEditorBillboards;
+}
+
+void EngineConfig::setShowEditorBillboards(bool enabled)
+{
+    m_showEditorBillboards = enabled;
 }
 
 bool EngineConfig::getDetailedRenderProfilingEnabled() const
@@ -339,6 +383,10 @@ void EngineConfig::applyDefaults()
     m_configFilePath = m_configDirectory / "engine_config.json";
     m_preferredIdeId = "vscode";
     m_showAssetThumbnails = true;
+    m_showModelAssetPreviews = true;
+    m_showMaterialAssetPreviews = true;
+    m_showTextureAssetPreviews = true;
+    m_showEditorBillboards = true;
     m_detailedRenderProfilingEnabled = true;
 }
 
@@ -371,6 +419,18 @@ bool EngineConfig::loadFromDisk()
 
     if (json.contains("show_asset_thumbnails") && json["show_asset_thumbnails"].is_boolean())
         m_showAssetThumbnails = json["show_asset_thumbnails"].get<bool>();
+
+    if (json.contains("show_model_asset_previews") && json["show_model_asset_previews"].is_boolean())
+        m_showModelAssetPreviews = json["show_model_asset_previews"].get<bool>();
+
+    if (json.contains("show_material_asset_previews") && json["show_material_asset_previews"].is_boolean())
+        m_showMaterialAssetPreviews = json["show_material_asset_previews"].get<bool>();
+
+    if (json.contains("show_texture_asset_previews") && json["show_texture_asset_previews"].is_boolean())
+        m_showTextureAssetPreviews = json["show_texture_asset_previews"].get<bool>();
+
+    if (json.contains("show_editor_billboards") && json["show_editor_billboards"].is_boolean())
+        m_showEditorBillboards = json["show_editor_billboards"].get<bool>();
 
     if (json.contains("detailed_render_profiling") && json["detailed_render_profiling"].is_boolean())
         m_detailedRenderProfilingEnabled = json["detailed_render_profiling"].get<bool>();

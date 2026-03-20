@@ -394,18 +394,13 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
 
     if (key.shader == ShaderId::GBufferStatic || key.shader == ShaderId::GBufferSkinned)
     {
-        if (colorBlendAttachments.size() >= 4)
-            colorBlendAttachments[3].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+        if (colorBlendAttachments.size() >= 5)
+            colorBlendAttachments.back().colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
 
-        if (key.gbufferOutputMode == GBufferOutputMode::ObjectOnly && colorBlendAttachments.size() >= 4)
+        if (key.gbufferOutputMode == GBufferOutputMode::ObjectOnly && colorBlendAttachments.size() >= 5)
         {
-            colorBlendAttachments[0].colorWriteMask = 0;
-            colorBlendAttachments[1].colorWriteMask = 0;
-            colorBlendAttachments[2].colorWriteMask = 0;
-            if (colorBlendAttachments.size() >= 5)
-                colorBlendAttachments[4].colorWriteMask = 0;
-            if (colorBlendAttachments.size() >= 6)
-                colorBlendAttachments[5].colorWriteMask = 0;
+            for (size_t attachmentIndex = 0; attachmentIndex + 1 < colorBlendAttachments.size(); ++attachmentIndex)
+                colorBlendAttachments[attachmentIndex].colorWriteMask = 0;
         }
     }
 

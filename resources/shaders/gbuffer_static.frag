@@ -9,12 +9,11 @@ layout(location = 4) in vec3 fragBitangentView;
 layout(location = 5) in flat uint fragObjectId;
 layout(location = 6) in flat uint fragMaterialIndex;
 
-layout(location = 0) out vec4 outGBufferNormal;         // normal (encoded)
-layout(location = 1) out vec4 outGBufferAlbedo;         // albedo + alpha
-layout(location = 2) out vec4 outGBufferMaterial;       // ao, roughness, metallic, reserved
-layout(location = 3) out uint outObjectId;
-layout(location = 4) out vec4 outGBufferTangentAniso;   // tangent (encoded), aniso mask
-layout(location = 5) out vec4 outGBufferEmissive;       // emissive rgb
+layout(location = 0) out vec4 outGBufferNormal;   // normal (encoded)
+layout(location = 1) out vec4 outGBufferAlbedo;   // albedo + alpha
+layout(location = 2) out vec4 outGBufferMaterial; // ao, roughness, metallic, reserved
+layout(location = 3) out vec4 outGBufferEmissive; // emissive rgb
+layout(location = 4) out uint outObjectId;
 
 layout(set = 0, binding = 0) uniform CameraUniformObject
 {
@@ -103,23 +102,6 @@ vec3 getNormalView(vec3 normalTS, MaterialGPUParams mat)
     return normalize(TBN * normalTS);
 }
 
-vec3 getTangentView()
-{
-    vec3 N = normalize(fragNormalView);
-    vec3 T = normalize(fragTangentView);
-    vec3 B = normalize(fragBitangentView);
-
-    T = normalize(T - dot(T, N) * N);
-    if (length(T) < 0.001)
-        T = normalize(cross(abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0), N));
-
-    float handedness = dot(cross(N, T), B) < 0.0 ? -1.0 : 1.0;
-    vec3 fixedB = normalize(cross(N, T)) * handedness;
-    T = normalize(cross(fixedB, N));
-
-    return T;
-}
-
 void main()
 {
     outObjectId = fragObjectId;
@@ -142,8 +124,8 @@ void main()
 
     vec3 normalSample = texture(allTextures[nonuniformEXT(mat.normalTexIdx)], uv).xyz * 2.0 - 1.0;
 
-    vec3  orm      = texture(allTextures[nonuniformEXT(mat.ormTexIdx)], uv).rgb;
-    float ao       = mix(1.0, orm.r, mat.aoStrength);
+    vec3  orm       = texture(allTextures[nonuniformEXT(mat.ormTexIdx)], uv).rgb;
+    float ao        = mix(1.0, orm.r, mat.aoStrength);
     float roughness = clamp(orm.g * mat.roughnessFactor, 0.04, 1.0);
     float metallic  = clamp(orm.b * mat.metallicFactor,  0.0,  1.0);
 
@@ -163,9 +145,8 @@ void main()
     vec3 N    = getNormalView(normalSample, mat);
     vec3 encN = N * 0.5 + 0.5;
 
-    outGBufferNormal      = vec4(encN, 1.0);
-    outGBufferAlbedo      = vec4(albedo, alpha);
-    outGBufferMaterial    = vec4(ao, roughness, metallic, 0.0);
-    outGBufferTangentAniso = vec4(getTangentView() * 0.5 + 0.5, 1.0);
-    outGBufferEmissive    = vec4(emissive, 1.0);
+    outGBufferNormal   = vec4(encN, 1.0);
+    outGBufferAlbedo   = vec4(albedo, alpha);
+    outGBufferMaterial = vec4(ao, roughness, metallic, 0.0);
+    outGBufferEmissive = vec4(emissive, 1.0);
 }

@@ -26,6 +26,7 @@ ParticleRenderGraphPass::ParticleRenderGraphPass(std::vector<RGPResourceHandler>
     : m_colorInputHandlers(colorInputHandlers), m_depthInputHandler(depthInputHandler)
 {
     setDebugName("Particle render graph pass");
+    outputs.color.setOwner(this);
 }
 
 void ParticleRenderGraphPass::setExtent(VkExtent2D extent)
@@ -73,6 +74,7 @@ void ParticleRenderGraphPass::setup(RGPResourcesBuilder &builder)
         m_outputHandlers.push_back(h);
         builder.write(h, RGPTextureUsage::COLOR_ATTACHMENT);
     }
+    outputs.color.set(m_outputHandlers);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 

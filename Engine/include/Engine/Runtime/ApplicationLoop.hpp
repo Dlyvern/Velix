@@ -25,12 +25,10 @@ private:
     void loop();
     void shutdown();
 
-    std::unique_ptr<IRuntime> m_runtime{nullptr};
-
-private:
     std::shared_ptr<core::VulkanContext> m_vulkanContext{nullptr};
     platform::Window::SharedPtr m_window{nullptr};
     std::string m_graphicsPipelineCachePath;
+    std::unique_ptr<IRuntime> m_runtime{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

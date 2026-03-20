@@ -48,7 +48,7 @@ struct PerObjectInstanceData
 struct GPUBatchBounds
 {
     glm::vec3 center{0.0f};
-    float     radius{0.0f};  // <= 0 means "always visible" (no bounds data)
+    float radius{0.0f}; // <= 0 means "always visible" (no bounds data)
 };
 
 struct DrawBatch
@@ -69,12 +69,6 @@ struct RTReflectionShadingInstanceData
     uint32_t padding1{0u};
     uint32_t padding2{0u};
     Material::GPUParams material{};
-};
-
-class AdditionalPerFrameData
-{
-public:
-    std::vector<DrawItem> drawItems;
 };
 
 class RenderGraphPassContext
@@ -107,8 +101,6 @@ public:
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_DIRECTIONAL_CASCADES> directionalShadowDrawBatches;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_SPOT_SHADOWS> spotShadowDrawBatches;
     std::array<std::vector<DrawBatch>, ShadowConstants::MAX_POINT_SHADOWS * ShadowConstants::POINT_SHADOW_FACES> pointShadowDrawBatches;
-
-    std::vector<AdditionalPerFrameData> additionalData;
 
     glm::vec3 directionalLightDirection;
     float directionalLightStrength;

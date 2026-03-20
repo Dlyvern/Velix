@@ -38,6 +38,7 @@ RTShadowsRenderGraphPass::RTShadowsRenderGraphPass(std::vector<RGPResourceHandle
 {
     setDebugName("RT Shadows render graph pass");
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    outputs.color.setOwner(this);
 }
 
 bool RTShadowsRenderGraphPass::canUsePipelinePath() const
@@ -93,6 +94,7 @@ void RTShadowsRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         m_outputHandlers.push_back(handler);
         builder.write(handler, RGPTextureUsage::COLOR_ATTACHMENT_STORAGE);
     }
+    outputs.color.set(m_outputHandlers);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
@@ -447,6 +449,14 @@ void RTShadowsRenderGraphPass::destroyComputePipeline()
     m_computeShader.destroyVk();
 }
 
+
+void RTShadowsRenderGraphPass::freeResources()
+{
+    m_outputRenderTargets.clear();
+    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+    outputs.color.set(MultiHandle{});
+}
 
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END

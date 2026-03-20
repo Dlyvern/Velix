@@ -9,7 +9,7 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 class GBufferRenderGraphPass : public IRenderGraphPass
 {
 public:
-    GBufferRenderGraphPass();
+    explicit GBufferRenderGraphPass(bool enableObjectId = false);
 
     /// Call before setup() to tell GBuffer to reuse an already-written depth buffer
     /// (e.g. from a DepthPrepassRenderGraphPass) instead of creating its own.
@@ -35,16 +35,24 @@ public:
     std::vector<RGPResourceHandler> &getAlbedoTextureHandlers() { return m_albedoTextureHandlers; }
     std::vector<RGPResourceHandler> &getNormalTextureHandlers() { return m_normalTextureHandlers; }
     std::vector<RGPResourceHandler> &getMaterialTextureHandlers() { return m_materialTextureHandlers; }
-    std::vector<RGPResourceHandler> &getTangentAnisoTextureHandlers() { return m_tangentAnisoTextureHandlers; }
     std::vector<RGPResourceHandler> &getEmissiveTextureHandlers() { return m_emissiveTextureHandlers; }
 
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle>  normals;
+        RGPOutputSlot<MultiHandle>  albedo;
+        RGPOutputSlot<MultiHandle>  material;
+        RGPOutputSlot<MultiHandle>  emissive;
+        RGPOutputSlot<SingleHandle> depth;
+        RGPOutputSlot<SingleHandle> objectId;
+    } outputs;
+
 private:
-    std::array<VkClearValue, 7> m_clearValues{};
+    std::array<VkClearValue, 6> m_clearValues{};
 
     std::vector<const RenderTarget *> m_normalRenderTargets;
     std::vector<const RenderTarget *> m_albedoRenderTargets;
     std::vector<const RenderTarget *> m_materialRenderTargets;
-    std::vector<const RenderTarget *> m_tangentAnisoRenderTargets;
     std::vector<const RenderTarget *> m_emissiveRenderTargets;
     const RenderTarget *m_depthRenderTarget{nullptr};
     const RenderTarget *m_objectIdRenderTarget{nullptr};
@@ -59,11 +67,12 @@ private:
     std::vector<RGPResourceHandler> m_normalTextureHandlers;
     std::vector<RGPResourceHandler> m_albedoTextureHandlers;
     std::vector<RGPResourceHandler> m_materialTextureHandlers;
-    std::vector<RGPResourceHandler> m_tangentAnisoTextureHandlers;
     std::vector<RGPResourceHandler> m_emissiveTextureHandlers;
 
     RGPResourceHandler m_depthTextureHandler;
     RGPResourceHandler m_objectIdTextureHandler;
+
+    bool m_enableObjectId{false};
 
     // External depth prepass support
     bool                m_hasExternalDepth{false};

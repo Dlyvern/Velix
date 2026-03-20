@@ -24,17 +24,23 @@ namespace
     };
 }
 
-GBufferRenderGraphPass::GBufferRenderGraphPass()
+GBufferRenderGraphPass::GBufferRenderGraphPass(bool enableObjectId)
+    : m_enableObjectId(enableObjectId)
 {
-    m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
+    m_clearValues[0].color = {{0.5f, 0.5f, 1.0f, 1.0f}};
     m_clearValues[1].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-    m_clearValues[2].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    m_clearValues[2].color = {{1.0f, 1.0f, 0.0f, 0.0f}};
     m_clearValues[3].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-    m_clearValues[4].color = {{0.5f, 0.5f, 0.5f, 0.0f}};
-    m_clearValues[5].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-    m_clearValues[6].depthStencil = {1.0f, 0};
+    m_clearValues[4].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    m_clearValues[5].depthStencil = {1.0f, 0};
 
     setDebugName("GBuffer render graph pass");
+    outputs.normals.setOwner(this);
+    outputs.albedo.setOwner(this);
+    outputs.material.setOwner(this);
+    outputs.emissive.setOwner(this);
+    outputs.depth.setOwner(this);
+    outputs.objectId.setOwner(this);
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
 }
 
@@ -268,26 +274,19 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     materialColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     materialColor.clearValue = m_clearValues[2];
 
-    VkRenderingAttachmentInfo objectColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    objectColor.imageView = m_objectIdRenderTarget->vkImageView();
-    objectColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    objectColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    objectColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    objectColor.clearValue = m_clearValues[3];
-
-    VkRenderingAttachmentInfo tangentAnisoColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    tangentAnisoColor.imageView = m_tangentAnisoRenderTargets[renderContext.currentImageIndex]->vkImageView();
-    tangentAnisoColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    tangentAnisoColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    tangentAnisoColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    tangentAnisoColor.clearValue = m_clearValues[4];
-
     VkRenderingAttachmentInfo emissiveColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     emissiveColor.imageView = m_emissiveRenderTargets[renderContext.currentImageIndex]->vkImageView();
     emissiveColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     emissiveColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     emissiveColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    emissiveColor.clearValue = m_clearValues[5];
+    emissiveColor.clearValue = m_clearValues[3];
+
+    VkRenderingAttachmentInfo objectColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    objectColor.imageView = m_objectIdRenderTarget ? m_objectIdRenderTarget->vkImageView() : VK_NULL_HANDLE;
+    objectColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    objectColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    objectColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    objectColor.clearValue = m_clearValues[4];
 
     VkRenderingAttachmentInfo depthAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     depthAttachment.imageView = m_depthRenderTarget->vkImageView();
@@ -297,17 +296,19 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     // (alpha-masked/transparent objects still write depth with LESS).
     depthAttachment.loadOp = m_hasExternalDepth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depthAttachment.clearValue = m_clearValues[6];
+    depthAttachment.clearValue = m_clearValues[5];
 
-    execution.colorsRenderingItems = {normalColor, albedoColor, materialColor, objectColor, tangentAnisoColor, emissiveColor};
+    execution.colorsRenderingItems = {normalColor, albedoColor, materialColor, emissiveColor};
+    if (m_enableObjectId && m_objectIdRenderTarget)
+        execution.colorsRenderingItems.push_back(objectColor);
     execution.depthRenderingItem = depthAttachment;
 
     execution.targets[m_normalTextureHandlers[renderContext.currentImageIndex]] = m_normalRenderTargets[renderContext.currentImageIndex];
     execution.targets[m_albedoTextureHandlers[renderContext.currentImageIndex]] = m_albedoRenderTargets[renderContext.currentImageIndex];
     execution.targets[m_materialTextureHandlers[renderContext.currentImageIndex]] = m_materialRenderTargets[renderContext.currentImageIndex];
-    execution.targets[m_tangentAnisoTextureHandlers[renderContext.currentImageIndex]] = m_tangentAnisoRenderTargets[renderContext.currentImageIndex];
     execution.targets[m_emissiveTextureHandlers[renderContext.currentImageIndex]] = m_emissiveRenderTargets[renderContext.currentImageIndex];
-    execution.targets[m_objectIdTextureHandler] = m_objectIdRenderTarget;
+    if (m_enableObjectId && m_objectIdRenderTarget && m_objectIdTextureHandler.isValid())
+        execution.targets[m_objectIdTextureHandler] = m_objectIdRenderTarget;
     execution.targets[m_depthTextureHandler] = m_depthRenderTarget;
 
     return {execution};
@@ -324,13 +325,12 @@ void GBufferRenderGraphPass::setExtent(VkExtent2D extent)
 void GBufferRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 {
     m_depthRenderTarget = storage.getTexture(m_depthTextureHandler);
-    m_objectIdRenderTarget = storage.getTexture(m_objectIdTextureHandler);
+    m_objectIdRenderTarget = (m_enableObjectId && m_objectIdTextureHandler.isValid()) ? storage.getTexture(m_objectIdTextureHandler) : nullptr;
 
     const int imageCount = static_cast<int>(core::VulkanContext::getContext()->getSwapchain()->getImages().size());
     m_normalRenderTargets.resize(imageCount);
     m_albedoRenderTargets.resize(imageCount);
     m_materialRenderTargets.resize(imageCount);
-    m_tangentAnisoRenderTargets.resize(imageCount);
     m_emissiveRenderTargets.resize(imageCount);
 
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
@@ -338,23 +338,32 @@ void GBufferRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         m_normalRenderTargets[imageIndex] = storage.getTexture(m_normalTextureHandlers[imageIndex]);
         m_albedoRenderTargets[imageIndex] = storage.getTexture(m_albedoTextureHandlers[imageIndex]);
         m_materialRenderTargets[imageIndex] = storage.getTexture(m_materialTextureHandlers[imageIndex]);
-        m_tangentAnisoRenderTargets[imageIndex] = storage.getTexture(m_tangentAnisoTextureHandlers[imageIndex]);
         m_emissiveRenderTargets[imageIndex] = storage.getTexture(m_emissiveTextureHandlers[imageIndex]);
     }
 }
 
 void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 {
-    const VkFormat hdrImageFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-    const VkFormat tangentAnisoFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-    m_colorFormats = {hdrImageFormat, hdrImageFormat, hdrImageFormat, VK_FORMAT_R32_UINT, tangentAnisoFormat, hdrImageFormat};
+    m_normalTextureHandlers.clear();
+    m_albedoTextureHandlers.clear();
+    m_materialTextureHandlers.clear();
+    m_emissiveTextureHandlers.clear();
+    m_colorFormats.clear();
+    m_objectIdTextureHandler = {};
+
+    const VkFormat normalFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkFormat albedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkFormat materialFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkFormat emissiveFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    m_colorFormats = {normalFormat, albedoFormat, materialFormat, emissiveFormat};
+    if (m_enableObjectId)
+        m_colorFormats.push_back(VK_FORMAT_R32_UINT);
     m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
 
-    RGPTextureDescription normalTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    RGPTextureDescription albedoTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    RGPTextureDescription materialTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    RGPTextureDescription tangentAnisoTextureDescription{tangentAnisoFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    RGPTextureDescription emissiveTextureDescription{hdrImageFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    RGPTextureDescription normalTextureDescription{normalFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    RGPTextureDescription albedoTextureDescription{albedoFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    RGPTextureDescription materialTextureDescription{materialFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    RGPTextureDescription emissiveTextureDescription{emissiveFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription objectIdTextureDescription{VK_FORMAT_R32_UINT, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription depthTextureDescription{m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
 
@@ -364,8 +373,6 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
                                                      { return m_extent; });
     materialTextureDescription.setCustomExtentFunction([this]
                                                        { return m_extent; });
-    tangentAnisoTextureDescription.setCustomExtentFunction([this]
-                                                           { return m_extent; });
     emissiveTextureDescription.setCustomExtentFunction([this]
                                                        { return m_extent; });
     objectIdTextureDescription.setCustomExtentFunction([this]
@@ -376,8 +383,11 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     objectIdTextureDescription.setDebugName("__ELIX_OBJECT_ID_GBUFFER_TEXTURE__");
     depthTextureDescription.setDebugName("__ELIX_DEPTH_GBUFFER_TEXTURE__");
 
-    m_objectIdTextureHandler = builder.createTexture(objectIdTextureDescription);
-    builder.write(m_objectIdTextureHandler, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC);
+    if (m_enableObjectId)
+    {
+        m_objectIdTextureHandler = builder.createTexture(objectIdTextureDescription);
+        builder.write(m_objectIdTextureHandler, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC);
+    }
 
     if (m_hasExternalDepth && m_externalDepthHandlerPtr)
     {
@@ -395,32 +405,40 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     }
 
     const int imageCount = static_cast<int>(core::VulkanContext::getContext()->getSwapchain()->getImages().size());
+    m_normalTextureHandlers.reserve(imageCount);
+    m_albedoTextureHandlers.reserve(imageCount);
+    m_materialTextureHandlers.reserve(imageCount);
+    m_emissiveTextureHandlers.reserve(imageCount);
+
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
     {
         normalTextureDescription.setDebugName("__ELIX_NORMAL_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         albedoTextureDescription.setDebugName("__ELIX_ALBEDO_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         materialTextureDescription.setDebugName("__ELIX_MATERIAL_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
-        tangentAnisoTextureDescription.setDebugName("__ELIX_TANGENT_ANISO_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         emissiveTextureDescription.setDebugName("__ELIX_EMISSIVE_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
 
         const auto normalTexture = builder.createTexture(normalTextureDescription);
         const auto albedoTexture = builder.createTexture(albedoTextureDescription);
         const auto materialTexture = builder.createTexture(materialTextureDescription);
-        const auto tangentAnisoTexture = builder.createTexture(tangentAnisoTextureDescription);
         const auto emissiveTexture = builder.createTexture(emissiveTextureDescription);
 
         m_normalTextureHandlers.push_back(normalTexture);
         m_albedoTextureHandlers.push_back(albedoTexture);
         m_materialTextureHandlers.push_back(materialTexture);
-        m_tangentAnisoTextureHandlers.push_back(tangentAnisoTexture);
         m_emissiveTextureHandlers.push_back(emissiveTexture);
 
         builder.write(normalTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(albedoTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(materialTexture, RGPTextureUsage::COLOR_ATTACHMENT);
-        builder.write(tangentAnisoTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(emissiveTexture, RGPTextureUsage::COLOR_ATTACHMENT);
     }
+
+    outputs.normals.set(m_normalTextureHandlers);
+    outputs.albedo.set(m_albedoTextureHandlers);
+    outputs.material.set(m_materialTextureHandlers);
+    outputs.emissive.set(m_emissiveTextureHandlers);
+    outputs.depth.set(m_depthTextureHandler);
+    outputs.objectId.set(m_objectIdTextureHandler);
 }
 
 ELIX_CUSTOM_NAMESPACE_END

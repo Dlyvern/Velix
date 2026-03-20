@@ -29,8 +29,14 @@ public:
 
     void compile(renderGraph::RGPResourcesStorage &storage) override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
+    void freeResources() override;
 
     std::vector<RGPResourceHandler> &getAOHandlers() { return m_outputHandlers; }
+
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> ao;
+    } outputs;
 
 private:
     RGPResourceHandler              &m_depthHandler;
@@ -40,7 +46,7 @@ private:
     std::vector<RGPResourceHandler>   m_outputHandlers;
     std::vector<const RenderTarget *> m_outputTargets;
 
-    VkFormat m_format{VK_FORMAT_R16G16B16A16_SFLOAT};
+    VkFormat m_format{VK_FORMAT_R8_UNORM};
 
     core::PipelineLayout::SharedPtr      m_pipelineLayout{nullptr};
     core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};

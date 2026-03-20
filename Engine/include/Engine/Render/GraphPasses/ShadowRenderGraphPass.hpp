@@ -25,6 +25,7 @@ public:
     void compile(RGPResourcesStorage &storage) override;
     void cleanup() override;
     void syncQualitySettings();
+    void syncActiveShadowCounts(uint32_t activeSpotCount, uint32_t activePointCount);
 
     RGPResourceHandler &getDirectionalShadowHandler()
     {
@@ -40,6 +41,13 @@ public:
     {
         return m_depthCubeTextureHandler;
     }
+
+    struct Outputs
+    {
+        RGPOutputSlot<SingleHandle> directionalShadow;
+        RGPOutputSlot<SingleHandle> spotShadow;
+        RGPOutputSlot<SingleHandle> cubeShadow;
+    } outputs;
 
 private:
     enum class ShadowExecutionType : uint8_t
@@ -77,6 +85,8 @@ private:
 
     VkExtent2D m_extent{2048, 2048};
     uint32_t m_directionalCascadeCount{ShadowConstants::MAX_DIRECTIONAL_CASCADES};
+    uint32_t m_spotShadowCount{ShadowConstants::MAX_SPOT_SHADOWS};
+    uint32_t m_pointShadowCount{ShadowConstants::MAX_POINT_SHADOWS};
 
     VkClearValue m_clearValue;
 

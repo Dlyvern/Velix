@@ -35,6 +35,11 @@ public:
 
     std::vector<RGPResourceHandler> &getHandlers() { return m_outputHandlers; }
 
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> color;
+    } outputs;
+
     void setup(RGPResourcesBuilder &builder) override;
     void compile(RGPResourcesStorage &storage) override;
     void prepareRecord(const RenderGraphPassPerFrameData &data,

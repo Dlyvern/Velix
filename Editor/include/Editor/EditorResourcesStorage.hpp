@@ -13,7 +13,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 class EditorResourcesStorage
 {
 public:
-    void loadNeededResources();
+    void loadNeededResources(bool backendRecreated = false);
 
     VkDescriptorSet getTextureDescriptorSet(const std::string &filePath);
 
@@ -24,6 +24,7 @@ private:
         VkDescriptorSet descriptorSet{VK_NULL_HANDLE};
     };
 
+    void refreshLoadedTextureDescriptors(bool backendRecreated);
     std::string toTextureAssetPath(const std::string &path) const;
     bool tryLoadTextureResource(const std::string &assetPath, const std::string &storageKey);
 

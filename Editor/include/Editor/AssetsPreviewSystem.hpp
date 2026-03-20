@@ -72,6 +72,50 @@ public:
         cleanupStaleDescriptors();
     }
 
+    void refreshImguiDescriptors(VkSampler previewSampler, bool backendRecreated)
+    {
+        if (backendRecreated)
+            m_pendingDescriptorFrees.clear();
+        else
+            flushDeferredDescriptorReleases(true);
+
+        const auto defaultMaterial = engine::Material::getDefaultMaterial();
+        const auto defaultTexture = defaultMaterial ? defaultMaterial->getAlbedoTexture() : nullptr;
+        refreshDescriptorNow(m_placeholder,
+                             defaultTexture ? defaultTexture->vkSampler() : VK_NULL_HANDLE,
+                             defaultTexture ? defaultTexture->vkImageView() : VK_NULL_HANDLE,
+                             backendRecreated);
+
+        refreshDescriptorNow(m_thumbnailDisabledIcon,
+                             m_thumbnailDisabledIconTexture ? m_thumbnailDisabledIconTexture->vkSampler() : VK_NULL_HANDLE,
+                             m_thumbnailDisabledIconTexture ? m_thumbnailDisabledIconTexture->vkImageView() : VK_NULL_HANDLE,
+                             backendRecreated);
+
+        for (auto &[_, entry] : m_textureEntries)
+        {
+            refreshDescriptorNow(entry.imguiDescriptorSet,
+                                 entry.texture ? entry.texture->vkSampler() : VK_NULL_HANDLE,
+                                 entry.texture ? entry.texture->vkImageView() : VK_NULL_HANDLE,
+                                 backendRecreated);
+        }
+
+        for (auto &[_, entry] : m_materialEntries)
+        {
+            if (previewSampler != VK_NULL_HANDLE)
+                entry.previewSampler = previewSampler;
+
+            refreshDescriptorNow(entry.imguiDescriptorSet, entry.previewSampler, entry.previewImageView, backendRecreated);
+        }
+
+        for (auto &[_, entry] : m_modelEntries)
+        {
+            if (previewSampler != VK_NULL_HANDLE)
+                entry.previewSampler = previewSampler;
+
+            refreshDescriptorNow(entry.imguiDescriptorSet, entry.previewSampler, entry.previewImageView, backendRecreated);
+        }
+    }
+
     VkDescriptorSet getPlaceholder()
     {
         if (m_placeholder)
@@ -176,6 +220,8 @@ public:
                 if (it == m_materialEntries.end())
                     continue;
 
+                it->second.previewSampler = sampler;
+                it->second.previewImageView = views[i];
                 replaceDescriptor(it->second.imguiDescriptorSet, sampler, views[i]);
                 it->second.lastRequestedFrame = m_frameIndex;
             }
@@ -185,6 +231,8 @@ public:
                 if (it == m_modelEntries.end())
                     continue;
 
+                it->second.previewSampler = sampler;
+                it->second.previewImageView = views[i];
                 replaceDescriptor(it->second.imguiDescriptorSet, sampler, views[i]);
                 it->second.lastRequestedFrame = m_frameIndex;
             }
@@ -195,6 +243,9 @@ public:
 
     VkDescriptorSet getOrRequestTexturePreview(const std::string &texturePath, engine::Texture::SharedPtr texture = nullptr)
     {
+        if (!isPreviewEnabled(PreviewKind::Texture))
+            return getThumbnailDisabledFallback();
+
         if (texturePath.empty())
             return getPlaceholder();
 
@@ -232,7 +283,7 @@ public:
     VkDescriptorSet getOrRequestMaterialPreview(const std::string &materialPath,
                                                 engine::Material::SharedPtr material = nullptr)
     {
-        if (!engine::EngineConfig::instance().getShowAssetThumbnails())
+        if (!isPreviewEnabled(PreviewKind::Material))
             return getThumbnailDisabledFallback();
 
         if (materialPath.empty())
@@ -264,6 +315,9 @@ public:
 
     VkDescriptorSet getOrRequestModelPreview(const std::string &modelPath)
     {
+        if (!isPreviewEnabled(PreviewKind::Model))
+            return getThumbnailDisabledFallback();
+
         if (modelPath.empty())
             return getPlaceholder();
 
@@ -310,6 +364,8 @@ private:
 
         engine::Material::SharedPtr material;
         VkDescriptorSet imguiDescriptorSet = VK_NULL_HANDLE;
+        VkSampler previewSampler = VK_NULL_HANDLE;
+        VkImageView previewImageView = VK_NULL_HANDLE;
 
         bool requestedThisFrame = false;
         bool dirty = true;
@@ -326,6 +382,8 @@ private:
         engine::Material::SharedPtr material;
         glm::mat4 previewTransform{1.0f};
         VkDescriptorSet imguiDescriptorSet = VK_NULL_HANDLE;
+        VkSampler previewSampler = VK_NULL_HANDLE;
+        VkImageView previewImageView = VK_NULL_HANDLE;
 
         bool requestedThisFrame = false;
         uint64_t lastRequestedFrame = 0;
@@ -342,12 +400,44 @@ private:
         uint64_t lastRequestedFrame = 0;
     };
 
+    bool isPreviewEnabled(PreviewKind kind) const
+    {
+        const auto &engineConfig = engine::EngineConfig::instance();
+        if (!engineConfig.getShowAssetThumbnails())
+            return false;
+
+        switch (kind)
+        {
+        case PreviewKind::Material:
+            return engineConfig.getShowMaterialAssetPreviews();
+        case PreviewKind::Model:
+            return engineConfig.getShowModelAssetPreviews();
+        case PreviewKind::Texture:
+            return engineConfig.getShowTextureAssetPreviews();
+        default:
+            return true;
+        }
+    }
+
     static void destroyDescriptorNow(VkDescriptorSet descriptorSet)
     {
         if (descriptorSet == VK_NULL_HANDLE)
             return;
 
         ImGui_ImplVulkan_RemoveTexture(descriptorSet);
+    }
+
+    static void refreshDescriptorNow(VkDescriptorSet &descriptorSet, VkSampler sampler, VkImageView imageView, bool backendRecreated)
+    {
+        if (descriptorSet != VK_NULL_HANDLE && !backendRecreated)
+            destroyDescriptorNow(descriptorSet);
+
+        descriptorSet = VK_NULL_HANDLE;
+
+        if (sampler == VK_NULL_HANDLE || imageView == VK_NULL_HANDLE)
+            return;
+
+        descriptorSet = ImGui_ImplVulkan_AddTexture(sampler, imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
     void queueDescriptorRelease(VkDescriptorSet &descriptorSet)

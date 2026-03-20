@@ -47,8 +47,8 @@ struct RTReflectionsPC
     float rtReflectionSamples;
     float rtRoughnessThreshold;
     float rtReflectionStrength;
-    glm::vec3 sunDirection; // world-space direction TO sun (for sky fallback)
-    float sunHeight;        // dot(sunDir, up) clamped [-1,1]
+    glm::vec3 sunDirection;    // world-space direction TO sun (for sky fallback)
+    float sunHeight;           // dot(sunDir, up) clamped [-1,1]
     glm::vec4 environmentInfo; // x = hasEnvironmentMap
 };
 
@@ -87,6 +87,7 @@ RTReflectionsRenderGraphPass::RTReflectionsRenderGraphPass(
     setDebugName("RT Reflections render graph pass");
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    outputs.color.setOwner(this);
 }
 
 void RTReflectionsRenderGraphPass::prepareRecord(const RenderGraphPassPerFrameData &data,
@@ -145,6 +146,7 @@ void RTReflectionsRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &build
         m_outputHandlers.push_back(h);
         builder.write(h, RGPTextureUsage::COLOR_ATTACHMENT_STORAGE);
     }
+    outputs.color.set(m_outputHandlers);
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
@@ -162,14 +164,14 @@ void RTReflectionsRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &build
     const VkShaderStageFlags environmentStages =
         VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     std::vector<VkDescriptorSetLayoutBinding> bindings = {
-        makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages), // normal
-        makeBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages), // albedo
-        makeBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages), // material
-        makeBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages), // depth
-        makeBinding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages), // lighting
-        makeBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_RAYGEN_BIT_KHR), // output
+        makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // normal
+        makeBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // albedo
+        makeBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // material
+        makeBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // depth
+        makeBinding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // lighting
+        makeBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_RAYGEN_BIT_KHR),                                      // output
         makeBinding(6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_FRAGMENT_BIT), // RT shading instances
-        makeBinding(7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, environmentStages), // environment cubemap
+        makeBinding(7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, environmentStages),                                          // environment cubemap
     };
 
     m_textureSetLayout = core::DescriptorSetLayout::createShared(device, bindings);
@@ -314,11 +316,11 @@ void RTReflectionsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
         {
             VkClearColorValue clearColor{};
             VkImageSubresourceRange range{};
-            range.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-            range.baseMipLevel   = 0;
-            range.levelCount     = 1;
+            range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            range.baseMipLevel = 0;
+            range.levelCount = 1;
             range.baseArrayLayer = 0;
-            range.layerCount     = 1;
+            range.layerCount = 1;
             vkCmdClearColorImage(commandBuffer->vk(), outputTarget->getImage()->vk(),
                                  VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &range);
         }
@@ -463,8 +465,30 @@ void RTReflectionsRenderGraphPass::ensureFallbackEnvironmentTexture()
     constexpr int width = 4;
     constexpr int height = 2;
     const float equirectangularData[width * height * 3] = {
-        0.78f, 0.80f, 0.84f, 0.78f, 0.80f, 0.84f, 0.78f, 0.80f, 0.84f, 0.78f, 0.80f, 0.84f,
-        0.42f, 0.44f, 0.48f, 0.42f, 0.44f, 0.48f, 0.42f, 0.44f, 0.48f, 0.42f, 0.44f, 0.48f,
+        0.78f,
+        0.80f,
+        0.84f,
+        0.78f,
+        0.80f,
+        0.84f,
+        0.78f,
+        0.80f,
+        0.84f,
+        0.78f,
+        0.80f,
+        0.84f,
+        0.42f,
+        0.44f,
+        0.48f,
+        0.42f,
+        0.44f,
+        0.48f,
+        0.42f,
+        0.44f,
+        0.48f,
+        0.42f,
+        0.44f,
+        0.48f,
     };
 
     if (!m_fallbackEnvironmentTexture->createCubemapFromEquirectangular(equirectangularData, width, height, 16u))
@@ -645,6 +669,14 @@ void RTReflectionsRenderGraphPass::destroyRayTracingPipeline()
     m_closestHitShader.destroyVk();
     m_missShader.destroyVk();
     m_raygenShader.destroyVk();
+}
+
+void RTReflectionsRenderGraphPass::freeResources()
+{
+    m_outputRenderTargets.clear();
+    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+    outputs.color.set(MultiHandle{});
 }
 
 ELIX_CUSTOM_NAMESPACE_END

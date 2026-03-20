@@ -151,6 +151,8 @@ void ImGuiRenderGraphPass::initImGui()
         ImGui_ImplGlfw_InitForVulkan(core::VulkanContext::getContext()->getSwapchain()->getWindow().getRawHandler(), true);
     }
 
+    bool rendererBackendCreated = false;
+
     if (io.BackendRendererUserData == nullptr)
     {
         if (!g_imguiDescriptorPool)
@@ -195,10 +197,11 @@ void ImGuiRenderGraphPass::initImGui()
         imguiInitInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &format;
 
         ImGui_ImplVulkan_Init(&imguiInitInfo);
+        rendererBackendCreated = true;
     }
 
     m_imguiDescriptorPool = g_imguiDescriptorPool;
-    m_editor->initStyle();
+    m_editor->initStyle(rendererBackendCreated);
 }
 
 std::vector<engine::renderGraph::IRenderGraphPass::RenderPassExecution> ImGuiRenderGraphPass::getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const

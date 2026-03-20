@@ -10,8 +10,14 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-void EditorResourcesStorage::loadNeededResources()
+void EditorResourcesStorage::loadNeededResources(bool backendRecreated)
 {
+    if (!m_textures.empty())
+    {
+        refreshLoadedTextureDescriptors(backendRecreated);
+        return;
+    }
+
     const std::string logoPath = "./resources/textures/VelixFire.tex.elixasset";
     const std::string folderPath = "./resources/textures/folder.tex.elixasset";
     const std::string filePath = "./resources/textures/file.tex.elixasset";
@@ -24,6 +30,26 @@ void EditorResourcesStorage::loadNeededResources()
 
     if (!logoLoaded || !folderLoaded || !fileLoaded || !velixIconLoaded)
         VX_EDITOR_ERROR_STREAM("Failed to load one or more editor texture assets.\n");
+}
+
+void EditorResourcesStorage::refreshLoadedTextureDescriptors(bool backendRecreated)
+{
+    for (auto &[storageKey, resource] : m_textures)
+    {
+        if (!resource.texture)
+            continue;
+
+        if (resource.descriptorSet != VK_NULL_HANDLE && !backendRecreated)
+            ImGui_ImplVulkan_RemoveTexture(resource.descriptorSet);
+
+        resource.descriptorSet = ImGui_ImplVulkan_AddTexture(
+            resource.texture->vkSampler(),
+            resource.texture->vkImageView(),
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        if (resource.descriptorSet == VK_NULL_HANDLE)
+            VX_EDITOR_WARNING_STREAM("Failed to refresh ImGui descriptor set for editor texture asset: " << storageKey << '\n');
+    }
 }
 
 VkDescriptorSet EditorResourcesStorage::getTextureDescriptorSet(const std::string &filePath)

@@ -38,6 +38,11 @@ public:
         return m_colorTextureHandler;
     }
 
+    struct Outputs
+    {
+        RGPOutputSlot<MultiHandle> color;
+    } outputs;
+
 private:
     std::vector<const RenderTarget *> m_colorRenderTargets;
     const RenderTarget *m_depthRenderTarget{nullptr};

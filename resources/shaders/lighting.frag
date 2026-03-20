@@ -45,7 +45,6 @@ layout(std430, set = 0, binding = 2) readonly buffer LightSSBO
 layout(set = 1, binding = 0) uniform sampler2D uGBufferNormal;
 layout(set = 1, binding = 1) uniform sampler2D uGBufferAlbedo;
 layout(set = 1, binding = 2) uniform sampler2D uGBufferMaterial;
-layout(set = 1, binding = 3) uniform sampler2D uGBufferTangentAniso;
 layout(set = 1, binding = 4) uniform sampler2D uGBufferEmissive;
 layout(set = 1, binding = 5) uniform sampler2D uDepth;
 layout(set = 1, binding = 6) uniform sampler2DArray directionalShadowMaps;
@@ -297,7 +296,7 @@ void main()
     vec4 gA = texture(uGBufferAlbedo, vUV);
     vec4 gM = texture(uGBufferMaterial, vUV);
     vec3 emissive = texture(uGBufferEmissive, vUV).rgb;
-    float ssaoAO = clamp(texture(uSSAO, vUV).a, 0.0, 1.0);
+    float ssaoAO = clamp(texture(uSSAO, vUV).r, 0.0, 1.0);
     float depth = texture(uDepth, vUV).r;
 
     if (depth >= 1.0)
