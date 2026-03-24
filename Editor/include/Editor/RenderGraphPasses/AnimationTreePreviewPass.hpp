@@ -16,7 +16,7 @@ struct AnimPreviewDrawData
 {
     std::vector<engine::GPUMesh *>  meshes;
     std::vector<engine::Material *> materials;
-    std::vector<glm::mat4>          boneMatrices;
+    std::vector<glm::mat4>          meshModelMatrices;
     glm::mat4                       modelMatrix{1.0f};
     glm::mat4                       viewMatrix{1.0f};
     glm::mat4                       projMatrix{1.0f};
@@ -50,6 +50,8 @@ private:
     {
         glm::mat4 view{1.0f};
         glm::mat4 proj{1.0f};
+        glm::mat4 invView{1.0f};
+        glm::mat4 invProj{1.0f};
     };
 
     engine::renderGraph::RGPResourceHandler m_colorHandler{};
@@ -62,11 +64,9 @@ private:
     core::PipelineLayout::SharedPtr      m_pipelineLayout{nullptr};
     core::Sampler::SharedPtr             m_sampler{nullptr};
 
-    // Per-frame camera UBO + bone SSBO
+    // Per-frame camera UBO
     std::vector<core::Buffer::SharedPtr> m_cameraBuffers;
-    std::vector<core::Buffer::SharedPtr> m_boneBuffers;
     std::vector<void *>                  m_cameraMapped;
-    std::vector<void *>                  m_boneMapped;
     std::vector<VkDescriptorSet>         m_descriptorSets;
     bool                                 m_descriptorSetsInitialized{false};
 

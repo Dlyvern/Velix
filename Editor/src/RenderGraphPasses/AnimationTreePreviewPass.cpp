@@ -13,6 +13,16 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
+namespace
+{
+    struct ModelOnly
+    {
+        glm::mat4 model{1.0f};
+        uint32_t objectId{0u};
+        uint32_t padding[3]{0u, 0u, 0u};
+    };
+}
+
 AnimationTreePreviewPass::AnimationTreePreviewPass()
 {
     m_viewport    = VkViewport{0.0f, 0.0f, static_cast<float>(PREVIEW_SIZE), static_cast<float>(PREVIEW_SIZE), 0.0f, 1.0f};
@@ -45,38 +55,28 @@ void AnimationTreePreviewPass::setup(engine::renderGraph::RGPResourcesBuilder &b
     depthDesc.setDebugName("__ELIX_ANIMTREE_PREVIEW_DEPTH__");
     m_depthHandler = builder.createTexture(depthDesc);
 
-    // Custom descriptor set layout: binding 0 = camera UBO, binding 1 = bone SSBO
+    // Camera descriptor set layout for the isolated preview camera.
     VkDescriptorSetLayoutBinding cameraBinding{};
     cameraBinding.binding         = 0;
     cameraBinding.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     cameraBinding.descriptorCount = 1;
     cameraBinding.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT;
 
-    VkDescriptorSetLayoutBinding bonesBinding{};
-    bonesBinding.binding         = 1;
-    bonesBinding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bonesBinding.descriptorCount = 1;
-    bonesBinding.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT;
-
-    m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{cameraBinding, bonesBinding});
-
     m_pipelineLayout = core::PipelineLayout::createShared(
         device,
         std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{
-            *m_descriptorSetLayout,
+            *engine::EngineShaderFamilies::cameraDescriptorSetLayout,
             *engine::EngineShaderFamilies::materialDescriptorSetLayout},
         std::vector<VkPushConstantRange>{
-            engine::PushConstant<glm::mat4>::getRange(VK_SHADER_STAGE_VERTEX_BIT)});
+            engine::PushConstant<ModelOnly>::getRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)});
 
     m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                                             VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 
-    // Per-frame buffers
+    // Per-frame camera buffers
     const uint32_t frameCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     m_cameraBuffers.resize(frameCount);
-    m_boneBuffers.resize(frameCount);
     m_cameraMapped.resize(frameCount, nullptr);
-    m_boneMapped.resize(frameCount, nullptr);
 
     for (uint32_t i = 0; i < frameCount; ++i)
     {
@@ -84,15 +84,6 @@ void AnimationTreePreviewPass::setup(engine::renderGraph::RGPResourcesBuilder &b
                                                          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                                          core::memory::MemoryUsage::CPU_TO_GPU);
         m_cameraBuffers[i]->map(m_cameraMapped[i]);
-
-        m_boneBuffers[i] = core::Buffer::createShared(MAX_PREVIEW_BONES * sizeof(glm::mat4),
-                                                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                                       core::memory::MemoryUsage::CPU_TO_GPU);
-        m_boneBuffers[i]->map(m_boneMapped[i]);
-
-        // Initialize bone buffer to identity matrices
-        std::vector<glm::mat4> identityBones(MAX_PREVIEW_BONES, glm::mat4(1.0f));
-        std::memcpy(m_boneMapped[i], identityBones.data(), MAX_PREVIEW_BONES * sizeof(glm::mat4));
     }
 }
 
@@ -114,15 +105,12 @@ void AnimationTreePreviewPass::compile(engine::renderGraph::RGPResourcesStorage 
             m_descriptorSets[i] = engine::DescriptorSetBuilder::begin()
                                        .addBuffer(m_cameraBuffers[i], sizeof(PreviewCameraUBO), 0,
                                                   VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                                       .addBuffer(m_boneBuffers[i], MAX_PREVIEW_BONES * sizeof(glm::mat4), 1,
-                                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                                       .build(device, pool, m_descriptorSetLayout);
+                                       .build(device, pool, engine::EngineShaderFamilies::cameraDescriptorSetLayout);
         }
         else
         {
             engine::DescriptorSetBuilder::begin()
                 .addBuffer(m_cameraBuffers[i], sizeof(PreviewCameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                .addBuffer(m_boneBuffers[i], MAX_PREVIEW_BONES * sizeof(glm::mat4), 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                 .update(device, m_descriptorSets[i]);
         }
     }
@@ -142,17 +130,16 @@ void AnimationTreePreviewPass::record(core::CommandBuffer::SharedPtr commandBuff
         return;
 
     // Update camera UBO
-    PreviewCameraUBO camData{m_pendingData.viewMatrix, m_pendingData.projMatrix};
+    PreviewCameraUBO camData{};
+    camData.view = m_pendingData.viewMatrix;
+    camData.proj = m_pendingData.projMatrix;
+    camData.invView = glm::inverse(camData.view);
+    camData.invProj = glm::inverse(camData.proj);
     std::memcpy(m_cameraMapped[renderContext.currentFrame], &camData, sizeof(PreviewCameraUBO));
 
-    // Update bone SSBO
-    const size_t boneCount = std::min(static_cast<size_t>(MAX_PREVIEW_BONES), m_pendingData.boneMatrices.size());
-    if (boneCount > 0)
-        std::memcpy(m_boneMapped[renderContext.currentFrame], m_pendingData.boneMatrices.data(), boneCount * sizeof(glm::mat4));
-
     engine::GraphicsPipelineKey key{};
-    key.shader       = engine::ShaderId::AnimPreview;
-    key.cull         = engine::CullMode::None;
+    key.shader       = engine::ShaderId::PreviewMesh;
+    key.cull         = engine::CullMode::Back;
     key.depthTest    = true;
     key.depthWrite   = true;
     key.depthCompare = VK_COMPARE_OP_LESS;
@@ -165,8 +152,6 @@ void AnimationTreePreviewPass::record(core::CommandBuffer::SharedPtr commandBuff
     auto pipeline = engine::GraphicsPipelineManager::getOrCreate(key);
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    glm::mat4 model = m_pendingData.modelMatrix;
-
     for (size_t i = 0; i < m_pendingData.meshes.size(); ++i)
     {
         auto *mesh = m_pendingData.meshes[i];
@@ -178,8 +163,14 @@ void AnimationTreePreviewPass::record(core::CommandBuffer::SharedPtr commandBuff
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuf, offset);
         vkCmdBindIndexBuffer(commandBuffer, mesh->indexBuffer, 0, mesh->indexType);
 
+        const glm::mat4 model =
+            (i < m_pendingData.meshModelMatrices.size()) ? m_pendingData.meshModelMatrices[i]
+                                                         : m_pendingData.modelMatrix;
+
+        ModelOnly pushConstant{};
+        pushConstant.model = model;
         vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(glm::mat4), &model);
+                           sizeof(ModelOnly), &pushConstant);
 
         auto *mat = (i < m_pendingData.materials.size()) ? m_pendingData.materials[i] : nullptr;
         VkDescriptorSet matDS = mat

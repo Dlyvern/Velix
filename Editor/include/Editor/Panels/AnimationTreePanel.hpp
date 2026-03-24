@@ -28,6 +28,17 @@ class Project;
 class AnimationTreePanel
 {
 public:
+    struct PreviewMeshEntry
+    {
+        engine::GPUMesh::SharedPtr   gpuMesh{nullptr};
+        engine::Material::SharedPtr  material{nullptr};
+        engine::CPUMesh              sourceMesh{};
+        std::vector<engine::vertex::Vertex3D> dynamicVertices;
+        glm::mat4                    localTransform{1.0f};
+        int32_t                      attachedBoneId{-1};
+        bool                         skinned{false};
+    };
+
     struct AnimPreviewContext
     {
         engine::AnimatorComponent    *animator{nullptr};
@@ -35,10 +46,11 @@ public:
         bool                          active{false};
         // Orbit camera
         float yaw{0.0f}, pitch{20.0f}, distance{3.0f};
-        glm::vec3 target{0.0f, 1.0f, 0.0f};
+        glm::vec3 target{0.0f};
         bool isFirstActivation{true};
-        // Cached GPU meshes created from the entity's CPU meshes
-        std::vector<engine::GPUMesh::SharedPtr> gpuMeshes;
+        glm::mat4 modelMatrix{1.0f};
+        // Cached preview meshes and their per-mesh transform metadata.
+        std::vector<PreviewMeshEntry> previewMeshes;
     };
 
     void draw();
@@ -113,6 +125,7 @@ private:
     void drawTransitionInspector(AnimTreeUIState &ui);
     void drawStateContextMenu(AnimTreeUIState &ui, int stateIndex);
     void drawPreviewPane(AnimTreeUIState &ui);
+    void resetPreviewCamera(AnimPreviewContext &ctx);
 
     glm::mat4 buildOrbitView(const AnimPreviewContext &ctx) const;
     glm::mat4 buildOrbitProj() const;

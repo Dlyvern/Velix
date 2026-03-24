@@ -1,13 +1,17 @@
 #include "Editor/Panels/AnimationTreePanel.hpp"
 #include "Editor/Project.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
+#include "Engine/Material.hpp"
+#include "Engine/Vertex.hpp"
 
 #include "imgui.h"
 #include "imgui_node_editor.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/matrix_transform.hpp>
@@ -16,6 +20,258 @@
 namespace ed = ax::NodeEditor;
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
+
+namespace
+{
+    bool looksLikeWindowsAbsolutePath(const std::string &path)
+    {
+        return path.size() >= 3u &&
+               std::isalpha(static_cast<unsigned char>(path[0])) &&
+               path[1] == ':' &&
+               (path[2] == '\\' || path[2] == '/');
+    }
+
+    std::string resolvePreviewAssetPath(const std::string &path, const std::string &referenceAssetPath)
+    {
+        if (path.empty())
+            return {};
+
+        const std::filesystem::path asPath(path);
+        if (asPath.is_absolute() || looksLikeWindowsAbsolutePath(path))
+            return asPath.lexically_normal().string();
+
+        if (!referenceAssetPath.empty())
+            return (std::filesystem::path(referenceAssetPath).parent_path() / asPath).lexically_normal().string();
+
+        return asPath.lexically_normal().string();
+    }
+
+    engine::Material::SharedPtr createPreviewMaterial(const engine::CPUMaterial &materialCPU,
+                                                      const std::string &referenceAssetPath)
+    {
+        engine::Texture::SharedPtr albedoTexture{nullptr};
+        if (!materialCPU.albedoTexture.empty())
+            albedoTexture = engine::AssetsLoader::loadTextureGPU(resolvePreviewAssetPath(materialCPU.albedoTexture, referenceAssetPath));
+        auto material = engine::Material::create(albedoTexture);
+        if (!material)
+            return engine::Material::getDefaultMaterial();
+
+        if (!materialCPU.normalTexture.empty())
+            material->setNormalTexture(engine::AssetsLoader::loadTextureGPU(resolvePreviewAssetPath(materialCPU.normalTexture, referenceAssetPath),
+                                                                            VK_FORMAT_R8G8B8A8_UNORM));
+        if (!materialCPU.ormTexture.empty())
+            material->setOrmTexture(engine::AssetsLoader::loadTextureGPU(resolvePreviewAssetPath(materialCPU.ormTexture, referenceAssetPath),
+                                                                         VK_FORMAT_R8G8B8A8_UNORM));
+        if (!materialCPU.emissiveTexture.empty())
+            material->setEmissiveTexture(engine::AssetsLoader::loadTextureGPU(resolvePreviewAssetPath(materialCPU.emissiveTexture, referenceAssetPath)));
+
+        material->setBaseColorFactor(materialCPU.baseColorFactor);
+        material->setEmissiveFactor(materialCPU.emissiveFactor);
+        material->setMetallic(materialCPU.metallicFactor);
+        material->setRoughness(materialCPU.roughnessFactor);
+        material->setAoStrength(materialCPU.aoStrength);
+        material->setNormalScale(materialCPU.normalScale);
+        material->setAlphaCutoff(materialCPU.alphaCutoff);
+        material->setUVScale(materialCPU.uvScale);
+        material->setUVOffset(materialCPU.uvOffset);
+        material->setUVRotation(materialCPU.uvRotation);
+        material->setFlags(materialCPU.flags);
+        material->setIor(materialCPU.ior);
+        return material;
+    }
+
+    bool buildPreviewMesh(const engine::CPUMesh &source,
+                          engine::CPUMesh &outMesh,
+                          glm::vec3 &outMinPos,
+                          glm::vec3 &outMaxPos)
+    {
+        outMesh = {};
+        outMinPos = glm::vec3(std::numeric_limits<float>::max());
+        outMaxPos = glm::vec3(std::numeric_limits<float>::lowest());
+
+        if (source.vertexStride == sizeof(engine::vertex::VertexSkinned))
+        {
+            const size_t vertexCount = source.vertexData.size() / sizeof(engine::vertex::VertexSkinned);
+            if (vertexCount == 0u || source.indices.empty())
+                return false;
+
+            const auto *sourceVertices = reinterpret_cast<const engine::vertex::VertexSkinned *>(source.vertexData.data());
+            std::vector<engine::vertex::Vertex3D> vertices;
+            vertices.reserve(vertexCount);
+
+            for (size_t i = 0; i < vertexCount; ++i)
+            {
+                engine::vertex::Vertex3D vertex{};
+                vertex.position = sourceVertices[i].position;
+                vertex.textureCoordinates = sourceVertices[i].textureCoordinates;
+                vertex.normal = sourceVertices[i].normal;
+                vertex.tangent = sourceVertices[i].tangent;
+                vertex.bitangent = sourceVertices[i].bitangent;
+                outMinPos = glm::min(outMinPos, vertex.position);
+                outMaxPos = glm::max(outMaxPos, vertex.position);
+                vertices.push_back(vertex);
+            }
+
+            outMesh = engine::CPUMesh::build<engine::vertex::Vertex3D>(vertices, source.indices);
+        }
+        else if (source.vertexStride == sizeof(engine::vertex::Vertex3D))
+        {
+            const size_t vertexCount = source.vertexData.size() / sizeof(engine::vertex::Vertex3D);
+            if (vertexCount == 0u || source.indices.empty())
+                return false;
+
+            const auto *sourceVertices = reinterpret_cast<const engine::vertex::Vertex3D *>(source.vertexData.data());
+            std::vector<engine::vertex::Vertex3D> vertices;
+            vertices.reserve(vertexCount);
+
+            for (size_t i = 0; i < vertexCount; ++i)
+            {
+                engine::vertex::Vertex3D vertex{};
+                vertex.position = sourceVertices[i].position;
+                vertex.textureCoordinates = sourceVertices[i].textureCoordinates;
+                vertex.normal = sourceVertices[i].normal;
+                vertex.tangent = sourceVertices[i].tangent;
+                vertex.bitangent = sourceVertices[i].bitangent;
+                outMinPos = glm::min(outMinPos, vertex.position);
+                outMaxPos = glm::max(outMaxPos, vertex.position);
+                vertices.push_back(vertex);
+            }
+
+            outMesh = engine::CPUMesh::build<engine::vertex::Vertex3D>(vertices, source.indices);
+        }
+        else
+        {
+            return false;
+        }
+
+        outMesh.name = source.name;
+        outMesh.material = source.material;
+        outMesh.localTransform = source.localTransform;
+        outMesh.attachedBoneId = source.attachedBoneId;
+        return true;
+    }
+
+    bool isSkinnedPreviewSource(const engine::CPUMesh &mesh)
+    {
+        return mesh.vertexStride == sizeof(engine::vertex::VertexSkinned) ||
+               mesh.vertexLayoutHash == engine::vertex::VertexTraits<engine::vertex::VertexSkinned>::layout().hash;
+    }
+
+    bool isMeaningfullyAnimatedSkinnedMesh(const engine::CPUMesh &mesh)
+    {
+        if (!isSkinnedPreviewSource(mesh))
+            return false;
+
+        const size_t vertexCount = mesh.vertexData.size() / sizeof(engine::vertex::VertexSkinned);
+        if (vertexCount == 0u)
+            return false;
+
+        const auto *vertices = reinterpret_cast<const engine::vertex::VertexSkinned *>(mesh.vertexData.data());
+
+        std::unordered_set<int> uniqueBoneIds;
+        size_t multiInfluenceVertexCount = 0u;
+
+        for (size_t i = 0; i < vertexCount; ++i)
+        {
+            size_t activeInfluences = 0u;
+            for (int influence = 0; influence < 4; ++influence)
+            {
+                const int boneId = vertices[i].boneIds[influence];
+                const float weight = vertices[i].weights[influence];
+                if (boneId < 0 || weight <= 0.001f)
+                    continue;
+
+                uniqueBoneIds.insert(boneId);
+                ++activeInfluences;
+            }
+
+            if (activeInfluences > 1u)
+                ++multiInfluenceVertexCount;
+        }
+
+        return uniqueBoneIds.size() >= 4u &&
+               multiInfluenceVertexCount * 10u >= vertexCount;
+    }
+
+    void updateSkinnedPreviewVertices(const engine::CPUMesh &sourceMesh,
+                                      const std::vector<glm::mat4> &finalBones,
+                                      std::vector<engine::vertex::Vertex3D> &ioVertices)
+    {
+        const size_t vertexCount = sourceMesh.vertexData.size() / sizeof(engine::vertex::VertexSkinned);
+        if (vertexCount == 0u)
+        {
+            ioVertices.clear();
+            return;
+        }
+
+        const auto *sourceVertices = reinterpret_cast<const engine::vertex::VertexSkinned *>(sourceMesh.vertexData.data());
+        ioVertices.resize(vertexCount);
+
+        for (size_t i = 0; i < vertexCount; ++i)
+        {
+            const auto &sourceVertex = sourceVertices[i];
+
+            glm::mat4 boneTransform(0.0f);
+            bool hasBone = false;
+            for (int boneInfluence = 0; boneInfluence < 4; ++boneInfluence)
+            {
+                const int boneId = sourceVertex.boneIds[boneInfluence];
+                const float weight = sourceVertex.weights[boneInfluence];
+                if (boneId < 0 || weight <= 0.0f || static_cast<size_t>(boneId) >= finalBones.size())
+                    continue;
+
+                boneTransform += finalBones[static_cast<size_t>(boneId)] * weight;
+                hasBone = true;
+            }
+
+            if (!hasBone)
+                boneTransform = glm::mat4(1.0f);
+
+            engine::vertex::Vertex3D vertex{};
+            vertex.position = glm::vec3(boneTransform * glm::vec4(sourceVertex.position, 1.0f));
+            vertex.textureCoordinates = sourceVertex.textureCoordinates;
+            vertex.normal = sourceVertex.normal;
+            vertex.tangent = sourceVertex.tangent;
+            vertex.bitangent = sourceVertex.bitangent;
+            ioVertices[i] = vertex;
+        }
+    }
+
+    glm::mat4 buildPreviewNormalizationTransform(const glm::vec3 &minPos, const glm::vec3 &maxPos)
+    {
+        const glm::vec3 center = (minPos + maxPos) * 0.5f;
+        const glm::vec3 size = maxPos - minPos;
+        const float maxAxis = std::max({size.x, size.y, size.z, 0.001f});
+        const float scale = 1.8f / maxAxis;
+        return glm::scale(glm::mat4(1.0f), glm::vec3(scale)) *
+               glm::translate(glm::mat4(1.0f), -center);
+    }
+
+    void expandBoundsByTransformedAabb(const glm::vec3 &localMin,
+                                       const glm::vec3 &localMax,
+                                       const glm::mat4 &transform,
+                                       glm::vec3 &ioMin,
+                                       glm::vec3 &ioMax)
+    {
+        const glm::vec3 corners[8] = {
+            {localMin.x, localMin.y, localMin.z},
+            {localMax.x, localMin.y, localMin.z},
+            {localMin.x, localMax.y, localMin.z},
+            {localMax.x, localMax.y, localMin.z},
+            {localMin.x, localMin.y, localMax.z},
+            {localMax.x, localMin.y, localMax.z},
+            {localMin.x, localMax.y, localMax.z},
+            {localMax.x, localMax.y, localMax.z},
+        };
+
+        for (const glm::vec3 &corner : corners)
+        {
+            const glm::vec3 transformed = glm::vec3(transform * glm::vec4(corner, 1.0f));
+            ioMin = glm::min(ioMin, transformed);
+            ioMax = glm::max(ioMax, transformed);
+        }
+    }
+} // namespace
 
 AnimationTreePanel::~AnimationTreePanel()
 {
@@ -50,7 +306,9 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
                     preview.animator     = animator;
                     preview.skeletalMesh = skeletalMesh;
                     preview.active       = true;
-                    preview.gpuMeshes.clear(); // will be rebuilt lazily in update()
+                    preview.previewMeshes.clear(); // will be rebuilt lazily in update()
+                    preview.modelMatrix = glm::mat4(1.0f);
+                    preview.isFirstActivation = true;
                 }
             }
             return;
@@ -76,6 +334,7 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
             ui.preview.animator     = animator;
             ui.preview.skeletalMesh = skeletalMesh;
             ui.preview.active       = true;
+            ui.preview.isFirstActivation = true;
             // GPU meshes are created lazily in update() to avoid calling Vulkan during ImGui render phase
         }
 
@@ -865,6 +1124,8 @@ void AnimationTreePanel::update(float deltaTime)
     if (!m_previewPass)
         return;
 
+    bool submittedPreview = false;
+
     for (auto &[key, ui] : m_uiStates)
     {
         auto &preview = ui.preview;
@@ -891,18 +1152,69 @@ void AnimationTreePanel::update(float deltaTime)
         }
 
         // Lazily create GPU meshes the first time update() runs (safe Vulkan context)
-        if (preview.gpuMeshes.empty() && preview.skeletalMesh)
+        if (preview.previewMeshes.empty() && preview.skeletalMesh)
         {
             const auto &cpuMeshes = preview.skeletalMesh->getMeshes();
-            preview.gpuMeshes.reserve(cpuMeshes.size());
+            const bool hasMeaningfullyAnimatedMeshes =
+                std::any_of(cpuMeshes.begin(), cpuMeshes.end(),
+                            [](const engine::CPUMesh &mesh)
+                            { return isMeaningfullyAnimatedSkinnedMesh(mesh); });
+            const bool hasSkinnedMeshes =
+                std::any_of(cpuMeshes.begin(), cpuMeshes.end(),
+                            [](const engine::CPUMesh &mesh)
+                            { return isSkinnedPreviewSource(mesh); });
+            preview.previewMeshes.reserve(cpuMeshes.size());
+            glm::vec3 previewMin(std::numeric_limits<float>::max());
+            glm::vec3 previewMax(std::numeric_limits<float>::lowest());
+
             for (size_t slot = 0; slot < cpuMeshes.size(); ++slot)
             {
-                auto gpu = engine::GPUMesh::createFromMesh(cpuMeshes[slot]);
+                if (hasMeaningfullyAnimatedMeshes && !isMeaningfullyAnimatedSkinnedMesh(cpuMeshes[slot]))
+                    continue;
+                if (hasSkinnedMeshes && !isSkinnedPreviewSource(cpuMeshes[slot]))
+                    continue;
+
+                engine::CPUMesh previewMesh{};
+                glm::vec3 meshMin{};
+                glm::vec3 meshMax{};
+                if (!buildPreviewMesh(cpuMeshes[slot], previewMesh, meshMin, meshMax))
+                    continue;
+
+                expandBoundsByTransformedAabb(meshMin, meshMax, previewMesh.localTransform, previewMin, previewMax);
+
+                auto gpu = engine::GPUMesh::createFromMesh(previewMesh);
                 if (gpu)
                 {
-                    gpu->material = preview.skeletalMesh->getMaterialOverride(slot);
-                    preview.gpuMeshes.push_back(std::move(gpu));
+                    auto material = preview.skeletalMesh->getMaterialOverride(slot);
+                    if (!material)
+                        material = createPreviewMaterial(previewMesh.material, preview.skeletalMesh->getAssetPath());
+                    gpu->material = material ? material : engine::Material::getDefaultMaterial();
+
+                    PreviewMeshEntry entry{};
+                    entry.gpuMesh = std::move(gpu);
+                    entry.material = entry.gpuMesh->material ? entry.gpuMesh->material : engine::Material::getDefaultMaterial();
+                    entry.sourceMesh = cpuMeshes[slot];
+                    entry.localTransform = previewMesh.localTransform;
+                    entry.attachedBoneId = previewMesh.attachedBoneId;
+                    entry.skinned = isSkinnedPreviewSource(cpuMeshes[slot]);
+                    if (entry.skinned)
+                        entry.dynamicVertices.resize(previewMesh.vertexData.size() / sizeof(engine::vertex::Vertex3D));
+                    preview.previewMeshes.push_back(std::move(entry));
                 }
+            }
+
+            if (!preview.previewMeshes.empty() &&
+                previewMin.x <= previewMax.x &&
+                previewMin.y <= previewMax.y &&
+                previewMin.z <= previewMax.z)
+            {
+                preview.modelMatrix = buildPreviewNormalizationTransform(previewMin, previewMax);
+            }
+
+            if (preview.isFirstActivation)
+            {
+                resetPreviewCamera(preview);
+                preview.isFirstActivation = false;
             }
         }
 
@@ -910,27 +1222,50 @@ void AnimationTreePanel::update(float deltaTime)
 
         // Build draw data from cached GPU meshes
         AnimPreviewDrawData data{};
-        data.modelMatrix = glm::mat4(1.0f);
+        data.modelMatrix = preview.modelMatrix;
         data.viewMatrix  = buildOrbitView(preview);
         data.projMatrix  = buildOrbitProj();
 
         const auto &finalBones = preview.skeletalMesh->getSkeleton().getFinalMatrices();
-        data.boneMatrices = finalBones;
 
-        for (size_t i = 0; i < preview.gpuMeshes.size(); ++i)
+        for (auto &previewMesh : preview.previewMeshes)
         {
-            auto *gpu = preview.gpuMeshes[i].get();
+            auto *gpu = previewMesh.gpuMesh.get();
             if (!gpu)
                 continue;
+
+            if (previewMesh.skinned)
+            {
+                updateSkinnedPreviewVertices(previewMesh.sourceMesh, finalBones, previewMesh.dynamicVertices);
+                if (!previewMesh.dynamicVertices.empty())
+                    gpu->vertexBuffer->upload(previewMesh.dynamicVertices.data(),
+                                              static_cast<VkDeviceSize>(previewMesh.dynamicVertices.size() * sizeof(engine::vertex::Vertex3D)));
+            }
+
+            glm::mat4 meshLocalTransform = previewMesh.localTransform;
+            if (previewMesh.attachedBoneId >= 0)
+            {
+                if (auto *attachmentBone = preview.skeletalMesh->getSkeleton().getBone(previewMesh.attachedBoneId))
+                    meshLocalTransform = attachmentBone->finalTransformation * meshLocalTransform;
+            }
+
+            // Match the real skeletal renderer: every mesh keeps its own local
+            // transform even when the vertices are skinned.
+            const glm::mat4 meshModel = preview.modelMatrix * meshLocalTransform;
+
             data.meshes.push_back(gpu);
-            // Raw material pointer — lifetime owned by SkeletalMeshComponent / shared_ptr
-            data.materials.push_back(gpu->material.get());
+            data.materials.push_back(previewMesh.material.get());
+            data.meshModelMatrices.push_back(meshModel);
         }
 
         data.hasData = !data.meshes.empty();
         m_previewPass->setPreviewData(data);
+        submittedPreview = true;
         break; // one active preview at a time
     }
+
+    if (!submittedPreview)
+        m_previewPass->setPreviewData(AnimPreviewDrawData{});
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -983,17 +1318,21 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
     }
 
     if (ImGui::SmallButton("Reset Camera"))
-    {
-        preview.yaw      = 0.0f;
-        preview.pitch    = 20.0f;
-        preview.distance = 3.0f;
-    }
+        resetPreviewCamera(preview);
 
     // State info
     const std::string stateName = preview.animator->getCurrentStateName();
     ImGui::Text("State: %s", stateName.empty() ? "(none)" : stateName.c_str());
     if (preview.animator->isInTransition())
         ImGui::TextDisabled("  -> %.0f%%", preview.animator->getCurrentStateNormalizedTime() * 100.0f);
+}
+
+void AnimationTreePanel::resetPreviewCamera(AnimPreviewContext &ctx)
+{
+    ctx.target = glm::vec3(0.0f);
+    ctx.yaw = 28.0f;
+    ctx.pitch = 12.0f;
+    ctx.distance = 2.7f;
 }
 
 glm::mat4 AnimationTreePanel::buildOrbitView(const AnimPreviewContext &ctx) const

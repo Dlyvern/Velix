@@ -72,7 +72,7 @@ namespace ed = ax::NodeEditor;
 
 namespace
 {
-    constexpr float kTitleBarHeight = 36.0f;
+    constexpr float kTitleBarHeight = 42.0f;
     constexpr float kToolBarHeight = 34.0f;
     constexpr float kBottomBarHeight = 32.0f;
 
@@ -1351,7 +1351,7 @@ Editor::Editor()
     m_animationTreePanel = std::make_unique<AnimationTreePanel>();
     m_animationTreePanel->setNotificationManager(&m_notificationManager);
     m_animationTreePanel->setSaveTreeFunction([this](const std::filesystem::path &path, const engine::AnimationTree &tree)
-                                             { return engine::AssetsLoader::saveAnimationTree(tree, path.string()); });
+                                              { return engine::AssetsLoader::saveAnimationTree(tree, path.string()); });
 
     m_hierarchyPanel.setSetSelectedEntityCallback([this](engine::Entity *entity)
                                                   { setSelectedEntity(entity); });
@@ -1368,8 +1368,7 @@ Editor::Editor()
                                 {
                                     m_pendingShaderReloadRequest = true;
                                     VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal", "Queued shader reload request");
-                                    m_notificationManager.showInfo("Shader reload queued");
-                                });
+                                    m_notificationManager.showInfo("Shader reload queued"); });
 }
 
 Editor::~Editor()
@@ -1813,44 +1812,47 @@ void Editor::initStyle(bool imguiBackendRecreated)
     ImGuiStyle &style = ImGui::GetStyle();
     ImVec4 *colors = style.Colors;
 
-    style.WindowRounding = 5.0f;
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.PopupRounding = 5.0f;
-    style.ScrollbarRounding = 6.0f;
-    style.TabRounding = 4.0f;
+    style.WindowRounding = 8.0f;
+    style.FrameRounding = 6.0f;
+    style.GrabRounding = 6.0f;
+    style.PopupRounding = 8.0f;
+    style.ScrollbarRounding = 8.0f;
+    style.TabRounding = 6.0f;
+    style.ChildRounding = 4.0f;
 
     style.WindowBorderSize = 1.0f;
-    style.FrameBorderSize = 0.0f;
+    style.FrameBorderSize = 0.8f;
     style.PopupBorderSize = 1.0f;
     style.TabBorderSize = 0.0f;
-    style.DockingSeparatorSize = 2.0f;
+    style.DockingSeparatorSize = 1.0f;
 
-    style.FramePadding = ImVec2(8, 5);
+    style.FramePadding = ImVec2(9, 6);
     style.ItemSpacing = ImVec2(8, 6);
     style.ItemInnerSpacing = ImVec2(6, 4);
-    style.WindowPadding = ImVec2(10, 10);
+    style.WindowPadding = ImVec2(12, 10);
     style.CellPadding = ImVec2(6, 4);
     style.IndentSpacing = 18.0f;
-    style.ScrollbarSize = 12.0f;
-    style.GrabMinSize = 10.0f;
+    style.ScrollbarSize = 10.0f;
+    style.GrabMinSize = 8.0f;
 
-    const ImVec4 bg0 = ImVec4(0.070f, 0.073f, 0.078f, 1.000f);
-    const ImVec4 bg1 = ImVec4(0.095f, 0.100f, 0.108f, 1.000f);
-    const ImVec4 bg2 = ImVec4(0.120f, 0.126f, 0.136f, 1.000f);
-    const ImVec4 bg3 = ImVec4(0.155f, 0.164f, 0.176f, 1.000f);
+    const ImVec4 bg0 = ImVec4(0.060f, 0.062f, 0.068f, 1.000f); // window base
+    const ImVec4 bg1 = ImVec4(0.090f, 0.094f, 0.102f, 1.000f); // panel / sidebar
+    const ImVec4 bg2 = ImVec4(0.140f, 0.146f, 0.158f, 1.000f); // input / frame
+    const ImVec4 bg3 = ImVec4(0.200f, 0.210f, 0.228f, 1.000f); // hover surface
 
-    const ImVec4 accentBlue = ImVec4(0.120f, 0.420f, 0.900f, 1.000f);
-    const ImVec4 accentBlueHover = ImVec4(0.180f, 0.500f, 0.950f, 1.000f);
-    const ImVec4 accentBlueActive = ImVec4(0.090f, 0.350f, 0.780f, 1.000f);
-    const ImVec4 accentOrange = ImVec4(0.930f, 0.490f, 0.130f, 1.000f);
+    const ImVec4 accentBlue = ImVec4(0.140f, 0.470f, 0.980f, 1.000f);
+    const ImVec4 accentBlueHover = ImVec4(0.220f, 0.540f, 1.000f, 1.000f);
+    const ImVec4 accentBlueActive = ImVec4(0.100f, 0.380f, 0.820f, 1.000f);
+    const ImVec4 accentOrange = ImVec4(0.960f, 0.530f, 0.120f, 1.000f);
 
-    colors[ImGuiCol_Text] = ImVec4(0.880f, 0.900f, 0.930f, 1.000f);
-    colors[ImGuiCol_TextDisabled] = ImVec4(0.520f, 0.560f, 0.620f, 1.000f);
+    colors[ImGuiCol_Text] = ImVec4(0.900f, 0.915f, 0.940f, 1.000f);
+    colors[ImGuiCol_TextDisabled] = ImVec4(0.480f, 0.510f, 0.570f, 1.000f);
+
     colors[ImGuiCol_WindowBg] = bg0;
     colors[ImGuiCol_ChildBg] = bg1;
-    colors[ImGuiCol_PopupBg] = bg1;
-    colors[ImGuiCol_Border] = ImVec4(0.245f, 0.255f, 0.280f, 0.900f);
+    colors[ImGuiCol_PopupBg] = ImVec4(0.082f, 0.086f, 0.094f, 0.980f);
+
+    colors[ImGuiCol_Border] = ImVec4(0.200f, 0.210f, 0.230f, 0.700f);
     colors[ImGuiCol_BorderShadow] = ImVec4(0.000f, 0.000f, 0.000f, 0.000f);
 
     colors[ImGuiCol_FrameBg] = bg2;
@@ -1862,9 +1864,9 @@ void Editor::initStyle(bool imguiBackendRecreated)
     colors[ImGuiCol_TitleBgCollapsed] = ImVec4(bg0.x, bg0.y, bg0.z, 0.700f);
     colors[ImGuiCol_MenuBarBg] = bg1;
 
-    colors[ImGuiCol_ScrollbarBg] = ImVec4(bg0.x, bg0.y, bg0.z, 0.800f);
-    colors[ImGuiCol_ScrollbarGrab] = bg3;
-    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.250f, 0.265f, 0.290f, 1.000f);
+    colors[ImGuiCol_ScrollbarBg] = ImVec4(bg0.x, bg0.y, bg0.z, 0.600f);
+    colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.220f, 0.232f, 0.255f, 1.000f);
+    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.280f, 0.295f, 0.320f, 1.000f);
     colors[ImGuiCol_ScrollbarGrabActive] = accentBlue;
 
     colors[ImGuiCol_CheckMark] = accentBlueHover;
@@ -1872,39 +1874,39 @@ void Editor::initStyle(bool imguiBackendRecreated)
     colors[ImGuiCol_SliderGrabActive] = accentBlueHover;
 
     colors[ImGuiCol_Button] = bg2;
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.195f, 0.206f, 0.222f, 1.000f);
+    colors[ImGuiCol_ButtonHovered] = bg3;
     colors[ImGuiCol_ButtonActive] = accentBlueActive;
 
-    colors[ImGuiCol_Header] = bg2;
-    colors[ImGuiCol_HeaderHovered] = bg3;
-    colors[ImGuiCol_HeaderActive] = accentBlueActive;
+    colors[ImGuiCol_Header] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.180f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.280f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.400f);
 
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.220f, 0.230f, 0.250f, 0.600f);
+    colors[ImGuiCol_ResizeGrip] = ImVec4(0.200f, 0.210f, 0.230f, 0.400f);
     colors[ImGuiCol_ResizeGripHovered] = accentBlue;
     colors[ImGuiCol_ResizeGripActive] = accentBlueHover;
 
     colors[ImGuiCol_Tab] = bg1;
-    colors[ImGuiCol_TabHovered] = ImVec4(0.190f, 0.205f, 0.240f, 1.000f);
-    colors[ImGuiCol_TabActive] = ImVec4(0.160f, 0.172f, 0.192f, 1.000f);
+    colors[ImGuiCol_TabHovered] = ImVec4(0.180f, 0.196f, 0.224f, 1.000f);
+    colors[ImGuiCol_TabActive] = ImVec4(0.155f, 0.168f, 0.192f, 1.000f);
     colors[ImGuiCol_TabUnfocused] = bg1;
-    colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.140f, 0.150f, 0.168f, 1.000f);
+    colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.135f, 0.146f, 0.164f, 1.000f);
     colors[ImGuiCol_TabSelectedOverline] = accentBlue;
-    colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.4f);
+    colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.350f);
 
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.400f);
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.350f);
     colors[ImGuiCol_DragDropTarget] = accentOrange;
     colors[ImGuiCol_NavHighlight] = accentBlue;
-    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.000f, 1.000f, 1.000f, 0.650f);
-    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.060f, 0.065f, 0.072f, 0.300f);
-    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.060f, 0.065f, 0.072f, 0.750f);
+    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.000f, 1.000f, 1.000f, 0.600f);
+    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.040f, 0.044f, 0.050f, 0.300f);
+    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.040f, 0.044f, 0.050f, 0.700f);
 
-    colors[ImGuiCol_Separator] = ImVec4(0.235f, 0.245f, 0.270f, 0.800f);
+    colors[ImGuiCol_Separator] = ImVec4(0.220f, 0.230f, 0.250f, 0.350f);
     colors[ImGuiCol_SeparatorHovered] = accentBlue;
     colors[ImGuiCol_SeparatorActive] = accentBlueHover;
 
     colors[ImGuiCol_TableHeaderBg] = bg2;
-    colors[ImGuiCol_TableBorderStrong] = ImVec4(0.260f, 0.275f, 0.300f, 1.000f);
-    colors[ImGuiCol_TableBorderLight] = ImVec4(0.180f, 0.192f, 0.210f, 0.600f);
+    colors[ImGuiCol_TableBorderStrong] = ImVec4(0.240f, 0.252f, 0.276f, 1.000f);
+    colors[ImGuiCol_TableBorderLight] = ImVec4(0.160f, 0.168f, 0.184f, 0.500f);
     colors[ImGuiCol_TableRowBg] = bg1;
     colors[ImGuiCol_TableRowBgAlt] = bg2;
 
@@ -1914,7 +1916,14 @@ void Editor::initStyle(bool imguiBackendRecreated)
     colors[ImGuiCol_PlotHistogramHovered] = accentBlueHover;
 
     ImGuiIO &io = ImGui::GetIO();
-    io.Fonts->AddFontFromFileTTF("./resources/fonts/JetBrainsMono-Regular.ttf", 16.0f);
+    // Index 0 — default: Roboto-Regular for all UI labels, buttons, panels
+    io.Fonts->AddFontFromFileTTF("./resources/fonts/Roboto/Roboto-Regular.ttf", 15.0f);
+    // Index 1 — Roboto-Medium for section headers (PushFont / PopFont)
+    io.Fonts->AddFontFromFileTTF("./resources/fonts/Roboto/Roboto-Medium.ttf", 15.0f);
+    // Index 2 — Roboto-Bold for emphasis
+    io.Fonts->AddFontFromFileTTF("./resources/fonts/Roboto/Roboto-Bold.ttf", 15.0f);
+    // Index 3 — JetBrainsMono for code / numeric value fields
+    io.Fonts->AddFontFromFileTTF("./resources/fonts/JetBrainsMono-Regular.ttf", 14.0f);
 
     m_resourceStorage.loadNeededResources(imguiBackendRecreated);
 
@@ -1928,8 +1937,7 @@ void Editor::initStyle(bool imguiBackendRecreated)
     m_assetsWindow->setOnAnimationTreeOpenRequest([this](const std::filesystem::path &path)
                                                   {
                                                       if (m_animationTreePanel)
-                                                          m_animationTreePanel->openTree(path);
-                                                  });
+                                                          m_animationTreePanel->openTree(path); });
     m_assetsWindow->setOnTextAssetOpenRequest([this](const std::filesystem::path &path)
                                               { openTextDocument(path); });
     if (m_pendingSceneOpenRequestCallback)
@@ -2190,42 +2198,41 @@ void Editor::drawCustomTitleBar()
     const float logoY = std::max(0.0f, (ImGui::GetWindowHeight() - logoSize.y) * 0.5f);
     const float controlsY = std::max(0.0f, (ImGui::GetWindowHeight() - buttonSize) * 0.5f);
 
-    ImGui::SetCursorPos(ImVec2(style.WindowPadding.x, logoY));
-    ImGui::Image(m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.tex.elixasset"), logoSize);
+    const float leftStartX = style.WindowPadding.x;
+    const float menuStartX = leftStartX + logoSize.x + 10.0f;
+    const VkDescriptorSet logoDescriptorSet = m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.tex.elixasset");
 
-    ImGui::SameLine(0, 10);
-    ImGui::SetCursorPosY(controlsY);
+    ImGui::SetCursorPos(ImVec2(leftStartX, logoY));
+    if (logoDescriptorSet != VK_NULL_HANDLE)
+        ImGui::Image(logoDescriptorSet, logoSize);
+    else
+        ImGui::Dummy(logoSize);
+
+    ImGui::SetCursorPos(ImVec2(menuStartX, controlsY));
 
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
 
-    if (ImGui::Button("File"))
+    auto drawMenuButton = [](const char *label, const char *popupId)
     {
-        if (ImGui::IsPopupOpen("FilePopup"))
-            ImGui::CloseCurrentPopup();
-        else
-            ImGui::OpenPopup("FilePopup");
-    }
+        if (ImGui::Button(label))
+        {
+            if (ImGui::IsPopupOpen(popupId))
+                ImGui::CloseCurrentPopup();
+            else
+                ImGui::OpenPopup(popupId);
+        }
+    };
 
+    drawMenuButton("File", "FilePopup");
     ImGui::SameLine(0, 10);
-
-    if (ImGui::Button("Tools"))
-    {
-        if (ImGui::IsPopupOpen("CreateNewClassPopup"))
-            ImGui::CloseCurrentPopup();
-        else
-            ImGui::OpenPopup("CreateNewClassPopup");
-    }
-
+    drawMenuButton("Edit", "EditPopup");
     ImGui::SameLine(0, 10);
+    drawMenuButton("Tools", "CreateNewClassPopup");
+    ImGui::SameLine(0, 10);
+    drawMenuButton("View", "ViewPopup");
 
-    if (ImGui::Button("View"))
-    {
-        if (ImGui::IsPopupOpen("ViewPopup"))
-            ImGui::CloseCurrentPopup();
-        else
-            ImGui::OpenPopup("ViewPopup");
-    }
+    const float menuRowEndX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
 
     ImGui::PopStyleColor(1);
     ImGui::PopStyleVar();
@@ -2617,22 +2624,6 @@ void Editor::drawCustomTitleBar()
         ImGui::EndPopup();
     }
 
-    ImGui::SameLine();
-
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-
-    if (ImGui::Button("Edit"))
-    {
-        if (ImGui::IsPopupOpen("EditPopup"))
-            ImGui::CloseCurrentPopup();
-        else
-            ImGui::OpenPopup("EditPopup");
-    }
-
-    ImGui::PopStyleColor(1);
-    ImGui::PopStyleVar();
-
     if (ImGui::BeginPopup("EditPopup"))
     {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -2648,7 +2639,7 @@ void Editor::drawCustomTitleBar()
 
     float windowWidth = ImGui::GetWindowWidth();
     const float rightControlsStartX = windowWidth - buttonSize * 3.0f - style.WindowPadding.x - style.ItemSpacing.x * 2.0f;
-    const float dragZoneStartX = ImGui::GetCursorPosX() + style.ItemSpacing.x;
+    const float dragZoneStartX = std::max(menuStartX, menuRowEndX + style.ItemSpacing.x);
     const float dragZoneWidth = std::max(0.0f, rightControlsStartX - dragZoneStartX - style.ItemSpacing.x);
 
     if (dragZoneWidth > 1.0f)
@@ -4357,7 +4348,7 @@ void Editor::drawRightSidebar()
                 }
 
                 const ImU32 splitterColor = ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_SeparatorActive
-                                                                                      : (ImGui::IsItemHovered() ? ImGuiCol_SeparatorHovered : ImGuiCol_Border));
+                                                                                     : (ImGui::IsItemHovered() ? ImGuiCol_SeparatorHovered : ImGuiCol_Border));
                 ImGui::GetWindowDrawList()->AddRectFilled(splitterMin,
                                                           ImVec2(splitterMin.x + splitterSize.x, splitterMin.y + splitterSize.y),
                                                           splitterColor,
@@ -5210,8 +5201,8 @@ bool Editor::performPasteAction()
 }
 
 void Editor::openAnimationTreeEditor(const std::filesystem::path &path,
-                                      engine::AnimatorComponent     *animator,
-                                      engine::SkeletalMeshComponent *skeletalMesh)
+                                     engine::AnimatorComponent *animator,
+                                     engine::SkeletalMeshComponent *skeletalMesh)
 {
     if (m_animationTreePanel)
         m_animationTreePanel->openTree(path, animator, skeletalMesh);

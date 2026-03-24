@@ -795,6 +795,10 @@ void EditorRuntime::initEditorRenderGraph()
     m_uiRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::UIRenderGraphPass>(
         m_selectionOverlayRenderGraphPass->getHandlers());
 
+    VkExtent2D previewExtent{.width = 256, .height = 256};
+    m_previewAssetsRenderGraphPass = m_renderGraph->addPass<PreviewAssetsRenderGraphPass>(previewExtent);
+    m_animTreePreviewPass          = m_renderGraph->addPass<AnimationTreePreviewPass>();
+
     m_editorBillboardRenderGraphPass = m_renderGraph->addPass<EditorBillboardRenderGraphPass>(
         m_activeScene,
         m_uiRenderGraphPass->getHandlers());
@@ -804,10 +808,6 @@ void EditorRuntime::initEditorRenderGraph()
         m_editor,
         m_editorBillboardRenderGraphPass->getHandlers(),
         m_gBufferRenderGraphPass->getObjectTextureHandler());
-
-    VkExtent2D previewExtent{.width = 256, .height = 256};
-    m_previewAssetsRenderGraphPass = m_renderGraph->addPass<PreviewAssetsRenderGraphPass>(previewExtent);
-    m_animTreePreviewPass          = m_renderGraph->addPass<AnimationTreePreviewPass>();
 
     m_renderGraph->setup();
     m_renderGraph->createRenderGraphResources();
