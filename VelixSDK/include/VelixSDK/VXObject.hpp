@@ -92,6 +92,19 @@ public:
         return getWorld().findById(entityRef.id);
     }
 
+    // Resolve an entity reference and return a specific script on that entity.
+    // Usage: auto* pc = resolveScript<PlayerController>(playerRef, "PlayerController");
+    // Or use the GET_SCRIPT(Type, ref) macro as shorthand.
+    template <typename T>
+    T *resolveScript(const EntityRef &entityRef, const char *scriptName) const
+    {
+        engine::Entity *entity = resolveEntity(entityRef);
+        if (!entity)
+            return nullptr;
+
+        return dynamic_cast<T *>(engine::scripting::getEntitySingleComponent(entity, scriptName));
+    }
+
     EntityRef makeEntityRef(const engine::Entity *entity) const
     {
         return entity ? EntityRef(entity->getId()) : EntityRef{};

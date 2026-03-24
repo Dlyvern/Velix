@@ -848,4 +848,278 @@ std::optional<AudioAsset> AssetsSerializer::readAudio(const std::string &path) c
     return audioAsset;
 }
 
+bool AssetsSerializer::writeAnimationAsset(const AnimationAsset &animationAsset, const std::string &outputPath) const
+{
+    std::ostringstream payloadStream(std::ios::binary);
+    if (!writeString(payloadStream, animationAsset.name) ||
+        !writeString(payloadStream, animationAsset.sourcePath) ||
+        !writeString(payloadStream, animationAsset.assetPath) ||
+        !writeAnimations(payloadStream, animationAsset.animations))
+        return false;
+
+    const std::string payload = payloadStream.str();
+
+    std::error_code directoryError;
+    const auto outputFilesystemPath = std::filesystem::path(outputPath).lexically_normal();
+    const auto parentPath = outputFilesystemPath.parent_path();
+    if (!parentPath.empty())
+        std::filesystem::create_directories(parentPath, directoryError);
+
+    std::ofstream stream(outputFilesystemPath, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to open animation asset output file: " << outputPath << '\n');
+        return false;
+    }
+
+    if (!writeHeader(stream, Asset::AssetType::ANIMATION, static_cast<uint64_t>(payload.size())))
+        return false;
+
+    stream.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    return stream.good();
+}
+
+std::optional<AnimationAsset> AssetsSerializer::readAnimationAsset(const std::string &path) const
+{
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream.is_open())
+        return std::nullopt;
+
+    Asset::BinaryHeader header{};
+    if (!::readHeader(stream, header))
+        return std::nullopt;
+
+    if (static_cast<Asset::AssetType>(header.type) != Asset::AssetType::ANIMATION)
+        return std::nullopt;
+
+    AnimationAsset animationAsset{};
+    if (!readString(stream, animationAsset.name) ||
+        !readString(stream, animationAsset.sourcePath) ||
+        !readString(stream, animationAsset.assetPath) ||
+        !readAnimations(stream, animationAsset.animations))
+        return std::nullopt;
+
+    if (animationAsset.assetPath.empty())
+        animationAsset.assetPath = std::filesystem::path(path).lexically_normal().string();
+
+    return animationAsset;
+}
+
+bool AssetsSerializer::writeAnimationTree(const AnimationTree &tree, const std::string &outputPath) const
+{
+    std::ostringstream payloadStream(std::ios::binary);
+
+    if (!writeString(payloadStream, tree.name) ||
+        !writeString(payloadStream, tree.assetPath))
+        return false;
+
+    if (!writePOD(payloadStream, static_cast<int32_t>(tree.entryStateIndex)))
+        return false;
+
+    const uint32_t paramCount = static_cast<uint32_t>(tree.parameters.size());
+    if (!writePOD(payloadStream, paramCount))
+        return false;
+    for (const auto &param : tree.parameters)
+    {
+        if (!writeString(payloadStream, param.name))
+            return false;
+        if (!writePOD(payloadStream, static_cast<uint8_t>(param.type)))
+            return false;
+        if (!writePOD(payloadStream, param.floatDefault))
+            return false;
+        if (!writePOD(payloadStream, static_cast<uint8_t>(param.boolDefault ? 1 : 0)))
+            return false;
+        if (!writePOD(payloadStream, static_cast<int32_t>(param.intDefault)))
+            return false;
+    }
+
+    const uint32_t stateCount = static_cast<uint32_t>(tree.states.size());
+    if (!writePOD(payloadStream, stateCount))
+        return false;
+    for (const auto &state : tree.states)
+    {
+        if (!writeString(payloadStream, state.name) ||
+            !writeString(payloadStream, state.animationAssetPath))
+            return false;
+        if (!writePOD(payloadStream, static_cast<int32_t>(state.clipIndex)))
+            return false;
+        if (!writePOD(payloadStream, static_cast<uint8_t>(state.loop ? 1 : 0)))
+            return false;
+        if (!writePOD(payloadStream, state.speed))
+            return false;
+    }
+
+    const uint32_t transitionCount = static_cast<uint32_t>(tree.transitions.size());
+    if (!writePOD(payloadStream, transitionCount))
+        return false;
+    for (const auto &transition : tree.transitions)
+    {
+        if (!writePOD(payloadStream, static_cast<int32_t>(transition.fromStateIndex)) ||
+            !writePOD(payloadStream, static_cast<int32_t>(transition.toStateIndex)) ||
+            !writePOD(payloadStream, transition.blendDuration) ||
+            !writePOD(payloadStream, static_cast<uint8_t>(transition.hasExitTime ? 1 : 0)) ||
+            !writePOD(payloadStream, transition.exitTime))
+            return false;
+
+        const uint32_t conditionCount = static_cast<uint32_t>(transition.conditions.size());
+        if (!writePOD(payloadStream, conditionCount))
+            return false;
+        for (const auto &cond : transition.conditions)
+        {
+            if (!writePOD(payloadStream, static_cast<uint8_t>(cond.type)))
+                return false;
+            if (!writeString(payloadStream, cond.parameterName))
+                return false;
+            if (!writePOD(payloadStream, cond.floatThreshold))
+                return false;
+            if (!writePOD(payloadStream, static_cast<int32_t>(cond.intValue)))
+                return false;
+        }
+    }
+
+    const uint32_t posCount = static_cast<uint32_t>(tree.stateNodePositions.size());
+    if (!writePOD(payloadStream, posCount))
+        return false;
+    for (const auto &pos : tree.stateNodePositions)
+    {
+        if (!writePOD(payloadStream, pos.x) || !writePOD(payloadStream, pos.y))
+            return false;
+    }
+
+    const std::string payload = payloadStream.str();
+
+    std::error_code directoryError;
+    const auto outputFilesystemPath = std::filesystem::path(outputPath).lexically_normal();
+    const auto parentPath = outputFilesystemPath.parent_path();
+    if (!parentPath.empty())
+        std::filesystem::create_directories(parentPath, directoryError);
+
+    std::ofstream stream(outputFilesystemPath, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to open animation tree output file: " << outputPath << '\n');
+        return false;
+    }
+
+    if (!writeHeader(stream, Asset::AssetType::ANIMATION_TREE, static_cast<uint64_t>(payload.size())))
+        return false;
+
+    stream.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    return stream.good();
+}
+
+std::optional<AnimationTree> AssetsSerializer::readAnimationTree(const std::string &path) const
+{
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream.is_open())
+        return std::nullopt;
+
+    Asset::BinaryHeader header{};
+    if (!::readHeader(stream, header))
+        return std::nullopt;
+
+    if (static_cast<Asset::AssetType>(header.type) != Asset::AssetType::ANIMATION_TREE)
+        return std::nullopt;
+
+    AnimationTree tree{};
+
+    if (!readString(stream, tree.name) ||
+        !readString(stream, tree.assetPath))
+        return std::nullopt;
+
+    int32_t entryIndex = 0;
+    if (!readPOD(stream, entryIndex))
+        return std::nullopt;
+    tree.entryStateIndex = static_cast<int>(entryIndex);
+
+    uint32_t paramCount = 0;
+    if (!readPOD(stream, paramCount) || paramCount > 1024u)
+        return std::nullopt;
+    tree.parameters.resize(paramCount);
+    for (auto &param : tree.parameters)
+    {
+        uint8_t typeVal = 0;
+        uint8_t boolVal = 0;
+        int32_t intVal = 0;
+        if (!readString(stream, param.name) ||
+            !readPOD(stream, typeVal) ||
+            !readPOD(stream, param.floatDefault) ||
+            !readPOD(stream, boolVal) ||
+            !readPOD(stream, intVal))
+            return std::nullopt;
+        param.type = static_cast<AnimationTreeParameter::Type>(typeVal);
+        param.boolDefault = (boolVal != 0);
+        param.intDefault = static_cast<int>(intVal);
+    }
+
+    uint32_t stateCount = 0;
+    if (!readPOD(stream, stateCount) || stateCount > 4096u)
+        return std::nullopt;
+    tree.states.resize(stateCount);
+    for (auto &state : tree.states)
+    {
+        uint8_t loopVal = 0;
+        int32_t clipIdx = 0;
+        if (!readString(stream, state.name) ||
+            !readString(stream, state.animationAssetPath) ||
+            !readPOD(stream, clipIdx) ||
+            !readPOD(stream, loopVal) ||
+            !readPOD(stream, state.speed))
+            return std::nullopt;
+        state.clipIndex = static_cast<int>(clipIdx);
+        state.loop = (loopVal != 0);
+    }
+
+    uint32_t transitionCount = 0;
+    if (!readPOD(stream, transitionCount) || transitionCount > 65536u)
+        return std::nullopt;
+    tree.transitions.resize(transitionCount);
+    for (auto &transition : tree.transitions)
+    {
+        int32_t fromIdx = 0, toIdx = 0;
+        uint8_t exitTimeFlag = 0;
+        if (!readPOD(stream, fromIdx) ||
+            !readPOD(stream, toIdx) ||
+            !readPOD(stream, transition.blendDuration) ||
+            !readPOD(stream, exitTimeFlag) ||
+            !readPOD(stream, transition.exitTime))
+            return std::nullopt;
+        transition.fromStateIndex = static_cast<int>(fromIdx);
+        transition.toStateIndex = static_cast<int>(toIdx);
+        transition.hasExitTime = (exitTimeFlag != 0);
+
+        uint32_t conditionCount = 0;
+        if (!readPOD(stream, conditionCount) || conditionCount > 256u)
+            return std::nullopt;
+        transition.conditions.resize(conditionCount);
+        for (auto &cond : transition.conditions)
+        {
+            uint8_t typeVal = 0;
+            int32_t intVal = 0;
+            if (!readPOD(stream, typeVal) ||
+                !readString(stream, cond.parameterName) ||
+                !readPOD(stream, cond.floatThreshold) ||
+                !readPOD(stream, intVal))
+                return std::nullopt;
+            cond.type = static_cast<AnimationTransitionCondition::Type>(typeVal);
+            cond.intValue = static_cast<int>(intVal);
+        }
+    }
+
+    uint32_t posCount = 0;
+    if (!readPOD(stream, posCount) || posCount > 4096u)
+        return std::nullopt;
+    tree.stateNodePositions.resize(posCount);
+    for (auto &pos : tree.stateNodePositions)
+    {
+        if (!readPOD(stream, pos.x) || !readPOD(stream, pos.y))
+            return std::nullopt;
+    }
+
+    if (tree.assetPath.empty())
+        tree.assetPath = std::filesystem::path(path).lexically_normal().string();
+
+    return tree;
+}
+
 ELIX_NESTED_NAMESPACE_END

@@ -81,9 +81,9 @@ private:
     std::array<VkClearValue, 1> m_clearValues{};
 
     std::array<std::string, 3> m_iconTexturePaths{
-        "./resources/textures/velix_logo.tex.elixasset", // camera
-        "./resources/textures/velix_logo.tex.elixasset", // light
-        "./resources/textures/velix_logo.tex.elixasset"  // audio
+        "", // camera: generated icon by default
+        "", // light: generated icon by default
+        ""  // audio: generated icon by default
     };
 };
 

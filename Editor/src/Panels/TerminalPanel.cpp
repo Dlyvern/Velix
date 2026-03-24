@@ -1,4 +1,5 @@
-#include "Editor/Editor.hpp"
+#include "Editor/Panels/TerminalPanel.hpp"
+
 #include "Editor/FileHelper.hpp"
 #include "Core/Logger.hpp"
 #include "Engine/Shaders/ShaderCompiler.hpp"
@@ -9,14 +10,129 @@
 #include <cctype>
 #include <cstring>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
-void Editor::drawTerminal()
+
+namespace
 {
-    if (!m_showTerminal)
+    std::string normalizeTerminalCommand(std::string command)
+    {
+        command.erase(command.begin(), std::find_if(command.begin(), command.end(), [](unsigned char character)
+                                                    { return !std::isspace(character); }));
+        command.erase(std::find_if(command.rbegin(), command.rend(), [](unsigned char character)
+                                   { return !std::isspace(character); })
+                          .base(),
+                      command.end());
+
+        std::string normalized;
+        normalized.reserve(command.size());
+
+        bool previousWasSpace = false;
+        for (unsigned char character : command)
+        {
+            if (std::isspace(character))
+            {
+                if (!normalized.empty() && !previousWasSpace)
+                    normalized.push_back(' ');
+
+                previousWasSpace = true;
+                continue;
+            }
+
+            normalized.push_back(static_cast<char>(std::tolower(character)));
+            previousWasSpace = false;
+        }
+
+        if (!normalized.empty() && normalized.back() == ' ')
+            normalized.pop_back();
+
+        return normalized;
+    }
+
+} // namespace
+
+void TerminalPanel::addFunction(const std::string &command, const std::function<void()> &function)
+{
+    const std::string normalizedCommand = normalizeTerminalCommand(command);
+    if (normalizedCommand.empty() || !function)
         return;
 
-    ImGui::Begin("Terminal with logs", &m_showTerminal);
+    auto existingFunctionIt = std::find_if(m_registeredFunctions.begin(), m_registeredFunctions.end(),
+                                           [&](const RegisteredFunction &registeredFunction)
+                                           { return registeredFunction.command == normalizedCommand; });
+
+    if (existingFunctionIt != m_registeredFunctions.end())
+    {
+        existingFunctionIt->function = function;
+        return;
+    }
+
+    m_registeredFunctions.push_back({normalizedCommand, function});
+}
+
+void TerminalPanel::setNotificationManager(NotificationManager *notificationManager)
+{
+    m_notificationManager = notificationManager;
+}
+
+void TerminalPanel::setQueueShaderReloadRequestCallback(const std::function<void()> &function)
+{
+    m_queueShaderReloadRequest = function;
+}
+
+void TerminalPanel::notify(NotificationType type, const std::string &message)
+{
+    if (!m_notificationManager)
+        return;
+
+    switch (type)
+    {
+    case NotificationType::Info:
+        m_notificationManager->showInfo(message);
+        break;
+    case NotificationType::Success:
+        m_notificationManager->showSuccess(message);
+        break;
+    case NotificationType::Warning:
+        m_notificationManager->showWarning(message);
+        break;
+    case NotificationType::Error:
+        m_notificationManager->showError(message);
+        break;
+    }
+}
+
+void TerminalPanel::queueShaderReloadRequest()
+{
+    if (m_queueShaderReloadRequest)
+        m_queueShaderReloadRequest();
+}
+
+bool TerminalPanel::executeRegisteredFunction(const std::string &command)
+{
+    const std::string normalizedCommand = normalizeTerminalCommand(command);
+    if (normalizedCommand.empty())
+        return false;
+
+    auto functionIt = std::find_if(m_registeredFunctions.begin(), m_registeredFunctions.end(),
+                                   [&](const RegisteredFunction &registeredFunction)
+                                   { return registeredFunction.command == normalizedCommand; });
+    if (functionIt == m_registeredFunctions.end() || !functionIt->function)
+        return false;
+
+    VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal", "$ " + normalizedCommand);
+    functionIt->function();
+    return true;
+}
+
+void TerminalPanel::draw(bool *open)
+{
+    if (!open || !*open)
+        return;
+
+    ImGui::Begin("Terminal with logs", open);
 
     auto *logger = core::Logger::getDefaultLogger();
     if (!logger)
@@ -29,26 +145,26 @@ void Editor::drawTerminal()
     if (ImGui::Button("Clear Logs"))
     {
         logger->clearHistory();
-        m_terminalLastLogCount = 0;
-        m_forceTerminalScrollToBottom = true;
+        m_lastLogCount = 0;
+        m_forceScrollToBottom = true;
     }
 
     ImGui::SameLine();
-    if (ImGui::Checkbox("Auto-scroll", &m_terminalAutoScroll) && m_terminalAutoScroll)
-        m_forceTerminalScrollToBottom = true;
+    if (ImGui::Checkbox("Auto-scroll", &m_autoScroll) && m_autoScroll)
+        m_forceScrollToBottom = true;
 
     ImGui::SameLine();
-    ImGui::Checkbox("Clear input on run", &m_terminalClearInputOnSubmit);
+    ImGui::Checkbox("Clear input on run", &m_clearInputOnSubmit);
 
     auto drawLayerToggle = [this](const char *label, int bit)
     {
-        bool enabled = (m_terminalSelectedLayerMask & (1 << bit)) != 0;
+        bool enabled = (m_selectedLayerMask & (1 << bit)) != 0;
         if (ImGui::Checkbox(label, &enabled))
         {
             if (enabled)
-                m_terminalSelectedLayerMask |= (1 << bit);
+                m_selectedLayerMask |= (1 << bit);
             else
-                m_terminalSelectedLayerMask &= ~(1 << bit);
+                m_selectedLayerMask &= ~(1 << bit);
         }
     };
 
@@ -67,8 +183,8 @@ void Editor::drawTerminal()
     {
         const auto logs = logger->getHistorySnapshot();
         const size_t currentLogCount = logs.size();
-        const bool hasNewLogs = currentLogCount > m_terminalLastLogCount;
-        const bool historyShrank = currentLogCount < m_terminalLastLogCount;
+        const bool hasNewLogs = currentLogCount > m_lastLogCount;
+        const bool historyShrank = currentLogCount < m_lastLogCount;
 
         const float scrollYBeforeRender = ImGui::GetScrollY();
         const float scrollMaxBeforeRender = ImGui::GetScrollMaxY();
@@ -96,7 +212,7 @@ void Editor::drawTerminal()
                 break;
             }
 
-            if ((m_terminalSelectedLayerMask & (1 << layerBit)) == 0)
+            if ((m_selectedLayerMask & (1 << layerBit)) == 0)
                 continue;
 
             ImVec4 color = ImVec4(0.85f, 0.88f, 0.93f, 1.0f);
@@ -121,19 +237,19 @@ void Editor::drawTerminal()
             ImGui::PopStyleColor();
         }
 
-        const bool shouldAutoScroll = m_terminalAutoScroll &&
-                                      (m_forceTerminalScrollToBottom || historyShrank || (hasNewLogs && wasAtBottom));
+        const bool shouldAutoScroll = m_autoScroll &&
+                                      (m_forceScrollToBottom || historyShrank || (hasNewLogs && wasAtBottom));
 
         if (shouldAutoScroll)
             ImGui::SetScrollHereY(1.0f);
 
-        m_terminalLastLogCount = currentLogCount;
-        m_forceTerminalScrollToBottom = false;
+        m_lastLogCount = currentLogCount;
+        m_forceScrollToBottom = false;
     }
     ImGui::EndChild();
 
     ImGui::PushItemWidth(-70.0f);
-    const bool submitWithEnter = ImGui::InputText("##TerminalCommand", m_terminalCommandBuffer, sizeof(m_terminalCommandBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+    const bool submitWithEnter = ImGui::InputText("##TerminalCommand", m_commandBuffer.data(), m_commandBuffer.size(), ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::PopItemWidth();
 
     ImGui::SameLine();
@@ -141,27 +257,20 @@ void Editor::drawTerminal()
 
     if (submitWithEnter || submitWithButton)
     {
-        std::string command = m_terminalCommandBuffer;
+        const std::string command = normalizeTerminalCommand(m_commandBuffer.data());
 
         if (!command.empty())
         {
-            command.erase(command.begin(), std::find_if(command.begin(), command.end(), [](unsigned char character)
-                                                        { return !std::isspace(character); }));
-            command.erase(std::find_if(command.rbegin(), command.rend(), [](unsigned char character)
-                                       { return !std::isspace(character); })
-                              .base(),
-                          command.end());
-        }
+            m_forceScrollToBottom = true;
 
-        if (!command.empty())
-        {
-            m_forceTerminalScrollToBottom = true;
-
-            if (command == "reload_shaders")
+            if (executeRegisteredFunction(command))
             {
-                m_pendingShaderReloadRequest = true;
+            }
+            else if (command == "reload_shaders")
+            {
+                queueShaderReloadRequest();
                 VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal", "Queued shader reload request");
-                m_notificationManager.showInfo("Shader reload queued");
+                notify(NotificationType::Info, "Shader reload queued");
             }
             else if (command == "compile_shaders")
             {
@@ -173,18 +282,18 @@ void Editor::drawTerminal()
 
                 if (compiledShaders > 0)
                 {
-                    m_pendingShaderReloadRequest = true;
+                    queueShaderReloadRequest();
                     VX_LOG_STREAM(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal",
                                   "Compiled " << compiledShaders << " shader source files. Reload queued.");
-                    m_notificationManager.showSuccess("Shaders compiled");
+                    notify(NotificationType::Success, "Shaders compiled");
                 }
                 else if (compileErrors.empty())
                 {
                     VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal", "No shader source files were compiled.");
-                    m_notificationManager.showInfo("No shader changes to compile");
+                    notify(NotificationType::Info, "No shader changes to compile");
                 }
                 else
-                    m_notificationManager.showError("Shader compilation failed. Check terminal output.");
+                    notify(NotificationType::Error, "Shader compilation failed. Check terminal output.");
             }
             else
             {
@@ -207,19 +316,19 @@ void Editor::drawTerminal()
                 {
                     VX_LOG_STREAM(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal",
                                   "Command finished successfully. Exit code: " << executionResult);
-                    m_notificationManager.showSuccess("Command executed successfully");
+                    notify(NotificationType::Success, "Command executed successfully");
                 }
                 else
                 {
                     VX_LOG_STREAM(core::Logger::LogLayer::Developer, core::Logger::LogLevel::LOG_LEVEL_ERROR, "Terminal",
                                   "Command failed. Exit code: " << executionResult);
-                    m_notificationManager.showError("Command failed. Check terminal output.");
+                    notify(NotificationType::Error, "Command failed. Check terminal output.");
                 }
             }
         }
 
-        if (m_terminalClearInputOnSubmit)
-            std::memset(m_terminalCommandBuffer, 0, sizeof(m_terminalCommandBuffer));
+        if (m_clearInputOnSubmit)
+            std::memset(m_commandBuffer.data(), 0, m_commandBuffer.size());
     }
 
     ImGui::End();

@@ -102,6 +102,8 @@ void GraphicsPipelineManager::loadShaderModules()
     depthPrepassStaticShader  = std::make_shared<core::Shader>("./resources/shaders/gbuffer_static.vert.spv",  "./resources/shaders/empty.frag.spv");
     depthPrepassSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_skinned.vert.spv", "./resources/shaders/empty.frag.spv");
     taaShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/taa.frag.spv");
+    animPreviewShader = std::make_shared<core::Shader>("./resources/shaders/anim_preview.vert.spv",
+                                                        "./resources/shaders/shader_simple_textured_mesh.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -146,6 +148,7 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(depthPrepassStaticShader);
     destroyShader(depthPrepassSkinnedShader);
     destroyShader(taaShader);
+    destroyShader(animPreviewShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -272,6 +275,9 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::TAA:
         stages = taaShader->getShaderStages();
         break;
+    case ShaderId::AnimPreview:
+        stages = animPreviewShader->getShaderStages();
+        break;
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
@@ -315,7 +321,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions;
 
     if (key.shader == ShaderId::GBufferSkinned || key.shader == ShaderId::SkinnedShadow ||
-        key.shader == ShaderId::DepthPrepassSkinned)
+        key.shader == ShaderId::DepthPrepassSkinned || key.shader == ShaderId::AnimPreview)
     {
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::VertexSkinned))};
         vertexAttributeDescriptions = vertex::VertexSkinned::getAttributeDescriptions();

@@ -439,6 +439,38 @@ Entity::SharedPtr Scene::addEntity(const std::string &name)
     return entity;
 }
 
+Entity::SharedPtr Scene::addEntityWithId(const std::string &name, uint32_t id)
+{
+    auto generateUniqueName = [this](const std::string &baseName)
+    {
+        int counter = 1;
+        std::string newName;
+
+        do
+        {
+            newName = baseName + "_" + (counter < 10 ? "0" : "") + std::to_string(counter);
+            counter++;
+        } while (doesEntityNameExist(newName));
+
+        return newName;
+    };
+
+    std::string actualName = name;
+    if (doesEntityNameExist(name))
+        actualName = generateUniqueName(name);
+
+    auto entity = std::make_shared<Entity>(actualName);
+    entity->addComponent<Transform3DComponent>();
+    entity->setId(id);
+
+    const uint32_t candidateNextId =
+        (id == std::numeric_limits<uint32_t>::max()) ? id : static_cast<uint32_t>(id + 1u);
+    m_nextEntityId = std::max(m_nextEntityId, candidateNextId);
+
+    m_entities.push_back(entity);
+    return entity;
+}
+
 bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback, bool additive)
 {
     auto reportStatus = [&](const std::string &status)
@@ -671,6 +703,70 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
         };
         std::vector<AnimatorState> pendingAnimatorStates;
 
+        auto collectResolvedAnimationAssetPaths = [&](const nlohmann::json &componentJson)
+        {
+            std::vector<std::string> resolvedPaths;
+
+            if (!componentJson.contains("animation_asset_paths") || !componentJson["animation_asset_paths"].is_array())
+                return resolvedPaths;
+
+            resolvedPaths.reserve(componentJson["animation_asset_paths"].size());
+            for (const auto &pathJson : componentJson["animation_asset_paths"])
+            {
+                if (!pathJson.is_string())
+                    continue;
+
+                const std::string resolvedPath = resolveScenePath(pathJson.get<std::string>());
+                if (!resolvedPath.empty())
+                    resolvedPaths.push_back(resolvedPath);
+            }
+
+            return resolvedPaths;
+        };
+
+        auto ensureAnimatorAnimationsLoaded = [&](Entity *entity, const nlohmann::json &componentJson)
+        {
+            if (!entity)
+                return;
+
+            auto *animatorComponent = entity->getComponent<AnimatorComponent>();
+            auto *skeletalMeshComponent = entity->getComponent<SkeletalMeshComponent>();
+            Skeleton *skeleton = skeletalMeshComponent ? &skeletalMeshComponent->getSkeleton() : nullptr;
+            const std::vector<std::string> externalAnimationAssetPaths = collectResolvedAnimationAssetPaths(componentJson);
+
+            if (!animatorComponent)
+            {
+                animatorComponent = entity->addComponent<AnimatorComponent>();
+                if (!animatorComponent)
+                    return;
+
+                if (skeleton)
+                    animatorComponent->bindSkeleton(skeleton);
+            }
+
+            if (!externalAnimationAssetPaths.empty())
+            {
+                std::vector<Animation> mergedAnimations = animatorComponent->getAnimations();
+                for (const auto &animationAssetPath : externalAnimationAssetPaths)
+                {
+                    auto animationAsset = AssetsLoader::loadAnimationAsset(animationAssetPath);
+                    if (!animationAsset.has_value())
+                    {
+                        VX_ENGINE_WARNING_STREAM("Failed to load animation asset while restoring scene: " << animationAssetPath << '\n');
+                        continue;
+                    }
+
+                    mergedAnimations.insert(mergedAnimations.end(),
+                                            animationAsset->animations.begin(),
+                                            animationAsset->animations.end());
+                }
+
+                animatorComponent->setAnimations(mergedAnimations, skeleton);
+            }
+
+            animatorComponent->setExternalAnimationAssetPaths(externalAnimationAssetPaths);
+        };
+
         size_t gameObjectIndex = 0;
         for (const auto &objectJson : json["game_objects"])
         {
@@ -852,6 +948,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                 }
                 else if (type == "animator")
                 {
+                    ensureAnimatorAnimationsLoaded(gameObject.get(), componentJson);
                     pendingAnimatorStates.push_back({gameObject.get(),
                                                      componentJson.value("selected_animation", -1),
                                                      componentJson.value("speed", 1.0f),
@@ -1507,6 +1604,16 @@ void Scene::saveSceneToFile(const std::string &filePath)
             j["speed"] = anim->getAnimationSpeed();
             j["looped"] = anim->isAnimationLooped();
             j["paused"] = anim->isAnimationPaused();
+
+            if (!anim->getExternalAnimationAssetPaths().empty())
+            {
+                nlohmann::json animationAssetPathsJson = nlohmann::json::array();
+                for (const auto &animationAssetPath : anim->getExternalAnimationAssetPaths())
+                    animationAssetPathsJson.push_back(toRelativePath(animationAssetPath));
+
+                j["animation_asset_paths"] = std::move(animationAssetPathsJson);
+            }
+
             componentsJson.push_back(j);
         }
 
@@ -1927,6 +2034,1501 @@ void Scene::saveSceneToFile(const std::string &filePath)
     }
     else
         VX_ENGINE_ERROR_STREAM("Failed to open file to save game objects: " << filePath << std::endl);
+}
+
+bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayload) const
+{
+    outPayload.clear();
+
+    auto *scene = const_cast<Scene *>(this);
+    Entity *rootEntity = scene->getEntityById(rootEntityId);
+    if (!rootEntity)
+        return false;
+
+    auto normalizeSerializedPath = [](const std::string &rawPath) -> std::string
+    {
+        if (rawPath.empty())
+            return {};
+
+        return std::filesystem::path(rawPath).lexically_normal().string();
+    };
+
+    auto serializeEntity = [&](Entity &object) -> nlohmann::json
+    {
+        nlohmann::json objectJson;
+
+        objectJson["name"] = object.getName();
+        objectJson["id"] = object.getId();
+        objectJson["enabled"] = object.isEnabled();
+
+        if (const auto *parent = object.getParent())
+            objectJson["parent_id"] = parent->getId();
+
+        if (const auto *transformation = object.getComponent<Transform3DComponent>())
+        {
+            const auto pos = transformation->getPosition();
+            const auto scl = transformation->getScale();
+            const auto rot = transformation->getEulerDegrees();
+            objectJson["position"] = {pos.x, pos.y, pos.z};
+            objectJson["scale"] = {scl.x, scl.y, scl.z};
+            objectJson["rotation"] = {rot.x, rot.y, rot.z};
+        }
+
+        const auto &tags = object.getTags();
+        if (!tags.empty())
+        {
+            nlohmann::json tagsJson = nlohmann::json::array();
+            for (const auto &tag : tags)
+                tagsJson.push_back(tag);
+            objectJson["tags"] = std::move(tagsJson);
+        }
+
+        nlohmann::json componentsJson = nlohmann::json::array();
+
+        if (const auto *sm = object.getComponent<StaticMeshComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "static_mesh";
+
+            const std::string &assetPath = sm->getAssetPath();
+            if (assetPath.empty())
+            {
+                componentJson["is_primitive"] = true;
+                componentJson["primitive_type"] = sm->getMeshes().empty() ? "Cube" : sm->getMeshes()[0].name;
+            }
+            else
+            {
+                componentJson["is_primitive"] = false;
+                componentJson["asset_path"] = normalizeSerializedPath(assetPath);
+            }
+
+            nlohmann::json overridesJson = nlohmann::json::array();
+            for (size_t slot = 0; slot < sm->getMaterialSlotCount(); ++slot)
+            {
+                const std::string &materialPath = sm->getMaterialOverridePath(slot);
+                if (!materialPath.empty())
+                    overridesJson.push_back({{"slot", slot}, {"path", normalizeSerializedPath(materialPath)}});
+            }
+            componentJson["material_overrides"] = std::move(overridesJson);
+
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        if (const auto *skm = object.getComponent<SkeletalMeshComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "skeletal_mesh";
+            componentJson["asset_path"] = normalizeSerializedPath(skm->getAssetPath());
+
+            nlohmann::json overridesJson = nlohmann::json::array();
+            for (size_t slot = 0; slot < skm->getMaterialSlotCount(); ++slot)
+            {
+                const std::string &materialPath = skm->getMaterialOverridePath(slot);
+                if (!materialPath.empty())
+                    overridesJson.push_back({{"slot", slot}, {"path", normalizeSerializedPath(materialPath)}});
+            }
+            componentJson["material_overrides"] = std::move(overridesJson);
+
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        if (const auto *terrainComponent = object.getComponent<TerrainComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "terrain";
+            componentJson["asset_path"] = normalizeSerializedPath(terrainComponent->getTerrainAssetPath());
+            componentJson["quads_per_chunk"] = terrainComponent->getQuadsPerChunk();
+
+            if (!terrainComponent->getMaterialOverridePath().empty())
+                componentJson["material_override_path"] = normalizeSerializedPath(terrainComponent->getMaterialOverridePath());
+
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        if (const auto *animator = object.getComponent<AnimatorComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "animator";
+            componentJson["selected_animation"] = animator->getSelectedAnimationIndex();
+            componentJson["speed"] = animator->getAnimationSpeed();
+            componentJson["looped"] = animator->isAnimationLooped();
+            componentJson["paused"] = animator->isAnimationPaused();
+
+            if (!animator->getExternalAnimationAssetPaths().empty())
+            {
+                nlohmann::json animationAssetPathsJson = nlohmann::json::array();
+                for (const auto &animationAssetPath : animator->getExternalAnimationAssetPaths())
+                    animationAssetPathsJson.push_back(normalizeSerializedPath(animationAssetPath));
+
+                componentJson["animation_asset_paths"] = std::move(animationAssetPathsJson);
+            }
+
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        if (const auto *cameraComponent = object.getComponent<CameraComponent>())
+        {
+            const auto camera = cameraComponent->getCamera();
+            if (camera)
+            {
+                nlohmann::json componentJson;
+                componentJson["type"] = "camera";
+                componentJson["yaw"] = camera->getYaw();
+                componentJson["pitch"] = camera->getPitch();
+                componentJson["fov"] = camera->getFOV();
+                componentJson["aspect"] = camera->getAspect();
+                const glm::vec3 positionOffset = cameraComponent->getPositionOffset();
+                componentJson["position_offset"] = {positionOffset.x, positionOffset.y, positionOffset.z};
+                componentsJson.push_back(std::move(componentJson));
+            }
+        }
+
+        if (auto *lightComponent = object.getComponent<LightComponent>())
+        {
+            nlohmann::json componentJson;
+            const auto &light = lightComponent->getLight();
+            componentJson["type"] = "light";
+
+            std::string lightTypeString;
+            switch (lightComponent->getLightType())
+            {
+            case LightComponent::LightType::DIRECTIONAL:
+                lightTypeString = "directional";
+                break;
+            case LightComponent::LightType::SPOT:
+                lightTypeString = "spot";
+                break;
+            case LightComponent::LightType::POINT:
+                lightTypeString = "point";
+                break;
+            default:
+                lightTypeString = "undefined";
+                break;
+            }
+
+            componentJson["light_type"] = lightTypeString;
+            componentJson["color"] = {light->color.x, light->color.y, light->color.z};
+            componentJson["strength"] = light->strength;
+            componentJson["casts_shadows"] = light->castsShadows;
+
+            if (lightComponent->getLightType() == LightComponent::LightType::DIRECTIONAL)
+            {
+                if (auto *directionalLight = dynamic_cast<DirectionalLight *>(light.get()))
+                    componentJson["sky_light_enabled"] = directionalLight->skyLightEnabled;
+            }
+            else if (lightComponent->getLightType() == LightComponent::LightType::POINT)
+            {
+                if (auto *pointLight = dynamic_cast<PointLight *>(light.get()))
+                {
+                    componentJson["radius"] = pointLight->radius;
+                    componentJson["falloff"] = pointLight->falloff;
+                }
+            }
+            else if (lightComponent->getLightType() == LightComponent::LightType::SPOT)
+            {
+                if (auto *spotLight = dynamic_cast<SpotLight *>(light.get()))
+                {
+                    componentJson["inner_angle"] = spotLight->innerAngle;
+                    componentJson["outer_angle"] = spotLight->outerAngle;
+                    componentJson["range"] = spotLight->range;
+                }
+            }
+
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        if (const auto *rigidBody = object.getComponent<RigidBodyComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "rigid_body";
+            componentJson["is_kinematic"] = rigidBody->isKinematic();
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        if (const auto *collision = object.getComponent<CollisionComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "collision";
+            if (collision->getShapeType() == CollisionComponent::ShapeType::CAPSULE)
+            {
+                componentJson["collision_type"] = "capsule";
+                componentJson["radius"] = collision->getCapsuleRadius();
+                componentJson["half_height"] = collision->getCapsuleHalfHeight();
+            }
+            else
+            {
+                componentJson["collision_type"] = "box";
+                const auto halfExtents = collision->getBoxHalfExtents();
+                componentJson["half_extents"] = {halfExtents.x, halfExtents.y, halfExtents.z};
+            }
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        if (const auto *characterMovement = object.getComponent<CharacterMovementComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "character_movement";
+            componentJson["radius"] = characterMovement->getCapsuleRadius();
+            componentJson["height"] = characterMovement->getCapsuleHeight();
+            componentJson["step_offset"] = characterMovement->getStepOffset();
+            componentJson["contact_offset"] = characterMovement->getContactOffset();
+            componentJson["slope_limit_degrees"] = characterMovement->getSlopeLimitDegrees();
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        for (const auto *audio : object.getComponents<AudioComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "audio";
+            componentJson["asset_path"] = normalizeSerializedPath(audio->getAssetPath());
+            componentJson["volume"] = audio->getVolume();
+            componentJson["pitch"] = audio->getPitch();
+            componentJson["loop"] = audio->isLooping();
+            componentJson["play_on_start"] = audio->isPlayOnStart();
+            componentJson["muted"] = audio->isMuted();
+            componentJson["spatial"] = audio->isSpatial();
+            componentJson["min_distance"] = audio->getMinDistance();
+            componentJson["max_distance"] = audio->getMaxDistance();
+            componentJson["audio_type"] = (audio->getAudioType() == AudioComponent::AudioType::Music) ? "music" : "sound";
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        for (auto *script : object.getComponents<ScriptComponent>())
+        {
+            if (script->getScriptName().empty())
+                continue;
+
+            script->syncSerializedVariablesFromScript();
+            nlohmann::json componentJson;
+            componentJson["type"] = "script";
+            componentJson["name"] = script->getScriptName();
+
+            const auto &serializedVariables = script->getSerializedVariables();
+            if (!serializedVariables.empty())
+            {
+                nlohmann::json variablesJson = nlohmann::json::object();
+                for (const auto &[variableName, variable] : serializedVariables)
+                    variablesJson[variableName] = scriptVariableToJson(variable);
+
+                componentJson["variables"] = std::move(variablesJson);
+            }
+
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        for (const auto *particleSystemComponent : object.getComponents<ParticleSystemComponent>())
+        {
+            const ParticleSystem *particleSystem = particleSystemComponent->getParticleSystem();
+            if (!particleSystem)
+                continue;
+
+            nlohmann::json componentJson;
+            componentJson["type"] = "particle_system";
+            componentJson["play_on_start"] = particleSystemComponent->playOnStart;
+
+            nlohmann::json systemJson;
+            systemJson["name"] = particleSystem->name;
+
+            nlohmann::json emittersJson = nlohmann::json::array();
+            for (const auto &emitter : particleSystem->getEmitters())
+            {
+                nlohmann::json emitterJson;
+                emitterJson["name"] = emitter->name;
+                emitterJson["enabled"] = emitter->enabled;
+
+                nlohmann::json modulesJson;
+
+                if (auto *spawn = emitter->getModule<SpawnModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = spawn->isEnabled();
+                    moduleJson["spawn_rate"] = spawn->spawnRate;
+                    moduleJson["burst_count"] = spawn->burstCount;
+                    moduleJson["loop"] = spawn->loop;
+                    moduleJson["duration"] = spawn->duration;
+
+                    std::string shapeString;
+                    switch (spawn->shape.shape)
+                    {
+                    case EmitterShape::Sphere:
+                        shapeString = "sphere";
+                        break;
+                    case EmitterShape::Box:
+                        shapeString = "box";
+                        break;
+                    case EmitterShape::Cone:
+                        shapeString = "cone";
+                        break;
+                    case EmitterShape::Cylinder:
+                        shapeString = "cylinder";
+                        break;
+                    default:
+                        shapeString = "point";
+                        break;
+                    }
+
+                    nlohmann::json shapeJson;
+                    shapeJson["type"] = shapeString;
+                    shapeJson["extents"] = {spawn->shape.extents.x, spawn->shape.extents.y, spawn->shape.extents.z};
+                    shapeJson["radius"] = spawn->shape.radius;
+                    shapeJson["angle"] = spawn->shape.angle;
+                    shapeJson["height"] = spawn->shape.height;
+                    shapeJson["surface_only"] = spawn->shape.surfaceOnly;
+                    moduleJson["shape"] = std::move(shapeJson);
+
+                    modulesJson["spawn"] = std::move(moduleJson);
+                }
+
+                if (auto *lifetime = emitter->getModule<LifetimeModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = lifetime->isEnabled();
+                    moduleJson["min"] = lifetime->minLifetime;
+                    moduleJson["max"] = lifetime->maxLifetime;
+                    modulesJson["lifetime"] = std::move(moduleJson);
+                }
+
+                if (auto *initialVelocity = emitter->getModule<InitialVelocityModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = initialVelocity->isEnabled();
+                    moduleJson["base"] = {initialVelocity->baseVelocity.x, initialVelocity->baseVelocity.y, initialVelocity->baseVelocity.z};
+                    moduleJson["randomness"] = {initialVelocity->randomness.x, initialVelocity->randomness.y, initialVelocity->randomness.z};
+                    modulesJson["initial_velocity"] = std::move(moduleJson);
+                }
+
+                if (auto *sizeOverLifetime = emitter->getModule<SizeOverLifetimeModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = sizeOverLifetime->isEnabled();
+                    moduleJson["base_size"] = {sizeOverLifetime->baseSize.x, sizeOverLifetime->baseSize.y};
+
+                    nlohmann::json curveJson = nlohmann::json::array();
+                    for (const auto &point : sizeOverLifetime->curve)
+                        curveJson.push_back({{"t", point.time}, {"v", point.value}});
+                    moduleJson["curve"] = std::move(curveJson);
+
+                    modulesJson["size_over_lifetime"] = std::move(moduleJson);
+                }
+
+                if (auto *colorOverLifetime = emitter->getModule<ColorOverLifetimeModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = colorOverLifetime->isEnabled();
+
+                    nlohmann::json gradientJson = nlohmann::json::array();
+                    for (const auto &point : colorOverLifetime->gradient)
+                        gradientJson.push_back({{"t", point.time}, {"color", {point.color.r, point.color.g, point.color.b, point.color.a}}});
+                    moduleJson["gradient"] = std::move(gradientJson);
+
+                    modulesJson["color_over_lifetime"] = std::move(moduleJson);
+                }
+
+                if (auto *force = emitter->getModule<ForceModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = force->isEnabled();
+                    moduleJson["force"] = {force->force.x, force->force.y, force->force.z};
+                    moduleJson["drag"] = force->drag;
+                    modulesJson["force"] = std::move(moduleJson);
+                }
+
+                if (auto *renderer = emitter->getModule<RendererModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = renderer->isEnabled();
+                    moduleJson["texture_path"] = normalizeSerializedPath(renderer->texturePath);
+
+                    std::string blendString;
+                    switch (renderer->blendMode)
+                    {
+                    case ParticleBlendMode::Additive:
+                        blendString = "additive";
+                        break;
+                    case ParticleBlendMode::Premultiplied:
+                        blendString = "premultiplied";
+                        break;
+                    default:
+                        blendString = "alpha_blend";
+                        break;
+                    }
+                    moduleJson["blend_mode"] = blendString;
+
+                    std::string facingString;
+                    switch (renderer->facingMode)
+                    {
+                    case ParticleFacingMode::VelocityAligned:
+                        facingString = "velocity_aligned";
+                        break;
+                    case ParticleFacingMode::WorldUp:
+                        facingString = "world_up";
+                        break;
+                    default:
+                        facingString = "camera_facing";
+                        break;
+                    }
+                    moduleJson["facing_mode"] = facingString;
+                    moduleJson["cast_shadows"] = renderer->castShadows;
+                    moduleJson["soft_particles"] = renderer->softParticles;
+                    moduleJson["soft_particle_range"] = renderer->softParticleRange;
+
+                    modulesJson["renderer"] = std::move(moduleJson);
+                }
+
+                emitterJson["modules"] = std::move(modulesJson);
+                emittersJson.push_back(std::move(emitterJson));
+            }
+
+            systemJson["emitters"] = std::move(emittersJson);
+            componentJson["system"] = std::move(systemJson);
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        objectJson["components"] = std::move(componentsJson);
+        return objectJson;
+    };
+
+    nlohmann::json json;
+    json["root_id"] = rootEntity->getId();
+    json["game_objects"] = nlohmann::json::array();
+
+    std::vector<Entity *> stack{rootEntity};
+    while (!stack.empty())
+    {
+        Entity *current = stack.back();
+        stack.pop_back();
+
+        if (!current)
+            continue;
+
+        json["game_objects"].push_back(serializeEntity(*current));
+
+        const auto &children = current->getChildren();
+        for (auto childIt = children.rbegin(); childIt != children.rend(); ++childIt)
+            stack.push_back(*childIt);
+    }
+
+    outPayload = json.dump();
+    return true;
+}
+
+Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outRootEntityId)
+{
+    nlohmann::json json;
+    try
+    {
+        json = nlohmann::json::parse(payload);
+    }
+    catch (const std::exception &)
+    {
+        return nullptr;
+    }
+
+    if (!json.is_object() || !json.contains("game_objects") || !json["game_objects"].is_array())
+        return nullptr;
+
+    const bool hasExplicitRootId = json.contains("root_id") && json["root_id"].is_number_unsigned();
+    const uint32_t expectedRootId = hasExplicitRootId ? json["root_id"].get<uint32_t>() : 0u;
+    const auto &gameObjectsJson = json["game_objects"];
+
+    if (gameObjectsJson.empty())
+        return nullptr;
+
+    auto resolveSerializedPath = [](const std::string &rawPath) -> std::string
+    {
+        if (rawPath.empty())
+            return {};
+
+        return std::filesystem::path(rawPath).lexically_normal().string();
+    };
+
+    auto restoreMaterialOverrides = [&](auto *meshComponent, const nlohmann::json &overridesJson)
+    {
+        if (!meshComponent || !overridesJson.is_array())
+            return;
+
+        for (const auto &overrideJson : overridesJson)
+        {
+            if (!overrideJson.contains("slot") || !overrideJson.contains("path"))
+                continue;
+
+            const size_t slot = overrideJson["slot"].get<size_t>();
+            if (slot >= meshComponent->getMaterialSlotCount())
+                continue;
+
+            const std::string materialPath = resolveSerializedPath(overrideJson["path"].get<std::string>());
+            if (!materialPath.empty())
+                meshComponent->setMaterialOverridePath(slot, materialPath);
+        }
+    };
+
+    auto parseVec2 = [](const nlohmann::json &arrayJson, const glm::vec2 &fallback) -> glm::vec2
+    {
+        if (!arrayJson.is_array() || arrayJson.size() != 2 || !arrayJson[0].is_number() || !arrayJson[1].is_number())
+            return fallback;
+
+        return glm::vec2(arrayJson[0].get<float>(), arrayJson[1].get<float>());
+    };
+
+    auto parseVec3 = [](const nlohmann::json &arrayJson, const glm::vec3 &fallback) -> glm::vec3
+    {
+        if (!arrayJson.is_array() || arrayJson.size() != 3 ||
+            !arrayJson[0].is_number() || !arrayJson[1].is_number() || !arrayJson[2].is_number())
+            return fallback;
+
+        return glm::vec3(arrayJson[0].get<float>(), arrayJson[1].get<float>(), arrayJson[2].get<float>());
+    };
+
+    auto parseVec4 = [](const nlohmann::json &arrayJson, const glm::vec4 &fallback) -> glm::vec4
+    {
+        if (!arrayJson.is_array() || arrayJson.size() != 4 ||
+            !arrayJson[0].is_number() || !arrayJson[1].is_number() || !arrayJson[2].is_number() || !arrayJson[3].is_number())
+            return fallback;
+
+        return glm::vec4(arrayJson[0].get<float>(), arrayJson[1].get<float>(), arrayJson[2].get<float>(), arrayJson[3].get<float>());
+    };
+
+    std::unordered_set<uint32_t> payloadIds;
+    for (const auto &objectJson : gameObjectsJson)
+    {
+        if (!objectJson.is_object() || !objectJson.contains("id") || !objectJson["id"].is_number_unsigned())
+            return nullptr;
+
+        const uint32_t objectId = objectJson["id"].get<uint32_t>();
+        if (!payloadIds.insert(objectId).second)
+            return nullptr;
+
+        if (getEntityById(objectId))
+        {
+            VX_ENGINE_WARNING_STREAM("restoreEntityHierarchy aborted because entity id " << objectId << " already exists.\n");
+            return nullptr;
+        }
+    }
+
+    std::unordered_map<uint32_t, Entity *> entitiesById;
+    std::vector<std::pair<Entity *, uint32_t>> pendingParents;
+    std::vector<std::pair<Entity *, glm::vec3>> pendingLightDirections;
+
+    struct AnimatorState
+    {
+        Entity *entity{nullptr};
+        int selectedAnimation{-1};
+        float speed{1.0f};
+        bool looped{true};
+        bool paused{false};
+    };
+    std::vector<AnimatorState> pendingAnimatorStates;
+
+    auto collectResolvedAnimationAssetPaths = [&](const nlohmann::json &componentJson)
+    {
+        std::vector<std::string> resolvedPaths;
+
+        if (!componentJson.contains("animation_asset_paths") || !componentJson["animation_asset_paths"].is_array())
+            return resolvedPaths;
+
+        resolvedPaths.reserve(componentJson["animation_asset_paths"].size());
+        for (const auto &pathJson : componentJson["animation_asset_paths"])
+        {
+            if (!pathJson.is_string())
+                continue;
+
+            const std::string resolvedPath = resolveSerializedPath(pathJson.get<std::string>());
+            if (!resolvedPath.empty())
+                resolvedPaths.push_back(resolvedPath);
+        }
+
+        return resolvedPaths;
+    };
+
+    auto ensureAnimatorAnimationsLoaded = [&](Entity *entity, const nlohmann::json &componentJson)
+    {
+        if (!entity)
+            return;
+
+        auto *animatorComponent = entity->getComponent<AnimatorComponent>();
+        auto *skeletalMeshComponent = entity->getComponent<SkeletalMeshComponent>();
+        Skeleton *skeleton = skeletalMeshComponent ? &skeletalMeshComponent->getSkeleton() : nullptr;
+        const std::vector<std::string> externalAnimationAssetPaths = collectResolvedAnimationAssetPaths(componentJson);
+
+        if (!animatorComponent)
+        {
+            animatorComponent = entity->addComponent<AnimatorComponent>();
+            if (!animatorComponent)
+                return;
+
+            if (skeleton)
+                animatorComponent->bindSkeleton(skeleton);
+        }
+
+        if (!externalAnimationAssetPaths.empty())
+        {
+            std::vector<Animation> mergedAnimations = animatorComponent->getAnimations();
+            for (const auto &animationAssetPath : externalAnimationAssetPaths)
+            {
+                auto animationAsset = AssetsLoader::loadAnimationAsset(animationAssetPath);
+                if (!animationAsset.has_value())
+                {
+                    VX_ENGINE_WARNING_STREAM("Failed to load animation asset while restoring entity hierarchy: " << animationAssetPath << '\n');
+                    continue;
+                }
+
+                mergedAnimations.insert(mergedAnimations.end(),
+                                        animationAsset->animations.begin(),
+                                        animationAsset->animations.end());
+            }
+
+            animatorComponent->setAnimations(mergedAnimations, skeleton);
+        }
+
+        animatorComponent->setExternalAnimationAssetPaths(externalAnimationAssetPaths);
+    };
+
+    Entity *restoredRoot = nullptr;
+    uint32_t createdRootId = 0u;
+
+    for (const auto &objectJson : gameObjectsJson)
+    {
+        const uint32_t objectId = objectJson["id"].get<uint32_t>();
+        const std::string name = objectJson.value("name", std::string("undefined"));
+
+        auto gameObject = addEntityWithId(name, objectId);
+        if (!gameObject)
+            return nullptr;
+
+        Entity *entity = gameObject.get();
+        entitiesById[objectId] = entity;
+
+        if ((!hasExplicitRootId && !restoredRoot) || (hasExplicitRootId && objectId == expectedRootId))
+        {
+            restoredRoot = entity;
+            createdRootId = objectId;
+        }
+
+        entity->setEnabled(objectJson.value("enabled", true));
+
+        if (objectJson.contains("parent_id") && objectJson["parent_id"].is_number_unsigned())
+            pendingParents.emplace_back(entity, objectJson["parent_id"].get<uint32_t>());
+
+        auto *transformation = entity->getComponent<Transform3DComponent>();
+        if (transformation)
+        {
+            if (objectJson.contains("position") && objectJson["position"].is_array() && objectJson["position"].size() == 3)
+            {
+                const auto &position = objectJson["position"];
+                transformation->setPosition({position[0], position[1], position[2]});
+            }
+
+            if (objectJson.contains("scale") && objectJson["scale"].is_array() && objectJson["scale"].size() == 3)
+            {
+                const auto &scale = objectJson["scale"];
+                transformation->setScale({scale[0], scale[1], scale[2]});
+            }
+
+            if (objectJson.contains("rotation") && objectJson["rotation"].is_array() && objectJson["rotation"].size() == 3)
+            {
+                const auto &rotation = objectJson["rotation"];
+                transformation->setEulerDegrees({rotation[0], rotation[1], rotation[2]});
+            }
+        }
+
+        if (objectJson.contains("tags") && objectJson["tags"].is_array())
+        {
+            for (const auto &tag : objectJson["tags"])
+            {
+                if (tag.is_string())
+                    entity->addTag(tag.get<std::string>());
+            }
+        }
+
+        if (!objectJson.contains("components") || !objectJson["components"].is_array())
+            continue;
+
+        for (const auto &componentJson : objectJson["components"])
+        {
+            if (!componentJson.contains("type") || !componentJson["type"].is_string())
+                continue;
+
+            const std::string type = componentJson["type"].get<std::string>();
+
+            if (type == "static_mesh")
+            {
+                std::vector<CPUMesh> meshes;
+                std::string assetPath;
+
+                if (componentJson.value("is_primitive", false))
+                {
+                    const std::string primitiveType = componentJson.value("primitive_type", "Cube");
+                    if (primitiveType == "Sphere")
+                    {
+                        std::vector<vertex::Vertex3D> vertices;
+                        std::vector<uint32_t> indices;
+                        circle::genereteVerticesAndIndices(vertices, indices);
+                        auto mesh = CPUMesh::build<vertex::Vertex3D>(vertices, indices);
+                        mesh.name = "Sphere";
+                        meshes.push_back(std::move(mesh));
+                    }
+                    else
+                    {
+                        auto mesh = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
+                        mesh.name = "Cube";
+                        meshes.push_back(std::move(mesh));
+                    }
+                }
+                else
+                {
+                    assetPath = resolveSerializedPath(componentJson.value("asset_path", std::string{}));
+                    if (!assetPath.empty())
+                    {
+                        auto modelAsset = AssetsLoader::loadModel(assetPath);
+                        if (modelAsset.has_value())
+                            meshes = modelAsset->meshes;
+                        else
+                            VX_ENGINE_WARNING_STREAM("Failed to load model for static_mesh: " << assetPath << '\n');
+                    }
+                }
+
+                if (!meshes.empty())
+                {
+                    auto *staticMeshComponent = entity->addComponent<StaticMeshComponent>(meshes);
+                    staticMeshComponent->setAssetPath(assetPath);
+                    restoreMaterialOverrides(staticMeshComponent, componentJson.value("material_overrides", nlohmann::json::array()));
+                }
+            }
+            else if (type == "terrain")
+            {
+                const std::string assetPath = resolveSerializedPath(componentJson.value("asset_path", std::string{}));
+                auto *terrainComponent = entity->addComponent<TerrainComponent>();
+                terrainComponent->setTerrainAssetPath(assetPath);
+                terrainComponent->setQuadsPerChunk(std::clamp(componentJson.value("quads_per_chunk", 63u), 1u, 512u));
+
+                if (componentJson.contains("material_override_path") && componentJson["material_override_path"].is_string())
+                    terrainComponent->setMaterialOverridePath(resolveSerializedPath(componentJson["material_override_path"].get<std::string>()));
+
+                if (!assetPath.empty())
+                {
+                    auto terrainAsset = AssetsLoader::loadTerrain(assetPath);
+                    if (terrainAsset.has_value())
+                        terrainComponent->setTerrainAsset(std::make_shared<TerrainAsset>(std::move(terrainAsset.value())));
+                    else
+                        VX_ENGINE_WARNING_STREAM("Failed to load terrain asset: " << assetPath << '\n');
+                }
+            }
+            else if (type == "skeletal_mesh")
+            {
+                const std::string assetPath = resolveSerializedPath(componentJson.value("asset_path", std::string{}));
+                if (!assetPath.empty())
+                {
+                    auto modelAsset = AssetsLoader::loadModel(assetPath);
+                    if (modelAsset.has_value() && modelAsset->skeleton.has_value())
+                    {
+                        auto *skeletalMeshComponent = entity->addComponent<SkeletalMeshComponent>(
+                            modelAsset->meshes, modelAsset->skeleton.value());
+                        skeletalMeshComponent->setAssetPath(assetPath);
+                        restoreMaterialOverrides(skeletalMeshComponent, componentJson.value("material_overrides", nlohmann::json::array()));
+
+                        if (!modelAsset->animations.empty())
+                        {
+                            auto *animatorComponent = entity->addComponent<AnimatorComponent>();
+                            animatorComponent->setAnimations(modelAsset->animations, &skeletalMeshComponent->getSkeleton());
+                        }
+                    }
+                    else
+                        VX_ENGINE_WARNING_STREAM("Failed to load skeletal model: " << assetPath << '\n');
+                }
+            }
+            else if (type == "animator")
+            {
+                ensureAnimatorAnimationsLoaded(entity, componentJson);
+                pendingAnimatorStates.push_back({
+                    entity,
+                    componentJson.value("selected_animation", -1),
+                    componentJson.value("speed", 1.0f),
+                    componentJson.value("looped", true),
+                    componentJson.value("paused", false)});
+            }
+            else if (type == "camera")
+            {
+                auto *cameraComponent = entity->addComponent<CameraComponent>();
+                if (!cameraComponent)
+                    continue;
+
+                const auto camera = cameraComponent->getCamera();
+                if (!camera)
+                    continue;
+
+                camera->setYaw(componentJson.value("yaw", camera->getYaw()));
+                camera->setPitch(componentJson.value("pitch", camera->getPitch()));
+                camera->setFOV(componentJson.value("fov", camera->getFOV()));
+                camera->setAspect(componentJson.value("aspect", camera->getAspect()));
+
+                bool hasExplicitOffset = false;
+                if (componentJson.contains("position_offset") &&
+                    componentJson["position_offset"].is_array() &&
+                    componentJson["position_offset"].size() == 3)
+                {
+                    const auto &offset = componentJson["position_offset"];
+                    cameraComponent->setPositionOffset({offset[0], offset[1], offset[2]});
+                    hasExplicitOffset = true;
+                }
+
+                if (componentJson.contains("position") &&
+                    componentJson["position"].is_array() &&
+                    componentJson["position"].size() == 3 &&
+                    transformation)
+                {
+                    const auto &position = componentJson["position"];
+                    if (!objectJson.contains("position"))
+                        transformation->setPosition({position[0], position[1], position[2]});
+                    else if (!hasExplicitOffset)
+                    {
+                        const glm::vec3 basePosition = transformation->getWorldPosition();
+                        cameraComponent->setPositionOffset(glm::vec3{position[0], position[1], position[2]} - basePosition);
+                    }
+                }
+
+                cameraComponent->syncFromOwnerTransform();
+            }
+            else if (type == "light")
+            {
+                LightComponent::LightType lightType{LightComponent::LightType::NONE};
+                const std::string serializedLightType = componentJson.value("light_type", std::string{});
+
+                if (serializedLightType == "directional")
+                    lightType = LightComponent::LightType::DIRECTIONAL;
+                else if (serializedLightType == "spot")
+                    lightType = LightComponent::LightType::SPOT;
+                else if (serializedLightType == "point")
+                    lightType = LightComponent::LightType::POINT;
+
+                if (lightType == LightComponent::LightType::NONE)
+                    continue;
+
+                auto *lightComponent = entity->addComponent<LightComponent>(lightType);
+                auto light = lightComponent->getLight();
+
+                if (componentJson.contains("color"))
+                {
+                    const auto &color = componentJson["color"];
+                    light->color = {color[0], color[1], color[2]};
+                }
+
+                if (componentJson.contains("position") &&
+                    componentJson["position"].is_array() &&
+                    componentJson["position"].size() == 3 &&
+                    transformation &&
+                    !objectJson.contains("position"))
+                {
+                    const auto &position = componentJson["position"];
+                    transformation->setPosition({position[0], position[1], position[2]});
+                }
+
+                if (componentJson.contains("strength"))
+                    light->strength = componentJson["strength"];
+
+                light->castsShadows = componentJson.value("casts_shadows", light->castsShadows);
+
+                if (componentJson.contains("direction") &&
+                    componentJson["direction"].is_array() &&
+                    componentJson["direction"].size() == 3)
+                {
+                    const auto &direction = componentJson["direction"];
+                    pendingLightDirections.emplace_back(entity, glm::vec3{direction[0], direction[1], direction[2]});
+                }
+
+                if (lightType == LightComponent::LightType::DIRECTIONAL)
+                {
+                    if (auto *directionalLight = dynamic_cast<DirectionalLight *>(light.get()))
+                        directionalLight->skyLightEnabled = componentJson.value("sky_light_enabled", true);
+                }
+                else if (lightType == LightComponent::LightType::POINT)
+                {
+                    if (auto *pointLight = dynamic_cast<PointLight *>(light.get()))
+                    {
+                        pointLight->radius = componentJson.value("radius", pointLight->radius);
+                        pointLight->falloff = componentJson.value("falloff", pointLight->falloff);
+                    }
+                }
+                else if (lightType == LightComponent::LightType::SPOT)
+                {
+                    if (auto *spotLight = dynamic_cast<SpotLight *>(light.get()))
+                    {
+                        spotLight->innerAngle = componentJson.value("inner_angle", spotLight->innerAngle);
+                        spotLight->outerAngle = componentJson.value("outer_angle", spotLight->outerAngle);
+                        spotLight->range = componentJson.value("range", spotLight->range);
+                    }
+                }
+            }
+            else if (type == "rigid_body")
+            {
+                if (!transformation)
+                    continue;
+
+                const glm::vec3 worldPosition = transformation->getWorldPosition();
+                const glm::quat worldRotation = transformation->getWorldRotation();
+                auto *dynamicActor = m_physicsScene.createDynamic(
+                    physx::PxTransform(
+                        physx::PxVec3(worldPosition.x, worldPosition.y, worldPosition.z),
+                        physx::PxQuat(worldRotation.x, worldRotation.y, worldRotation.z, worldRotation.w)));
+
+                if (dynamicActor)
+                {
+                    auto *rigidBodyComponent = entity->addComponent<RigidBodyComponent>(dynamicActor);
+                    rigidBodyComponent->setKinematic(componentJson.value("is_kinematic", false));
+                    rigidBodyComponent->setGravityEnable(componentJson.value("gravity_enabled", true));
+                }
+            }
+            else if (type == "collision")
+            {
+                std::string collisionType = componentJson.value("collision_type", "box");
+                std::transform(collisionType.begin(), collisionType.end(), collisionType.begin(), ::tolower);
+
+                CollisionComponent::ShapeType shapeType = CollisionComponent::ShapeType::BOX;
+                glm::vec3 boxHalfExtents(0.5f);
+                float capsuleRadius = 0.5f;
+                float capsuleHalfHeight = 0.5f;
+                physx::PxShape *shape = nullptr;
+
+                if (collisionType == "capsule")
+                {
+                    shapeType = CollisionComponent::ShapeType::CAPSULE;
+                    capsuleRadius = std::max(componentJson.value("radius", 0.5f), 0.01f);
+                    capsuleHalfHeight = std::max(componentJson.value("half_height", 0.5f), 0.0f);
+                    shape = m_physicsScene.createShape(physx::PxCapsuleGeometry(capsuleRadius, capsuleHalfHeight));
+                    if (shape)
+                        shape->setLocalPose(physx::PxTransform(physx::PxQuat(physx::PxHalfPi, physx::PxVec3(0.0f, 0.0f, 1.0f))));
+                }
+                else
+                {
+                    if (componentJson.contains("half_extents") &&
+                        componentJson["half_extents"].is_array() &&
+                        componentJson["half_extents"].size() == 3)
+                    {
+                        boxHalfExtents.x = componentJson["half_extents"][0];
+                        boxHalfExtents.y = componentJson["half_extents"][1];
+                        boxHalfExtents.z = componentJson["half_extents"][2];
+                    }
+
+                    boxHalfExtents = glm::max(boxHalfExtents, glm::vec3(0.01f));
+                    shape = m_physicsScene.createShape(physx::PxBoxGeometry(boxHalfExtents.x, boxHalfExtents.y, boxHalfExtents.z));
+                }
+
+                if (!shape)
+                    continue;
+
+                if (auto *rigidBodyComponent = entity->getComponent<RigidBodyComponent>())
+                {
+                    rigidBodyComponent->getRigidActor()->attachShape(*shape);
+                    if (auto *dynamicActor = rigidBodyComponent->getRigidActor()->is<physx::PxRigidDynamic>())
+                        physx::PxRigidBodyExt::updateMassAndInertia(*dynamicActor, 10.0f);
+
+                    entity->addComponent<CollisionComponent>(shape, shapeType, boxHalfExtents, capsuleRadius, capsuleHalfHeight, nullptr);
+                }
+                else if (transformation)
+                {
+                    const glm::vec3 worldPosition = transformation->getWorldPosition();
+                    const glm::quat worldRotation = transformation->getWorldRotation();
+                    auto *staticActor = m_physicsScene.createStatic(
+                        physx::PxTransform(
+                            physx::PxVec3(worldPosition.x, worldPosition.y, worldPosition.z),
+                            physx::PxQuat(worldRotation.x, worldRotation.y, worldRotation.z, worldRotation.w)));
+
+                    staticActor->attachShape(*shape);
+                    entity->addComponent<CollisionComponent>(shape, shapeType, boxHalfExtents, capsuleRadius, capsuleHalfHeight, staticActor);
+                }
+            }
+            else if (type == "character_movement")
+            {
+                const float capsuleRadius = std::max(componentJson.value("radius", 0.35f), 0.05f);
+                const float capsuleHeight = std::max(componentJson.value("height", 1.0f), 0.1f);
+
+                auto *characterMovement = entity->addComponent<CharacterMovementComponent>(this, capsuleRadius, capsuleHeight);
+                if (!characterMovement)
+                    continue;
+
+                characterMovement->setStepOffset(componentJson.value("step_offset", characterMovement->getStepOffset()));
+                characterMovement->setContactOffset(componentJson.value("contact_offset", characterMovement->getContactOffset()));
+                characterMovement->setSlopeLimitDegrees(componentJson.value("slope_limit_degrees", characterMovement->getSlopeLimitDegrees()));
+            }
+            else if (type == "audio")
+            {
+                auto *audio = entity->addComponent<AudioComponent>();
+                const std::string assetPath = resolveSerializedPath(componentJson.value("asset_path", std::string{}));
+                if (!assetPath.empty())
+                    audio->loadFromAsset(assetPath);
+
+                audio->setVolume(componentJson.value("volume", 1.0f));
+                audio->setPitch(componentJson.value("pitch", 1.0f));
+                audio->setLooping(componentJson.value("loop", false));
+                audio->setPlayOnStart(componentJson.value("play_on_start", false));
+                audio->setMuted(componentJson.value("muted", false));
+                audio->setSpatial(componentJson.value("spatial", false));
+                audio->setMinDistance(componentJson.value("min_distance", 1.0f));
+                audio->setMaxDistance(componentJson.value("max_distance", 500.0f));
+
+                const std::string audioTypeString = componentJson.value("audio_type", "sound");
+                audio->setAudioType(audioTypeString == "music" ? AudioComponent::AudioType::Music
+                                                               : AudioComponent::AudioType::Sound);
+            }
+            else if (type == "script")
+            {
+                const std::string scriptName = componentJson.value("name", std::string{});
+                if (!scriptName.empty())
+                {
+                    Script *script = ScriptsRegister::createScriptFromActiveRegister(scriptName);
+                    if (script)
+                    {
+                        auto *scriptComponent = entity->addComponent<ScriptComponent>(scriptName, script);
+
+                        if (scriptComponent &&
+                            componentJson.contains("variables") &&
+                            componentJson["variables"].is_object())
+                        {
+                            Script::ExposedVariablesMap serializedVariables;
+                            for (auto variableIt = componentJson["variables"].begin(); variableIt != componentJson["variables"].end(); ++variableIt)
+                            {
+                                Script::ExposedVariable variable;
+                                if (!scriptVariableFromJson(variableIt.value(), variable))
+                                    continue;
+
+                                serializedVariables[variableIt.key()] = std::move(variable);
+                            }
+
+                            scriptComponent->setSerializedVariables(serializedVariables);
+                        }
+                    }
+                    else
+                        VX_ENGINE_WARNING_STREAM("Script not found in registry: " << scriptName << '\n');
+                }
+            }
+            else if (type == "particle_system")
+            {
+                auto particleSystem = std::make_shared<ParticleSystem>();
+
+                if (componentJson.contains("system") && componentJson["system"].is_object())
+                {
+                    const auto &systemJson = componentJson["system"];
+                    particleSystem->name = systemJson.value("name", "Particle System");
+
+                    if (systemJson.contains("emitters") && systemJson["emitters"].is_array())
+                    {
+                        for (const auto &emitterJson : systemJson["emitters"])
+                        {
+                            auto *emitter = particleSystem->addEmitter(emitterJson.value("name", "Emitter"));
+                            emitter->enabled = emitterJson.value("enabled", true);
+
+                            if (!emitterJson.contains("modules"))
+                                continue;
+
+                            const auto &modulesJson = emitterJson["modules"];
+
+                            if (modulesJson.contains("spawn"))
+                            {
+                                const auto &moduleJson = modulesJson["spawn"];
+                                auto *spawn = emitter->addModule<SpawnModule>();
+                                spawn->setEnabled(moduleJson.value("enabled", true));
+                                spawn->spawnRate = moduleJson.value("spawn_rate", 100.0f);
+                                spawn->burstCount = moduleJson.value("burst_count", 0.0f);
+                                spawn->loop = moduleJson.value("loop", true);
+                                spawn->duration = moduleJson.value("duration", 5.0f);
+
+                                if (moduleJson.contains("shape") && moduleJson["shape"].is_object())
+                                {
+                                    const auto &shapeJson = moduleJson["shape"];
+                                    const std::string shapeTypeString = shapeJson.value("type", "point");
+
+                                    if (shapeTypeString == "sphere")
+                                        spawn->shape.shape = EmitterShape::Sphere;
+                                    else if (shapeTypeString == "box")
+                                        spawn->shape.shape = EmitterShape::Box;
+                                    else if (shapeTypeString == "cone")
+                                        spawn->shape.shape = EmitterShape::Cone;
+                                    else if (shapeTypeString == "cylinder")
+                                        spawn->shape.shape = EmitterShape::Cylinder;
+                                    else
+                                        spawn->shape.shape = EmitterShape::Point;
+
+                                    if (shapeJson.contains("extents") && shapeJson["extents"].is_array() && shapeJson["extents"].size() == 3)
+                                        spawn->shape.extents = {shapeJson["extents"][0], shapeJson["extents"][1], shapeJson["extents"][2]};
+
+                                    spawn->shape.radius = shapeJson.value("radius", 1.0f);
+                                    spawn->shape.angle = shapeJson.value("angle", 25.0f);
+                                    spawn->shape.height = shapeJson.value("height", 1.0f);
+                                    spawn->shape.surfaceOnly = shapeJson.value("surface_only", false);
+                                }
+                            }
+
+                            if (modulesJson.contains("lifetime"))
+                            {
+                                const auto &moduleJson = modulesJson["lifetime"];
+                                auto *lifetime = emitter->addModule<LifetimeModule>();
+                                lifetime->setEnabled(moduleJson.value("enabled", true));
+                                lifetime->minLifetime = moduleJson.value("min", 1.0f);
+                                lifetime->maxLifetime = moduleJson.value("max", 2.0f);
+                            }
+
+                            if (modulesJson.contains("initial_velocity"))
+                            {
+                                const auto &moduleJson = modulesJson["initial_velocity"];
+                                auto *initialVelocity = emitter->addModule<InitialVelocityModule>();
+                                initialVelocity->setEnabled(moduleJson.value("enabled", true));
+                                if (moduleJson.contains("base") && moduleJson["base"].is_array() && moduleJson["base"].size() == 3)
+                                    initialVelocity->baseVelocity = {moduleJson["base"][0], moduleJson["base"][1], moduleJson["base"][2]};
+                                if (moduleJson.contains("randomness") && moduleJson["randomness"].is_array() && moduleJson["randomness"].size() == 3)
+                                    initialVelocity->randomness = {moduleJson["randomness"][0], moduleJson["randomness"][1], moduleJson["randomness"][2]};
+                            }
+
+                            if (modulesJson.contains("size_over_lifetime"))
+                            {
+                                const auto &moduleJson = modulesJson["size_over_lifetime"];
+                                auto *sizeOverLifetime = emitter->addModule<SizeOverLifetimeModule>();
+                                sizeOverLifetime->setEnabled(moduleJson.value("enabled", true));
+                                if (moduleJson.contains("base_size") && moduleJson["base_size"].is_array() && moduleJson["base_size"].size() == 2)
+                                    sizeOverLifetime->baseSize = {moduleJson["base_size"][0], moduleJson["base_size"][1]};
+                                if (moduleJson.contains("curve") && moduleJson["curve"].is_array())
+                                {
+                                    sizeOverLifetime->curve.clear();
+                                    for (const auto &point : moduleJson["curve"])
+                                        sizeOverLifetime->curve.push_back({point.value("t", 0.0f), point.value("v", 1.0f)});
+                                }
+                            }
+
+                            if (modulesJson.contains("color_over_lifetime"))
+                            {
+                                const auto &moduleJson = modulesJson["color_over_lifetime"];
+                                auto *colorOverLifetime = emitter->addModule<ColorOverLifetimeModule>();
+                                colorOverLifetime->setEnabled(moduleJson.value("enabled", true));
+                                if (moduleJson.contains("gradient") && moduleJson["gradient"].is_array())
+                                {
+                                    colorOverLifetime->gradient.clear();
+                                    for (const auto &point : moduleJson["gradient"])
+                                    {
+                                        GradientPoint gradientPoint;
+                                        gradientPoint.time = point.value("t", 0.0f);
+                                        if (point.contains("color") && point["color"].is_array() && point["color"].size() == 4)
+                                            gradientPoint.color = {point["color"][0], point["color"][1], point["color"][2], point["color"][3]};
+                                        colorOverLifetime->gradient.push_back(gradientPoint);
+                                    }
+                                }
+                            }
+
+                            if (modulesJson.contains("force"))
+                            {
+                                const auto &moduleJson = modulesJson["force"];
+                                auto *force = emitter->addModule<ForceModule>();
+                                force->setEnabled(moduleJson.value("enabled", true));
+                                if (moduleJson.contains("force") && moduleJson["force"].is_array() && moduleJson["force"].size() == 3)
+                                    force->force = {moduleJson["force"][0], moduleJson["force"][1], moduleJson["force"][2]};
+                                force->drag = moduleJson.value("drag", 0.0f);
+                            }
+
+                            if (modulesJson.contains("renderer"))
+                            {
+                                const auto &moduleJson = modulesJson["renderer"];
+                                auto *renderer = emitter->addModule<RendererModule>();
+                                renderer->setEnabled(moduleJson.value("enabled", true));
+                                renderer->texturePath = resolveSerializedPath(moduleJson.value("texture_path", std::string{}));
+
+                                const std::string blendModeString = moduleJson.value("blend_mode", "alpha_blend");
+                                if (blendModeString == "additive")
+                                    renderer->blendMode = ParticleBlendMode::Additive;
+                                else if (blendModeString == "premultiplied")
+                                    renderer->blendMode = ParticleBlendMode::Premultiplied;
+                                else
+                                    renderer->blendMode = ParticleBlendMode::AlphaBlend;
+
+                                const std::string facingModeString = moduleJson.value("facing_mode", "camera_facing");
+                                if (facingModeString == "velocity_aligned")
+                                    renderer->facingMode = ParticleFacingMode::VelocityAligned;
+                                else if (facingModeString == "world_up")
+                                    renderer->facingMode = ParticleFacingMode::WorldUp;
+                                else
+                                    renderer->facingMode = ParticleFacingMode::CameraFacing;
+
+                                renderer->castShadows = moduleJson.value("cast_shadows", false);
+                                renderer->softParticles = moduleJson.value("soft_particles", false);
+                                renderer->softParticleRange = moduleJson.value("soft_particle_range", 1.0f);
+                            }
+                        }
+                    }
+                }
+
+                auto *particleSystemComponent = entity->addComponent<ParticleSystemComponent>();
+                particleSystemComponent->playOnStart = componentJson.value("play_on_start", true);
+                particleSystemComponent->setParticleSystem(particleSystem);
+            }
+        }
+    }
+
+    if (!restoredRoot && !entitiesById.empty())
+    {
+        restoredRoot = entitiesById.begin()->second;
+        createdRootId = restoredRoot ? restoredRoot->getId() : 0u;
+    }
+
+    for (const auto &[child, parentId] : pendingParents)
+    {
+        Entity *parent = nullptr;
+        if (auto it = entitiesById.find(parentId); it != entitiesById.end())
+            parent = it->second;
+        else
+            parent = getEntityById(parentId);
+
+        if (!parent)
+        {
+            VX_ENGINE_WARNING_STREAM("Parent entity with id " << parentId << " was not found while restoring entity hierarchy.\n");
+            continue;
+        }
+
+        if (!child->setParent(parent))
+            VX_ENGINE_WARNING_STREAM("Failed to restore parent for entity '" << child->getName() << "'.\n");
+    }
+
+    for (const auto &[entity, direction] : pendingLightDirections)
+    {
+        if (!entity)
+            continue;
+
+        if (auto *transform = entity->getComponent<Transform3DComponent>())
+            transform->setWorldRotation(worldRotationFromForward(direction));
+
+        if (auto *lightComponent = entity->getComponent<LightComponent>())
+            lightComponent->syncFromOwnerTransform();
+    }
+
+    for (const auto &state : pendingAnimatorStates)
+    {
+        if (!state.entity)
+            continue;
+
+        auto *animator = state.entity->getComponent<AnimatorComponent>();
+        if (!animator)
+            continue;
+
+        animator->setAnimationSpeed(state.speed);
+        animator->setAnimationLooped(state.looped);
+        animator->setAnimationPaused(state.paused);
+        if (state.selectedAnimation >= 0)
+            animator->setSelectedAnimationIndex(state.selectedAnimation);
+    }
+
+    if (outRootEntityId)
+        *outRootEntityId = createdRootId;
+
+    return restoredRoot;
+}
+
+void Scene::serializeUIState(std::string &outPayload) const
+{
+    outPayload.clear();
+
+    auto normalizeSerializedPath = [](const std::string &rawPath) -> std::string
+    {
+        if (rawPath.empty())
+            return {};
+
+        return std::filesystem::path(rawPath).lexically_normal().string();
+    };
+
+    nlohmann::json json;
+    json["ui_objects"] = nlohmann::json::array();
+
+    for (const auto &text : m_uiTexts)
+    {
+        if (!text)
+            continue;
+
+        const auto position = text->getPosition();
+        const auto color = text->getColor();
+
+        nlohmann::json textJson;
+        textJson["type"] = "text";
+        textJson["enabled"] = text->isEnabled();
+        textJson["text"] = text->getText();
+        textJson["position"] = {position.x, position.y};
+        textJson["scale"] = text->getScale();
+        textJson["rotation"] = text->getRotation();
+        textJson["color"] = {color.x, color.y, color.z, color.w};
+
+        if (const auto *font = text->getFont(); font && !font->getFontPath().empty())
+            textJson["font_path"] = normalizeSerializedPath(font->getFontPath());
+
+        json["ui_objects"].push_back(std::move(textJson));
+    }
+
+    for (const auto &button : m_uiButtons)
+    {
+        if (!button)
+            continue;
+
+        const auto position = button->getPosition();
+        const auto size = button->getSize();
+        const auto backgroundColor = button->getBackgroundColor();
+        const auto hoverColor = button->getHoverColor();
+        const auto borderColor = button->getBorderColor();
+        const auto labelColor = button->getLabelColor();
+
+        nlohmann::json buttonJson;
+        buttonJson["type"] = "button";
+        buttonJson["enabled"] = button->isEnabled();
+        buttonJson["position"] = {position.x, position.y};
+        buttonJson["size"] = {size.x, size.y};
+        buttonJson["background_color"] = {backgroundColor.x, backgroundColor.y, backgroundColor.z, backgroundColor.w};
+        buttonJson["hover_color"] = {hoverColor.x, hoverColor.y, hoverColor.z, hoverColor.w};
+        buttonJson["border_color"] = {borderColor.x, borderColor.y, borderColor.z, borderColor.w};
+        buttonJson["border_width"] = button->getBorderWidth();
+        buttonJson["label"] = button->getLabel();
+        buttonJson["label_color"] = {labelColor.x, labelColor.y, labelColor.z, labelColor.w};
+        buttonJson["label_scale"] = button->getLabelScale();
+        buttonJson["rotation"] = button->getRotation();
+
+        if (const auto *font = button->getFont(); font && !font->getFontPath().empty())
+            buttonJson["font_path"] = normalizeSerializedPath(font->getFontPath());
+
+        json["ui_objects"].push_back(std::move(buttonJson));
+    }
+
+    for (const auto &billboard : m_billboards)
+    {
+        if (!billboard)
+            continue;
+
+        const auto worldPosition = billboard->getWorldPosition();
+        const auto color = billboard->getColor();
+
+        nlohmann::json billboardJson;
+        billboardJson["type"] = "billboard";
+        billboardJson["enabled"] = billboard->isEnabled();
+        billboardJson["world_position"] = {worldPosition.x, worldPosition.y, worldPosition.z};
+        billboardJson["size"] = billboard->getSize();
+        billboardJson["rotation"] = billboard->getRotation();
+        billboardJson["color"] = {color.x, color.y, color.z, color.w};
+
+        if (!billboard->getTexturePath().empty())
+            billboardJson["texture_path"] = normalizeSerializedPath(billboard->getTexturePath());
+
+        json["ui_objects"].push_back(std::move(billboardJson));
+    }
+
+    outPayload = json.dump();
+}
+
+bool Scene::restoreUIState(const std::string &payload)
+{
+    nlohmann::json json;
+    try
+    {
+        json = nlohmann::json::parse(payload);
+    }
+    catch (const std::exception &)
+    {
+        return false;
+    }
+
+    if (!json.is_object() || !json.contains("ui_objects") || !json["ui_objects"].is_array())
+        return false;
+
+    auto resolveSerializedPath = [](const std::string &rawPath) -> std::string
+    {
+        if (rawPath.empty())
+            return {};
+
+        return std::filesystem::path(rawPath).lexically_normal().string();
+    };
+
+    auto parseVec2 = [](const nlohmann::json &arrayJson, const glm::vec2 &fallback) -> glm::vec2
+    {
+        if (!arrayJson.is_array() || arrayJson.size() != 2 || !arrayJson[0].is_number() || !arrayJson[1].is_number())
+            return fallback;
+
+        return glm::vec2(arrayJson[0].get<float>(), arrayJson[1].get<float>());
+    };
+
+    auto parseVec3 = [](const nlohmann::json &arrayJson, const glm::vec3 &fallback) -> glm::vec3
+    {
+        if (!arrayJson.is_array() || arrayJson.size() != 3 ||
+            !arrayJson[0].is_number() || !arrayJson[1].is_number() || !arrayJson[2].is_number())
+            return fallback;
+
+        return glm::vec3(arrayJson[0].get<float>(), arrayJson[1].get<float>(), arrayJson[2].get<float>());
+    };
+
+    auto parseVec4 = [](const nlohmann::json &arrayJson, const glm::vec4 &fallback) -> glm::vec4
+    {
+        if (!arrayJson.is_array() || arrayJson.size() != 4 ||
+            !arrayJson[0].is_number() || !arrayJson[1].is_number() || !arrayJson[2].is_number() || !arrayJson[3].is_number())
+            return fallback;
+
+        return glm::vec4(arrayJson[0].get<float>(), arrayJson[1].get<float>(), arrayJson[2].get<float>(), arrayJson[3].get<float>());
+    };
+
+    m_uiTexts.clear();
+    m_uiButtons.clear();
+    m_billboards.clear();
+
+    for (const auto &uiObjectJson : json["ui_objects"])
+    {
+        if (!uiObjectJson.is_object())
+            continue;
+
+        const std::string type = uiObjectJson.value("type", std::string{});
+        if (type == "text")
+        {
+            auto *text = addUIText();
+            if (!text)
+                continue;
+
+            text->setEnabled(uiObjectJson.value("enabled", true));
+            text->setText(uiObjectJson.value("text", std::string{}));
+            text->setPosition(parseVec2(uiObjectJson.value("position", nlohmann::json::array()), text->getPosition()));
+            text->setScale(uiObjectJson.value("scale", text->getScale()));
+            text->setRotation(uiObjectJson.value("rotation", text->getRotation()));
+            text->setColor(parseVec4(uiObjectJson.value("color", nlohmann::json::array()), text->getColor()));
+
+            const std::string fontPath = resolveSerializedPath(uiObjectJson.value("font_path", std::string{}));
+            if (!fontPath.empty())
+                text->loadFont(fontPath);
+        }
+        else if (type == "button")
+        {
+            auto *button = addUIButton();
+            if (!button)
+                continue;
+
+            button->setEnabled(uiObjectJson.value("enabled", true));
+            button->setPosition(parseVec2(uiObjectJson.value("position", nlohmann::json::array()), button->getPosition()));
+            button->setSize(parseVec2(uiObjectJson.value("size", nlohmann::json::array()), button->getSize()));
+            button->setBackgroundColor(parseVec4(uiObjectJson.value("background_color", nlohmann::json::array()), button->getBackgroundColor()));
+            button->setHoverColor(parseVec4(uiObjectJson.value("hover_color", nlohmann::json::array()), button->getHoverColor()));
+            button->setBorderColor(parseVec4(uiObjectJson.value("border_color", nlohmann::json::array()), button->getBorderColor()));
+            button->setBorderWidth(uiObjectJson.value("border_width", button->getBorderWidth()));
+            button->setLabel(uiObjectJson.value("label", std::string{}));
+            button->setLabelColor(parseVec4(uiObjectJson.value("label_color", nlohmann::json::array()), button->getLabelColor()));
+            button->setLabelScale(uiObjectJson.value("label_scale", button->getLabelScale()));
+            button->setRotation(uiObjectJson.value("rotation", button->getRotation()));
+
+            const std::string fontPath = resolveSerializedPath(uiObjectJson.value("font_path", std::string{}));
+            if (!fontPath.empty())
+                button->loadFont(fontPath);
+        }
+        else if (type == "billboard")
+        {
+            auto *billboard = addBillboard();
+            if (!billboard)
+                continue;
+
+            billboard->setEnabled(uiObjectJson.value("enabled", true));
+            billboard->setWorldPosition(parseVec3(uiObjectJson.value("world_position", nlohmann::json::array()), billboard->getWorldPosition()));
+            billboard->setSize(uiObjectJson.value("size", billboard->getSize()));
+            billboard->setRotation(uiObjectJson.value("rotation", billboard->getRotation()));
+            billboard->setColor(parseVec4(uiObjectJson.value("color", nlohmann::json::array()), billboard->getColor()));
+
+            const std::string texturePath = resolveSerializedPath(uiObjectJson.value("texture_path", std::string{}));
+            if (!texturePath.empty())
+                billboard->setTexturePath(texturePath);
+        }
+    }
+
+    return true;
 }
 
 bool Scene::destroyEntity(Entity *entity)

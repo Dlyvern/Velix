@@ -23,9 +23,14 @@ public:
     static bool importModelAsset(const std::string &sourcePath, const std::string &outputAssetPath);
     static bool importTextureAsset(const std::string &sourcePath, const std::string &outputAssetPath);
     static bool importAudioAsset(const std::string &sourcePath, const std::string &outputAssetPath);
+    static bool importAnimationFromFBX(const std::string &fbxPath, const std::string &outputAssetPath);
+    static bool exportAnimationsFromModel(const std::string &modelAssetPath, const std::string &outputAssetPath);
     static std::optional<ModelAsset> loadModel(const std::string &path);
     static std::optional<TextureAsset> loadTexture(const std::string &path);
     static std::optional<AudioAsset> loadAudio(const std::string &path);
+    static std::optional<AnimationAsset> loadAnimationAsset(const std::string &path);
+    static std::optional<AnimationTree> loadAnimationTree(const std::string &path);
+    static bool saveAnimationTree(const AnimationTree &tree, const std::string &path);
     static Texture::SharedPtr loadTextureGPU(const std::string &path,
                                              VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB);
     static Texture::SharedPtr createTextureGPU(const TextureAsset &textureAsset,

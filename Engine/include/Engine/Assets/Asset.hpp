@@ -7,6 +7,7 @@
 #include "Engine/Skeleton.hpp"
 #include "Engine/Material.hpp"
 #include "Engine/Components/AnimatorComponent.hpp"
+#include "Engine/Animation/AnimationTree.hpp"
 
 #include <string>
 #include <cstdint>
@@ -80,6 +81,21 @@ public:
     std::vector<uint8_t> audioData;
 };
 
+class AnimationAsset : public IAsset
+{
+public:
+    std::string name;
+    std::string sourcePath;
+    std::string assetPath;
+    std::vector<Animation> animations;
+};
+
+class AnimationTreeAsset : public IAsset
+{
+public:
+    AnimationTree tree;
+};
+
 class Asset
 {
 public:
@@ -92,7 +108,9 @@ public:
         TEXTURE = 1,
         MODEL = 2,
         MATERIAL = 3,
-        AUDIO = 4
+        AUDIO = 4,
+        ANIMATION = 5,
+        ANIMATION_TREE = 6
     };
 
     struct BinaryHeader

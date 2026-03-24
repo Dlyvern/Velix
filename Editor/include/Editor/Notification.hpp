@@ -121,24 +121,29 @@ public:
                            { return n.isExpired(); }),
             m_notifications.end());
 
-        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+        if (m_notifications.empty())
+            return;
 
-        float startY = displaySize.y - m_position.y;
+        ImGuiViewport *viewport = ImGui::GetMainViewport();
+        const float rightEdge = viewport->Pos.x + viewport->Size.x - m_position.x;
+        float bottomEdge = viewport->Pos.y + viewport->Size.y - m_position.y;
 
         for (auto it = m_notifications.rbegin(); it != m_notifications.rend(); ++it)
         {
             Notification &notification = *it;
 
             ImVec2 notificationPos(
-                displaySize.x - m_width - m_position.x,
-                startY - m_padding);
+                rightEdge - m_width,
+                bottomEdge - m_padding);
 
             ImGui::SetNextWindowPos(notificationPos, ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(m_width, 0), ImGuiCond_Always);
+            ImGui::SetNextWindowViewport(viewport->ID);
 
             ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
                                      ImGuiWindowFlags_NoResize |
                                      ImGuiWindowFlags_NoMove |
+                                     ImGuiWindowFlags_NoDocking |
                                      ImGuiWindowFlags_NoSavedSettings |
                                      ImGuiWindowFlags_AlwaysAutoResize |
                                      ImGuiWindowFlags_NoFocusOnAppearing |
@@ -198,13 +203,14 @@ public:
             if (ImGui::SmallButton("x"))
                 notification.duration = 0.0f;
 
+            const float notificationHeight = ImGui::GetWindowSize().y;
             ImGui::End();
 
             ImGui::PopStyleColor();
 
             ImGui::PopStyleVar();
 
-            startY -= (ImGui::GetWindowHeight() + m_padding);
+            bottomEdge -= (notificationHeight + m_padding);
         }
     }
 };

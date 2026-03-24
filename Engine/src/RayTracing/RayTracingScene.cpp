@@ -123,7 +123,19 @@ bool RayTracingScene::update(uint32_t frameIndex,
         vkInstance.instanceCustomIndex = instance.customInstanceIndex;
         vkInstance.mask = instance.mask;
         vkInstance.instanceShaderBindingTableRecordOffset = 0u;
-        vkInstance.flags = 0u;
+        // Match the raster path: GraphicsPipelineBuilder defaults to
+        // VK_FRONT_FACE_COUNTER_CLOCKWISE for regular mesh rendering.
+        // Without this RT-specific flag, ray tracing treats clockwise
+        // triangles as front-facing, so backface-culling rays end up
+        // shading the opposite side of surfaces and reflections look
+        // inside-out or mirrored.
+        vkInstance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FRONT_COUNTERCLOCKWISE_BIT_KHR;
+        // Mirrored / negative-scale instance transforms invert triangle winding.
+        // Rasterization handles that through the transformed geometry, but RT
+        // needs an explicit per-instance facing flip to keep front/back-face
+        // tests aligned with the raster path.
+        if (glm::determinant(glm::mat3(instance.transform)) < 0.0f)
+            vkInstance.flags |= VK_GEOMETRY_INSTANCE_TRIANGLE_FLIP_FACING_BIT_KHR;
         if (instance.forceOpaque)
             vkInstance.flags |= VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
         if (instance.disableTriangleFacingCull)

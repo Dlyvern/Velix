@@ -49,8 +49,23 @@ public:
     bool getShowEditorBillboards() const;
     void setShowEditorBillboards(bool enabled);
 
+    bool getShowHierarchyPanel() const;
+    void setShowHierarchyPanel(bool enabled);
+
+    bool getShowDetailsPanel() const;
+    void setShowDetailsPanel(bool enabled);
+
+    float getRightSidebarSplitRatio() const;
+    void setRightSidebarSplitRatio(float ratio);
+
     bool getDetailedRenderProfilingEnabled() const;
     void setDetailedRenderProfilingEnabled(bool enabled);
+
+    bool getSceneAutosaveEnabled() const;
+    void setSceneAutosaveEnabled(bool enabled);
+
+    float getSceneAutosaveIntervalMinutes() const;
+    void setSceneAutosaveIntervalMinutes(float minutes);
 
     std::optional<IdeInfo> findPreferredVSCodeIde() const;
     bool hasVSCodeIde() const;
@@ -73,7 +88,12 @@ private:
     bool m_showMaterialAssetPreviews{true};
     bool m_showTextureAssetPreviews{true};
     bool m_showEditorBillboards{true};
+    bool m_showHierarchyPanel{true};
+    bool m_showDetailsPanel{true};
+    float m_rightSidebarSplitRatio{0.5f};
     bool m_detailedRenderProfilingEnabled{true};
+    bool m_sceneAutosaveEnabled{true};
+    float m_sceneAutosaveIntervalMinutes{5.0f};
     std::vector<IdeInfo> m_detectedIdes;
 };
 

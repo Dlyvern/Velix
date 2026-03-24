@@ -39,6 +39,7 @@ public:
 
     Entity::SharedPtr
     addEntity(const std::string &name);
+    Entity::SharedPtr addEntityWithId(const std::string &name, uint32_t id);
     Entity::SharedPtr addEntity(Entity &en, const std::string &name);
 
     Entity *getEntityById(uint32_t id);
@@ -48,6 +49,10 @@ public:
     bool loadSceneFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback = {}, bool additive = false);
     bool loadEntitiesFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback = {});
     void saveSceneToFile(const std::string &filePath);
+    bool serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayload) const;
+    Entity *restoreEntityHierarchy(const std::string &payload, uint32_t *outRootEntityId = nullptr);
+    void serializeUIState(std::string &outPayload) const;
+    bool restoreUIState(const std::string &payload);
 
     // Extract all entities that have a specific tag, removing them from this scene.
     std::vector<Entity::SharedPtr> extractEntitiesWithTag(const std::string &tag);

@@ -4,3 +4,6 @@ cmake-build-debug
 build
 external/fbx_sdk/lib/linux/Debug/libfbxsdk.a
 external/fbx_sdk/lib/macos/Debug/libfbxsdk.a
+imgui.ini
+resources/shaders/material_cache/
+external/physx/lib/

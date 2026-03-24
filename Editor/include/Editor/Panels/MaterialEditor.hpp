@@ -76,9 +76,7 @@ private:
             int nodeId = 0;
             int outputPinId = 0;
             int linkId = 0;
-            bool linkToEmissiveActive = false;
-            glm::vec3 color{1.0f, 1.0f, 1.0f};
-            float strength{1.0f};
+            engine::CPUMaterial::ColorNodeParams params;
             glm::vec2 spawnPosition{0.0f, 0.0f};
             bool pendingPlacement = false;
             bool removeRequested = false;
@@ -95,9 +93,7 @@ private:
 
         int mappingNodeId = 1;
         int texturesNodeId = 2;
-        int principledNodeId = 3;
-        int outputNodeId = 4;
-        int colorNodeId = 5;
+        int outputNodeId = 3;
 
         int mappingOutVectorPinId = 11;
         int texturesInVectorPinId = 12;
@@ -107,30 +103,20 @@ private:
         int texturesOutOrmPinId = 23;
         int texturesOutEmissivePinId = 24;
 
-        int principledInAlbedoPinId = 31;
-        int principledInNormalPinId = 32;
-        int principledInOrmPinId = 33;
-        int principledInEmissivePinId = 34;
-        int principledOutBsdfPinId = 35;
-
-        int outputInSurfacePinId = 41;
-        int colorOutPinId = 51;
+        int outputInAlbedoPinId = 31;
+        int outputInNormalPinId = 32;
+        int outputInOrmPinId = 33;
+        int outputInEmissivePinId = 34;
+        int outputInRoughnessPinId = 35;
+        int outputInMetallicPinId = 36;
+        int outputInAoPinId = 37;
+        int outputInAlphaPinId = 38;
 
         int linkMappingId = 101;
         int linkAlbedoId = 102;
         int linkNormalId = 103;
         int linkOrmId = 104;
         int linkEmissiveId = 105;
-        int linkOutputId = 106;
-        int linkColorToEmissiveId = 107;
-
-        bool linkMappingActive = true;
-        bool linkAlbedoActive = false;
-        bool linkNormalActive = false;
-        bool linkOrmActive = false;
-        bool linkEmissiveActive = false;
-        bool linkOutputActive = true;
-        bool linkColorToEmissiveActive = false;
 
         bool customShaderInitialized = false;
         bool customShaderPanelOpen = false;
@@ -138,14 +124,31 @@ private:
         TextEditor customExpressionEditor;
         std::string customShaderLastError;
         bool customShaderHasError = false;
-
-        glm::vec3 colorNodeValue{1.0f, 1.0f, 1.0f};
-        float colorNodeStrength{1.0f};
+        bool initialCustomShaderRefreshDone = false;
 
         int nextDynamicColorNodeId = 5000;
         int nextDynamicColorPinId = 6000;
         int nextDynamicColorLinkId = 7000;
         std::vector<DynamicColorNode> dynamicColorNodes;
+        bool colorNodesInitialized = false;
+
+        struct DynamicNoiseNode
+        {
+            int nodeId = 0;
+            int outputPinId = 0;
+            int linkId = 0;
+            engine::CPUMaterial::NoiseNodeParams params;
+
+            glm::vec2 spawnPosition{0.0f, 0.0f};
+            bool pendingPlacement = false;
+            bool removeRequested = false;
+        };
+
+        int nextNoiseNodeId  = 8000;
+        int nextNoisePinId   = 9000;
+        int nextNoiseLinkId  = 10000;
+        std::vector<DynamicNoiseNode> dynamicNoiseNodes;
+        bool noiseNodesInitialized = false;
     };
 
     void notify(NotificationType type, const std::string &message);

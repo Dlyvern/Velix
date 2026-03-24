@@ -1,4 +1,5 @@
 #include "Editor/AssetsWindow.hpp"
+#include "Core/Logger.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Assets/AssetsSerializer.hpp"
 #include "Engine/Runtime/EngineConfig.hpp"
@@ -18,6 +19,12 @@
 
 namespace
 {
+    enum class BuiltinAssetIcon
+    {
+        Folder,
+        File
+    };
+
     std::string toLowerCopy(std::string text)
     {
         std::transform(text.begin(), text.end(), text.begin(), [](unsigned char character)
@@ -81,6 +88,8 @@ namespace
         constexpr const char *modelSuffix = ".model.elixasset";
         constexpr const char *textureSuffix = ".tex.elixasset";
         constexpr const char *audioSuffix = ".audio.elixasset";
+        constexpr const char *animationSuffix = ".anim.elixasset";
+        constexpr const char *animTreeSuffix  = ".animtree.elixasset";
         constexpr const char *genericSuffix = ".elixasset";
 
         if (lowerFilename.size() > std::strlen(modelSuffix) &&
@@ -94,6 +103,14 @@ namespace
         if (lowerFilename.size() > std::strlen(audioSuffix) &&
             lowerFilename.rfind(audioSuffix) == lowerFilename.size() - std::strlen(audioSuffix))
             return filename.substr(0, filename.size() - std::strlen(audioSuffix));
+
+        if (lowerFilename.size() > std::strlen(animationSuffix) &&
+            lowerFilename.rfind(animationSuffix) == lowerFilename.size() - std::strlen(animationSuffix))
+            return filename.substr(0, filename.size() - std::strlen(animationSuffix));
+
+        if (lowerFilename.size() > std::strlen(animTreeSuffix) &&
+            lowerFilename.rfind(animTreeSuffix) == lowerFilename.size() - std::strlen(animTreeSuffix))
+            return filename.substr(0, filename.size() - std::strlen(animTreeSuffix));
 
         if (lowerFilename.size() > std::strlen(genericSuffix) &&
             lowerFilename.rfind(genericSuffix) == lowerFilename.size() - std::strlen(genericSuffix))
@@ -138,11 +155,138 @@ namespace
         return audioExtensions.find(extensionLower) != audioExtensions.end();
     }
 
+    bool isSupportedAnimationSourceExtension(const std::string &extensionLower)
+    {
+        static const std::unordered_set<std::string> animationExtensions = {".fbx"};
+        return animationExtensions.find(extensionLower) != animationExtensions.end();
+    }
+
     bool isSupportedImportSourceExtension(const std::string &extensionLower)
     {
         return isSupportedModelSourceExtension(extensionLower) ||
                isSupportedTextureSourceExtension(extensionLower) ||
                isSupportedAudioSourceExtension(extensionLower);
+    }
+
+    void drawBuiltinAssetIcon(ImDrawList *drawList, const ImVec2 &itemMin, const ImVec2 &itemMax, BuiltinAssetIcon iconKind)
+    {
+        if (!drawList)
+            return;
+
+        const ImVec2 min(itemMin.x + 7.0f, itemMin.y + 7.0f);
+        const ImVec2 max(itemMax.x - 7.0f, itemMax.y - 7.0f);
+        const float width = max.x - min.x;
+        const float height = max.y - min.y;
+        const ImU32 outlineColor = IM_COL32(14, 18, 24, 235);
+        const ImU32 accentColor = IM_COL32(102, 156, 220, 230);
+
+        if (iconKind == BuiltinAssetIcon::Folder)
+        {
+            const ImU32 tabColor = IM_COL32(86, 96, 108, 255);
+            const ImU32 bodyTopColor = IM_COL32(96, 106, 118, 255);
+            const ImU32 bodyBottomColor = IM_COL32(70, 78, 88, 255);
+            const ImU32 innerLineColor = IM_COL32(255, 255, 255, 18);
+
+            const float tabWidth = width * 0.46f;
+            const float tabHeight = height * 0.20f;
+            const float bodyTop = min.y + tabHeight * 0.82f;
+
+            drawList->AddRectFilled(ImVec2(min.x + width * 0.06f, min.y + 1.0f),
+                                    ImVec2(min.x + tabWidth, min.y + tabHeight),
+                                    tabColor, 3.0f, ImDrawFlags_RoundCornersTop);
+
+            drawList->AddRectFilledMultiColor(ImVec2(min.x, bodyTop),
+                                              max,
+                                              bodyTopColor,
+                                              bodyTopColor,
+                                              bodyBottomColor,
+                                              bodyBottomColor);
+            drawList->AddRect(ImVec2(min.x, bodyTop), max, outlineColor, 4.0f, 0, 1.5f);
+            drawList->AddLine(ImVec2(min.x + 1.5f, bodyTop + 1.5f),
+                              ImVec2(max.x - 1.5f, bodyTop + 1.5f),
+                              innerLineColor, 1.0f);
+            drawList->AddRectFilled(ImVec2(min.x + 4.0f, bodyTop + 4.0f),
+                                    ImVec2(max.x - 4.0f, bodyTop + 7.0f),
+                                    accentColor, 1.5f);
+        }
+        else
+        {
+            const ImU32 pageTopColor = IM_COL32(94, 102, 114, 255);
+            const ImU32 pageBottomColor = IM_COL32(72, 79, 89, 255);
+            const ImU32 foldColor = IM_COL32(116, 124, 138, 255);
+            const ImU32 lineColor = IM_COL32(191, 199, 211, 110);
+            const float foldSize = std::min(width, height) * 0.24f;
+
+            drawList->AddRectFilledMultiColor(min,
+                                              max,
+                                              pageTopColor,
+                                              pageTopColor,
+                                              pageBottomColor,
+                                              pageBottomColor);
+
+            ImVec2 foldStart(max.x - foldSize, min.y);
+            drawList->AddTriangleFilled(foldStart, ImVec2(max.x, min.y), ImVec2(max.x, min.y + foldSize), foldColor);
+            drawList->AddLine(foldStart, ImVec2(max.x, min.y + foldSize), outlineColor, 1.5f);
+            drawList->AddRect(min, max, outlineColor, 4.0f, 0, 1.5f);
+            drawList->AddRectFilled(ImVec2(min.x + 4.0f, min.y + 4.0f),
+                                    ImVec2(max.x - foldSize - 5.0f, min.y + 7.0f),
+                                    accentColor, 1.5f);
+
+            const float left = min.x + width * 0.18f;
+            const float right = max.x - width * 0.16f;
+            for (int lineIndex = 0; lineIndex < 4; ++lineIndex)
+            {
+                const float y = min.y + height * (0.40f + 0.12f * static_cast<float>(lineIndex));
+                const float lineRight = (lineIndex == 3) ? (right - width * 0.16f) : right;
+                drawList->AddLine(ImVec2(left, y), ImVec2(lineRight, y), lineColor, 1.5f);
+            }
+        }
+    }
+
+    void drawAssetGridIcon(VkDescriptorSet icon, BuiltinAssetIcon builtinIcon, bool isSelected)
+    {
+        constexpr ImVec2 buttonSize(58.0f, 58.0f);
+        constexpr float cornerRounding = 6.0f;
+        constexpr float imagePadding = 4.0f;
+
+        ImGui::InvisibleButton("##icon", buttonSize);
+
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        if (!drawList)
+            return;
+
+        const ImVec2 itemMin = ImGui::GetItemRectMin();
+        const ImVec2 itemMax = ImGui::GetItemRectMax();
+        const bool hovered = ImGui::IsItemHovered();
+        const bool active = ImGui::IsItemActive();
+
+        const ImU32 frameColor = isSelected
+                                     ? IM_COL32(56, 89, 140, 120)
+                                     : hovered
+                                           ? IM_COL32(255, 255, 255, 24)
+                                           : IM_COL32(0, 0, 0, 0);
+        const ImU32 borderColor = isSelected
+                                      ? IM_COL32(112, 170, 255, 220)
+                                      : hovered
+                                            ? IM_COL32(255, 255, 255, 36)
+                                            : IM_COL32(255, 255, 255, 18);
+
+        if (frameColor != IM_COL32(0, 0, 0, 0))
+            drawList->AddRectFilled(itemMin, itemMax, frameColor, cornerRounding);
+        drawList->AddRect(itemMin, itemMax, borderColor, cornerRounding, 0, isSelected || hovered ? 1.5f : 1.0f);
+
+        const ImVec2 imageMin(itemMin.x + imagePadding, itemMin.y + imagePadding);
+        const ImVec2 imageMax(itemMax.x - imagePadding, itemMax.y - imagePadding);
+
+        if (icon != VK_NULL_HANDLE)
+        {
+            const ImU32 tint = active ? IM_COL32(230, 230, 230, 255) : IM_COL32(255, 255, 255, 255);
+            drawList->AddImage((ImTextureID)(uintptr_t)icon, imageMin, imageMax, ImVec2(0, 0), ImVec2(1, 1), tint);
+        }
+        else
+        {
+            drawBuiltinAssetIcon(drawList, itemMin, itemMax, builtinIcon);
+        }
     }
 
     std::vector<std::filesystem::path> gatherImportableFiles(const std::filesystem::path &directory,
@@ -166,6 +310,8 @@ namespace
                 accepted = isSupportedTextureSourceExtension(extensionLower);
             else if (importTypeIndex == 3)
                 accepted = isSupportedAudioSourceExtension(extensionLower);
+            else if (importTypeIndex == 4)
+                accepted = isSupportedAnimationSourceExtension(extensionLower);
             else
                 accepted = isSupportedImportSourceExtension(extensionLower);
             if (!accepted)
@@ -508,6 +654,18 @@ void AssetsWindow::draw()
             refreshTree();
         }
 
+        if (ImGui::Button("Animation Tree"))
+        {
+            const std::filesystem::path treePath = m_currentDirectory / "NewAnimationTree.animtree.elixasset";
+            engine::AnimationTree emptyTree{};
+            emptyTree.name = "NewAnimationTree";
+            emptyTree.assetPath = treePath.string();
+            engine::AssetsLoader::saveAnimationTree(emptyTree, treePath.string());
+
+            ImGui::CloseCurrentPopup();
+            refreshTree();
+        }
+
         ImGui::EndPopup();
     }
 
@@ -787,9 +945,7 @@ void AssetsWindow::drawAssetGrid()
 
         ImGui::Columns(columns, "AssetsColumns", false);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
 
         for (const auto &entry : entries)
         {
@@ -799,7 +955,8 @@ void AssetsWindow::drawAssetGrid()
 
             ImGui::BeginGroup();
 
-            VkDescriptorSet icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/file.tex.elixasset");
+            VkDescriptorSet icon = VK_NULL_HANDLE;
+            BuiltinAssetIcon builtinIcon = entry.is_directory() ? BuiltinAssetIcon::Folder : BuiltinAssetIcon::File;
             std::string filename = assetPath.filename().string();
             std::string extension = assetPath.extension().string();
             std::string extensionLower = toLowerCopy(extension);
@@ -809,7 +966,7 @@ void AssetsWindow::drawAssetGrid()
 
             if (entry.is_directory())
             {
-                icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/folder.tex.elixasset");
+                icon = VK_NULL_HANDLE;
             }
             else
             {
@@ -821,28 +978,13 @@ void AssetsWindow::drawAssetGrid()
                         icon = m_assetsPreviewSystem.getOrRequestTexturePreview(assetPath.string());
                     else if (serializedAssetType == engine::Asset::AssetType::MODEL)
                         icon = m_assetsPreviewSystem.getOrRequestModelPreview(assetPath.string());
-                    else if (m_velixExtensions.find(extensionLower) != m_velixExtensions.end())
-                        icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.tex.elixasset");
-                }
-                else if (m_velixExtensions.find(extensionLower) != m_velixExtensions.end())
-                {
-                    icon = m_resourcesStorage->getTextureDescriptorSet("./resources/textures/VelixV.tex.elixasset");
                 }
             }
 
             const bool isSelected = (!m_selectedAssetPath.empty() && m_selectedAssetPath == assetPath)
                                     || m_multiSelectedPaths.count(assetPath.string()) > 0;
-            if (isSelected)
-            {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.35f, 0.55f, 0.45f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.42f, 0.68f, 0.55f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.19f, 0.30f, 0.48f, 0.65f));
-            }
 
-            ImGui::ImageButton(id.c_str(), icon, ImVec2(50, 50));
-
-            if (isSelected)
-                ImGui::PopStyleColor(3);
+            drawAssetGridIcon(icon, builtinIcon, isSelected);
 
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
@@ -854,6 +996,8 @@ void AssetsWindow::drawAssetGrid()
                         m_onMaterialOpenRequestFunction(assetPath);
                     else if ((extensionLower == ".elixscene" || extensionLower == ".scene") && m_onSceneOpenRequestFunction)
                         m_onSceneOpenRequestFunction(assetPath);
+                    else if (serializedAssetType == engine::Asset::AssetType::ANIMATION_TREE && m_onAnimationTreeOpenRequestFunction)
+                        m_onAnimationTreeOpenRequestFunction(assetPath);
                     else
                     {
                         const bool isTextEditable =
@@ -962,6 +1106,10 @@ void AssetsWindow::drawAssetGrid()
                         typeLabel = "Material Asset";
                     else if (serializedAssetType == engine::Asset::AssetType::AUDIO)
                         typeLabel = "Audio Asset";
+                    else if (serializedAssetType == engine::Asset::AssetType::ANIMATION)
+                        typeLabel = "Animation Asset";
+                    else if (serializedAssetType == engine::Asset::AssetType::ANIMATION_TREE)
+                        typeLabel = "Animation Tree Asset";
 
                     ImGui::Text("Type: %s", typeLabel.c_str());
                 }
@@ -981,8 +1129,7 @@ void AssetsWindow::drawAssetGrid()
             ImGui::NextColumn();
         }
 
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
         ImGui::Columns(1);
     }
 
@@ -1030,6 +1177,15 @@ void AssetsWindow::drawAssetGrid()
                     }
                 }
 
+                if (serializedAssetType == engine::Asset::AssetType::MODEL)
+                {
+                    if (ImGui::MenuItem("Export Animations"))
+                    {
+                        m_exportAnimationsSourcePath = m_contextAssetPath;
+                        m_openExportAnimationsRequested = true;
+                    }
+                }
+
                 const bool isTextEditable =
                     m_shaderExtensions.find(extensionLower) != m_shaderExtensions.end() ||
                     m_cppExtensions.find(extensionLower) != m_cppExtensions.end() ||
@@ -1062,6 +1218,16 @@ void AssetsWindow::drawAssetGrid()
                 {
                     if (ImGui::MenuItem("New Folder"))
                         createFolder(m_contextAssetPath);
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Animation Tree"))
+                    {
+                        const std::filesystem::path treePath = m_contextAssetPath / "NewAnimationTree.animtree.elixasset";
+                        engine::AnimationTree emptyTree{};
+                        emptyTree.name     = "NewAnimationTree";
+                        emptyTree.assetPath = treePath.string();
+                        engine::AssetsLoader::saveAnimationTree(emptyTree, treePath.string());
+                        refreshTree();
+                    }
                     ImGui::EndMenu();
                 }
                 ImGui::Separator();
@@ -1090,6 +1256,27 @@ void AssetsWindow::drawAssetGrid()
         }
 
         ImGui::EndPopup();
+    }
+
+    if (m_openExportAnimationsRequested)
+    {
+        const std::filesystem::path outputPath = [&]() -> std::filesystem::path
+        {
+            const std::string stem = m_exportAnimationsSourcePath.stem().string();
+            const std::string strippedStem = stem.rfind(".model") != std::string::npos
+                ? stem.substr(0, stem.rfind(".model"))
+                : stem;
+            return makeUniquePathWithExtension(m_exportAnimationsSourcePath.parent_path(), strippedStem, ".anim.elixasset");
+        }();
+
+        if (engine::AssetsLoader::exportAnimationsFromModel(m_exportAnimationsSourcePath.string(), outputPath.string()))
+        {
+            navigateToDirectory(outputPath.parent_path());
+            setSelectedAssetPath(outputPath);
+            refreshTree();
+        }
+
+        m_openExportAnimationsRequested = false;
     }
 
     if (m_openRenamePopupRequested)
@@ -1192,7 +1379,7 @@ void AssetsWindow::drawAssetGrid()
 
     if (ImGui::BeginPopupModal("Import Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
-        const char *importTypes[] = {"Auto Detect", "Model", "Texture", "Audio"};
+        const char *importTypes[] = {"Auto Detect", "Model", "Texture", "Audio", "Animation"};
         const std::filesystem::path projectRoot = m_currentProject ? std::filesystem::path(m_currentProject->fullPath).lexically_normal() : std::filesystem::path{};
         const bool importRunning = m_asyncImportState && !m_asyncImportState->finished.load(std::memory_order_acquire);
 
@@ -1335,7 +1522,7 @@ void AssetsWindow::drawAssetGrid()
 
                 if (importFiles.empty())
                 {
-                    ImGui::TextDisabled("No importable model/texture/audio files in this folder.");
+                    ImGui::TextDisabled("No importable model/texture/audio/animation files in this folder.");
                 }
                 else
                 {
@@ -1488,9 +1675,12 @@ void AssetsWindow::drawAssetGrid()
                                     const bool isTextureSource = isSupportedTextureSourceExtension(extensionLower);
                                     const bool isAudioSource = isSupportedAudioSourceExtension(extensionLower);
 
+                                    const bool isAnimationSource = isSupportedAnimationSourceExtension(extensionLower);
+
                                     bool importModel = false;
                                     bool importTexture = false;
                                     bool importAudio = false;
+                                    bool importAnimation = false;
 
                                     if (importTypeIndex == 1)
                                         importModel = true;
@@ -1498,6 +1688,8 @@ void AssetsWindow::drawAssetGrid()
                                         importTexture = true;
                                     else if (importTypeIndex == 3)
                                         importAudio = true;
+                                    else if (importTypeIndex == 4)
+                                        importAnimation = true;
                                     else
                                     {
                                         importModel = isModelSource;
@@ -1505,10 +1697,11 @@ void AssetsWindow::drawAssetGrid()
                                         importAudio = isAudioSource;
                                     }
 
-                                    if ((!importModel && !importTexture && !importAudio) ||
+                                    if ((!importModel && !importTexture && !importAudio && !importAnimation) ||
                                         (importModel && !isModelSource) ||
                                         (importTexture && !isTextureSource) ||
-                                        (importAudio && !isAudioSource))
+                                        (importAudio && !isAudioSource) ||
+                                        (importAnimation && !isAnimationSource))
                                     {
                                         asyncState->failedCount.fetch_add(1u, std::memory_order_relaxed);
                                         asyncState->processedCount.fetch_add(1u, std::memory_order_relaxed);
@@ -1517,7 +1710,7 @@ void AssetsWindow::drawAssetGrid()
 
                                     std::string assetName = hasCustomSingleAssetName ? customAssetName : sourcePath.stem().string();
                                     if (assetName.empty())
-                                        assetName = importModel ? "ModelAsset" : (importAudio ? "AudioAsset" : "TextureAsset");
+                                        assetName = importModel ? "ModelAsset" : (importAudio ? "AudioAsset" : (importAnimation ? "AnimationAsset" : "TextureAsset"));
 
                                     if (assetName.find('/') != std::string::npos || assetName.find('\\') != std::string::npos)
                                     {
@@ -1526,7 +1719,7 @@ void AssetsWindow::drawAssetGrid()
                                         continue;
                                     }
 
-                                    const std::string outputExtension = importModel ? ".model.elixasset" : (importAudio ? ".audio.elixasset" : ".tex.elixasset");
+                                    const std::string outputExtension = importModel ? ".model.elixasset" : (importAudio ? ".audio.elixasset" : (importAnimation ? ".anim.elixasset" : ".tex.elixasset"));
                                     const auto outputPath = makeUniquePathWithExtension(destinationDirectoryCopy, assetName, outputExtension);
 
                                     bool importSuccess = false;
@@ -1534,6 +1727,8 @@ void AssetsWindow::drawAssetGrid()
                                         importSuccess = engine::AssetsLoader::importModelAsset(sourcePath.string(), outputPath.string());
                                     else if (importAudio)
                                         importSuccess = engine::AssetsLoader::importAudioAsset(sourcePath.string(), outputPath.string());
+                                    else if (importAnimation)
+                                        importSuccess = engine::AssetsLoader::importAnimationFromFBX(sourcePath.string(), outputPath.string());
                                     else
                                         importSuccess = engine::AssetsLoader::importTextureAsset(sourcePath.string(), outputPath.string());
 

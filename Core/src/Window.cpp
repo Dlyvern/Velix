@@ -123,6 +123,11 @@ void Window::setPosition(int x, int y)
     glfwSetWindowPos(m_window, x, y);
 }
 
+void Window::getPosition(int *x, int *y) const
+{
+    glfwGetWindowPos(m_window, x, y);
+}
+
 void Window::onAboutToClose(GLFWwindow *window)
 {
     auto platformWindow = reinterpret_cast<Window *>(glfwGetWindowUserPointer(window));
@@ -159,6 +164,21 @@ void Window::iconify()
 void Window::setSize(int width, int height)
 {
     glfwSetWindowSize(m_window, width, height);
+}
+
+void Window::maximize()
+{
+    glfwMaximizeWindow(m_window);
+}
+
+void Window::restore()
+{
+    glfwRestoreWindow(m_window);
+}
+
+bool Window::isMaximized() const
+{
+    return glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED) == GLFW_TRUE;
 }
 
 void Window::getMaxMonitorResolution(int *width, int *height)

@@ -1,6 +1,7 @@
 #include "Core/Logger.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
@@ -113,7 +114,10 @@ void Logger::log(LogLevel logLevel, LogLayer layer, const std::string &category,
             terminalColors::logColoredMessageToTerminal(logLevelToColor(logLevel), logMessage.formattedMessage);
 
         if (m_isOutputFile && m_logFile.is_open())
+        {
             m_logFile << logMessage.formattedMessage << '\n';
+            m_logFile.flush();
+        }
 
         pushHistory(logMessage);
 
@@ -185,7 +189,14 @@ void Logger::setFileOutputPath(const std::string &logFilePath)
     if (logFilePath.empty())
         return;
 
-    m_logFile.open(logFilePath, std::ios::app);
+    const std::filesystem::path outputPath(logFilePath);
+    if (outputPath.has_parent_path())
+    {
+        std::error_code errorCode;
+        std::filesystem::create_directories(outputPath.parent_path(), errorCode);
+    }
+
+    m_logFile.open(outputPath, std::ios::app);
     m_isOutputFile = m_logFile.is_open();
 }
 

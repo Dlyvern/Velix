@@ -1,4 +1,8 @@
+#include "Editor/Panels/DetailsViews/EntityDetailsView.hpp"
+
 #include "Editor/Editor.hpp"
+
+#include "Engine/Assets/AssetsLoader.hpp"
 
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/AudioComponent.hpp"
@@ -6,14 +10,12 @@
 #include "Engine/Components/CharacterMovementComponent.hpp"
 #include "Engine/Components/CollisionComponent.hpp"
 #include "Engine/Components/LightComponent.hpp"
+#include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Components/RigidBodyComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
-#include "Engine/Primitives.hpp"
-
-#include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Particles/Modules/ColorOverLifetimeModule.hpp"
 #include "Engine/Particles/Modules/ForceModule.hpp"
 #include "Engine/Particles/Modules/InitialVelocityModule.hpp"
@@ -21,36 +23,34 @@
 #include "Engine/Particles/Modules/RendererModule.hpp"
 #include "Engine/Particles/Modules/SizeOverLifetimeModule.hpp"
 #include "Engine/Particles/Modules/SpawnModule.hpp"
+#include "Engine/Primitives.hpp"
 
 #include <imgui.h>
-#include <glm/gtc/type_ptr.hpp>
 #include <glm/common.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 namespace
 {
-    // Draws a vec3 control with colored X/Y/Z axis buttons (click to reset to resetValue)
-    // Returns true if any component changed.
     bool drawVec3Control(const char *id, glm::vec3 &v, float resetValue = 0.0f, float speed = 0.01f)
     {
         bool changed = false;
 
         const float lineHeight = ImGui::GetTextLineHeight();
         const ImVec2 btnSize = {lineHeight + 6.0f, lineHeight + 4.0f};
-        // Divide the remaining item width equally among the 3 drag fields
-        const float totalBtnW = 3.0f * btnSize.x + 2.0f * 2.0f; // 3 buttons + 2 inner gaps
+        const float totalBtnW = 3.0f * btnSize.x + 2.0f * 2.0f;
         const float fieldW = (ImGui::CalcItemWidth() - totalBtnW - 2.0f * 4.0f) / 3.0f;
 
         ImGui::PushID(id);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, ImGui::GetStyle().ItemSpacing.y));
 
-        // --- X (red) ---
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.72f, 0.14f, 0.14f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.88f, 0.24f, 0.24f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.08f, 0.08f, 1.0f));
@@ -65,7 +65,6 @@ namespace
         changed |= ImGui::DragFloat("##X", &v.x, speed, 0.0f, 0.0f, "%.3f");
         ImGui::SameLine(0, 4);
 
-        // --- Y (green) ---
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.58f, 0.16f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.74f, 0.24f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.42f, 0.10f, 1.0f));
@@ -80,7 +79,6 @@ namespace
         changed |= ImGui::DragFloat("##Y", &v.y, speed, 0.0f, 0.0f, "%.3f");
         ImGui::SameLine(0, 4);
 
-        // --- Z (blue) ---
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.26f, 0.72f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.36f, 0.88f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.16f, 0.55f, 1.0f));
@@ -283,10 +281,7 @@ namespace
         {
             shape = scene->getPhysicsScene().createShape(physx::PxCapsuleGeometry(capsuleRadius, capsuleHalfHeight));
             if (shape)
-            {
-                // PhysX capsule axis is +X by default; rotate it to +Y to match editor expectation.
                 shape->setLocalPose(physx::PxTransform(physx::PxQuat(physx::PxHalfPi, physx::PxVec3(0.0f, 0.0f, 1.0f))));
-            }
         }
 
         if (!shape)
@@ -346,23 +341,37 @@ namespace
 
         return false;
     }
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
-void Editor::drawDetails()
-{
-    ImGui::Begin("Details");
 
-    if (m_detailsContext == DetailsContext::Asset && !m_selectedAssetPath.empty())
-    {
-        drawAssetDetails();
-        return ImGui::End();
-    }
+bool EntityDetailsView::canDraw(const Editor &editor) const
+{
+    return editor.m_detailsContext != Editor::DetailsContext::Asset &&
+           editor.m_selectedEntity != nullptr;
+}
+
+void EntityDetailsView::draw(Editor &editor)
+{
+    using EditorMode = Editor::EditorMode;
+
+    auto *&m_selectedEntity = editor.m_selectedEntity;
+    auto &m_scene = editor.m_scene;
+    auto &m_projectScriptsRegister = editor.m_projectScriptsRegister;
+    auto &m_loadedGameModulePath = editor.m_loadedGameModulePath;
+    auto &m_notificationManager = editor.m_notificationManager;
+    auto &m_currentMode = editor.m_currentMode;
+    auto &m_selectedMeshSlot = editor.m_selectedMeshSlot;
+    auto &m_lastScrolledMeshSlot = editor.m_lastScrolledMeshSlot;
+    auto &m_assetsPreviewSystem = editor.m_assetsPreviewSystem;
+    auto &m_showCollisionBounds = editor.m_showCollisionBounds;
+    auto &m_enableCollisionBoundsEditing = editor.m_enableCollisionBoundsEditing;
+    auto &m_currentProject = editor.m_currentProject;
 
     if (!m_selectedEntity)
     {
         ImGui::Text("Select an object or asset to view details");
-        return ImGui::End();
+        return;
     }
 
     char buffer[128];
@@ -473,7 +482,6 @@ void Editor::drawDetails()
 
     if (componentRemovedFromPopup)
     {
-        ImGui::End();
         return;
     }
 
@@ -668,6 +676,19 @@ void Editor::drawDetails()
             ImGui::CloseCurrentPopup();
         }
 
+        if (ImGui::Button("Animator"))
+        {
+            if (!m_selectedEntity->getComponent<engine::AnimatorComponent>())
+            {
+                m_selectedEntity->addComponent<engine::AnimatorComponent>();
+                ImGui::CloseCurrentPopup();
+            }
+            else
+            {
+                m_notificationManager.showWarning("Animator already exists on this entity");
+            }
+        }
+
         if (ImGui::Button("Light"))
         {
             m_selectedEntity->addComponent<engine::LightComponent>(engine::LightComponent::LightType::POINT);
@@ -847,7 +868,7 @@ void Editor::drawDetails()
 
                         if (extension == ".elixmat")
                         {
-                            if (applyMaterialToSelectedEntity(droppedPath, std::nullopt, true))
+                            if (editor.applyMaterialToSelectedEntity(droppedPath, std::nullopt, true))
                                 m_notificationManager.showSuccess("Material applied to all slots");
                             else
                                 m_notificationManager.showError("Failed to apply material");
@@ -917,7 +938,7 @@ void Editor::drawDetails()
                     }
 
                     if (hasOverride && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                        openMaterialEditor(overridePath);
+                        editor.openMaterialEditor(overridePath);
 
                     if (ImGui::BeginDragDropTarget())
                     {
@@ -930,7 +951,7 @@ void Editor::drawDetails()
 
                             if (extension == ".elixmat")
                             {
-                                if (applyMaterialToSelectedEntity(droppedPath, meshIndex))
+                                if (editor.applyMaterialToSelectedEntity(droppedPath, meshIndex))
                                     m_notificationManager.showSuccess("Material applied to slot");
                                 else
                                     m_notificationManager.showError("Failed to apply material");
@@ -950,7 +971,7 @@ void Editor::drawDetails()
                         ImGui::TextDisabled("<None>");
 
                     if (hasOverride && ImGui::Button("Open Material Editor"))
-                        openMaterialEditor(overridePath);
+                        editor.openMaterialEditor(overridePath);
 
                     if (hasOverride && ImGui::Button("Clear Override"))
                     {
@@ -982,7 +1003,7 @@ void Editor::drawDetails()
 
                         if (extension == ".elixmat")
                         {
-                            if (applyMaterialToSelectedEntity(droppedPath, std::nullopt, true))
+                            if (editor.applyMaterialToSelectedEntity(droppedPath, std::nullopt, true))
                                 m_notificationManager.showSuccess("Material applied to all slots");
                             else
                                 m_notificationManager.showError("Failed to apply material");
@@ -1052,7 +1073,7 @@ void Editor::drawDetails()
                     }
 
                     if (hasOverride && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                        openMaterialEditor(overridePath);
+                        editor.openMaterialEditor(overridePath);
 
                     if (ImGui::BeginDragDropTarget())
                     {
@@ -1065,7 +1086,7 @@ void Editor::drawDetails()
 
                             if (extension == ".elixmat")
                             {
-                                if (applyMaterialToSelectedEntity(droppedPath, meshIndex))
+                                if (editor.applyMaterialToSelectedEntity(droppedPath, meshIndex))
                                     m_notificationManager.showSuccess("Material applied to slot");
                                 else
                                     m_notificationManager.showError("Failed to apply material");
@@ -1085,7 +1106,7 @@ void Editor::drawDetails()
                         ImGui::TextDisabled("<None>");
 
                     if (hasOverride && ImGui::Button("Open Material Editor"))
-                        openMaterialEditor(overridePath);
+                        editor.openMaterialEditor(overridePath);
 
                     if (hasOverride && ImGui::Button("Clear Override"))
                     {
@@ -1104,11 +1125,57 @@ void Editor::drawDetails()
             {
                 const auto &animations = animatorComponent->getAnimations();
 
-                if (animations.empty())
+                // Always-visible drop zone for adding animation clips
                 {
-                    ImGui::TextDisabled("No animation clips imported for this model");
+                    const ImVec2 dropSize(-1.0f, animations.empty() ? 48.0f : 28.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.4f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.6f));
+                    ImGui::Button(animations.empty() ? "Drop .anim.elixasset to load animations" : "+ Drop .anim.elixasset to add clips", dropSize);
+                    ImGui::PopStyleColor(2);
+
+                    if (ImGui::BeginDragDropTarget())
+                    {
+                        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                        {
+                            const std::string droppedPath(static_cast<const char *>(payload->Data), payload->DataSize - 1);
+                            const std::string lower = [&droppedPath]()
+                            {
+                                std::string s = droppedPath;
+                                std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
+                                               { return static_cast<char>(std::tolower(c)); });
+                                return s;
+                            }();
+
+                            if (lower.size() > std::strlen(".anim.elixasset") &&
+                                lower.rfind(".anim.elixasset") == lower.size() - std::strlen(".anim.elixasset"))
+                            {
+                                const std::string normalizedAnimationAssetPath = std::filesystem::path(droppedPath).lexically_normal().string();
+                                const auto &externalAnimationAssetPaths = animatorComponent->getExternalAnimationAssetPaths();
+                                if (std::find(externalAnimationAssetPaths.begin(), externalAnimationAssetPaths.end(), normalizedAnimationAssetPath) != externalAnimationAssetPaths.end())
+                                {
+                                    editor.m_notificationManager.showInfo("Animation asset already added");
+                                }
+                                else if (auto animAsset = engine::AssetsLoader::loadAnimationAsset(normalizedAnimationAssetPath);
+                                         animAsset.has_value() && !animAsset->animations.empty())
+                                {
+                                    auto *skelComp = m_selectedEntity->getComponent<engine::SkeletalMeshComponent>();
+                                    engine::Skeleton *skel = skelComp ? &skelComp->getSkeleton() : nullptr;
+
+                                    // Append new clips to existing ones
+                                    std::vector<engine::Animation> merged = animatorComponent->getAnimations();
+                                    merged.insert(merged.end(), animAsset->animations.begin(), animAsset->animations.end());
+                                    animatorComponent->setAnimations(merged, skel);
+                                    animatorComponent->addExternalAnimationAssetPath(normalizedAnimationAssetPath);
+                                    if (animatorComponent->getSelectedAnimationIndex() < 0)
+                                        animatorComponent->setSelectedAnimationIndex(0);
+                                }
+                            }
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
                 }
-                else
+
+                if (!animations.empty())
                 {
                     int selectedAnimationIndex = animatorComponent->getSelectedAnimationIndex();
                     if (selectedAnimationIndex < 0 || selectedAnimationIndex >= static_cast<int>(animations.size()))
@@ -1127,11 +1194,13 @@ void Editor::drawDetails()
                             const std::string &animationName = animations[animationIndex].name.empty() ? fallbackName : animations[animationIndex].name;
                             const bool isSelected = animationIndex == selectedAnimationIndex;
 
+                            ImGui::PushID(animationIndex);
                             if (ImGui::Selectable(animationName.c_str(), isSelected))
                             {
                                 selectedAnimationIndex = animationIndex;
                                 animatorComponent->setSelectedAnimationIndex(selectedAnimationIndex);
                             }
+                            ImGui::PopID();
 
                             if (isSelected)
                                 ImGui::SetItemDefaultFocus();
@@ -1176,6 +1245,117 @@ void Editor::drawDetails()
 
                     if (m_currentMode != EditorMode::EDIT)
                         ImGui::TextDisabled("Animation preview updates in Edit mode");
+
+                    ImGui::Separator();
+                    if (ImGui::Button("Clear Animations"))
+                    {
+                        animatorComponent->stopAnimation();
+                        animatorComponent->setAnimations({}, nullptr);
+                        animatorComponent->setExternalAnimationAssetPaths({});
+                    }
+                }
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Animation Tree");
+
+                if (animatorComponent->hasTree())
+                {
+                    const engine::AnimationTree *tree = animatorComponent->getTree();
+                    ImGui::Text("Tree: %s", tree->name.c_str());
+
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Open Editor"))
+                        editor.openAnimationTreeEditor(tree->assetPath, animatorComponent,
+                            m_selectedEntity->getComponent<engine::SkeletalMeshComponent>());
+
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Clear"))
+                        animatorComponent->clearTree();
+
+                    // Runtime state info
+                    const std::string curState = animatorComponent->getCurrentStateName();
+                    ImGui::Text("State: %s", curState.empty() ? "(none)" : curState.c_str());
+                    if (animatorComponent->isInTransition())
+                        ImGui::TextDisabled("  (transitioning %.0f%%)", animatorComponent->getCurrentStateNormalizedTime() * 100.0f);
+
+                    // Parameter live controls
+                    if (tree && !tree->parameters.empty())
+                    {
+                        ImGui::Spacing();
+                        ImGui::TextDisabled("Parameters:");
+                        for (const auto &param : tree->parameters)
+                        {
+                            ImGui::PushID(param.name.c_str());
+                            switch (param.type)
+                            {
+                            case engine::AnimationTreeParameter::Type::Float:
+                            {
+                                float v = animatorComponent->getFloat(param.name);
+                                if (ImGui::DragFloat(param.name.c_str(), &v, 0.01f))
+                                    animatorComponent->setFloat(param.name, v);
+                                break;
+                            }
+                            case engine::AnimationTreeParameter::Type::Bool:
+                            {
+                                bool v = animatorComponent->getBool(param.name);
+                                if (ImGui::Checkbox(param.name.c_str(), &v))
+                                    animatorComponent->setBool(param.name, v);
+                                break;
+                            }
+                            case engine::AnimationTreeParameter::Type::Int:
+                            {
+                                int v = animatorComponent->getInt(param.name);
+                                if (ImGui::InputInt(param.name.c_str(), &v))
+                                    animatorComponent->setInt(param.name, v);
+                                break;
+                            }
+                            case engine::AnimationTreeParameter::Type::Trigger:
+                            {
+                                if (ImGui::Button(("Fire: " + param.name).c_str()))
+                                    animatorComponent->setTrigger(param.name);
+                                break;
+                            }
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                }
+                else
+                {
+                    // Drop zone for .animtree.elixasset
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.4f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.6f));
+                    ImGui::Button("Drop .animtree.elixasset here", ImVec2(-1.0f, 32.0f));
+                    ImGui::PopStyleColor(2);
+
+                    if (ImGui::BeginDragDropTarget())
+                    {
+                        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                        {
+                            const std::string droppedPath(static_cast<const char *>(payload->Data), payload->DataSize - 1);
+                            const std::string lower = [&droppedPath]()
+                            {
+                                std::string s = droppedPath;
+                                std::transform(s.begin(), s.end(), s.begin(),
+                                               [](unsigned char c)
+                                               { return static_cast<char>(std::tolower(c)); });
+                                return s;
+                            }();
+
+                            constexpr const char *animTreeSuffix = ".animtree.elixasset";
+                            if (lower.size() > std::strlen(animTreeSuffix) &&
+                                lower.rfind(animTreeSuffix) == lower.size() - std::strlen(animTreeSuffix))
+                            {
+                                auto *skelComp = m_selectedEntity->getComponent<engine::SkeletalMeshComponent>();
+                                if (skelComp)
+                                    animatorComponent->bindSkeleton(&skelComp->getSkeleton());
+                                animatorComponent->loadTree(droppedPath);
+                                if (!animatorComponent->hasTree())
+                                    editor.m_notificationManager.showError("Failed to load animation tree");
+                            }
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
                 }
             }
         }
@@ -1253,7 +1433,6 @@ void Editor::drawDetails()
                 if (ImGui::Button("Remove Character Movement"))
                 {
                     m_selectedEntity->removeComponent<engine::CharacterMovementComponent>();
-                    ImGui::End();
                     return;
                 }
             }
@@ -1290,7 +1469,6 @@ void Editor::drawDetails()
                 if (ImGui::Button("Remove Collision"))
                 {
                     destroyCollisionComponent(m_scene.get(), m_selectedEntity, collisionComponent);
-                    ImGui::End();
                     return;
                 }
             }
@@ -1413,7 +1591,6 @@ void Editor::drawDetails()
                 if (ImGui::Button("Remove Audio Source"))
                 {
                     m_selectedEntity->removeComponent<engine::AudioComponent>();
-                    ImGui::End();
                     return;
                 }
             }
@@ -1905,7 +2082,6 @@ void Editor::drawDetails()
                 ImGui::PopStyleColor();
                 ImGui::PopID();
                 m_selectedEntity->removeComponent<engine::ParticleSystemComponent>();
-                ImGui::End();
                 return;
             }
             ImGui::PopStyleColor();
@@ -1913,8 +2089,6 @@ void Editor::drawDetails()
 
         ImGui::PopID();
     }
-
-    ImGui::End();
 }
 
 ELIX_NESTED_NAMESPACE_END

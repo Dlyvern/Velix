@@ -20,6 +20,7 @@
 #include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/TAARenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/PreviewAssetsRenderGraphPass.hpp"
+#include "Editor/RenderGraphPasses/AnimationTreePreviewPass.hpp"
 #include "Editor/RenderGraphPasses/SelectionOverlayRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/EditorBillboardRenderGraphPass.hpp"
 #include "Editor/ImGuiRenderGraphPass.hpp"
@@ -100,7 +101,16 @@ private:
     std::unique_ptr<engine::renderGraph::RenderGraph> m_gameViewportRenderGraph{nullptr};
     std::unique_ptr<engine::shaders::ShaderHotReloader> m_shaderHotReloader{nullptr};
 
-    PreviewAssetsRenderGraphPass *m_previewAssetsRenderGraphPass{nullptr};
+    PreviewAssetsRenderGraphPass  *m_previewAssetsRenderGraphPass{nullptr};
+    AnimationTreePreviewPass      *m_animTreePreviewPass{nullptr};
+    VkDescriptorSet                m_animTreePreviewDescriptorSet{VK_NULL_HANDLE};
+
+public:
+    AnimationTreePreviewPass *getAnimTreePreviewPass() const { return m_animTreePreviewPass; }
+    VkDescriptorSet           getAnimTreePreviewDescriptorSet() const { return m_animTreePreviewDescriptorSet; }
+    void                      setAnimTreePreviewData(const AnimPreviewDrawData &data);
+
+private:
     engine::renderGraph::DepthPrepassRenderGraphPass *m_depthPrepassRenderGraphPass{nullptr};
     engine::renderGraph::GBufferRenderGraphPass *m_gBufferRenderGraphPass{nullptr};
     engine::renderGraph::ShadowRenderGraphPass *m_shadowRenderGraphPass{nullptr};

@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : enable
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 1) in vec3 fragNormalView;
@@ -6,6 +7,7 @@ layout(location = 2) in vec3 fragPositionView;
 layout(location = 3) in vec3 fragTangentView;
 layout(location = 4) in vec3 fragBitangentView;
 layout(location = 5) in flat uint fragObjectId;
+layout(location = 6) in flat uint fragMaterialIndex;
 
 layout(location = 0) out vec4 outGBufferNormal;   // normal (encoded)
 layout(location = 1) out vec4 outGBufferAlbedo;   // albedo + alpha
@@ -21,12 +23,9 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
     mat4 invProjection;
 } cameraUniformObject;
 
-layout(set = 1, binding = 0) uniform sampler2D uAlbedoTex;
-layout(set = 1, binding = 1) uniform sampler2D uNormalTex;
-layout(set = 1, binding = 2) uniform sampler2D uOrmTex;      // R=AO G=Roughness B=Metallic
-layout(set = 1, binding = 3) uniform sampler2D uEmissiveTex;
+layout(set = 1, binding = 0) uniform sampler2D allTextures[];
 
-layout(set = 1, binding = 4) uniform MaterialParams
+struct MaterialGPUParams
 {
     vec4 baseColorFactor;
     vec4 emissiveFactor;
@@ -41,7 +40,16 @@ layout(set = 1, binding = 4) uniform MaterialParams
     float alphaCutoff;
     float uvRotation; // degrees
     float ior;
-} material;
+    uint albedoTexIdx;
+    uint normalTexIdx;
+    uint ormTexIdx;
+    uint emissiveTexIdx;
+};
+
+layout(set = 1, binding = 1, std430) readonly buffer MaterialBuffer
+{
+    MaterialGPUParams materials[];
+} materialBuffer;
 
 layout(push_constant) uniform GBufferPC
 {
@@ -55,29 +63,30 @@ layout(push_constant) uniform GBufferPC
 const uint MATERIAL_FLAG_FLIP_V = 1u << 4;
 const uint MATERIAL_FLAG_FLIP_U = 1u << 5;
 const uint MATERIAL_FLAG_CLAMP_UV = 1u << 6;
+const uint MATERIAL_FLAG_ALPHA_MASK = 1u << 0;
 
-vec2 getUV()
+vec2 getUV(MaterialGPUParams mat)
 {
     vec2 uv = fragUV;
-    if ((material.flags & MATERIAL_FLAG_FLIP_U) != 0u)
+    if ((mat.flags & MATERIAL_FLAG_FLIP_U) != 0u)
         uv.x = 1.0 - uv.x;
-    if ((material.flags & MATERIAL_FLAG_FLIP_V) != 0u)
+    if ((mat.flags & MATERIAL_FLAG_FLIP_V) != 0u)
         uv.y = 1.0 - uv.y;
 
-    uv *= material.uvTransform.xy;
-    float rotationRadians = radians(material.uvRotation);
+    uv *= mat.uvTransform.xy;
+    float rotationRadians = radians(mat.uvRotation);
     float c = cos(rotationRadians);
     float s = sin(rotationRadians);
     mat2 rotation = mat2(c, -s, s, c);
-    uv = (rotation * uv) + material.uvTransform.zw;
+    uv = (rotation * uv) + mat.uvTransform.zw;
 
-    if ((material.flags & MATERIAL_FLAG_CLAMP_UV) != 0u)
+    if ((mat.flags & MATERIAL_FLAG_CLAMP_UV) != 0u)
         uv = clamp(uv, vec2(0.0), vec2(1.0));
 
     return uv;
 }
 
-vec3 getNormalView(vec2 uv)
+vec3 getNormalView(vec2 uv, MaterialGPUParams mat)
 {
     vec3 N = normalize(fragNormalView);
     vec3 T = normalize(fragTangentView);
@@ -88,12 +97,109 @@ vec3 getNormalView(vec2 uv)
 
     mat3 TBN = mat3(T, B, N);
 
-    vec3 normalTS = texture(uNormalTex, uv).xyz * 2.0 - 1.0;
-    normalTS.xy *= material.normalScale;
+    vec3 normalTS = texture(allTextures[nonuniformEXT(mat.normalTexIdx)], uv).xyz * 2.0 - 1.0;
+    normalTS.xy *= mat.normalScale;
     normalTS = normalize(normalTS);
 
     return normalize(TBN * normalTS);
 }
+
+float _elixHash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+float _elixHash13(vec3 p3) {
+    p3 = fract(p3 * 0.1031);
+    p3 += dot(p3, p3.zyx + 31.32);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+vec2 _elixHash22(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.xx + p3.yz) * p3.zy);
+}
+
+float elixValueNoise2D(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(_elixHash12(i),                _elixHash12(i + vec2(1.0, 0.0)), u.x),
+        mix(_elixHash12(i + vec2(0.0,1.0)),_elixHash12(i + vec2(1.0, 1.0)), u.x),
+        u.y);
+}
+
+vec2 _elixGrad2(vec2 p) {
+    float h = _elixHash12(p) * 6.28318;
+    return vec2(cos(h), sin(h));
+}
+
+float elixGradientNoise2D(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float a = dot(_elixGrad2(i),                  f);
+    float b = dot(_elixGrad2(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+    float c = dot(_elixGrad2(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+    float d = dot(_elixGrad2(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+    return 0.5 + 0.5 * mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float elixFbm2D(vec2 p, int octaves, float persistence, float lacunarity) {
+    float value = 0.0, amplitude = 0.5, frequency = 1.0, maxValue = 0.0;
+    for (int i = 0; i < octaves; i++) {
+        value    += amplitude * elixGradientNoise2D(p * frequency);
+        maxValue += amplitude;
+        amplitude *= persistence;
+        frequency *= lacunarity;
+    }
+    return value / max(maxValue, 0.0001);
+}
+
+float elixVoronoiNoise2D(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float minDist = 8.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 neighbor = vec2(float(x), float(y));
+            vec2 point = 0.5 + 0.5 * sin(6.28318 * _elixHash22(i + neighbor));
+            vec2 diff = neighbor + point - f;
+            minDist = min(minDist, dot(diff, diff));
+        }
+    }
+    return clamp(sqrt(minDist), 0.0, 1.0);
+}
+
+float elixValueNoise3D(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(mix(_elixHash13(i),                _elixHash13(i+vec3(1,0,0)),u.x),
+            mix(_elixHash13(i+vec3(0,1,0)),    _elixHash13(i+vec3(1,1,0)),u.x), u.y),
+        mix(mix(_elixHash13(i+vec3(0,0,1)),    _elixHash13(i+vec3(1,0,1)),u.x),
+            mix(_elixHash13(i+vec3(0,1,1)),    _elixHash13(i+vec3(1,1,1)),u.x), u.y),
+        u.z);
+}
+
+float elixFbm3D(vec3 p, int octaves, float persistence, float lacunarity) {
+    float value = 0.0, amplitude = 0.5, frequency = 1.0, maxValue = 0.0;
+    for (int i = 0; i < octaves; i++) {
+        value    += amplitude * elixValueNoise3D(p * frequency);
+        maxValue += amplitude;
+        amplitude *= persistence;
+        frequency *= lacunarity;
+    }
+    return value / max(maxValue, 0.0001);
+}
+
+// =====================================================
+// End Elix Noise Library
+// =====================================================
 
 // <<ELIX_CUSTOM_FUNCTIONS>>
 
@@ -101,28 +207,31 @@ void main()
 {
     outObjectId = fragObjectId;
 
-    vec2 uv = getUV();
-    vec4 albedoTex = texture(uAlbedoTex, uv);
-    vec3 albedo = albedoTex.rgb * material.baseColorFactor.rgb;
-    float alpha = albedoTex.a * material.baseColorFactor.a;
+    MaterialGPUParams mat = materialBuffer.materials[fragMaterialIndex];
+    MaterialGPUParams material = mat; // read-only alias kept for custom expressions
 
-    if ((material.flags & 1u) != 0u)
+    vec2 uv = getUV(mat);
+    vec4 albedoTex = texture(allTextures[nonuniformEXT(mat.albedoTexIdx)], uv);
+    vec3 albedo = albedoTex.rgb * mat.baseColorFactor.rgb;
+    float alpha = albedoTex.a * mat.baseColorFactor.a;
+
+    if ((material.flags & MATERIAL_FLAG_ALPHA_MASK) != 0u)
     {
         if (alpha < material.alphaCutoff)
             discard;
     }
 
-    vec3 emissive = texture(uEmissiveTex, uv).rgb * material.emissiveFactor.rgb;
+    vec3 emissive = texture(allTextures[nonuniformEXT(mat.emissiveTexIdx)], uv).rgb * mat.emissiveFactor.rgb;
 
-    vec3 orm = texture(uOrmTex, uv).rgb;
-    float ao        = mix(1.0, orm.r, material.aoStrength);
-    float roughness = clamp(orm.g * material.roughnessFactor, 0.04, 1.0);
-    float metallic  = clamp(orm.b * material.metallicFactor, 0.0, 1.0);
+    vec3 orm = texture(allTextures[nonuniformEXT(mat.ormTexIdx)], uv).rgb;
+    float ao        = mix(1.0, orm.r, mat.aoStrength);
+    float roughness = clamp(orm.g * mat.roughnessFactor, 0.04, 1.0);
+    float metallic  = clamp(orm.b * mat.metallicFactor, 0.0, 1.0);
 
     // Specular AA (Tokuyoshi & Kaplanyan 2019): widen roughness based on
     // normal-map screen-space variance to suppress specular flickering.
     {
-        vec3 normalRaw = texture(uNormalTex, uv).xyz * 2.0 - 1.0;
+        vec3 normalRaw = texture(allTextures[nonuniformEXT(mat.normalTexIdx)], uv).xyz * 2.0 - 1.0;
         vec3 dnx = dFdx(normalRaw);
         vec3 dny = dFdy(normalRaw);
         float variance = dot(dnx, dnx) + dot(dny, dny);
@@ -130,7 +239,7 @@ void main()
         roughness = sqrt(clamp(roughness * roughness + kernelRoughness, 0.0, 1.0));
     }
 
-    vec3 N = getNormalView(uv);
+    vec3 N = getNormalView(uv, mat);
 
     // <<ELIX_CUSTOM_EXPRESSION>>
     // Modifiable: albedo, roughness, metallic, ao, emissive, N, alpha

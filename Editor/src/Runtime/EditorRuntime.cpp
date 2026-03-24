@@ -12,7 +12,9 @@
 #include "Engine/Components/CameraComponent.hpp"
 #include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
+#include "Engine/Diagnostics.hpp"
 #include "Engine/PluginSystem/PluginLoader.hpp"
+#include "Engine/PluginSystem/PluginManager.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Engine/Scripting/VelixAPI.hpp"
@@ -21,6 +23,7 @@
 
 #include "Core/Logger.hpp"
 
+#include <backends/imgui_impl_vulkan.h>
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
@@ -88,7 +91,7 @@ namespace
     }
 
     bool renderGraphUsesRTShadows(const elix::engine::RenderQualitySettings &settings,
-                                 const std::shared_ptr<elix::core::VulkanContext> &context)
+                                  const std::shared_ptr<elix::core::VulkanContext> &context)
     {
         const bool supportsRayQuery = context && context->hasRayQuerySupport();
         const bool supportsRayPipeline = context && context->hasRayTracingPipelineSupport();
@@ -374,6 +377,15 @@ bool EditorRuntime::init()
     engine::ScriptsRegister *startupScriptsRegister = nullptr;
     std::string startupModulePath;
     tryLoadProjectScriptsModule(*m_project, startupScriptsRegister, startupModulePath);
+
+    {
+        const std::filesystem::path execDir = engine::diagnostics::getExecutableDirectory();
+        const std::filesystem::path projectDir = std::filesystem::path(m_project->fullPath);
+        auto &pm = engine::PluginManager::instance();
+        pm.loadPluginsFromDirectory("resources/plugins");
+        pm.loadPluginsFromDirectory(execDir / "Plugins");
+        pm.loadPluginsFromDirectory(projectDir / "Plugins");
+    }
 
     m_editorScene = std::make_shared<engine::Scene>();
     m_activeScene = m_editorScene;
@@ -787,9 +799,6 @@ void EditorRuntime::initEditorRenderGraph()
         m_activeScene,
         m_uiRenderGraphPass->getHandlers());
     m_editorBillboardRenderGraphPass->setBillboardsVisible(engine::EngineConfig::instance().getShowEditorBillboards());
-    m_editorBillboardRenderGraphPass->setCameraIconTexturePath("./resources/textures/velix_logo.tex.elixasset");
-    m_editorBillboardRenderGraphPass->setLightIconTexturePath("./resources/textures/velix_logo.tex.elixasset");
-    m_editorBillboardRenderGraphPass->setAudioIconTexturePath("./resources/textures/velix_logo.tex.elixasset");
 
     m_imGuiRenderGraphPass = m_renderGraph->addPass<ImGuiRenderGraphPass>(
         m_editor,
@@ -798,10 +807,35 @@ void EditorRuntime::initEditorRenderGraph()
 
     VkExtent2D previewExtent{.width = 256, .height = 256};
     m_previewAssetsRenderGraphPass = m_renderGraph->addPass<PreviewAssetsRenderGraphPass>(previewExtent);
+    m_animTreePreviewPass          = m_renderGraph->addPass<AnimationTreePreviewPass>();
 
     m_renderGraph->setup();
     m_renderGraph->createRenderGraphResources();
     m_editorRenderGraphTopologyHash = renderGraphTopologyHash();
+
+    // Eagerly register / re-register the anim-tree preview image with ImGui.
+    // This must happen after createRenderGraphResources() (so compile() has run and
+    // m_colorTarget is valid) but also needs to handle re-initialization when the render
+    // graph is rebuilt due to a topology-hash change.
+    if (m_animTreePreviewDescriptorSet != VK_NULL_HANDLE)
+    {
+        ImGui_ImplVulkan_RemoveTexture(m_animTreePreviewDescriptorSet);
+        m_animTreePreviewDescriptorSet = VK_NULL_HANDLE;
+    }
+    if (m_animTreePreviewPass &&
+        m_animTreePreviewPass->getOutputImageView() != VK_NULL_HANDLE &&
+        m_animTreePreviewPass->getOutputSampler() != VK_NULL_HANDLE)
+    {
+        m_animTreePreviewDescriptorSet = ImGui_ImplVulkan_AddTexture(
+            m_animTreePreviewPass->getOutputSampler(),
+            m_animTreePreviewPass->getOutputImageView(),
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    if (m_editor)
+    {
+        m_editor->setAnimTreePreviewPass(m_animTreePreviewPass);
+        m_editor->setAnimTreePreviewDescriptorSet(m_animTreePreviewDescriptorSet);
+    }
 }
 
 void EditorRuntime::initGameViewportRenderGraph()
@@ -1225,6 +1259,12 @@ void EditorRuntime::tick(float deltaTime)
     m_editor->setDonePreviewJobs(m_previewAssetsRenderGraphPass->getRenderedImages());
 }
 
+void EditorRuntime::setAnimTreePreviewData(const AnimPreviewDrawData &data)
+{
+    if (m_animTreePreviewPass)
+        m_animTreePreviewPass->setPreviewData(data);
+}
+
 void EditorRuntime::applyEditorViewportExtent(uint32_t width, uint32_t height)
 {
     const VkExtent2D extent = makeScaledRenderExtent(width, height);
@@ -1344,6 +1384,8 @@ void EditorRuntime::shutdown()
 
     engine::scripting::setActiveScene(nullptr);
     engine::scripting::setActiveWindow(nullptr);
+
+    engine::PluginManager::instance().unloadAll();
 
     if (m_editor)
         m_editor->saveProjectConfig();

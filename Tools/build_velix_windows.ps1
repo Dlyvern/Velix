@@ -170,36 +170,63 @@ function Ensure-VulkanSdk([switch]$ForceRefresh) {
     $vulkanInstaller = Join-Path $DownloadsDir "vulkan-sdk.exe"
     Download-File $VulkanDownloadUrl $vulkanInstaller -Force:$ForceRefresh
 
-    $installerProcess = Start-Process -Wait -PassThru -FilePath $vulkanInstaller -ArgumentList @(
-        "--accept-licenses",
-        "--default-answer",
-        "--confirm-command",
-        "install",
-        "--root", $VulkanInstallDir
-    )
-    if ($installerProcess.ExitCode -ne 0) {
-        throw "Bundled Vulkan SDK installer exited with code $($installerProcess.ExitCode)."
-    }
-
-    $sdkRoot = $null
-    $deadline = (Get-Date).AddSeconds(30)
-    do {
-        $sdkRoot = Find-VulkanSdkRoot
-        if ($sdkRoot) {
-            break
+    $installAttempts = @(
+        [pscustomobject]@{
+            Name = "local tool cache"
+            Arguments = @(
+                "--accept-licenses",
+                "--default-answer",
+                "--confirm-command",
+                "install",
+                "--root", $VulkanInstallDir
+            )
+        },
+        [pscustomobject]@{
+            Name = "default VulkanSDK location"
+            Arguments = @(
+                "--accept-licenses",
+                "--default-answer",
+                "--confirm-command",
+                "install"
+            )
         }
-        Start-Sleep -Seconds 2
-    } while ((Get-Date) -lt $deadline)
+    )
 
-    if (-not $sdkRoot) {
-        $searchedRoots = (Get-VulkanSdkSearchRoots) -join ", "
-        throw "Bundled Vulkan SDK installer completed, but no SDK root containing Include\vulkan\vulkan.h was found. Searched: $searchedRoots"
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $sdkRoot "Bin\glslangValidator.exe"))) {
-        throw "Bundled Vulkan SDK was installed at $sdkRoot, but Bin\glslangValidator.exe is missing."
+    $attemptResults = @()
+    foreach ($attempt in $installAttempts) {
+        Write-Step "Running Vulkan SDK installer via $($attempt.Name)"
+        $installerProcess = Start-Process -Wait -PassThru -FilePath $vulkanInstaller -ArgumentList $attempt.Arguments
+        $attemptResults += "$($attempt.Name): exit code $($installerProcess.ExitCode)"
+
+        $sdkRoot = $null
+        $deadline = (Get-Date).AddSeconds(30)
+        do {
+            $sdkRoot = Find-VulkanSdkRoot
+            if ($sdkRoot) {
+                break
+            }
+            Start-Sleep -Seconds 2
+        } while ((Get-Date) -lt $deadline)
+
+        if ($sdkRoot) {
+            if (-not (Test-Path -LiteralPath (Join-Path $sdkRoot "Bin\glslangValidator.exe"))) {
+                throw "Vulkan SDK was installed at $sdkRoot, but Bin\glslangValidator.exe is missing."
+            }
+
+            if ($installerProcess.ExitCode -ne 0) {
+                Write-Warning "Vulkan SDK installer exited with code $($installerProcess.ExitCode), but a usable SDK was found at $sdkRoot."
+            }
+            return $sdkRoot
+        }
+
+        if ($installerProcess.ExitCode -ne 0) {
+            Write-Warning "Vulkan SDK installer attempt '$($attempt.Name)' exited with code $($installerProcess.ExitCode). Trying the next fallback."
+        }
     }
 
-    return $sdkRoot
+    $searchedRoots = (Get-VulkanSdkSearchRoots) -join ", "
+    $attemptSummary = $attemptResults -join "; "
+    throw "Bundled Vulkan SDK installer did not produce a usable SDK. Attempts: $attemptSummary. Searched: $searchedRoots"
 }
 
 function Import-VisualStudioBuildEnvironment {

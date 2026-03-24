@@ -135,6 +135,82 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
     if (json.contains("custom_shader_hash") && json["custom_shader_hash"].is_string())
         material.customShaderHash = json["custom_shader_hash"].get<std::string>();
 
+    if (json.contains("noise_nodes") && json["noise_nodes"].is_array())
+    {
+        for (const auto &entry : json["noise_nodes"])
+        {
+            CPUMaterial::NoiseNodeParams p;
+
+            if (entry.contains("type") && entry["type"].is_string())
+            {
+                const std::string typeStr = entry["type"].get<std::string>();
+                if (typeStr == "Value")    p.type = CPUMaterial::NoiseNodeParams::Type::Value;
+                else if (typeStr == "Gradient") p.type = CPUMaterial::NoiseNodeParams::Type::Gradient;
+                else if (typeStr == "FBM")      p.type = CPUMaterial::NoiseNodeParams::Type::FBM;
+                else if (typeStr == "Voronoi")  p.type = CPUMaterial::NoiseNodeParams::Type::Voronoi;
+            }
+            if (entry.contains("scale") && entry["scale"].is_number())
+                p.scale = entry["scale"].get<float>();
+            if (entry.contains("blend_mode") && entry["blend_mode"].is_string())
+            {
+                const std::string blendModeStr = entry["blend_mode"].get<std::string>();
+                if (blendModeStr == "Multiply")
+                    p.blendMode = CPUMaterial::NoiseNodeParams::BlendMode::Multiply;
+                else if (blendModeStr == "Add")
+                    p.blendMode = CPUMaterial::NoiseNodeParams::BlendMode::Add;
+                else
+                    p.blendMode = CPUMaterial::NoiseNodeParams::BlendMode::Replace;
+            }
+            if (entry.contains("octaves") && entry["octaves"].is_number())
+                p.octaves = std::clamp(entry["octaves"].get<int>(), 1, 8);
+            if (entry.contains("persistence") && entry["persistence"].is_number())
+                p.persistence = entry["persistence"].get<float>();
+            if (entry.contains("lacunarity") && entry["lacunarity"].is_number())
+                p.lacunarity = entry["lacunarity"].get<float>();
+            if (entry.contains("world_space") && entry["world_space"].is_boolean())
+                p.worldSpace = entry["world_space"].get<bool>();
+            if (entry.contains("active") && entry["active"].is_boolean())
+                p.active = entry["active"].get<bool>();
+            if (entry.contains("target") && entry["target"].is_string())
+                p.targetSlot = entry["target"].get<std::string>();
+            if (entry.contains("ramp_a") && entry["ramp_a"].is_array() && entry["ramp_a"].size() >= 3)
+                p.rampColorA = glm::vec3(entry["ramp_a"][0], entry["ramp_a"][1], entry["ramp_a"][2]);
+            if (entry.contains("ramp_b") && entry["ramp_b"].is_array() && entry["ramp_b"].size() >= 3)
+                p.rampColorB = glm::vec3(entry["ramp_b"][0], entry["ramp_b"][1], entry["ramp_b"][2]);
+
+            material.noiseNodes.push_back(p);
+        }
+    }
+
+    if (json.contains("color_nodes") && json["color_nodes"].is_array())
+    {
+        for (const auto &entry : json["color_nodes"])
+        {
+            CPUMaterial::ColorNodeParams p;
+
+            if (entry.contains("blend_mode") && entry["blend_mode"].is_string())
+            {
+                const std::string blendModeStr = entry["blend_mode"].get<std::string>();
+                if (blendModeStr == "Replace")
+                    p.blendMode = CPUMaterial::ColorNodeParams::BlendMode::Replace;
+                else if (blendModeStr == "Add")
+                    p.blendMode = CPUMaterial::ColorNodeParams::BlendMode::Add;
+                else
+                    p.blendMode = CPUMaterial::ColorNodeParams::BlendMode::Multiply;
+            }
+            if (entry.contains("active") && entry["active"].is_boolean())
+                p.active = entry["active"].get<bool>();
+            if (entry.contains("target") && entry["target"].is_string())
+                p.targetSlot = entry["target"].get<std::string>();
+            if (entry.contains("color") && entry["color"].is_array() && entry["color"].size() >= 3)
+                p.color = glm::vec3(entry["color"][0], entry["color"][1], entry["color"][2]);
+            if (entry.contains("strength") && entry["strength"].is_number())
+                p.strength = entry["strength"].get<float>();
+
+            material.colorNodes.push_back(p);
+        }
+    }
+
     auto sanitizeFinite = [](float value, float fallback) -> float
     {
         return std::isfinite(value) ? value : fallback;

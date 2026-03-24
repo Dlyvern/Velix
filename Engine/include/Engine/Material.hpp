@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
@@ -107,6 +108,7 @@ public:
 private:
     void createDescriptorSets();
     void updateTextureDescriptors();
+    void updateParamBuffers();
 
     uint32_t m_maxFramesInFlight{0};
     VkDevice m_device{VK_NULL_HANDLE};
@@ -151,9 +153,46 @@ public:
     // Custom shader expression — GLSL source written in the material editor.
     // Empty means "use the default gbuffer_static pipeline".
     std::string customExpression;
-    // SHA-1 hex hash of customExpression; used at runtime to locate the cached .spv
-    // without recompiling. Stored alongside customExpression in the .elixmat file.
+    // FNV-1a hex hash of customExpression+noiseNodes; used at runtime to locate the cached .spv.
     std::string customShaderHash;
+
+    // Procedural noise nodes defined in the material editor node graph.
+    struct NoiseNodeParams
+    {
+        enum class Type : uint8_t { Value = 0, Gradient, FBM, Voronoi };
+        enum class BlendMode : uint8_t { Replace = 0, Multiply, Add };
+
+        Type type = Type::FBM;
+        BlendMode blendMode = BlendMode::Replace;
+        float scale = 1.0f;
+        int octaves = 4;          // FBM types only
+        float persistence = 0.5f; // FBM types only
+        float lacunarity = 2.0f;  // FBM types only
+        bool worldSpace = false;  // use stable world-space position instead of UVs
+        bool active = true;
+
+        // Target output slot: "albedo" | "emissive" | "roughness" | "metallic" | "ao" | "alpha"
+        std::string targetSlot{"roughness"};
+
+        // Color ramp — only used when targetSlot is a color slot.
+        glm::vec3 rampColorA{0.0f, 0.0f, 0.0f};
+        glm::vec3 rampColorB{1.0f, 1.0f, 1.0f};
+    };
+    std::vector<NoiseNodeParams> noiseNodes;
+
+    struct ColorNodeParams
+    {
+        enum class BlendMode : uint8_t { Replace = 0, Multiply, Add };
+
+        BlendMode blendMode = BlendMode::Multiply;
+        glm::vec3 color{1.0f, 1.0f, 1.0f};
+        float strength{1.0f};
+        bool active = true;
+
+        // Target output slot: "albedo" | "emissive"
+        std::string targetSlot{"albedo"};
+    };
+    std::vector<ColorNodeParams> colorNodes;
 };
 
 ELIX_NESTED_NAMESPACE_END

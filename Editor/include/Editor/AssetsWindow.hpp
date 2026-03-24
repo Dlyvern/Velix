@@ -57,6 +57,11 @@ public:
         m_onSceneOpenRequestFunction = function;
     }
 
+    void setOnAnimationTreeOpenRequest(const std::function<void(const std::filesystem::path &)> &function)
+    {
+        m_onAnimationTreeOpenRequestFunction = function;
+    }
+
     [[nodiscard]] bool hasKeyboardFocus() const
     {
         return m_hasKeyboardFocus;
@@ -68,6 +73,7 @@ private:
     std::function<void(const std::filesystem::path &)> m_onAssetSelectionChangedFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onAssetDeletedFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onSceneOpenRequestFunction{nullptr};
+    std::function<void(const std::filesystem::path &)> m_onAnimationTreeOpenRequestFunction{nullptr};
 
     AssetsPreviewSystem &m_assetsPreviewSystem;
 
@@ -134,6 +140,8 @@ private:
     bool m_openRenamePopupRequested{false};
     bool m_openDeletePopupRequested{false};
     bool m_openImportPopupRequested{false};
+    bool m_openExportAnimationsRequested{false};
+    std::filesystem::path m_exportAnimationsSourcePath;
     char m_renameBuffer[256] = "";
     char m_importSourceBuffer[1024] = "";
     char m_importDestinationBuffer[1024] = "";

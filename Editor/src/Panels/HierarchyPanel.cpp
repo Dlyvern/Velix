@@ -1,19 +1,43 @@
-#include "Editor/Editor.hpp"
-#include "Engine/Components/SkeletalMeshComponent.hpp"
-#include "Engine/Components/StaticMeshComponent.hpp"
+#include "Editor/Panels/HierarchyPanel.hpp"
+
+#include "Core/Logger.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 
-#include <imgui.h>
-#include <glm/gtc/type_ptr.hpp>
+#include "imgui.h"
+#include "glm/gtc/type_ptr.hpp"
 #include "ImGuizmo.h"
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
-void Editor::drawHierarchy()
-{
-    ImGui::Begin("Hierarchy");
 
+void HierarchyPanel::setSetSelectedEntityCallback(const std::function<void(engine::Entity *)> &function)
+{
+    m_setSelectedEntityCallback = function;
+}
+
+void HierarchyPanel::setSelectedEntity(engine::Entity *entity)
+{
+    m_selectedEntity = entity;
+}
+
+void HierarchyPanel::setAddEmptyEntityCallback(const std::function<void(const std::string &)> &function)
+{
+    m_addEmptyEntityCallback = function;
+}
+
+void HierarchyPanel::setAddPrimitiveEntityCallback(const std::function<void(const std::string &)> &function)
+{
+    m_addPrimitiveEntityCallback = function;
+}
+
+void HierarchyPanel::setScene(engine::Scene *scene)
+{
+    m_scene = scene;
+}
+
+void HierarchyPanel::drawContents()
+{
     if (!m_scene)
-        return ImGui::End();
+        return;
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
@@ -27,6 +51,7 @@ void Editor::drawHierarchy()
         if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("HIERARCHY_ENTITY_ID"))
         {
             const uint32_t draggedId = *static_cast<const uint32_t *>(payload->Data);
+
             if (auto *draggedEntity = m_scene->getEntityById(draggedId))
             {
                 if (draggedEntity->getParent())
@@ -60,7 +85,6 @@ void Editor::drawHierarchy()
     ImGui::PopStyleVar(2);
 
     const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-    ImGuiIO &io = ImGui::GetIO();
 
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
     {
@@ -78,17 +102,21 @@ void Editor::drawHierarchy()
         {
             if (ImGui::Button("Empty"))
             {
-                addEmptyEntity("Empty");
+                if (m_addEmptyEntityCallback)
+                    m_addEmptyEntityCallback("Empty");
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::Button("Cube"))
             {
-                addPrimitiveEntity("Cube");
+                if (m_addPrimitiveEntityCallback)
+                    m_addPrimitiveEntityCallback("Cube");
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::Button("Sphere"))
             {
-                addPrimitiveEntity("Sphere");
+                if (m_addPrimitiveEntityCallback)
+                    m_addPrimitiveEntityCallback("Sphere");
+
                 ImGui::CloseCurrentPopup();
             }
 
@@ -98,10 +126,9 @@ void Editor::drawHierarchy()
         ImGui::EndPopup();
     }
 
-    ImGui::End();
 }
 
-void Editor::drawHierarchyEntityNode(engine::Entity *entity)
+void HierarchyPanel::drawHierarchyEntityNode(engine::Entity *entity)
 {
     if (!entity)
         return;
@@ -130,7 +157,8 @@ void Editor::drawHierarchyEntityNode(engine::Entity *entity)
     const bool nodeOpen = ImGui::TreeNodeEx(nodeLabel.c_str(), nodeFlags);
 
     if (ImGui::IsItemClicked())
-        setSelectedEntity(entity);
+        if (m_setSelectedEntityCallback)
+            m_setSelectedEntityCallback(entity);
 
     if (ImGui::BeginDragDropSource())
     {

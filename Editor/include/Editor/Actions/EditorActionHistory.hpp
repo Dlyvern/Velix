@@ -6,51 +6,48 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 namespace actions
 {
-    class EditorSceneHistory
+    class IEditorCommand
     {
     public:
-        explicit EditorSceneHistory(std::size_t maxEntries = 64u);
-        ~EditorSceneHistory();
+        virtual ~IEditorCommand() = default;
+
+        virtual bool execute() = 0;
+        virtual bool undo() = 0;
+        virtual const char *getName() const = 0;
+    };
+
+    class EditorCommandHistory
+    {
+    public:
+        explicit EditorCommandHistory(std::size_t maxEntries = 64u);
+        ~EditorCommandHistory();
 
         void clear();
         void setMaxEntries(std::size_t maxEntries);
 
-        bool reset(engine::Scene &scene, const std::string &label = "Initial state");
-        bool capture(engine::Scene &scene, const std::string &label);
+        bool execute(std::unique_ptr<IEditorCommand> command);
+        bool recordExecuted(std::unique_ptr<IEditorCommand> command);
 
         bool canUndo() const;
         bool canRedo() const;
 
-        bool undo(engine::Scene &scene);
-        bool redo(engine::Scene &scene);
+        bool undo();
+        bool redo();
 
     private:
-        struct SnapshotEntry
-        {
-            std::filesystem::path path;
-            std::string label;
-        };
-
-        bool saveSnapshot(engine::Scene &scene, SnapshotEntry &outEntry, const std::string &label);
-        bool restoreSnapshot(engine::Scene &scene, const SnapshotEntry &entry) const;
-        std::filesystem::path makeSnapshotPath(const std::string &prefix);
-        void ensureSnapshotDirectory();
-        void eraseEntryFile(const SnapshotEntry &entry) const;
         void trimHistoryToLimit();
 
     private:
-        std::vector<SnapshotEntry> m_entries;
-        std::size_t m_currentIndex{0u};
+        std::vector<std::unique_ptr<IEditorCommand>> m_commands;
+        std::size_t m_nextCommandIndex{0u};
         std::size_t m_maxEntries{64u};
-        std::filesystem::path m_snapshotDirectory;
-        std::uint64_t m_snapshotCounter{0u};
     };
 
     class EditorEntityClipboard
@@ -66,13 +63,7 @@ namespace actions
         bool pasteEntity(engine::Scene &scene, std::uint32_t *outNewEntityId = nullptr);
 
     private:
-        std::filesystem::path makeTempScenePath(const std::string &prefix);
-        void ensureTempDirectory();
-
-    private:
-        std::string m_serializedEntityObject;
-        std::filesystem::path m_tempDirectory;
-        std::uint64_t m_tempCounter{0u};
+        std::string m_serializedEntityHierarchy;
         std::uint64_t m_pasteCounter{0u};
     };
 } // namespace actions

@@ -19,10 +19,19 @@
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
+#include <cmath>
 #include <utility>
+#include <vector>
 
 namespace
 {
+    enum class GeneratedEditorBillboardIcon : std::size_t
+    {
+        Camera = 0,
+        Light = 1,
+        Audio = 2
+    };
+
     std::string toLowerCopy(std::string value)
     {
         std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
@@ -97,6 +106,246 @@ namespace
 
         return nullptr;
     }
+
+    float saturate(float value)
+    {
+        return std::clamp(value, 0.0f, 1.0f);
+    }
+
+    void blendIconPixel(std::vector<uint8_t> &rgbaPixels, int size, int x, int y, const glm::vec4 &color)
+    {
+        if (x < 0 || y < 0 || x >= size || y >= size || color.a <= 0.0f)
+            return;
+
+        const std::size_t pixelIndex = static_cast<std::size_t>((y * size + x) * 4);
+        const glm::vec4 dstColor(
+            rgbaPixels[pixelIndex + 0] / 255.0f,
+            rgbaPixels[pixelIndex + 1] / 255.0f,
+            rgbaPixels[pixelIndex + 2] / 255.0f,
+            rgbaPixels[pixelIndex + 3] / 255.0f);
+
+        const float outAlpha = color.a + dstColor.a * (1.0f - color.a);
+        glm::vec3 outRgb(0.0f);
+        if (outAlpha > 0.0f)
+        {
+            outRgb = (glm::vec3(color) * color.a +
+                      glm::vec3(dstColor) * dstColor.a * (1.0f - color.a)) /
+                     outAlpha;
+        }
+
+        rgbaPixels[pixelIndex + 0] = static_cast<uint8_t>(std::round(saturate(outRgb.r) * 255.0f));
+        rgbaPixels[pixelIndex + 1] = static_cast<uint8_t>(std::round(saturate(outRgb.g) * 255.0f));
+        rgbaPixels[pixelIndex + 2] = static_cast<uint8_t>(std::round(saturate(outRgb.b) * 255.0f));
+        rgbaPixels[pixelIndex + 3] = static_cast<uint8_t>(std::round(saturate(outAlpha) * 255.0f));
+    }
+
+    float signedDistanceCircle(const glm::vec2 &point, const glm::vec2 &center, float radius)
+    {
+        return glm::length(point - center) - radius;
+    }
+
+    float signedDistanceRoundedBox(const glm::vec2 &point, const glm::vec2 &center, const glm::vec2 &halfExtent, float radius)
+    {
+        const glm::vec2 q = glm::abs(point - center) - halfExtent + glm::vec2(radius);
+        return glm::length(glm::max(q, glm::vec2(0.0f))) +
+               std::min(std::max(q.x, q.y), 0.0f) - radius;
+    }
+
+    float signedDistanceCapsule(const glm::vec2 &point, const glm::vec2 &a, const glm::vec2 &b, float radius)
+    {
+        const glm::vec2 segment = b - a;
+        const float segmentLengthSquared = glm::dot(segment, segment);
+        if (segmentLengthSquared <= 1e-5f)
+            return glm::length(point - a) - radius;
+
+        const float t = glm::clamp(glm::dot(point - a, segment) / segmentLengthSquared, 0.0f, 1.0f);
+        return glm::length((a + segment * t) - point) - radius;
+    }
+
+    template <typename DistanceFn>
+    void rasterizeSignedDistanceShape(std::vector<uint8_t> &rgbaPixels,
+                                      int size,
+                                      DistanceFn &&distanceFn,
+                                      const glm::vec4 &color,
+                                      float softness = 1.35f)
+    {
+        for (int y = 0; y < size; ++y)
+        {
+            for (int x = 0; x < size; ++x)
+            {
+                const glm::vec2 point(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f);
+                const float distance = distanceFn(point);
+                const float coverage = saturate(0.5f - distance / softness);
+                if (coverage <= 0.0f)
+                    continue;
+
+                glm::vec4 shadedColor = color;
+                shadedColor.a *= coverage;
+                blendIconPixel(rgbaPixels, size, x, y, shadedColor);
+            }
+        }
+    }
+
+    void rasterizeEditorBillboardBadge(std::vector<uint8_t> &rgbaPixels, int size, const glm::vec4 &ringColor)
+    {
+        const glm::vec2 center(64.0f, 64.0f);
+        rasterizeSignedDistanceShape(
+            rgbaPixels, size,
+            [center](const glm::vec2 &point)
+            { return signedDistanceCircle(point, center, 54.0f); },
+            glm::vec4(0.10f, 0.12f, 0.15f, 0.92f),
+            1.6f);
+
+        rasterizeSignedDistanceShape(
+            rgbaPixels, size,
+            [center](const glm::vec2 &point)
+            { return signedDistanceCircle(point, center, 50.0f); },
+            glm::vec4(0.14f, 0.16f, 0.19f, 0.95f),
+            1.4f);
+
+        rasterizeSignedDistanceShape(
+            rgbaPixels, size,
+            [center](const glm::vec2 &point)
+            {
+                const float outer = signedDistanceCircle(point, center, 53.0f);
+                const float inner = -signedDistanceCircle(point, center, 49.0f);
+                return std::max(outer, inner);
+            },
+            ringColor,
+            1.2f);
+
+        rasterizeSignedDistanceShape(
+            rgbaPixels, size,
+            [center](const glm::vec2 &point)
+            { return signedDistanceCapsule(point, center + glm::vec2(-18.0f, -33.0f), center + glm::vec2(18.0f, -33.0f), 2.0f); },
+            glm::vec4(1.0f, 1.0f, 1.0f, 0.10f),
+            1.0f);
+    }
+
+    elix::engine::Texture::SharedPtr createGeneratedEditorBillboardTexture(GeneratedEditorBillboardIcon iconType)
+    {
+        constexpr int kIconSize = 128;
+        std::vector<uint8_t> rgbaPixels(static_cast<std::size_t>(kIconSize) * static_cast<std::size_t>(kIconSize) * 4u, 0u);
+
+        const glm::vec4 glyphColor(0.94f, 0.96f, 0.98f, 1.0f);
+        const glm::vec4 cutoutColor(0.12f, 0.15f, 0.18f, 1.0f);
+
+        switch (iconType)
+        {
+        case GeneratedEditorBillboardIcon::Camera:
+        {
+            rasterizeEditorBillboardBadge(rgbaPixels, kIconSize, glm::vec4(0.30f, 0.58f, 0.95f, 0.90f));
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceRoundedBox(point, glm::vec2(64.0f, 68.0f), glm::vec2(24.0f, 15.0f), 7.0f); },
+                glyphColor, 1.2f);
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceRoundedBox(point, glm::vec2(47.0f, 49.0f), glm::vec2(10.0f, 5.0f), 3.0f); },
+                glyphColor, 1.0f);
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceRoundedBox(point, glm::vec2(89.0f, 61.0f), glm::vec2(6.0f, 8.0f), 3.0f); },
+                glyphColor, 1.0f);
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceCircle(point, glm::vec2(64.0f, 68.0f), 10.0f); },
+                cutoutColor, 1.0f);
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceCircle(point, glm::vec2(64.0f, 68.0f), 5.0f); },
+                glm::vec4(0.30f, 0.58f, 0.95f, 0.85f), 1.0f);
+            break;
+        }
+        case GeneratedEditorBillboardIcon::Light:
+        {
+            rasterizeEditorBillboardBadge(rgbaPixels, kIconSize, glm::vec4(0.98f, 0.74f, 0.25f, 0.92f));
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceCircle(point, glm::vec2(64.0f, 54.0f), 18.0f); },
+                glm::vec4(0.98f, 0.91f, 0.78f, 1.0f), 1.2f);
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceRoundedBox(point, glm::vec2(64.0f, 82.0f), glm::vec2(11.0f, 8.0f), 3.5f); },
+                glyphColor, 1.0f);
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                {
+                    const float outer = signedDistanceCapsule(point, glm::vec2(56.0f, 77.0f), glm::vec2(72.0f, 77.0f), 1.8f);
+                    return outer;
+                },
+                cutoutColor, 0.9f);
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceCapsule(point, glm::vec2(59.0f, 55.0f), glm::vec2(64.0f, 63.0f), 1.8f); },
+                glm::vec4(0.98f, 0.74f, 0.25f, 0.92f), 1.0f);
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceCapsule(point, glm::vec2(69.0f, 55.0f), glm::vec2(64.0f, 63.0f), 1.8f); },
+                glm::vec4(0.98f, 0.74f, 0.25f, 0.92f), 1.0f);
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceCapsule(point, glm::vec2(64.0f, 63.0f), glm::vec2(64.0f, 69.0f), 1.8f); },
+                glm::vec4(0.98f, 0.74f, 0.25f, 0.92f), 1.0f);
+            break;
+        }
+        case GeneratedEditorBillboardIcon::Audio:
+        default:
+        {
+            rasterizeEditorBillboardBadge(rgbaPixels, kIconSize, glm::vec4(0.34f, 0.86f, 0.78f, 0.90f));
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceCircle(point, glm::vec2(56.0f, 80.0f), 10.5f); },
+                glyphColor, 1.2f);
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceCapsule(point, glm::vec2(66.0f, 44.0f), glm::vec2(66.0f, 80.0f), 4.0f); },
+                glyphColor, 1.0f);
+
+            rasterizeSignedDistanceShape(
+                rgbaPixels, kIconSize,
+                [](const glm::vec2 &point)
+                { return signedDistanceCapsule(point, glm::vec2(66.0f, 46.0f), glm::vec2(92.0f, 53.0f), 4.0f); },
+                glyphColor, 1.0f);
+            break;
+        }
+        }
+
+        auto texture = std::make_shared<elix::engine::Texture>();
+        if (!texture->createFromMemory(rgbaPixels.data(),
+                                       rgbaPixels.size(),
+                                       static_cast<uint32_t>(kIconSize),
+                                       static_cast<uint32_t>(kIconSize),
+                                       VK_FORMAT_R8G8B8A8_SRGB,
+                                       4u))
+            return nullptr;
+
+        return texture;
+    }
 } // namespace
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
@@ -158,12 +407,28 @@ void EditorBillboardRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuil
     for (size_t iconIndex = 0; iconIndex < m_iconTexturePaths.size(); ++iconIndex)
     {
         const std::string resolvedPath = resolveTextureAssetPath(m_iconTexturePaths[iconIndex]);
-        m_iconTextures[iconIndex] = tryLoadIconTexture(m_iconTexturePaths[iconIndex]);
+        if (!m_iconTexturePaths[iconIndex].empty())
+            m_iconTextures[iconIndex] = tryLoadIconTexture(m_iconTexturePaths[iconIndex]);
+
         if (!m_iconTextures[iconIndex])
+        {
+            m_iconTextures[iconIndex] = createGeneratedEditorBillboardTexture(
+                static_cast<GeneratedEditorBillboardIcon>(iconIndex));
+        }
+
+        if (!m_iconTextures[iconIndex] && !m_iconTexturePaths[iconIndex].empty())
         {
             VX_EDITOR_WARNING_STREAM("Editor billboard icon texture not found at \"" << m_iconTexturePaths[iconIndex]
                                                                                       << "\" (resolved: \"" << resolvedPath
-                                                                                      << "\"). Falling back to default white texture.\n");
+                                                                                      << "\"). Falling back to generated icon texture.\n");
+            m_iconTextures[iconIndex] = createGeneratedEditorBillboardTexture(
+                static_cast<GeneratedEditorBillboardIcon>(iconIndex));
+        }
+
+        if (!m_iconTextures[iconIndex])
+        {
+            VX_EDITOR_WARNING_STREAM("Editor billboard pass: failed to create icon texture for icon index "
+                                     << iconIndex << ". Falling back to default white texture.\n");
             m_iconTextures[iconIndex] = engine::Texture::getDefaultWhiteTexture();
         }
 

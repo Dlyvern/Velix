@@ -241,6 +241,14 @@ namespace
         }
     }
 
+    bool isMeshNode(FbxNode *node)
+    {
+        if (!node)
+            return false;
+        const FbxNodeAttribute *attr = node->GetNodeAttribute();
+        return attr && attr->GetAttributeType() == FbxNodeAttribute::eMesh;
+    }
+
     void addBoneChainToSkeleton(FbxNode *boneNode, Skeleton &skeleton)
     {
         if (!boneNode)
@@ -248,7 +256,11 @@ namespace
 
         std::vector<FbxNode *> chain;
         for (auto *current = boneNode; current; current = current->GetParent())
-            chain.push_back(current);
+        {
+            // Mesh nodes are never proper skeleton bones — skip them in the chain.
+            if (!isMeshNode(current))
+                chain.push_back(current);
+        }
 
         for (auto iterator = chain.rbegin(); iterator != chain.rend(); ++iterator)
         {
@@ -295,7 +307,10 @@ namespace
             if (isIdentityMatrix(targetBone->localBindTransform) && !isIdentityMatrix(sourceBone->localBindTransform))
                 targetBone->localBindTransform = sourceBone->localBindTransform;
 
-            if (isIdentityMatrix(targetBone->globalBindTransform) && !isIdentityMatrix(sourceBone->globalBindTransform))
+            // Always prefer skin-cluster globalBindTransform (from GetTransformLinkMatrix) over
+            // EvaluateGlobalTransform data so that globalBindTransform and offsetMatrix use the
+            // same bind-pose reference, avoiding vertex misplacement for rigidly-weighted meshes.
+            if (!isIdentityMatrix(sourceBone->globalBindTransform))
                 targetBone->globalBindTransform = sourceBone->globalBindTransform;
 
             // Preserve the first valid inverse bind matrix to keep a stable global palette.
@@ -309,18 +324,20 @@ namespace
         if (!node)
             return -1;
 
-        // Prefer the nearest transform carrier (mesh node itself first), then walk parents.
-        // This preserves rigid attachments exported as animated helper/null nodes.
-        for (FbxNode *current = node; current; current = current->GetParent())
+        for (FbxNode *current = node->GetParent(); current; current = current->GetParent())
         {
             const char *nodeName = current->GetName();
             if (!nodeName || nodeName[0] == '\0')
+                continue;
+
+            if (isMeshNode(current))
                 continue;
 
             int boneId = skeleton.getBoneId(nodeName);
             if (boneId >= 0)
                 return boneId;
 
+            // Not yet in skeleton — add it (it's a helper/null/skeleton node).
             addBoneChainToSkeleton(current, skeleton);
 
             boneId = skeleton.getBoneId(nodeName);

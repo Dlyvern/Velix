@@ -3,10 +3,11 @@
 #include "Core/Logger.hpp"
 
 #include <algorithm>
-#include <cctype>
-#include <fstream>
+#include <cstdint>
+#include <limits>
 #include <nlohmann/json.hpp>
-#include <system_error>
+#include <optional>
+#include <unordered_map>
 #include <unordered_set>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
@@ -14,61 +15,6 @@ namespace actions
 {
     namespace
     {
-        bool looksLikeWindowsAbsolutePath(const std::string &path)
-        {
-            return path.size() >= 3u &&
-                   std::isalpha(static_cast<unsigned char>(path[0])) &&
-                   path[1] == ':' &&
-                   (path[2] == '\\' || path[2] == '/');
-        }
-
-        bool isPathLikeJsonField(const std::string &fieldName)
-        {
-            return fieldName == "path" ||
-                   fieldName == "asset_path" ||
-                   fieldName == "texture_path" ||
-                   fieldName == "font_path" ||
-                   fieldName == "material_override_path" ||
-                   fieldName == "skybox" ||
-                   fieldName == "skybox_hdr";
-        }
-
-        std::string resolveSerializedPathAgainstDirectory(const std::string &rawPath, const std::filesystem::path &baseDirectory)
-        {
-            if (rawPath.empty() || looksLikeWindowsAbsolutePath(rawPath))
-                return rawPath;
-
-            std::filesystem::path parsedPath(rawPath);
-            if (!parsedPath.is_absolute())
-                parsedPath = baseDirectory / parsedPath;
-
-            return parsedPath.lexically_normal().string();
-        }
-
-        void absolutizeJsonPathFields(nlohmann::json &jsonValue,
-                                      const std::filesystem::path &baseDirectory,
-                                      const std::string &currentFieldName = {})
-        {
-            if (jsonValue.is_object())
-            {
-                for (auto it = jsonValue.begin(); it != jsonValue.end(); ++it)
-                    absolutizeJsonPathFields(it.value(), baseDirectory, it.key());
-                return;
-            }
-
-            if (jsonValue.is_array())
-            {
-                for (auto &arrayValue : jsonValue)
-                    absolutizeJsonPathFields(arrayValue, baseDirectory, currentFieldName);
-                return;
-            }
-
-            if (!jsonValue.is_string() || !isPathLikeJsonField(currentFieldName))
-                return;
-
-            jsonValue = resolveSerializedPathAgainstDirectory(jsonValue.get<std::string>(), baseDirectory);
-        }
-
         std::string makeUniqueName(const std::string &baseName, const std::unordered_set<std::string> &existingNames)
         {
             if (!existingNames.contains(baseName))
@@ -88,268 +34,276 @@ namespace actions
                 ++index;
             }
         }
+
+        bool prepareSerializedHierarchyForPaste(engine::Scene &scene,
+                                                const std::string &serializedHierarchy,
+                                                std::uint64_t pasteCounter,
+                                                std::string &outPayload,
+                                                std::uint32_t *outRootEntityId)
+        {
+            outPayload.clear();
+            if (outRootEntityId)
+                *outRootEntityId = 0u;
+
+            nlohmann::json json;
+            try
+            {
+                json = nlohmann::json::parse(serializedHierarchy);
+            }
+            catch (const std::exception &)
+            {
+                return false;
+            }
+
+            if (!json.is_object() || !json.contains("game_objects") || !json["game_objects"].is_array() || json["game_objects"].empty())
+                return false;
+
+            auto &gameObjectsJson = json["game_objects"];
+
+            const bool hasExplicitRootId = json.contains("root_id") && json["root_id"].is_number_unsigned();
+            std::uint32_t sourceRootId = 0u;
+            bool rootIdInitialized = false;
+
+            std::vector<std::uint32_t> sourceIds;
+            sourceIds.reserve(gameObjectsJson.size());
+
+            std::unordered_set<std::uint32_t> uniqueSourceIds;
+            for (const auto &objectJson : gameObjectsJson)
+            {
+                if (!objectJson.is_object() || !objectJson.contains("id") || !objectJson["id"].is_number_unsigned())
+                    return false;
+
+                const std::uint32_t sourceId = objectJson["id"].get<std::uint32_t>();
+                if (!uniqueSourceIds.insert(sourceId).second)
+                    return false;
+
+                sourceIds.push_back(sourceId);
+
+                if ((!hasExplicitRootId && !rootIdInitialized) ||
+                    (hasExplicitRootId && sourceId == json["root_id"].get<std::uint32_t>()))
+                {
+                    sourceRootId = sourceId;
+                    rootIdInitialized = true;
+                }
+            }
+
+            if (!rootIdInitialized)
+                return false;
+
+            std::unordered_set<std::uint32_t> occupiedIds;
+            std::uint64_t nextIdCandidate = 0u;
+            for (const auto &entity : scene.getEntities())
+            {
+                if (!entity)
+                    continue;
+
+                occupiedIds.insert(entity->getId());
+                nextIdCandidate = std::max(nextIdCandidate, static_cast<std::uint64_t>(entity->getId()) + 1u);
+            }
+
+            auto allocateEntityId = [&]() -> std::optional<std::uint32_t>
+            {
+                while (nextIdCandidate <= std::numeric_limits<std::uint32_t>::max() &&
+                       occupiedIds.contains(static_cast<std::uint32_t>(nextIdCandidate)))
+                {
+                    ++nextIdCandidate;
+                }
+
+                if (nextIdCandidate > std::numeric_limits<std::uint32_t>::max())
+                    return std::nullopt;
+
+                const std::uint32_t allocatedId = static_cast<std::uint32_t>(nextIdCandidate);
+                occupiedIds.insert(allocatedId);
+                ++nextIdCandidate;
+                return allocatedId;
+            };
+
+            std::unordered_map<std::uint32_t, std::uint32_t> remappedIds;
+            remappedIds.reserve(sourceIds.size());
+            for (const std::uint32_t sourceId : sourceIds)
+            {
+                const auto remappedId = allocateEntityId();
+                if (!remappedId.has_value())
+                    return false;
+
+                remappedIds.emplace(sourceId, remappedId.value());
+            }
+
+            std::unordered_set<std::string> existingNames;
+            existingNames.reserve(scene.getEntities().size());
+            for (const auto &entity : scene.getEntities())
+            {
+                if (entity)
+                    existingNames.insert(entity->getName());
+            }
+
+            for (auto &objectJson : gameObjectsJson)
+            {
+                const std::uint32_t sourceId = objectJson["id"].get<std::uint32_t>();
+                objectJson["id"] = remappedIds.at(sourceId);
+
+                if (objectJson.contains("parent_id") && objectJson["parent_id"].is_number_unsigned())
+                {
+                    const std::uint32_t sourceParentId = objectJson["parent_id"].get<std::uint32_t>();
+                    if (auto remappedParentIt = remappedIds.find(sourceParentId); remappedParentIt != remappedIds.end())
+                        objectJson["parent_id"] = remappedParentIt->second;
+                    else if (!scene.getEntityById(sourceParentId))
+                        objectJson.erase("parent_id");
+                }
+
+                if (sourceId == sourceRootId)
+                {
+                    const std::string originalName = objectJson.value("name", std::string("Entity"));
+                    const std::string uniqueName = makeUniqueName(originalName, existingNames);
+                    objectJson["name"] = uniqueName;
+                    existingNames.insert(uniqueName);
+
+                    if (objectJson.contains("position") &&
+                        objectJson["position"].is_array() &&
+                        objectJson["position"].size() == 3 &&
+                        objectJson["position"][0].is_number() &&
+                        objectJson["position"][2].is_number())
+                    {
+                        auto &positionJson = objectJson["position"];
+                        const float offset = 0.35f + static_cast<float>(pasteCounter % 6u) * 0.1f;
+                        positionJson[0] = positionJson[0].get<float>() + offset;
+                        positionJson[2] = positionJson[2].get<float>() + offset;
+                    }
+                }
+            }
+
+            const std::uint32_t remappedRootId = remappedIds.at(sourceRootId);
+            json["root_id"] = remappedRootId;
+            outPayload = json.dump();
+
+            if (outRootEntityId)
+                *outRootEntityId = remappedRootId;
+
+            return true;
+        }
     } // namespace
 
-    EditorSceneHistory::EditorSceneHistory(std::size_t maxEntries)
-        : m_maxEntries(std::max<std::size_t>(maxEntries, 2u))
+    EditorCommandHistory::EditorCommandHistory(std::size_t maxEntries)
+        : m_maxEntries(std::max<std::size_t>(maxEntries, 1u))
     {
     }
 
-    EditorSceneHistory::~EditorSceneHistory()
+    EditorCommandHistory::~EditorCommandHistory() = default;
+
+    void EditorCommandHistory::clear()
     {
-        clear();
+        m_commands.clear();
+        m_nextCommandIndex = 0u;
     }
 
-    void EditorSceneHistory::clear()
+    void EditorCommandHistory::setMaxEntries(std::size_t maxEntries)
     {
-        for (const auto &entry : m_entries)
-            eraseEntryFile(entry);
-
-        m_entries.clear();
-        m_currentIndex = 0u;
-
-        if (!m_snapshotDirectory.empty())
-        {
-            std::error_code removeError;
-            std::filesystem::remove_all(m_snapshotDirectory, removeError);
-            m_snapshotDirectory.clear();
-        }
-    }
-
-    void EditorSceneHistory::setMaxEntries(std::size_t maxEntries)
-    {
-        m_maxEntries = std::max<std::size_t>(maxEntries, 2u);
+        m_maxEntries = std::max<std::size_t>(maxEntries, 1u);
         trimHistoryToLimit();
     }
 
-    bool EditorSceneHistory::reset(engine::Scene &scene, const std::string &label)
+    bool EditorCommandHistory::execute(std::unique_ptr<IEditorCommand> command)
     {
-        clear();
-        SnapshotEntry snapshot;
-        if (!saveSnapshot(scene, snapshot, label))
+        if (!command)
             return false;
 
-        m_entries.push_back(std::move(snapshot));
-        m_currentIndex = 0u;
-        return true;
-    }
+        if (m_nextCommandIndex < m_commands.size())
+            m_commands.erase(m_commands.begin() + static_cast<std::ptrdiff_t>(m_nextCommandIndex), m_commands.end());
 
-    bool EditorSceneHistory::capture(engine::Scene &scene, const std::string &label)
-    {
-        if (m_entries.empty())
-            return reset(scene, label);
-
-        while (m_entries.size() > (m_currentIndex + 1u))
+        if (!command->execute())
         {
-            eraseEntryFile(m_entries.back());
-            m_entries.pop_back();
+            VX_EDITOR_WARNING_STREAM("Failed to execute editor command '" << command->getName() << "'.\n");
+            return false;
         }
 
-        SnapshotEntry snapshot;
-        if (!saveSnapshot(scene, snapshot, label))
-            return false;
-
-        m_entries.push_back(std::move(snapshot));
-        m_currentIndex = m_entries.size() - 1u;
-
+        m_commands.push_back(std::move(command));
+        m_nextCommandIndex = m_commands.size();
         trimHistoryToLimit();
         return true;
     }
 
-    bool EditorSceneHistory::canUndo() const
+    bool EditorCommandHistory::recordExecuted(std::unique_ptr<IEditorCommand> command)
     {
-        return !m_entries.empty() && m_currentIndex > 0u;
+        if (!command)
+            return false;
+
+        if (m_nextCommandIndex < m_commands.size())
+            m_commands.erase(m_commands.begin() + static_cast<std::ptrdiff_t>(m_nextCommandIndex), m_commands.end());
+
+        m_commands.push_back(std::move(command));
+        m_nextCommandIndex = m_commands.size();
+        trimHistoryToLimit();
+        return true;
     }
 
-    bool EditorSceneHistory::canRedo() const
+    bool EditorCommandHistory::canUndo() const
     {
-        return !m_entries.empty() && (m_currentIndex + 1u) < m_entries.size();
+        return m_nextCommandIndex > 0u && !m_commands.empty();
     }
 
-    bool EditorSceneHistory::undo(engine::Scene &scene)
+    bool EditorCommandHistory::canRedo() const
+    {
+        return m_nextCommandIndex < m_commands.size();
+    }
+
+    bool EditorCommandHistory::undo()
     {
         if (!canUndo())
             return false;
 
-        const std::size_t targetIndex = m_currentIndex - 1u;
-        if (!restoreSnapshot(scene, m_entries[targetIndex]))
+        const std::size_t commandIndex = m_nextCommandIndex - 1u;
+        if (!m_commands[commandIndex]->undo())
+        {
+            VX_EDITOR_WARNING_STREAM("Failed to undo editor command '" << m_commands[commandIndex]->getName() << "'.\n");
             return false;
+        }
 
-        m_currentIndex = targetIndex;
+        m_nextCommandIndex = commandIndex;
         return true;
     }
 
-    bool EditorSceneHistory::redo(engine::Scene &scene)
+    bool EditorCommandHistory::redo()
     {
         if (!canRedo())
             return false;
 
-        const std::size_t targetIndex = m_currentIndex + 1u;
-        if (!restoreSnapshot(scene, m_entries[targetIndex]))
+        if (!m_commands[m_nextCommandIndex]->execute())
+        {
+            VX_EDITOR_WARNING_STREAM("Failed to redo editor command '" << m_commands[m_nextCommandIndex]->getName() << "'.\n");
             return false;
+        }
 
-        m_currentIndex = targetIndex;
+        ++m_nextCommandIndex;
         return true;
     }
 
-    bool EditorSceneHistory::saveSnapshot(engine::Scene &scene, SnapshotEntry &outEntry, const std::string &label)
+    void EditorCommandHistory::trimHistoryToLimit()
     {
-        ensureSnapshotDirectory();
-        if (m_snapshotDirectory.empty())
-            return false;
-
-        outEntry.path = makeSnapshotPath("history");
-        outEntry.label = label;
-
-        scene.saveSceneToFile(outEntry.path.string());
-        if (!std::filesystem::exists(outEntry.path))
+        while (m_commands.size() > m_maxEntries)
         {
-            VX_EDITOR_ERROR_STREAM("Failed to create editor history snapshot: " << outEntry.path.string() << '\n');
-            return false;
-        }
-
-        return true;
-    }
-
-    bool EditorSceneHistory::restoreSnapshot(engine::Scene &scene, const SnapshotEntry &entry) const
-    {
-        if (!std::filesystem::exists(entry.path))
-        {
-            VX_EDITOR_ERROR_STREAM("Editor history snapshot is missing: " << entry.path.string() << '\n');
-            return false;
-        }
-
-        if (!scene.loadSceneFromFile(entry.path.string()))
-        {
-            VX_EDITOR_ERROR_STREAM("Failed to restore editor history snapshot: " << entry.path.string() << '\n');
-            return false;
-        }
-
-        return true;
-    }
-
-    std::filesystem::path EditorSceneHistory::makeSnapshotPath(const std::string &prefix)
-    {
-        ensureSnapshotDirectory();
-        const std::string filename = prefix + "_" + std::to_string(++m_snapshotCounter) + ".elixscene";
-        return m_snapshotDirectory / filename;
-    }
-
-    void EditorSceneHistory::ensureSnapshotDirectory()
-    {
-        if (!m_snapshotDirectory.empty())
-            return;
-
-        std::error_code tempError;
-        std::filesystem::path tempRoot = std::filesystem::temp_directory_path(tempError);
-        if (tempError)
-            tempRoot = std::filesystem::current_path();
-
-        const std::string directoryName = "velix_editor_history_" +
-                                          std::to_string(reinterpret_cast<std::uintptr_t>(this));
-        m_snapshotDirectory = tempRoot / directoryName;
-
-        std::error_code createError;
-        std::filesystem::create_directories(m_snapshotDirectory, createError);
-        if (createError)
-        {
-            VX_EDITOR_ERROR_STREAM("Failed to create editor history directory '" << m_snapshotDirectory.string()
-                                                                                 << "': " << createError.message() << '\n');
-            m_snapshotDirectory.clear();
-        }
-    }
-
-    void EditorSceneHistory::eraseEntryFile(const SnapshotEntry &entry) const
-    {
-        if (entry.path.empty())
-            return;
-
-        std::error_code removeError;
-        std::filesystem::remove(entry.path, removeError);
-    }
-
-    void EditorSceneHistory::trimHistoryToLimit()
-    {
-        while (m_entries.size() > m_maxEntries)
-        {
-            eraseEntryFile(m_entries.front());
-            m_entries.erase(m_entries.begin());
-            if (m_currentIndex > 0u)
-                --m_currentIndex;
+            m_commands.erase(m_commands.begin());
+            if (m_nextCommandIndex > 0u)
+                --m_nextCommandIndex;
         }
     }
 
     EditorEntityClipboard::EditorEntityClipboard() = default;
 
-    EditorEntityClipboard::~EditorEntityClipboard()
-    {
-        if (!m_tempDirectory.empty())
-        {
-            std::error_code removeError;
-            std::filesystem::remove_all(m_tempDirectory, removeError);
-            m_tempDirectory.clear();
-        }
-    }
+    EditorEntityClipboard::~EditorEntityClipboard() = default;
 
     void EditorEntityClipboard::clear()
     {
-        m_serializedEntityObject.clear();
+        m_serializedEntityHierarchy.clear();
     }
 
     bool EditorEntityClipboard::hasEntity() const
     {
-        return !m_serializedEntityObject.empty();
+        return !m_serializedEntityHierarchy.empty();
     }
 
     bool EditorEntityClipboard::copySelectedEntity(engine::Scene &scene, std::uint32_t entityId)
     {
-        ensureTempDirectory();
-        if (m_tempDirectory.empty())
-            return false;
-
-        const std::filesystem::path tempScenePath = makeTempScenePath("copy");
-        scene.saveSceneToFile(tempScenePath.string());
-
-        std::ifstream sceneFile(tempScenePath);
-        if (!sceneFile.is_open())
-            return false;
-
-        nlohmann::json sceneJson;
-        try
-        {
-            sceneFile >> sceneJson;
-        }
-        catch (const std::exception &)
-        {
-            std::error_code removeError;
-            std::filesystem::remove(tempScenePath, removeError);
-            return false;
-        }
-
-        std::error_code removeError;
-        std::filesystem::remove(tempScenePath, removeError);
-
-        if (!sceneJson.contains("game_objects") || !sceneJson["game_objects"].is_array())
-            return false;
-
-        for (const auto &objectJson : sceneJson["game_objects"])
-        {
-            if (!objectJson.is_object())
-                continue;
-
-            if (!objectJson.contains("id") || !objectJson["id"].is_number_unsigned())
-                continue;
-
-            if (objectJson["id"].get<std::uint32_t>() != entityId)
-                continue;
-
-            auto serializedEntity = objectJson;
-            absolutizeJsonPathFields(serializedEntity, tempScenePath.parent_path());
-            m_serializedEntityObject = serializedEntity.dump();
-            return true;
-        }
-
-        return false;
+        return scene.serializeEntityHierarchy(entityId, m_serializedEntityHierarchy);
     }
 
     bool EditorEntityClipboard::pasteEntity(engine::Scene &scene, std::uint32_t *outNewEntityId)
@@ -357,143 +311,27 @@ namespace actions
         if (!hasEntity())
             return false;
 
-        ensureTempDirectory();
-        if (m_tempDirectory.empty())
-            return false;
-
-        nlohmann::json copiedEntityJson;
-        try
-        {
-            copiedEntityJson = nlohmann::json::parse(m_serializedEntityObject);
-        }
-        catch (const std::exception &)
+        std::string preparedPayload;
+        std::uint32_t expectedRootEntityId = 0u;
+        if (!prepareSerializedHierarchyForPaste(scene,
+                                                m_serializedEntityHierarchy,
+                                                m_pasteCounter,
+                                                preparedPayload,
+                                                &expectedRootEntityId))
         {
             return false;
         }
 
-        const std::filesystem::path tempScenePath = makeTempScenePath("paste");
-        scene.saveSceneToFile(tempScenePath.string());
-
-        std::ifstream sceneFile(tempScenePath);
-        if (!sceneFile.is_open())
-            return false;
-
-        nlohmann::json sceneJson;
-        try
-        {
-            sceneFile >> sceneJson;
-        }
-        catch (const std::exception &)
-        {
-            std::error_code removeError;
-            std::filesystem::remove(tempScenePath, removeError);
-            return false;
-        }
-
-        if (!sceneJson.contains("game_objects") || !sceneJson["game_objects"].is_array())
-            sceneJson["game_objects"] = nlohmann::json::array();
-
-        // Snapshot JSON is written against temporary scene location; normalize all
-        // path-like fields back to absolute paths before reloading from temp file.
-        for (auto &objectJson : sceneJson["game_objects"])
-            absolutizeJsonPathFields(objectJson, tempScenePath.parent_path());
-
-        absolutizeJsonPathFields(copiedEntityJson, tempScenePath.parent_path());
-
-        std::unordered_set<std::uint32_t> existingIds;
-        std::unordered_set<std::string> existingNames;
-        std::uint32_t maxEntityId = 0u;
-        bool hasEntityIds = false;
-
-        for (const auto &objectJson : sceneJson["game_objects"])
-        {
-            if (!objectJson.is_object())
-                continue;
-
-            if (objectJson.contains("id") && objectJson["id"].is_number_unsigned())
-            {
-                const std::uint32_t id = objectJson["id"].get<std::uint32_t>();
-                existingIds.insert(id);
-                maxEntityId = std::max(maxEntityId, id);
-                hasEntityIds = true;
-            }
-
-            if (objectJson.contains("name") && objectJson["name"].is_string())
-                existingNames.insert(objectJson["name"].get<std::string>());
-        }
-
-        const std::uint32_t newEntityId = hasEntityIds ? (maxEntityId + 1u) : 0u;
-        copiedEntityJson["id"] = newEntityId;
-
-        const std::string originalName = copiedEntityJson.value("name", std::string("Entity"));
-        copiedEntityJson["name"] = makeUniqueName(originalName, existingNames);
-
-        if (copiedEntityJson.contains("parent_id") && copiedEntityJson["parent_id"].is_number_unsigned())
-        {
-            const std::uint32_t parentId = copiedEntityJson["parent_id"].get<std::uint32_t>();
-            if (!existingIds.contains(parentId))
-                copiedEntityJson.erase("parent_id");
-        }
-
-        if (copiedEntityJson.contains("position") && copiedEntityJson["position"].is_array() && copiedEntityJson["position"].size() == 3)
-        {
-            auto &positionJson = copiedEntityJson["position"];
-            if (positionJson[0].is_number() && positionJson[2].is_number())
-            {
-                const float offset = 0.35f + static_cast<float>((m_pasteCounter % 6u)) * 0.1f;
-                positionJson[0] = positionJson[0].get<float>() + offset;
-                positionJson[2] = positionJson[2].get<float>() + offset;
-            }
-        }
-
-        sceneJson["game_objects"].push_back(copiedEntityJson);
-
-        std::ofstream outputFile(tempScenePath, std::ios::trunc);
-        if (!outputFile.is_open())
-            return false;
-        outputFile << sceneJson.dump(4);
-        outputFile.close();
-
-        const bool loadResult = scene.loadSceneFromFile(tempScenePath.string());
-
-        std::error_code removeError;
-        std::filesystem::remove(tempScenePath, removeError);
-
-        if (!loadResult)
+        std::uint32_t restoredRootEntityId = 0u;
+        engine::Entity *entity = scene.restoreEntityHierarchy(preparedPayload, &restoredRootEntityId);
+        if (!entity)
             return false;
 
         ++m_pasteCounter;
         if (outNewEntityId)
-            *outNewEntityId = newEntityId;
+            *outNewEntityId = restoredRootEntityId != 0u ? restoredRootEntityId : expectedRootEntityId;
 
         return true;
-    }
-
-    std::filesystem::path EditorEntityClipboard::makeTempScenePath(const std::string &prefix)
-    {
-        ensureTempDirectory();
-        const std::string filename = prefix + "_" + std::to_string(++m_tempCounter) + ".elixscene";
-        return m_tempDirectory / filename;
-    }
-
-    void EditorEntityClipboard::ensureTempDirectory()
-    {
-        if (!m_tempDirectory.empty())
-            return;
-
-        std::error_code tempError;
-        std::filesystem::path tempRoot = std::filesystem::temp_directory_path(tempError);
-        if (tempError)
-            tempRoot = std::filesystem::current_path();
-
-        const std::string directoryName = "velix_editor_clipboard_" +
-                                          std::to_string(reinterpret_cast<std::uintptr_t>(this));
-        m_tempDirectory = tempRoot / directoryName;
-
-        std::error_code createError;
-        std::filesystem::create_directories(m_tempDirectory, createError);
-        if (createError)
-            m_tempDirectory.clear();
     }
 } // namespace actions
 ELIX_NESTED_NAMESPACE_END

@@ -4,6 +4,7 @@
 #include "Core/Macros.hpp"
 
 #include "Engine/Components/ECS.hpp"
+#include "Engine/Animation/AnimationTree.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/vec3.hpp>
@@ -12,8 +13,12 @@
 
 #include "Engine/Skeleton.hpp"
 #include <algorithm>
+#include <memory>
+#include <optional>
 #include <string>
 #include <cstddef>
+#include <unordered_map>
+#include <unordered_set>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -67,6 +72,9 @@ public:
     void bindSkeleton(Skeleton *skeletonForAnimations);
 
     const std::vector<Animation> &getAnimations() const;
+    void setExternalAnimationAssetPaths(const std::vector<std::string> &assetPaths);
+    void addExternalAnimationAssetPath(const std::string &assetPath);
+    const std::vector<std::string> &getExternalAnimationAssetPaths() const;
 
     void setSelectedAnimationIndex(int index);
     [[nodiscard]] int getSelectedAnimationIndex() const;
@@ -96,12 +104,42 @@ public:
 
     [[nodiscard]] bool isAnimationPlaying() const;
 
+    void loadTree(const std::string &assetPath);
+    void setTree(const AnimationTree &tree);
+    void clearTree();
+    [[nodiscard]] bool hasTree() const;
+    [[nodiscard]] const AnimationTree *getTree() const;
+
+    void setFloat(const std::string &name, float value);
+    void setBool(const std::string &name, bool value);
+    void setInt(const std::string &name, int value);
+    void setTrigger(const std::string &name);
+    [[nodiscard]] float getFloat(const std::string &name) const;
+    [[nodiscard]] bool getBool(const std::string &name) const;
+    [[nodiscard]] int getInt(const std::string &name) const;
+
+    [[nodiscard]] std::string getCurrentStateName() const;
+    [[nodiscard]] float getCurrentStateNormalizedTime() const;
+    [[nodiscard]] bool isInTransition() const;
+
 private:
     void applyCurrentAnimationPose();
     void refreshAnimationBindings();
 
     void calculateBoneTransform(Skeleton::BoneInfo *boneInfo, const glm::mat4 &parentTransform, Animation *animation, float currentTime);
     void calculateObjectTransform(Animation *animation, float currentTime);
+
+    void initTreeParams();
+    void evaluateTransitions();
+    bool checkConditions(const AnimationTransition &t) const;
+    void startTransition(int targetIndex, float blendDuration);
+    void applyTreePose();
+    void applyBlendedBoneTransform(Skeleton::BoneInfo *bone, const glm::mat4 &parentTransform,
+                                   const Animation *animA, float ticksA,
+                                   const Animation *animB, float ticksB,
+                                   float blend);
+    [[nodiscard]] float secondsToTicks(const Animation *anim, float seconds) const;
+    [[nodiscard]] const Animation *getStateAnimation(int stateIndex) const;
 
     bool m_isAnimationPaused{false};
     bool m_isAnimationLooped{true};
@@ -112,8 +150,28 @@ private:
 
     Skeleton *m_boundSkeleton{nullptr};
     std::vector<Animation> m_animations;
+    std::vector<std::string> m_externalAnimationAssetPaths;
     int m_selectedAnimationIndex{-1};
     Animation *m_currentAnimation{nullptr};
+
+    // Tree mode state
+    std::optional<AnimationTree> m_tree;
+    std::unordered_map<std::string, float> m_floats;
+    std::unordered_map<std::string, bool> m_bools;
+    std::unordered_map<std::string, int> m_ints;
+    std::unordered_set<std::string> m_triggers;
+
+    int m_currentStateIndex{-1};
+    int m_nextStateIndex{-1};
+    float m_currentStateTimeSec{0.0f};
+    float m_nextStateTimeSec{0.0f};
+    float m_blendAlpha{0.0f};
+    float m_blendDuration{0.3f};
+    float m_transitionElapsed{0.0f};
+
+    // Cached clips per state (owned by AnimatorComponent, indexed by state)
+    std::vector<std::vector<Animation>> m_treeStateClips;
+    std::vector<const Animation *> m_stateAnims;
 };
 
 ELIX_NESTED_NAMESPACE_END

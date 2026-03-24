@@ -6,6 +6,7 @@
 #include "Engine/Components/CameraComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/PluginSystem/PluginLoader.hpp"
+#include "Engine/PluginSystem/PluginManager.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Engine/SceneManager.hpp"
@@ -137,6 +138,13 @@ bool GameRuntime::init()
     {
         VX_ENGINE_ERROR_STREAM("Game runtime module load failed: " << errorMessage << '\n');
         return false;
+    }
+
+    {
+        auto &pm = PluginManager::instance();
+        pm.loadPluginsFromDirectory("resources/plugins");
+        pm.loadPluginsFromDirectory(executableDirectory / "Plugins");
+        pm.loadPluginsFromDirectory(m_packetPath.parent_path() / "Plugins");
     }
 
     if (!extractPacket(&errorMessage))
@@ -354,6 +362,8 @@ void GameRuntime::initRenderGraph()
 void GameRuntime::shutdown()
 {
     ScriptsRegister::setActiveRegister(nullptr);
+
+    PluginManager::instance().unloadAll();
 
     if (m_scriptsAttached)
     {

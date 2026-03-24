@@ -43,6 +43,7 @@ enum class ShaderId : uint8_t
     DepthPrepassStatic,
     DepthPrepassSkinned,
     TAA,
+    AnimPreview,
     None
 };
 

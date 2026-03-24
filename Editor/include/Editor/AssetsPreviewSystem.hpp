@@ -15,7 +15,6 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
-#include <iostream>
 #include <limits>
 #include <unordered_map>
 #include <unordered_set>
@@ -653,6 +652,48 @@ private:
         material.emissiveTexture = resolveTexturePathForProject(material.emissiveTexture, materialPath);
     }
 
+    engine::Material::SharedPtr createPreviewMaterialFromCpu(engine::CPUMaterial material,
+                                                             const std::filesystem::path &materialPath,
+                                                             bool forceDielectricWithoutOrm)
+    {
+        normalizeMaterialTexturePaths(material, materialPath);
+        sanitizeMaterialCpuData(material, forceDielectricWithoutOrm);
+
+        const float maxBaseColorChannel = std::max({std::abs(material.baseColorFactor.r),
+                                                    std::abs(material.baseColorFactor.g),
+                                                    std::abs(material.baseColorFactor.b)});
+        if (material.albedoTexture.empty() && maxBaseColorChannel < 0.05f)
+            material.baseColorFactor = glm::vec4(0.82f, 0.84f, 0.88f, 1.0f);
+
+        auto albedoTexture = loadOrGetTexture(material.albedoTexture, TextureUsage::PreviewColor);
+        auto normalTexture = loadOrGetTexture(material.normalTexture, TextureUsage::PreviewData);
+        auto ormTexture = loadOrGetTexture(material.ormTexture, TextureUsage::PreviewData);
+        auto emissiveTexture = loadOrGetTexture(material.emissiveTexture, TextureUsage::PreviewColor);
+
+        auto previewMaterial = engine::Material::create(albedoTexture);
+        if (!previewMaterial)
+            return nullptr;
+
+        previewMaterial->setAlbedoTexture(albedoTexture);
+        previewMaterial->setNormalTexture(normalTexture);
+        previewMaterial->setOrmTexture(ormTexture);
+        previewMaterial->setEmissiveTexture(emissiveTexture);
+        previewMaterial->setBaseColorFactor(material.baseColorFactor);
+        previewMaterial->setEmissiveFactor(material.emissiveFactor);
+        previewMaterial->setMetallic(material.metallicFactor);
+        previewMaterial->setRoughness(material.roughnessFactor);
+        previewMaterial->setAoStrength(material.aoStrength);
+        previewMaterial->setNormalScale(material.normalScale);
+        previewMaterial->setIor(material.ior);
+        previewMaterial->setAlphaCutoff(material.alphaCutoff);
+        previewMaterial->setFlags(material.flags);
+        previewMaterial->setUVScale(material.uvScale);
+        previewMaterial->setUVOffset(material.uvOffset);
+        previewMaterial->setUVRotation(material.uvRotation);
+
+        return previewMaterial;
+    }
+
     static VkFormat getLdrTextureFormat(TextureUsage usage)
     {
         return (usage == TextureUsage::Data || usage == TextureUsage::PreviewData)
@@ -766,6 +807,39 @@ private:
         return scaleMatrix * translate;
     }
 
+    static void applyPreviewLocalTransform(std::vector<engine::vertex::Vertex3D> &vertices, const glm::mat4 &transform)
+    {
+        if (vertices.empty() || transform == glm::mat4(1.0f))
+            return;
+
+        const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(transform)));
+
+        for (auto &vertex : vertices)
+        {
+            vertex.position = glm::vec3(transform * glm::vec4(vertex.position, 1.0f));
+            vertex.normal = glm::normalize(normalMatrix * vertex.normal);
+            vertex.tangent = glm::normalize(normalMatrix * vertex.tangent);
+            vertex.bitangent = glm::normalize(normalMatrix * vertex.bitangent);
+        }
+    }
+
+    static float computePreviewMeshScore(const std::vector<engine::vertex::Vertex3D> &vertices)
+    {
+        if (vertices.empty())
+            return -1.0f;
+
+        glm::vec3 minPos(std::numeric_limits<float>::max());
+        glm::vec3 maxPos(std::numeric_limits<float>::lowest());
+
+        for (const auto &vertex : vertices)
+        {
+            minPos = glm::min(minPos, vertex.position);
+            maxPos = glm::max(maxPos, vertex.position);
+        }
+
+        return glm::length(maxPos - minPos);
+    }
+
     bool ensureMaterialLoaded(const std::string &materialPath, engine::Material::SharedPtr &outMaterial)
     {
         if (outMaterial)
@@ -791,39 +865,15 @@ private:
         }
 
         auto materialCPU = materialAsset.value().material;
-        normalizeMaterialTexturePaths(materialCPU, normalizedMaterialPath);
-        sanitizeMaterialCpuData(materialCPU, false);
-        auto texture = loadOrGetTexture(materialCPU.albedoTexture, TextureUsage::PreviewColor);
-        auto normalTexture = loadOrGetTexture(materialCPU.normalTexture, TextureUsage::PreviewData);
-        auto ormTexture = loadOrGetTexture(materialCPU.ormTexture, TextureUsage::PreviewData);
-        auto emissiveTexture = loadOrGetTexture(materialCPU.emissiveTexture, TextureUsage::PreviewColor);
-        outMaterial = engine::Material::create(texture);
-
+        outMaterial = createPreviewMaterialFromCpu(materialCPU, normalizedMaterialPath, false);
         if (!outMaterial)
             return false;
-
-        outMaterial->setAlbedoTexture(texture);
-        outMaterial->setNormalTexture(normalTexture);
-        outMaterial->setOrmTexture(ormTexture);
-        outMaterial->setEmissiveTexture(emissiveTexture);
-        outMaterial->setBaseColorFactor(materialCPU.baseColorFactor);
-        outMaterial->setEmissiveFactor(materialCPU.emissiveFactor);
-        outMaterial->setMetallic(materialCPU.metallicFactor);
-        outMaterial->setRoughness(materialCPU.roughnessFactor);
-        outMaterial->setAoStrength(materialCPU.aoStrength);
-        outMaterial->setNormalScale(materialCPU.normalScale);
-        outMaterial->setIor(materialCPU.ior);
-        outMaterial->setAlphaCutoff(materialCPU.alphaCutoff);
-        outMaterial->setFlags(materialCPU.flags);
-        outMaterial->setUVScale(materialCPU.uvScale);
-        outMaterial->setUVOffset(materialCPU.uvOffset);
-        outMaterial->setUVRotation(materialCPU.uvRotation);
 
         auto &record = m_project->cache.materialsByPath[normalizedMaterialPath];
         record.path = normalizedMaterialPath;
         record.cpuData = materialCPU;
         record.gpu = outMaterial;
-        record.texture = texture;
+        record.texture = outMaterial->getAlbedoTexture();
 
         return outMaterial != nullptr;
     }
@@ -838,21 +888,29 @@ private:
             return false;
 
         std::vector<engine::vertex::Vertex3D> previewVertices;
+        std::vector<engine::vertex::Vertex3D> candidateVertices;
         engine::CPUMesh previewMesh;
         bool foundPreviewMesh = false;
-
+        float bestMeshScore = -1.0f;
         for (const auto &sourceMesh : model->meshes)
         {
-            if (!tryDecodePreviewVertices(sourceMesh, previewVertices))
+            if (!tryDecodePreviewVertices(sourceMesh, candidateVertices))
                 continue;
 
-            if (previewVertices.empty() || sourceMesh.indices.empty())
+            if (candidateVertices.empty() || sourceMesh.indices.empty())
                 continue;
 
+            applyPreviewLocalTransform(candidateVertices, sourceMesh.localTransform);
+
+            const float meshScore = computePreviewMeshScore(candidateVertices);
+            if (meshScore <= bestMeshScore)
+                continue;
+
+            previewVertices = candidateVertices;
             previewMesh = engine::CPUMesh::build<engine::vertex::Vertex3D>(previewVertices, sourceMesh.indices);
             previewMesh.material = sourceMesh.material;
             foundPreviewMesh = true;
-            break;
+            bestMeshScore = meshScore;
         }
 
         if (!foundPreviewMesh)
@@ -860,7 +918,9 @@ private:
 
         entry.previewTransform = buildNormalizationTransform(previewVertices);
         entry.mesh = engine::GPUMesh::createFromMesh(previewMesh);
-        entry.material = engine::Material::getDefaultMaterial();
+        entry.material = createPreviewMaterialFromCpu(previewMesh.material, modelPath, true);
+        if (!entry.material)
+            entry.material = engine::Material::getDefaultMaterial();
 
         return entry.mesh != nullptr && entry.material != nullptr;
     }

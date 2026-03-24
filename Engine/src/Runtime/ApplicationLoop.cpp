@@ -15,6 +15,7 @@
 #include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Audio/AudioSystem.hpp"
 
+#include "Engine/Diagnostics.hpp"
 #include "Core/Logger.hpp"
 
 #include <GLFW/glfw3.h>
@@ -38,27 +39,6 @@
 
 namespace
 {
-    // TODO remove this shit
-    inline std::filesystem::path getExecutablePath()
-    {
-#if defined(_WIN32)
-        char buffer[MAX_PATH];
-        DWORD size = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
-        if (size == 0 || size == MAX_PATH)
-            return {};
-        return std::filesystem::path(buffer).parent_path();
-
-#elif defined(__linux__)
-        char buffer[1024];
-        ssize_t size = readlink("/proc/self/exe", buffer, sizeof(buffer));
-        if (size <= 0 || size >= static_cast<ssize_t>(sizeof(buffer)))
-            return {};
-        return std::filesystem::path(std::string(buffer, size)).parent_path();
-#else
-        return {};
-#endif
-    }
-
     inline void tuneProcessFileDescriptorLimits()
     {
 #if defined(_WIN32)
@@ -143,7 +123,8 @@ int ApplicationLoop::run(const ApplicationConfig &applicationConfig, const Runti
 
 bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
 {
-    core::Logger::createDefaultLogger();
+    diagnostics::configureDefaultLogging();
+    diagnostics::installCrashHandler();
     tuneProcessFileDescriptorLimits();
 
     auto &engineConfig = EngineConfig::instance();
@@ -158,7 +139,7 @@ bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
         return false;
     }
     // TODO ONLY IF DEBUG
-    const auto repoRootFromBuild = getExecutablePath().parent_path();
+    const auto repoRootFromBuild = diagnostics::getExecutableDirectory().parent_path();
     if (!repoRootFromBuild.empty() && std::filesystem::exists(repoRootFromBuild / "resources"))
         std::filesystem::current_path(repoRootFromBuild);
     //
@@ -188,9 +169,12 @@ bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
     m_vulkanContext = core::VulkanContext::create(*m_window);
     auto props = m_vulkanContext->getPhysicalDevicePoperties();
 
-    m_graphicsPipelineCachePath = getExecutablePath().string() +
-                                  "/pipeline_cache_" + std::string(props.deviceName) + "_" + std::to_string(props.vendorID) + '_' +
-                                  std::to_string(props.driverVersion) + ".elixgpbin";
+    const auto executableDirectory = diagnostics::getExecutableDirectory();
+    const std::string pipelineCacheFileName = "pipeline_cache_" + std::string(props.deviceName) + "_" + std::to_string(props.vendorID) + '_' +
+                                              std::to_string(props.driverVersion) + ".elixgpbin";
+    m_graphicsPipelineCachePath = executableDirectory.empty()
+                                  ? pipelineCacheFileName
+                                  : (executableDirectory / pipelineCacheFileName).string();
 
     cache::GraphicsPipelineCache::loadCacheFromFile(m_vulkanContext->getDevice(), m_graphicsPipelineCachePath);
     EngineShaderFamilies::initEngineShaderFamilies();

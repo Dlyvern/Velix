@@ -12,6 +12,10 @@
 #include "Editor/Notification.hpp"
 #include "Editor/Actions/EditorActionHistory.hpp"
 #include "Editor/Panels/MaterialEditor.hpp"
+#include "Editor/Panels/AnimationTreePanel.hpp"
+#include "Editor/Panels/HierarchyPanel.hpp"
+#include "Editor/Panels/DetailsPanel.hpp"
+#include "Editor/Panels/TerminalPanel.hpp"
 #include "Engine/Render/RenderTarget.hpp"
 
 #include "TextEditor.h"
@@ -22,6 +26,8 @@
 
 #include "Engine/Scene.hpp"
 #include "Engine/Runtime/ProjectConfig.hpp"
+#include "Engine/Components/AnimatorComponent.hpp"
+#include "Engine/Components/SkeletalMeshComponent.hpp"
 #include <volk.h>
 
 #include <vector>
@@ -44,6 +50,9 @@
 #include <filesystem>
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
+
+class AssetDetailsView;
+class EntityDetailsView;
 
 class Editor
 {
@@ -111,6 +120,9 @@ public:
                    VkDescriptorSet gameViewportDescriptorSet = VK_NULL_HANDLE,
                    bool hasGameCamera = false);
     void updateAnimationPreview(float deltaTime);
+
+    void setAnimTreePreviewDescriptorSet(VkDescriptorSet ds);
+    void setAnimTreePreviewPass(AnimationTreePreviewPass *pass);
 
     void processPendingObjectSelection();
 
@@ -236,7 +248,14 @@ public:
     void saveProjectConfig();
 
 private:
+    friend class AssetDetailsView;
+    friend class EntityDetailsView;
+
     std::unique_ptr<MaterialEditor> m_materialEditor{nullptr};
+    std::unique_ptr<AnimationTreePanel> m_animationTreePanel{nullptr};
+    HierarchyPanel m_hierarchyPanel;
+    DetailsPanel m_detailsPanel;
+    TerminalPanel m_terminalPanel;
     std::unordered_map<std::string, std::vector<DrawFn>> m_drawQueue;
     bool m_renderOnlyViewport{false};
 
@@ -274,15 +293,21 @@ private:
     void addDefaultCharacterEntity(const std::string &name = "Character");
 
     void openMaterialEditor(const std::filesystem::path &path);
+    void openAnimationTreeEditor(const std::filesystem::path &path,
+                                 engine::AnimatorComponent     *animator     = nullptr,
+                                 engine::SkeletalMeshComponent *skeletalMesh = nullptr);
     void openTextDocument(const std::filesystem::path &path);
     bool saveOpenDocument();
     bool compileOpenDocumentShader();
     void setDocumentLanguageFromPath(const std::filesystem::path &path);
 
     void drawMaterialEditors();
+    void drawAnimationTreePanels();
     void loadProjectConfig();
-    void resetSceneActionHistory();
-    void captureSceneActionSnapshot(const std::string &label);
+    void resetCommandHistory();
+    bool executeEditorCommand(std::unique_ptr<actions::IEditorCommand> command);
+    bool recordExecutedEditorCommand(std::unique_ptr<actions::IEditorCommand> command);
+    bool recordCreatedEntityCommand(engine::Entity *entity, const std::string &label);
     bool performUndoAction();
     bool performRedoAction();
     bool performCopyAction();
@@ -353,8 +378,18 @@ private:
         CAPSULE_HEIGHT
     };
 
+    enum class RightSidebarPanelId : uint8_t
+    {
+        Hierarchy = 0,
+        Details = 1
+    };
+
     void handleInput();
+    bool saveCurrentScene(bool showNotification = true, bool autosave = false);
+    void resetSceneAutosaveTimer();
+    void updateSceneAutosave(float deltaSeconds);
     bool hasUnsavedSceneChanges();
+    void buildCurrentProject();
     void exportCurrentProjectPacket();
 
     void setSelectedEntity(engine::Entity *entity);
@@ -373,6 +408,10 @@ private:
     double m_viewportRightMouseDownTime{0.0};
     float m_viewportRightMouseDownX{0.0f};
     float m_viewportRightMouseDownY{0.0f};
+    bool m_isNativeWindowDragActive{false};
+    ImVec2 m_nativeWindowDragStartMouse{0.0f, 0.0f};
+    int m_nativeWindowDragStartX{0};
+    int m_nativeWindowDragStartY{0};
 
     bool m_showAssetsWindow{false};
     bool m_showTerminal{false};
@@ -381,13 +420,10 @@ private:
     bool m_showRenderSettings{false};
     bool m_showEditorCameraSettings{false};
     bool m_showBenchmark{false};
+    bool m_showHierarchyPanel{true};
+    bool m_showDetailsPanel{true};
     bool m_isGameViewportVisible{false};
-    bool m_terminalAutoScroll{true};
-    bool m_terminalClearInputOnSubmit{true};
-    char m_terminalCommandBuffer[512]{};
-    int m_terminalSelectedLayerMask{(1 << 5) - 1};
-    size_t m_terminalLastLogCount{0};
-    bool m_forceTerminalScrollToBottom{false};
+    float m_rightSidebarSplitRatio{0.5f};
 
     engine::Camera::SharedPtr m_editorCamera{nullptr};
 
@@ -414,27 +450,28 @@ private:
 
     void drawBottomPanel();
     void drawToolBar();
+    void drawRightSidebar();
     void drawEditorCameraSettings();
     void drawRenderSettings();
     void drawBenchmark();
     void drawDevTools();
     void drawUITools();
     void drawTerrainTools();
+    bool hasVisibleRightSidebarPanels() const;
+    void persistRightSidebarSettings() const;
+    void setRightSidebarPanelVisible(RightSidebarPanelId panelId, bool visible);
+    void setRightSidebarSplitRatio(float ratio);
     void showDockSpace();
     void syncAssetsAndTerminalDocking();
     void drawCustomTitleBar();
     void drawAssets();
-    void drawTerminal();
-    void drawDetails();
-    void drawAssetDetails();
     void drawViewport(VkDescriptorSet viewportDescriptorSet);
     void drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGameCamera);
-    void drawHierarchy();
-    void drawHierarchyEntityNode(engine::Entity *entity);
-    actions::EditorSceneHistory m_sceneActionHistory{};
+    actions::EditorCommandHistory m_commandHistory{};
     actions::EditorEntityClipboard m_entityClipboard{};
     engine::Scene::SharedPtr m_scene{nullptr};
     std::filesystem::path m_currentScenePath;
+    float m_sceneAutosaveElapsedSeconds{0.0f};
     engine::Entity *m_selectedEntity{nullptr};
     std::optional<uint32_t> m_selectedMeshSlot;
     std::optional<uint32_t> m_lastScrolledMeshSlot; // tracks last slot we auto-scrolled to
@@ -468,6 +505,7 @@ private:
     glm::vec2 ndcToViewportPixel(const glm::vec2 &ndcPos, const ImVec2 &imageMin, const ImVec2 &imageMax) const;
     glm::vec2 snapNdcToGrid(const glm::vec2 &ndcPos) const;
     glm::vec3 computeBillboardPlacementWorldPosition(const glm::vec2 &ndcPos) const;
+    bool trySelectEditorBillboardAtViewportPosition(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax);
     bool placeUIElementAtViewportPosition(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax);
     void clearSelectedUIElement();
     std::filesystem::path m_selectedAssetPath;

@@ -129,6 +129,15 @@ void Material::updateTextureDescriptors()
     }
 }
 
+void Material::updateParamBuffers()
+{
+    for (auto &paramBuffer : m_paramBuffers)
+    {
+        if (paramBuffer)
+            paramBuffer->upload(&m_params, sizeof(GPUParams));
+    }
+}
+
 VkDescriptorSet Material::getDescriptorSet(uint32_t frameIndex) const
 {
     if (frameIndex < m_descriptorSets.size())
@@ -182,29 +191,79 @@ Texture::SharedPtr Material::getEmissiveTexture() const { return m_emissiveTextu
 
 // ---------------- Params ----------------
 
-void Material::setBaseColorFactor(const glm::vec4 &color)  { m_params.baseColorFactor = color; }
-void Material::setEmissiveFactor(const glm::vec3 &emissive) { m_params.emissiveFactor = glm::vec4(emissive, 0.0f); }
-void Material::setMetallic(float metallic)                  { m_params.metallicFactor = clamp01(metallic); }
-void Material::setRoughness(float roughness)                { m_params.roughnessFactor = std::max(0.04f, clamp01(roughness)); }
-void Material::setNormalScale(float normalScale)            { m_params.normalScale = std::max(0.0f, normalScale); }
-void Material::setAoStrength(float aoStrength)              { m_params.aoStrength = clamp01(aoStrength); }
-void Material::setAlphaCutoff(float cutoff)                 { m_params.alphaCutoff = clamp01(cutoff); }
-void Material::setFlags(uint32_t flags)                     { m_params.flags = flags; }
-void Material::setIor(float ior)                            { m_params.ior = ior; }
+void Material::setBaseColorFactor(const glm::vec4 &color)
+{
+    m_params.baseColorFactor = color;
+    updateParamBuffers();
+}
+
+void Material::setEmissiveFactor(const glm::vec3 &emissive)
+{
+    m_params.emissiveFactor = glm::vec4(emissive, 0.0f);
+    updateParamBuffers();
+}
+
+void Material::setMetallic(float metallic)
+{
+    m_params.metallicFactor = clamp01(metallic);
+    updateParamBuffers();
+}
+
+void Material::setRoughness(float roughness)
+{
+    m_params.roughnessFactor = std::max(0.04f, clamp01(roughness));
+    updateParamBuffers();
+}
+
+void Material::setNormalScale(float normalScale)
+{
+    m_params.normalScale = std::max(0.0f, normalScale);
+    updateParamBuffers();
+}
+
+void Material::setAoStrength(float aoStrength)
+{
+    m_params.aoStrength = clamp01(aoStrength);
+    updateParamBuffers();
+}
+
+void Material::setAlphaCutoff(float cutoff)
+{
+    m_params.alphaCutoff = clamp01(cutoff);
+    updateParamBuffers();
+}
+
+void Material::setFlags(uint32_t flags)
+{
+    m_params.flags = flags;
+    updateParamBuffers();
+}
+
+void Material::setIor(float ior)
+{
+    m_params.ior = ior;
+    updateParamBuffers();
+}
 
 void Material::setUVScale(const glm::vec2 &scale)
 {
     m_params.uvTransform.x = scale.x;
     m_params.uvTransform.y = scale.y;
+    updateParamBuffers();
 }
 
 void Material::setUVOffset(const glm::vec2 &offset)
 {
     m_params.uvTransform.z = offset.x;
     m_params.uvTransform.w = offset.y;
+    updateParamBuffers();
 }
 
-void Material::setUVRotation(float rotationDegrees) { m_params.uvRotation = rotationDegrees; }
+void Material::setUVRotation(float rotationDegrees)
+{
+    m_params.uvRotation = rotationDegrees;
+    updateParamBuffers();
+}
 
 const Material::GPUParams &Material::params() const { return m_params; }
 

@@ -480,15 +480,54 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         hashCombine(seed, hashFloat(materialCPU.uvOffset.x));
         hashCombine(seed, hashFloat(materialCPU.uvOffset.y));
         hashCombine(seed, hashFloat(materialCPU.uvRotation));
+        hashCombine(seed, std::hash<std::string>()(materialCPU.customExpression));
+        hashCombine(seed, std::hash<std::string>()(materialCPU.customShaderHash));
+
+        for (const auto &noiseNode : materialCPU.noiseNodes)
+        {
+            hashCombine(seed, std::hash<uint8_t>()(static_cast<uint8_t>(noiseNode.type)));
+            hashCombine(seed, std::hash<uint8_t>()(static_cast<uint8_t>(noiseNode.blendMode)));
+            hashCombine(seed, hashFloat(noiseNode.scale));
+            hashCombine(seed, std::hash<int>()(noiseNode.octaves));
+            hashCombine(seed, hashFloat(noiseNode.persistence));
+            hashCombine(seed, hashFloat(noiseNode.lacunarity));
+            hashCombine(seed, std::hash<bool>()(noiseNode.worldSpace));
+            hashCombine(seed, std::hash<bool>()(noiseNode.active));
+            hashCombine(seed, std::hash<std::string>()(noiseNode.targetSlot));
+            hashCombine(seed, hashFloat(noiseNode.rampColorA.x));
+            hashCombine(seed, hashFloat(noiseNode.rampColorA.y));
+            hashCombine(seed, hashFloat(noiseNode.rampColorA.z));
+            hashCombine(seed, hashFloat(noiseNode.rampColorB.x));
+            hashCombine(seed, hashFloat(noiseNode.rampColorB.y));
+            hashCombine(seed, hashFloat(noiseNode.rampColorB.z));
+        }
+
+        for (const auto &colorNode : materialCPU.colorNodes)
+        {
+            hashCombine(seed, std::hash<uint8_t>()(static_cast<uint8_t>(colorNode.blendMode)));
+            hashCombine(seed, hashFloat(colorNode.color.x));
+            hashCombine(seed, hashFloat(colorNode.color.y));
+            hashCombine(seed, hashFloat(colorNode.color.z));
+            hashCombine(seed, hashFloat(colorNode.strength));
+            hashCombine(seed, std::hash<bool>()(colorNode.active));
+            hashCombine(seed, std::hash<std::string>()(colorNode.targetSlot));
+        }
+
         return std::to_string(seed);
     };
 
     auto ensureCustomMaterialShaderPath = [&](const CPUMaterial &materialCPU) -> std::string
     {
+        if (!materialCPU.customShaderHash.empty())
+        {
+            const std::string hashedShaderPath = "./resources/shaders/material_cache/" + materialCPU.customShaderHash + ".spv";
+            std::error_code existsError;
+            if (std::filesystem::exists(hashedShaderPath, existsError) && !existsError)
+                return hashedShaderPath;
+        }
+
         if (materialCPU.customExpression.empty())
         {
-            if (!materialCPU.customShaderHash.empty())
-                return "./resources/shaders/material_cache/" + materialCPU.customShaderHash + ".spv";
             return {};
         }
 
@@ -529,7 +568,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         constexpr uint64_t kFnvOffset = 14695981039346656037ull;
         constexpr uint64_t kFnvPrime = 1099511628211ull;
         uint64_t hash = kFnvOffset;
-        const std::string hashInput = std::string("gbuffer_layout_v2\n") + functions + "\n" + expression;
+        const std::string hashInput = std::string("gbuffer_bindless_layout_v1\n") + functions + "\n" + expression;
         for (unsigned char c : hashInput)
         {
             hash ^= c;

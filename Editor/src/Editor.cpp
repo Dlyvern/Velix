@@ -28,6 +28,9 @@
 #include "Engine/Assets/ElixPacket.hpp"
 
 #include "Editor/FileHelper.hpp"
+#include "Editor/Actions/Commands/CreateEntityCommand.hpp"
+#include "Editor/Actions/Commands/DeleteEntityCommand.hpp"
+#include "Editor/Actions/Commands/UIStateCommand.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -69,6 +72,10 @@ namespace ed = ax::NodeEditor;
 
 namespace
 {
+    constexpr float kTitleBarHeight = 36.0f;
+    constexpr float kToolBarHeight = 34.0f;
+    constexpr float kBottomBarHeight = 32.0f;
+
     std::string quoteShellArgument(const std::filesystem::path &path)
     {
         std::string value = path.string();
@@ -1324,6 +1331,11 @@ namespace
 
 Editor::Editor()
 {
+    auto &engineConfig = engine::EngineConfig::instance();
+    m_showHierarchyPanel = engineConfig.getShowHierarchyPanel();
+    m_showDetailsPanel = engineConfig.getShowDetailsPanel();
+    m_rightSidebarSplitRatio = engineConfig.getRightSidebarSplitRatio();
+
     m_editorCamera = std::make_shared<engine::Camera>();
     m_materialEditor = std::make_unique<MaterialEditor>();
     m_materialEditor->setNotificationManager(&m_notificationManager);
@@ -1336,6 +1348,28 @@ Editor::Editor()
                                                             { return ensureProjectTextureLoaded(texturePath, usage); });
     m_materialEditor->setEnsureProjectTextureLoadedPreviewFunction([this](const std::string &texturePath, TextureUsage usage)
                                                                    { return ensureProjectTextureLoadedPreview(texturePath, usage); });
+    m_animationTreePanel = std::make_unique<AnimationTreePanel>();
+    m_animationTreePanel->setNotificationManager(&m_notificationManager);
+    m_animationTreePanel->setSaveTreeFunction([this](const std::filesystem::path &path, const engine::AnimationTree &tree)
+                                             { return engine::AssetsLoader::saveAnimationTree(tree, path.string()); });
+
+    m_hierarchyPanel.setSetSelectedEntityCallback([this](engine::Entity *entity)
+                                                  { setSelectedEntity(entity); });
+    m_hierarchyPanel.setAddEmptyEntityCallback([this](const std::string &name)
+                                               { addEmptyEntity(name); });
+    m_hierarchyPanel.setAddPrimitiveEntityCallback([this](const std::string &primitiveName)
+                                                   { addPrimitiveEntity(primitiveName); });
+    m_terminalPanel.setNotificationManager(&m_notificationManager);
+    m_terminalPanel.setQueueShaderReloadRequestCallback([this]()
+                                                        { m_pendingShaderReloadRequest = true; });
+    m_terminalPanel.addFunction("build project", [this]()
+                                { buildCurrentProject(); });
+    m_terminalPanel.addFunction("reload dev shaders", [this]()
+                                {
+                                    m_pendingShaderReloadRequest = true;
+                                    VX_LOG(core::Logger::LogLayer::Developer, core::Logger::LogLevel::INFO, "Terminal", "Queued shader reload request");
+                                    m_notificationManager.showInfo("Shader reload queued");
+                                });
 }
 
 Editor::~Editor()
@@ -1345,18 +1379,20 @@ Editor::~Editor()
 void Editor::setScene(engine::Scene::SharedPtr scene)
 {
     m_scene = std::move(scene);
+    m_hierarchyPanel.setScene(m_scene.get());
     m_terrainTools.setScene(m_scene);
-    m_selectedEntity = nullptr;
-    m_selectedMeshSlot.reset();
+    resetSceneAutosaveTimer();
+    setSelectedEntity(nullptr);
     m_hasPendingObjectPick = false;
     clearSelectedUIElement();
-    resetSceneActionHistory();
+    resetCommandHistory();
     restoreSceneMaterialOverrides();
 }
 
 void Editor::setCurrentScenePath(const std::filesystem::path &path)
 {
     m_currentScenePath = path.lexically_normal();
+    resetSceneAutosaveTimer();
 }
 
 std::filesystem::path Editor::resolveCurrentScenePath() const
@@ -1889,6 +1925,11 @@ void Editor::initStyle(bool imguiBackendRecreated)
         m_assetsWindow = std::make_shared<AssetsWindow>(&m_resourceStorage, m_assetsPreviewSystem);
     m_assetsWindow->setOnMaterialOpenRequest([this](const std::filesystem::path &path)
                                              { openMaterialEditor(path); });
+    m_assetsWindow->setOnAnimationTreeOpenRequest([this](const std::filesystem::path &path)
+                                                  {
+                                                      if (m_animationTreePanel)
+                                                          m_animationTreePanel->openTree(path);
+                                                  });
     m_assetsWindow->setOnTextAssetOpenRequest([this](const std::filesystem::path &path)
                                               { openTextDocument(path); });
     if (m_pendingSceneOpenRequestCallback)
@@ -1949,16 +1990,7 @@ void Editor::initStyle(bool imguiBackendRecreated)
                                                   core::memory::MemoryUsage::CPU_TO_GPU);
 
     auto &window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
-    GLFWwindow *windowHandler = window.getRawHandler();
-
-    // glfwSetWindowAttrib(windowHandler, GLFW_DECORATED, !m_isDockingWindowFullscreen);
-    if (m_isDockingWindowFullscreen)
-    {
-        GLFWmonitor *monitor = glfwGetPrimaryMonitor();
-        const GLFWvidmode *mode = glfwGetVideoMode(monitor);
-        window.setPosition(0, 0);
-        window.setSize(mode->width, mode->height);
-    }
+    window.setShowDecorations(false);
 
     m_textEditor.SetPalette(TextEditor::GetDarkPalette());
     m_textEditor.SetShowWhitespaces(false);
@@ -1975,6 +2007,10 @@ void Editor::showDockSpace()
     constexpr static ImGuiDockNodeFlags dockspaceFlags = ImGuiDockNodeFlags_None;
 
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDocking;
+    int pushedStyleVarCount = 0;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ++pushedStyleVarCount;
 
     if (m_isDockingWindowFullscreen)
     {
@@ -1984,6 +2020,7 @@ void Editor::showDockSpace()
         ImGui::SetNextWindowViewport(viewport->ID);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        pushedStyleVarCount += 2;
         windowFlags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
                        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
         windowFlags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
@@ -1991,8 +2028,7 @@ void Editor::showDockSpace()
 
     ImGui::Begin("Velix dockSpace", &dockspaceOpen, windowFlags);
 
-    if (m_isDockingWindowFullscreen)
-        ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(pushedStyleVarCount);
 
     ImGuiID dockspaceId = ImGui::GetID("MyDockSpace");
     m_dockSpaceId = dockspaceId;
@@ -2006,26 +2042,31 @@ void Editor::showDockSpace()
 
         ImGui::DockBuilderRemoveNode(dockspaceId);
         ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-        ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->Size);
+        const ImVec2 dockViewportSize = ImGui::GetMainViewport()->Size;
+        ImGui::DockBuilderSetNodeSize(dockspaceId, dockViewportSize);
 
         ImGuiID dockMainId = dockspaceId;
 
-        ImGuiID titleBarDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Up, 0.04f, nullptr, &dockMainId);
+        const float totalDockHeight = std::max(1.0f, dockViewportSize.y);
+        const float titleBarFraction = std::clamp(kTitleBarHeight / totalDockHeight, 0.0f, 0.25f);
+        ImGuiID titleBarDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Up, titleBarFraction, nullptr, &dockMainId);
         ImGui::DockBuilderDockWindow("TitleBar", titleBarDock);
 
-        ImGuiID toolbarDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Up, 0.03f, nullptr, &dockMainId);
+        const float remainingAfterTitle = std::max(1.0f, totalDockHeight - kTitleBarHeight);
+        const float toolBarFraction = std::clamp(kToolBarHeight / remainingAfterTitle, 0.0f, 0.25f);
+        ImGuiID toolbarDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Up, toolBarFraction, nullptr, &dockMainId);
         ImGui::DockBuilderDockWindow("Toolbar", toolbarDock);
 
-        ImGuiID bottomStripDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Down, 0.04f, nullptr, &dockMainId);
+        const float remainingAfterTopBars = std::max(1.0f, totalDockHeight - kTitleBarHeight - kToolBarHeight);
+        const float bottomBarFraction = std::clamp(kBottomBarHeight / remainingAfterTopBars, 0.0f, 0.25f);
+        ImGuiID bottomStripDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Down, bottomBarFraction, nullptr, &dockMainId);
         ImGui::DockBuilderDockWindow("BottomPanel", bottomStripDock);
 
-        ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Right, 0.20f, nullptr, &dockMainId);
-
-        ImGuiID dockRightTop = dockRight;
-        ImGuiID dockRightBottom = ImGui::DockBuilderSplitNode(dockRightTop, ImGuiDir_Down, 0.5f, nullptr, &dockRightTop);
-
-        ImGui::DockBuilderDockWindow("Hierarchy", dockRightTop);
-        ImGui::DockBuilderDockWindow("Details", dockRightBottom);
+        if (hasVisibleRightSidebarPanels())
+        {
+            ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Right, 0.20f, nullptr, &dockMainId);
+            ImGui::DockBuilderDockWindow("Right Sidebar", dockRight);
+        }
 
         ImGuiID assetsDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Down, 0.25f, nullptr, &dockMainId);
         m_assetsPanelsDockId = assetsDock;
@@ -2036,6 +2077,21 @@ void Editor::showDockSpace()
         ImGui::DockBuilderDockWindow("Game Viewport", dockMainId);
         m_centerDockId = dockMainId;
         ImGui::DockBuilderFinish(dockspaceId);
+
+        auto configureChromeNode = [](ImGuiID nodeId)
+        {
+            if (ImGuiDockNode *node = ImGui::DockBuilderGetNode(nodeId))
+            {
+                node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
+                node->LocalFlags |= ImGuiDockNodeFlags_NoSplit;
+                node->LocalFlags |= ImGuiDockNodeFlags_NoResize;
+                node->LocalFlags |= ImGuiDockNodeFlags_NoDockingOverMe;
+            }
+        };
+
+        configureChromeNode(titleBarDock);
+        configureChromeNode(toolbarDock);
+        configureChromeNode(bottomStripDock);
 
         if (ImGuiDockNode *node = ImGui::DockBuilderGetNode(bottomStripDock))
         {
@@ -2121,17 +2177,24 @@ void Editor::drawCustomTitleBar()
     windowClass.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoTabBar;
     ImGui::SetNextWindowClass(&windowClass);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 3.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
     ImGui::Begin("TitleBar", nullptr, windowFlags);
 
     ImGuiIO &io = ImGui::GetIO();
     ImGuiStyle &style = ImGui::GetStyle();
 
-    ImGui::SetCursorPos(ImVec2(4, (ImGui::GetWindowHeight() - 30) * 0.5f));
-    ImVec2 logoSize = ImVec2(50, 30);
+    const ImVec2 logoSize = ImVec2(50.0f, 30.0f);
+    const float buttonSize = ImGui::GetFrameHeight();
+    const float logoY = std::max(0.0f, (ImGui::GetWindowHeight() - logoSize.y) * 0.5f);
+    const float controlsY = std::max(0.0f, (ImGui::GetWindowHeight() - buttonSize) * 0.5f);
+
+    ImGui::SetCursorPos(ImVec2(style.WindowPadding.x, logoY));
     ImGui::Image(m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.tex.elixasset"), logoSize);
 
     ImGui::SameLine(0, 10);
+    ImGui::SetCursorPosY(controlsY);
 
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -2152,6 +2215,16 @@ void Editor::drawCustomTitleBar()
             ImGui::CloseCurrentPopup();
         else
             ImGui::OpenPopup("CreateNewClassPopup");
+    }
+
+    ImGui::SameLine(0, 10);
+
+    if (ImGui::Button("View"))
+    {
+        if (ImGui::IsPopupOpen("ViewPopup"))
+            ImGui::CloseCurrentPopup();
+        else
+            ImGui::OpenPopup("ViewPopup");
     }
 
     ImGui::PopStyleColor(1);
@@ -2238,140 +2311,7 @@ void Editor::drawCustomTitleBar()
         }
 
         if (ImGui::Button("Build Project"))
-        {
-            auto project = m_currentProject.lock();
-            if (!project)
-            {
-                VX_EDITOR_ERROR_STREAM("Build aborted: project is not loaded\n");
-                m_notificationManager.showError("Build failed: no project loaded");
-            }
-            else
-            {
-                const std::filesystem::path projectRoot = project->fullPath;
-                if (projectRoot.empty() || !std::filesystem::exists(projectRoot))
-                {
-                    VX_EDITOR_ERROR_STREAM("Build aborted: invalid project path '" << project->fullPath << "'\n");
-                    m_notificationManager.showError("Build failed: invalid project path");
-                }
-                else
-                {
-                    const std::filesystem::path buildDirectory = project->buildDir.empty() ? projectRoot / "build"
-                                                                                           : std::filesystem::path(project->buildDir);
-                    std::filesystem::path cmakePrefixPath = FileHelper::getExecutablePath();
-                    if (cmakePrefixPath.filename() == "bin")
-                        cmakePrefixPath = cmakePrefixPath.parent_path();
-
-                    const std::filesystem::path cmakeExecutablePath = resolveCMakeExecutablePath();
-                    const std::string cmakeCommandToken = makeExecutableCommandToken(cmakeExecutablePath);
-
-                    if (cmakeExecutablePath.is_absolute())
-                        VX_EDITOR_INFO_STREAM("Using bundled CMake executable: " << cmakeExecutablePath << '\n');
-                    else
-                        VX_EDITOR_INFO_STREAM("Using CMake from PATH: " << cmakeExecutablePath.string() << '\n');
-
-                    const std::string configureCommand = cmakeCommandToken + " -S " + quoteShellArgument(projectRoot) +
-                                                         " -B " + quoteShellArgument(buildDirectory) +
-                                                         " -DCMAKE_PREFIX_PATH=" + quoteShellArgument(cmakePrefixPath) +
-                                                         " -DCMAKE_BUILD_TYPE=Release" +
-                                                         " -DCMAKE_EXPORT_COMPILE_COMMANDS=ON";
-
-                    const auto [configureResult, configureOutput] = FileHelper::executeCommand(configureCommand);
-                    if (configureResult != 0)
-                    {
-                        VX_EDITOR_ERROR_STREAM("CMake configure failed\n"
-                                               << configureOutput << '\n');
-                        m_notificationManager.showError("Build failed: cmake configure error");
-                    }
-                    else
-                    {
-                        if (!syncProjectCompileCommands(*project))
-                            VX_EDITOR_WARNING_STREAM("Failed to sync compile_commands.json to project root\n");
-
-                        std::string buildCommand = cmakeCommandToken + " --build " + quoteShellArgument(buildDirectory) + " --config Release";
-#if defined(__linux__)
-                        buildCommand += " -j";
-#endif
-
-                        const auto [buildResult, buildOutput] = FileHelper::executeCommand(buildCommand);
-                        if (buildResult != 0)
-                        {
-                            VX_EDITOR_ERROR_STREAM("Project build failed\n"
-                                                   << buildOutput << '\n');
-                            m_notificationManager.showError("Build failed");
-                        }
-                        else
-                        {
-                            const auto moduleLibraryPath = findGameModuleLibraryPath(buildDirectory);
-                            if (moduleLibraryPath.empty())
-                            {
-                                VX_EDITOR_ERROR_STREAM("Build succeeded but GameModule library was not found in " << buildDirectory << '\n');
-                                m_notificationManager.showError("Build succeeded, but GameModule was not found");
-                            }
-                            else
-                            {
-                                bool hasAttachedScriptComponents = false;
-                                if (m_scene)
-                                {
-                                    for (const auto &entity : m_scene->getEntities())
-                                    {
-                                        if (entity->getComponents<engine::ScriptComponent>().empty())
-                                            continue;
-
-                                        hasAttachedScriptComponents = true;
-                                        break;
-                                    }
-                                }
-
-                                if (project->projectLibrary && hasAttachedScriptComponents)
-                                {
-                                    VX_EDITOR_WARNING_STREAM("Skipping module reload because script components are attached in current scene\n");
-                                    m_notificationManager.showWarning("Build done. Stop Play/remove scripts to reload module.");
-                                }
-                                else
-                                {
-                                    if (project->projectLibrary)
-                                    {
-                                        engine::PluginLoader::closeLibrary(project->projectLibrary);
-                                        project->projectLibrary = nullptr;
-                                        setProjectScriptsRegister(nullptr, {});
-                                    }
-
-                                    project->projectLibrary = engine::PluginLoader::loadLibrary(moduleLibraryPath.string());
-                                    if (!project->projectLibrary)
-                                    {
-                                        setProjectScriptsRegister(nullptr, {});
-                                        VX_EDITOR_ERROR_STREAM("Failed to load game module: " << moduleLibraryPath << '\n');
-                                        m_notificationManager.showError("Build done, but failed to load module");
-                                    }
-                                    else
-                                    {
-                                        auto getScriptsRegisterFunction = engine::PluginLoader::getFunction<engine::ScriptsRegister &(*)()>("getScriptsRegister", project->projectLibrary);
-                                        if (!getScriptsRegisterFunction)
-                                        {
-                                            engine::PluginLoader::closeLibrary(project->projectLibrary);
-                                            project->projectLibrary = nullptr;
-
-                                            setProjectScriptsRegister(nullptr, {});
-
-                                            VX_EDITOR_ERROR_STREAM("Module loaded but getScriptsRegister was not found: " << moduleLibraryPath << '\n');
-                                            m_notificationManager.showError("Module loaded, but script register function is missing");
-                                        }
-                                        else
-                                        {
-                                            setProjectScriptsRegister(&getScriptsRegisterFunction(), moduleLibraryPath.string());
-
-                                            const std::size_t scriptsCount = m_projectScriptsRegister->getScripts().size();
-                                            VX_EDITOR_INFO_STREAM("Loaded " << scriptsCount << " script(s) from " << m_loadedGameModulePath << '\n');
-                                            m_notificationManager.showSuccess("Build done. Loaded scripts: " + std::to_string(scriptsCount));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+            buildCurrentProject();
 
         if (ImGui::Button("Export Game (.elixpacket)"))
             exportCurrentProjectPacket();
@@ -2532,22 +2472,7 @@ void Editor::drawCustomTitleBar()
             ImGui::CloseCurrentPopup();
         }
         if (ImGui::Button("Save"))
-        {
-            if (m_currentMode != EditorMode::EDIT)
-            {
-                m_notificationManager.showError("Cannot save scene while playing. Stop Play first.");
-                VX_EDITOR_WARNING_STREAM("Blocked scene save while not in Edit mode.\n");
-            }
-
-            auto project = m_currentProject.lock();
-            const std::filesystem::path scenePath = resolveCurrentScenePath();
-            if (m_scene && project && m_currentMode == EditorMode::EDIT && !scenePath.empty())
-            {
-                m_scene->saveSceneToFile(scenePath.string());
-                m_notificationManager.showInfo("Scene saved");
-                VX_EDITOR_INFO_STREAM("Scene saved to: " << scenePath.string());
-            }
-        }
+            saveCurrentScene(true, false);
 
         if (ImGui::Button("Save As..."))
         {
@@ -2559,6 +2484,17 @@ void Editor::drawCustomTitleBar()
         if (ImGui::Button("Exit"))
             window.close(); // Ha-ha-ha-ha Kill it slower dumbass
         ImGui::PopStyleColor(1);
+
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::BeginPopup("ViewPopup"))
+    {
+        if (ImGui::MenuItem("Hierarchy", nullptr, m_showHierarchyPanel))
+            setRightSidebarPanelVisible(RightSidebarPanelId::Hierarchy, !m_showHierarchyPanel);
+
+        if (ImGui::MenuItem("Details", nullptr, m_showDetailsPanel))
+            setRightSidebarPanelVisible(RightSidebarPanelId::Details, !m_showDetailsPanel);
 
         ImGui::EndPopup();
     }
@@ -2711,26 +2647,109 @@ void Editor::drawCustomTitleBar()
     }
 
     float windowWidth = ImGui::GetWindowWidth();
-    float buttonSize = ImGui::GetFrameHeight();
-    ImGui::SameLine(windowWidth - buttonSize * 3 - 30);
+    const float rightControlsStartX = windowWidth - buttonSize * 3.0f - style.WindowPadding.x - style.ItemSpacing.x * 2.0f;
+    const float dragZoneStartX = ImGui::GetCursorPosX() + style.ItemSpacing.x;
+    const float dragZoneWidth = std::max(0.0f, rightControlsStartX - dragZoneStartX - style.ItemSpacing.x);
+
+    if (dragZoneWidth > 1.0f)
+    {
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(dragZoneStartX);
+        ImGui::SetCursorPosY(controlsY);
+        ImGui::InvisibleButton("##CustomTitleBarDragZone", ImVec2(dragZoneWidth, buttonSize));
+
+        const bool dragZoneHovered = ImGui::IsItemHovered();
+        const bool dragZoneActive = ImGui::IsItemActive();
+
+        if (dragZoneHovered || dragZoneActive)
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+
+        if (ImGui::IsItemActivated())
+        {
+            m_isNativeWindowDragActive = true;
+            double cursorX = 0.0;
+            double cursorY = 0.0;
+            glfwGetCursorPos(window.getRawHandler(), &cursorX, &cursorY);
+            m_nativeWindowDragStartMouse = ImVec2(static_cast<float>(cursorX), static_cast<float>(cursorY));
+            window.getPosition(&m_nativeWindowDragStartX, &m_nativeWindowDragStartY);
+        }
+
+        if (dragZoneHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        {
+            if (window.isMaximized())
+                window.restore();
+            else
+                window.maximize();
+
+            reinitDocking();
+            m_isNativeWindowDragActive = false;
+        }
+        else if (m_isNativeWindowDragActive && dragZoneActive && !window.isMaximized())
+        {
+            int currentWindowX = 0;
+            int currentWindowY = 0;
+            window.getPosition(&currentWindowX, &currentWindowY);
+
+            double cursorX = 0.0;
+            double cursorY = 0.0;
+            glfwGetCursorPos(window.getRawHandler(), &cursorX, &cursorY);
+
+            const double globalCursorX = static_cast<double>(currentWindowX) + cursorX;
+            const double globalCursorY = static_cast<double>(currentWindowY) + cursorY;
+
+            const int newWindowX = static_cast<int>(std::lround(globalCursorX - static_cast<double>(m_nativeWindowDragStartMouse.x)));
+            const int newWindowY = static_cast<int>(std::lround(globalCursorY - static_cast<double>(m_nativeWindowDragStartMouse.y)));
+            window.setPosition(newWindowX, newWindowY);
+        }
+
+        if (ImGui::IsItemDeactivated())
+            m_isNativeWindowDragActive = false;
+
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        const ImVec2 dragZoneMin = ImGui::GetItemRectMin();
+        const ImVec2 dragZoneMax = ImGui::GetItemRectMax();
+        const ImU32 dragZoneColor = ImGui::GetColorU32(dragZoneHovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
+        drawList->AddRectFilled(dragZoneMin, dragZoneMax, dragZoneColor, 4.0f);
+
+        std::string windowLabel = "Velix";
+        if (auto project = m_currentProject.lock(); project && !project->name.empty())
+            windowLabel = project->name;
+
+        const ImVec2 textSize = ImGui::CalcTextSize(windowLabel.c_str());
+        const ImVec2 textPos(
+            dragZoneMin.x + std::max(0.0f, (dragZoneWidth - textSize.x) * 0.5f),
+            dragZoneMin.y + std::max(0.0f, (buttonSize - textSize.y) * 0.5f));
+        drawList->AddText(textPos, ImGui::GetColorU32(ImGuiCol_TextDisabled), windowLabel.c_str());
+    }
+
+    ImGui::SameLine(rightControlsStartX);
+    ImGui::SetCursorPosY(controlsY);
 
     if (ImGui::Button("_", ImVec2(buttonSize, buttonSize * 0.9f)))
         window.iconify();
 
     ImGui::SameLine();
+    ImGui::SetCursorPosY(controlsY);
 
     if (ImGui::Button("[]", ImVec2(buttonSize, buttonSize * 0.9f)))
-        setDockingFullscreen(!m_isDockingWindowFullscreen);
+    {
+        if (window.isMaximized())
+            window.restore();
+        else
+            window.maximize();
+
+        reinitDocking();
+    }
 
     ImGui::SameLine();
+    ImGui::SetCursorPosY(controlsY);
 
     if (ImGui::Button("X", ImVec2(buttonSize, buttonSize * 0.9f)))
         window.close();
 
-    ImGui::Dummy(ImVec2(0, 10));
     ImGui::End();
 
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(4);
 }
 
 void Editor::changeMode(EditorMode mode)
@@ -2739,6 +2758,7 @@ void Editor::changeMode(EditorMode mode)
         return;
 
     m_currentMode = mode;
+    resetSceneAutosaveTimer();
 
     switch (mode)
     {
@@ -2759,6 +2779,82 @@ void Editor::changeMode(EditorMode mode)
     for (const auto &callback : m_onModeChangedCallbacks)
         if (callback)
             callback(mode);
+}
+
+bool Editor::saveCurrentScene(bool showNotification, bool autosave)
+{
+    if (m_currentMode != EditorMode::EDIT)
+    {
+        if (showNotification)
+        {
+            m_notificationManager.showError("Cannot save scene while playing. Stop Play first.");
+            VX_EDITOR_WARNING_STREAM("Blocked scene save while not in Edit mode.\n");
+        }
+        return false;
+    }
+
+    auto project = m_currentProject.lock();
+    const std::filesystem::path scenePath = resolveCurrentScenePath();
+    if (!m_scene || !project || scenePath.empty())
+        return false;
+
+    try
+    {
+        m_scene->saveSceneToFile(scenePath.string());
+        resetSceneAutosaveTimer();
+
+        if (showNotification)
+            m_notificationManager.showInfo(autosave ? "Scene autosaved" : "Scene saved");
+
+        if (autosave)
+            VX_EDITOR_INFO_STREAM("Scene autosaved to: " << scenePath.string());
+        else
+            VX_EDITOR_INFO_STREAM("Scene saved to: " << scenePath.string());
+        return true;
+    }
+    catch (const std::exception &exception)
+    {
+        if (showNotification)
+            m_notificationManager.showWarning(autosave ? "Scene autosave failed" : "Scene save failed");
+        VX_EDITOR_WARNING_STREAM("Failed to save scene '" << scenePath.string() << "': " << exception.what() << '\n');
+    }
+    catch (...)
+    {
+        if (showNotification)
+            m_notificationManager.showWarning(autosave ? "Scene autosave failed" : "Scene save failed");
+        VX_EDITOR_WARNING_STREAM("Failed to save scene '" << scenePath.string() << "': unknown error\n");
+    }
+
+    return false;
+}
+
+void Editor::resetSceneAutosaveTimer()
+{
+    m_sceneAutosaveElapsedSeconds = 0.0f;
+}
+
+void Editor::updateSceneAutosave(float deltaSeconds)
+{
+    auto &engineConfig = engine::EngineConfig::instance();
+    if (!engineConfig.getSceneAutosaveEnabled() || m_currentMode != EditorMode::EDIT || !m_scene)
+        return;
+
+    const std::filesystem::path scenePath = resolveCurrentScenePath();
+    if (scenePath.empty())
+        return;
+
+    m_sceneAutosaveElapsedSeconds += std::max(deltaSeconds, 0.0f);
+
+    const float autosaveIntervalSeconds = engineConfig.getSceneAutosaveIntervalMinutes() * 60.0f;
+    if (m_sceneAutosaveElapsedSeconds < autosaveIntervalSeconds)
+        return;
+
+    resetSceneAutosaveTimer();
+
+    if (!hasUnsavedSceneChanges())
+        return;
+
+    saveCurrentScene(false, true);
 }
 
 bool Editor::hasUnsavedSceneChanges()
@@ -2824,6 +2920,134 @@ bool Editor::hasUnsavedSceneChanges()
     std::filesystem::remove(tempScenePath, removeError);
 
     return hasChanges;
+}
+
+void Editor::buildCurrentProject()
+{
+    auto project = m_currentProject.lock();
+    if (!project)
+    {
+        VX_EDITOR_ERROR_STREAM("Build aborted: project is not loaded\n");
+        m_notificationManager.showError("Build failed: no project loaded");
+        return;
+    }
+
+    const std::filesystem::path projectRoot = project->fullPath;
+    if (projectRoot.empty() || !std::filesystem::exists(projectRoot))
+    {
+        VX_EDITOR_ERROR_STREAM("Build aborted: invalid project path '" << project->fullPath << "'\n");
+        m_notificationManager.showError("Build failed: invalid project path");
+        return;
+    }
+
+    const std::filesystem::path buildDirectory = project->buildDir.empty() ? projectRoot / "build"
+                                                                           : std::filesystem::path(project->buildDir);
+    std::filesystem::path cmakePrefixPath = FileHelper::getExecutablePath();
+    if (cmakePrefixPath.filename() == "bin")
+        cmakePrefixPath = cmakePrefixPath.parent_path();
+
+    const std::filesystem::path cmakeExecutablePath = resolveCMakeExecutablePath();
+    const std::string cmakeCommandToken = makeExecutableCommandToken(cmakeExecutablePath);
+
+    if (cmakeExecutablePath.is_absolute())
+        VX_EDITOR_INFO_STREAM("Using bundled CMake executable: " << cmakeExecutablePath << '\n');
+    else
+        VX_EDITOR_INFO_STREAM("Using CMake from PATH: " << cmakeExecutablePath.string() << '\n');
+
+    const std::string configureCommand = cmakeCommandToken + " -S " + quoteShellArgument(projectRoot) +
+                                         " -B " + quoteShellArgument(buildDirectory) +
+                                         " -DCMAKE_PREFIX_PATH=" + quoteShellArgument(cmakePrefixPath) +
+                                         " -DCMAKE_BUILD_TYPE=Release" +
+                                         " -DCMAKE_EXPORT_COMPILE_COMMANDS=ON";
+
+    const auto [configureResult, configureOutput] = FileHelper::executeCommand(configureCommand);
+    if (configureResult != 0)
+    {
+        VX_EDITOR_ERROR_STREAM("CMake configure failed\n"
+                               << configureOutput << '\n');
+        m_notificationManager.showError("Build failed: cmake configure error");
+        return;
+    }
+
+    if (!syncProjectCompileCommands(*project))
+        VX_EDITOR_WARNING_STREAM("Failed to sync compile_commands.json to project root\n");
+
+    std::string buildCommand = cmakeCommandToken + " --build " + quoteShellArgument(buildDirectory) + " --config Release";
+#if defined(__linux__)
+    buildCommand += " -j";
+#endif
+
+    const auto [buildResult, buildOutput] = FileHelper::executeCommand(buildCommand);
+    if (buildResult != 0)
+    {
+        VX_EDITOR_ERROR_STREAM("Project build failed\n"
+                               << buildOutput << '\n');
+        m_notificationManager.showError("Build failed");
+        return;
+    }
+
+    const auto moduleLibraryPath = findGameModuleLibraryPath(buildDirectory);
+    if (moduleLibraryPath.empty())
+    {
+        VX_EDITOR_ERROR_STREAM("Build succeeded but GameModule library was not found in " << buildDirectory << '\n');
+        m_notificationManager.showError("Build succeeded, but GameModule was not found");
+        return;
+    }
+
+    bool hasAttachedScriptComponents = false;
+    if (m_scene)
+    {
+        for (const auto &entity : m_scene->getEntities())
+        {
+            if (entity->getComponents<engine::ScriptComponent>().empty())
+                continue;
+
+            hasAttachedScriptComponents = true;
+            break;
+        }
+    }
+
+    if (project->projectLibrary && hasAttachedScriptComponents)
+    {
+        VX_EDITOR_WARNING_STREAM("Skipping module reload because script components are attached in current scene\n");
+        m_notificationManager.showWarning("Build done. Stop Play/remove scripts to reload module.");
+        return;
+    }
+
+    if (project->projectLibrary)
+    {
+        engine::PluginLoader::closeLibrary(project->projectLibrary);
+        project->projectLibrary = nullptr;
+        setProjectScriptsRegister(nullptr, {});
+    }
+
+    project->projectLibrary = engine::PluginLoader::loadLibrary(moduleLibraryPath.string());
+    if (!project->projectLibrary)
+    {
+        setProjectScriptsRegister(nullptr, {});
+        VX_EDITOR_ERROR_STREAM("Failed to load game module: " << moduleLibraryPath << '\n');
+        m_notificationManager.showError("Build done, but failed to load module");
+        return;
+    }
+
+    auto getScriptsRegisterFunction = engine::PluginLoader::getFunction<engine::ScriptsRegister &(*)()>("getScriptsRegister", project->projectLibrary);
+    if (!getScriptsRegisterFunction)
+    {
+        engine::PluginLoader::closeLibrary(project->projectLibrary);
+        project->projectLibrary = nullptr;
+
+        setProjectScriptsRegister(nullptr, {});
+
+        VX_EDITOR_ERROR_STREAM("Module loaded but getScriptsRegister was not found: " << moduleLibraryPath << '\n');
+        m_notificationManager.showError("Module loaded, but script register function is missing");
+        return;
+    }
+
+    setProjectScriptsRegister(&getScriptsRegisterFunction(), moduleLibraryPath.string());
+
+    const std::size_t scriptsCount = m_projectScriptsRegister->getScripts().size();
+    VX_EDITOR_INFO_STREAM("Loaded " << scriptsCount << " script(s) from " << m_loadedGameModulePath << '\n');
+    m_notificationManager.showSuccess("Build done. Loaded scripts: " + std::to_string(scriptsCount));
 }
 
 void Editor::exportCurrentProjectPacket()
@@ -3210,7 +3434,7 @@ void Editor::exportCurrentProjectPacket()
 void Editor::drawToolBar()
 {
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
-                                   ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
     static bool showBenchmark = false;
@@ -3218,139 +3442,138 @@ void Editor::drawToolBar()
     ImGuiWindowClass windowClass;
     windowClass.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoTabBar;
     ImGui::SetNextWindowClass(&windowClass);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 3.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
 
     ImGui::Begin("Toolbar", nullptr, windowFlags);
+    ImGui::SetCursorPosY(std::max(0.0f, (ImGui::GetWindowHeight() - ImGui::GetFrameHeight()) * 0.5f));
 
-    if (ImGui::BeginMenuBar())
+    // TODO make it better
+    const std::vector<std::string> selectionModes = {"Translate", "Rotate", "Scale"};
+    static int guizmoMode = 0;
+
+    switch (m_currentGuizmoOperation)
     {
-        // TODO make it better
-        const std::vector<std::string> selectionModes = {"Translate", "Rotate", "Scale"};
-        static int guizmoMode = 0;
-
-        switch (m_currentGuizmoOperation)
-        {
-        case GuizmoOperation::TRANSLATE:
-            guizmoMode = 0;
-            break;
-        case GuizmoOperation::ROTATE:
-            guizmoMode = 1;
-            break;
-        case GuizmoOperation::SCALE:
-            guizmoMode = 2;
-            break;
-        }
-
-        ImGui::PushItemWidth(120.0f);
-        // ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(50, 200));
-        if (ImGui::BeginCombo("##Selection mode", selectionModes[guizmoMode].c_str()))
-        {
-            for (int i = 0; i < selectionModes.size(); ++i)
-            {
-                const bool isSelected = (guizmoMode == i);
-
-                if (ImGui::Selectable(selectionModes[i].c_str(), isSelected))
-                {
-                    guizmoMode = i;
-
-                    if (guizmoMode == 0)
-                        m_currentGuizmoOperation = GuizmoOperation::TRANSLATE;
-                    else if (guizmoMode == 1)
-                        m_currentGuizmoOperation = GuizmoOperation::ROTATE;
-                    else if (guizmoMode == 2)
-                        m_currentGuizmoOperation = GuizmoOperation::SCALE;
-                }
-                if (isSelected)
-                    ImGui::SetItemDefaultFocus();
-            }
-
-            ImGui::EndCombo();
-        }
-
-        // ImGui::SameLine(200);
-        ImGui::SameLine();
-
-        const bool isPlaying = m_currentMode == EditorMode::PLAY;
-        const bool isPaused = m_currentMode == EditorMode::PAUSE;
-        const bool isEditing = m_currentMode == EditorMode::EDIT;
-
-        // Play / Pause button — green when in edit/pause, yellow when playing
-        if (isPlaying)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.55f, 0.00f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.68f, 0.00f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.60f, 0.45f, 0.00f, 1.00f));
-        }
-        else
-        {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.20f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.68f, 0.25f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.42f, 0.15f, 1.00f));
-        }
-
-        const char *playText = isPlaying ? "Pause" : "Play";
-        if (ImGui::Button(playText))
-        {
-            if (isEditing || isPaused)
-            {
-                if (isEditing && hasUnsavedSceneChanges())
-                {
-                    m_notificationManager.showWarning("Scene has unsaved changes. Save scene before Play.");
-                    VX_EDITOR_WARNING_STREAM("Blocked Play due to unsaved scene changes.\n");
-                }
-                else
-                {
-                    changeMode(EditorMode::PLAY);
-                }
-            }
-            else if (isPlaying)
-            {
-                changeMode(EditorMode::PAUSE);
-            }
-        }
-        ImGui::PopStyleColor(3);
-
-        ImGui::SameLine();
-
-        // Stop button — only colored red when not already in edit mode
-        if (!isEditing)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.12f, 0.10f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.15f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.48f, 0.08f, 0.07f, 1.00f));
-        }
-        if (ImGui::Button("Stop"))
-            changeMode(EditorMode::EDIT);
-        if (!isEditing)
-            ImGui::PopStyleColor(3);
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Render Settings"))
-            m_showRenderSettings = !m_showRenderSettings;
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Camera Settings"))
-            m_showEditorCameraSettings = !m_showEditorCameraSettings;
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Benchmark"))
-            m_showBenchmark = !m_showBenchmark;
-
-        ImGui::SameLine();
-
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.45f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.60f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.18f, 0.35f, 1.00f));
-        if (ImGui::Button("Dev Tools"))
-            m_showDevTools = !m_showDevTools;
-        ImGui::PopStyleColor(3);
-
-        ImGui::EndMenuBar();
+    case GuizmoOperation::TRANSLATE:
+        guizmoMode = 0;
+        break;
+    case GuizmoOperation::ROTATE:
+        guizmoMode = 1;
+        break;
+    case GuizmoOperation::SCALE:
+        guizmoMode = 2;
+        break;
     }
 
+    ImGui::PushItemWidth(120.0f);
+    if (ImGui::BeginCombo("##Selection mode", selectionModes[guizmoMode].c_str()))
+    {
+        for (int i = 0; i < selectionModes.size(); ++i)
+        {
+            const bool isSelected = (guizmoMode == i);
+
+            if (ImGui::Selectable(selectionModes[i].c_str(), isSelected))
+            {
+                guizmoMode = i;
+
+                if (guizmoMode == 0)
+                    m_currentGuizmoOperation = GuizmoOperation::TRANSLATE;
+                else if (guizmoMode == 1)
+                    m_currentGuizmoOperation = GuizmoOperation::ROTATE;
+                else if (guizmoMode == 2)
+                    m_currentGuizmoOperation = GuizmoOperation::SCALE;
+            }
+            if (isSelected)
+                ImGui::SetItemDefaultFocus();
+        }
+
+        ImGui::EndCombo();
+    }
+    ImGui::PopItemWidth();
+
+    ImGui::SameLine();
+
+    const bool isPlaying = m_currentMode == EditorMode::PLAY;
+    const bool isPaused = m_currentMode == EditorMode::PAUSE;
+    const bool isEditing = m_currentMode == EditorMode::EDIT;
+
+    // Play / Pause button — green when in edit/pause, yellow when playing
+    if (isPlaying)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.55f, 0.00f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.68f, 0.00f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.60f, 0.45f, 0.00f, 1.00f));
+    }
+    else
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.20f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.68f, 0.25f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.42f, 0.15f, 1.00f));
+    }
+
+    const char *playText = isPlaying ? "Pause" : "Play";
+    if (ImGui::Button(playText))
+    {
+        if (isEditing || isPaused)
+        {
+            if (isEditing && hasUnsavedSceneChanges())
+            {
+                m_notificationManager.showWarning("Scene has unsaved changes. Save scene before Play.");
+                VX_EDITOR_WARNING_STREAM("Blocked Play due to unsaved scene changes.\n");
+            }
+            else
+            {
+                changeMode(EditorMode::PLAY);
+            }
+        }
+        else if (isPlaying)
+        {
+            changeMode(EditorMode::PAUSE);
+        }
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::SameLine();
+
+    // Stop button — only colored red when not already in edit mode
+    if (!isEditing)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.12f, 0.10f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.15f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.48f, 0.08f, 0.07f, 1.00f));
+    }
+    if (ImGui::Button("Stop"))
+        changeMode(EditorMode::EDIT);
+    if (!isEditing)
+        ImGui::PopStyleColor(3);
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Render Settings"))
+        m_showRenderSettings = !m_showRenderSettings;
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Camera Settings"))
+        m_showEditorCameraSettings = !m_showEditorCameraSettings;
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Benchmark"))
+        m_showBenchmark = !m_showBenchmark;
+
+    ImGui::SameLine();
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.45f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.60f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.18f, 0.35f, 1.00f));
+    if (ImGui::Button("Dev Tools"))
+        m_showDevTools = !m_showDevTools;
+    ImGui::PopStyleColor(3);
+
     ImGui::End();
+    ImGui::PopStyleVar(3);
 }
 
 void Editor::drawRenderSettings()
@@ -3368,6 +3591,7 @@ void Editor::drawRenderSettings()
     }
 
     auto &settings = engine::RenderQualitySettings::getInstance();
+    auto &engineConfig = engine::EngineConfig::instance();
     const size_t settingsHashBefore = hashRenderQualitySettings(settings);
 
     ImGui::SeparatorText("General");
@@ -3380,6 +3604,29 @@ void Editor::drawRenderSettings()
 
     ImGui::DragFloat("Texture Mip Bias", &settings.textureMipBias, 0.05f, -4.0f, 0.0f, "%.2f");
     ImGui::SetItemTooltip("Negative = sharper textures at distance (higher-res mips, more bandwidth).\nPositive = blurrier (lower-res mips, less bandwidth).\nRange: [-4, 0]. Default: -1.5.");
+
+    ImGui::SeparatorText("Editor");
+    bool sceneAutosaveEnabled = engineConfig.getSceneAutosaveEnabled();
+    if (ImGui::Checkbox("Scene Autosave", &sceneAutosaveEnabled))
+    {
+        engineConfig.setSceneAutosaveEnabled(sceneAutosaveEnabled);
+        resetSceneAutosaveTimer();
+        if (!engineConfig.save())
+            VX_EDITOR_WARNING_STREAM("Failed to persist scene autosave setting to engine config\n");
+    }
+    ImGui::SetItemTooltip("Automatically saves the current scene file while in Edit mode.");
+
+    float sceneAutosaveIntervalMinutes = engineConfig.getSceneAutosaveIntervalMinutes();
+    ImGui::BeginDisabled(!sceneAutosaveEnabled);
+    if (ImGui::DragFloat("Autosave Interval (min)", &sceneAutosaveIntervalMinutes, 0.25f, 0.25f, 120.0f, "%.2f"))
+    {
+        engineConfig.setSceneAutosaveIntervalMinutes(sceneAutosaveIntervalMinutes);
+        resetSceneAutosaveTimer();
+        if (!engineConfig.save())
+            VX_EDITOR_WARNING_STREAM("Failed to persist scene autosave interval to engine config\n");
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Time between autosaves in minutes.");
 
     ImGui::SeparatorText("Culling");
     ImGui::Checkbox("Small Feature Culling", &settings.enableSmallFeatureCulling);
@@ -3859,8 +4106,12 @@ void Editor::drawBottomPanel()
     ImGuiWindowClass windowClass;
     windowClass.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoTabBar;
     ImGui::SetNextWindowClass(&windowClass);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 3.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
 
     ImGui::Begin("BottomPanel", nullptr, flags);
+    ImGui::SetCursorPosY(std::max(0.0f, (ImGui::GetWindowHeight() - ImGui::GetFrameHeight()) * 0.5f));
 
     if (ImGui::Button("Assets"))
         m_showAssetsWindow = !m_showAssetsWindow;
@@ -3880,6 +4131,303 @@ void Editor::drawBottomPanel()
     if (ImGui::Button("Terrain Tools"))
         m_showTerrainTools = !m_showTerrainTools;
 
+    ImGui::SameLine();
+
+    if (ImGui::Button("Hierarchy"))
+        setRightSidebarPanelVisible(RightSidebarPanelId::Hierarchy, !m_showHierarchyPanel);
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Details"))
+        setRightSidebarPanelVisible(RightSidebarPanelId::Details, !m_showDetailsPanel);
+
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+}
+
+bool Editor::hasVisibleRightSidebarPanels() const
+{
+    return m_showHierarchyPanel || m_showDetailsPanel;
+}
+
+void Editor::persistRightSidebarSettings() const
+{
+    auto &engineConfig = engine::EngineConfig::instance();
+    engineConfig.setShowHierarchyPanel(m_showHierarchyPanel);
+    engineConfig.setShowDetailsPanel(m_showDetailsPanel);
+    engineConfig.setRightSidebarSplitRatio(m_rightSidebarSplitRatio);
+
+    if (!engineConfig.save())
+        VX_EDITOR_WARNING_STREAM("Failed to persist right sidebar settings to engine config\n");
+}
+
+void Editor::setRightSidebarPanelVisible(RightSidebarPanelId panelId, bool visible)
+{
+    const bool hadVisiblePanels = hasVisibleRightSidebarPanels();
+    bool *panelVisibility = nullptr;
+
+    switch (panelId)
+    {
+    case RightSidebarPanelId::Hierarchy:
+        panelVisibility = &m_showHierarchyPanel;
+        break;
+    case RightSidebarPanelId::Details:
+        panelVisibility = &m_showDetailsPanel;
+        break;
+    }
+
+    if (!panelVisibility || *panelVisibility == visible)
+        return;
+
+    *panelVisibility = visible;
+    persistRightSidebarSettings();
+
+    if (hadVisiblePanels != hasVisibleRightSidebarPanels())
+        reinitDocking();
+}
+
+void Editor::setRightSidebarSplitRatio(float ratio)
+{
+    const float clampedRatio = std::clamp(ratio, 0.1f, 0.9f);
+    if (std::abs(m_rightSidebarSplitRatio - clampedRatio) < 0.001f)
+        return;
+
+    m_rightSidebarSplitRatio = clampedRatio;
+    persistRightSidebarSettings();
+}
+
+void Editor::drawRightSidebar()
+{
+    if (!hasVisibleRightSidebarPanels())
+        return;
+
+    struct RightSidebarPanelDescriptor
+    {
+        RightSidebarPanelId id;
+        const char *label{nullptr};
+        bool *visible{nullptr};
+        std::function<void()> drawContents;
+        std::function<void(ImDrawList *, const ImVec2 &, const ImVec2 &, ImU32)> drawIcon;
+    };
+
+    const auto drawHierarchyGlyph = [](ImDrawList *drawList, const ImVec2 &origin, const ImVec2 &size, ImU32 color)
+    {
+        const float left = origin.x + size.x * 0.26f;
+        const float right = origin.x + size.x * 0.76f;
+        const float top = origin.y + size.y * 0.26f;
+        const float spacing = size.y * 0.24f;
+        const float nodeRadius = std::max(1.5f, size.x * 0.055f);
+        const float thickness = std::max(1.5f, size.x * 0.065f);
+
+        for (int rowIndex = 0; rowIndex < 3; ++rowIndex)
+        {
+            const float y = top + spacing * static_cast<float>(rowIndex);
+            drawList->AddCircleFilled(ImVec2(left, y), nodeRadius, color);
+            drawList->AddLine(ImVec2(left + size.x * 0.09f, y), ImVec2(right, y), color, thickness);
+        }
+
+        drawList->AddLine(ImVec2(left, top), ImVec2(left, top + spacing * 2.0f), color, thickness * 0.9f);
+    };
+
+    const auto drawDetailsGlyph = [](ImDrawList *drawList, const ImVec2 &origin, const ImVec2 &size, ImU32 color)
+    {
+        const float left = origin.x + size.x * 0.22f;
+        const float right = origin.x + size.x * 0.78f;
+        const float top = origin.y + size.y * 0.28f;
+        const float spacing = size.y * 0.22f;
+        const float thickness = std::max(1.5f, size.x * 0.065f);
+        const float knobRadius = std::max(2.0f, size.x * 0.08f);
+        const std::array<float, 3> knobFractions = {0.35f, 0.68f, 0.50f};
+
+        for (size_t rowIndex = 0; rowIndex < knobFractions.size(); ++rowIndex)
+        {
+            const float y = top + spacing * static_cast<float>(rowIndex);
+            const float knobX = left + (right - left) * knobFractions[rowIndex];
+
+            drawList->AddLine(ImVec2(left, y), ImVec2(right, y), color, thickness);
+            drawList->AddCircleFilled(ImVec2(knobX, y), knobRadius, color);
+        }
+    };
+
+    const std::array<RightSidebarPanelDescriptor, 2> panels = {{
+        {RightSidebarPanelId::Hierarchy,
+         "Hierarchy",
+         &m_showHierarchyPanel,
+         [this]()
+         { m_hierarchyPanel.drawContents(); },
+         drawHierarchyGlyph},
+        {RightSidebarPanelId::Details,
+         "Details",
+         &m_showDetailsPanel,
+         [this]()
+         { m_detailsPanel.drawContents(*this); },
+         drawDetailsGlyph},
+    }};
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    const bool isWindowOpen = ImGui::Begin("Right Sidebar", nullptr, flags);
+    ImGui::PopStyleVar();
+
+    if (!isWindowOpen)
+    {
+        ImGui::End();
+        return;
+    }
+
+    const ImVec2 availableSize = ImGui::GetContentRegionAvail();
+    if (availableSize.x <= 0.0f || availableSize.y <= 0.0f)
+    {
+        ImGui::End();
+        return;
+    }
+
+    const float railWidth = 44.0f;
+    const float contentWidth = std::max(0.0f, availableSize.x - railWidth);
+    const float startCursorX = ImGui::GetCursorPosX();
+    const float startCursorY = ImGui::GetCursorPosY();
+
+    if (contentWidth > 1.0f)
+    {
+        if (ImGui::BeginChild("RightSidebarContent", ImVec2(contentWidth, 0.0f), false, ImGuiWindowFlags_NoScrollbar))
+        {
+            std::vector<const RightSidebarPanelDescriptor *> visiblePanels;
+            visiblePanels.reserve(panels.size());
+            for (const auto &panel : panels)
+            {
+                if (panel.visible && *panel.visible)
+                    visiblePanels.push_back(&panel);
+            }
+
+            const auto drawSidebarSection = [](const RightSidebarPanelDescriptor &panel, const char *sectionId, const char *bodyId, float height)
+            {
+                if (!ImGui::BeginChild(sectionId, ImVec2(0.0f, height), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+                {
+                    ImGui::EndChild();
+                    return;
+                }
+
+                ImGui::TextUnformatted(panel.label);
+                ImGui::Separator();
+
+                if (ImGui::BeginChild(bodyId, ImVec2(0.0f, 0.0f), false))
+                    panel.drawContents();
+                ImGui::EndChild();
+                ImGui::EndChild();
+            };
+
+            if (visiblePanels.size() == 1)
+            {
+                drawSidebarSection(*visiblePanels.front(), "RightSidebarSingleSection", "RightSidebarSingleSectionBody", 0.0f);
+            }
+            else if (visiblePanels.size() == 2)
+            {
+                const float splitterHeight = 6.0f;
+                const float sectionSpacingY = ImGui::GetStyle().ItemSpacing.y * 2.0f;
+                const float totalSectionHeight = std::max(0.0f, ImGui::GetContentRegionAvail().y - splitterHeight - sectionSpacingY);
+                const float minSectionHeight = 120.0f;
+
+                float topHeight = totalSectionHeight * m_rightSidebarSplitRatio;
+                if (totalSectionHeight >= minSectionHeight * 2.0f)
+                    topHeight = std::clamp(topHeight, minSectionHeight, totalSectionHeight - minSectionHeight);
+                else
+                    topHeight = std::clamp(topHeight, 0.0f, totalSectionHeight);
+
+                float bottomHeight = std::max(0.0f, totalSectionHeight - topHeight);
+
+                drawSidebarSection(*visiblePanels[0], "RightSidebarTopSection", "RightSidebarTopSectionBody", topHeight);
+
+                const ImVec2 splitterSize(ImGui::GetContentRegionAvail().x, splitterHeight);
+                const ImVec2 splitterMin = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##RightSidebarSplitter", splitterSize);
+
+                if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+
+                if (ImGui::IsItemActive() && totalSectionHeight > 0.0f)
+                {
+                    float adjustedTopHeight = topHeight + ImGui::GetIO().MouseDelta.y;
+                    if (totalSectionHeight >= minSectionHeight * 2.0f)
+                        adjustedTopHeight = std::clamp(adjustedTopHeight, minSectionHeight, totalSectionHeight - minSectionHeight);
+                    else
+                        adjustedTopHeight = std::clamp(adjustedTopHeight, 0.0f, totalSectionHeight);
+
+                    setRightSidebarSplitRatio(adjustedTopHeight / totalSectionHeight);
+                    bottomHeight = std::max(0.0f, totalSectionHeight - adjustedTopHeight);
+                }
+
+                const ImU32 splitterColor = ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_SeparatorActive
+                                                                                      : (ImGui::IsItemHovered() ? ImGuiCol_SeparatorHovered : ImGuiCol_Border));
+                ImGui::GetWindowDrawList()->AddRectFilled(splitterMin,
+                                                          ImVec2(splitterMin.x + splitterSize.x, splitterMin.y + splitterSize.y),
+                                                          splitterColor,
+                                                          splitterHeight * 0.5f);
+
+                drawSidebarSection(*visiblePanels[1], "RightSidebarBottomSection", "RightSidebarBottomSectionBody", bottomHeight);
+            }
+        }
+
+        ImGui::EndChild();
+    }
+
+    if (contentWidth > 1.0f)
+    {
+        ImGui::SameLine(0.0f, 0.0f);
+    }
+    else
+    {
+        ImGui::SetCursorPosX(startCursorX + std::max(0.0f, availableSize.x - railWidth));
+        ImGui::SetCursorPosY(startCursorY);
+    }
+
+    if (ImGui::BeginChild("RightSidebarRail",
+                          ImVec2(railWidth, 0.0f),
+                          true,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+    {
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        const float buttonSize = railWidth - 10.0f;
+        const float buttonRounding = 6.0f;
+
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
+        for (const auto &panel : panels)
+        {
+            ImGui::SetCursorPosX((railWidth - buttonSize) * 0.5f);
+            ImGui::PushID(panel.label);
+
+            const ImVec2 buttonMin = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##Toggle", ImVec2(buttonSize, buttonSize));
+
+            if (ImGui::IsItemClicked())
+                setRightSidebarPanelVisible(panel.id, !*panel.visible);
+
+            const bool hovered = ImGui::IsItemHovered();
+            const bool active = *panel.visible;
+            const ImU32 backgroundColor = active ? ImGui::GetColorU32(hovered ? ImGuiCol_ButtonHovered : ImGuiCol_ButtonActive)
+                                                 : (hovered ? ImGui::GetColorU32(ImGuiCol_ButtonHovered) : 0u);
+            if (backgroundColor != 0u)
+            {
+                drawList->AddRectFilled(buttonMin,
+                                        ImVec2(buttonMin.x + buttonSize, buttonMin.y + buttonSize),
+                                        backgroundColor,
+                                        buttonRounding);
+            }
+
+            const ImU32 iconColor = active || hovered ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+            panel.drawIcon(drawList, buttonMin, ImVec2(buttonSize, buttonSize), iconColor);
+
+            if (hovered)
+                ImGui::SetTooltip("%s", panel.label);
+
+            ImGui::PopID();
+
+            if (&panel != &panels.back())
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+        }
+    }
+    ImGui::EndChild();
+
     ImGui::End();
 }
 
@@ -3887,6 +4435,8 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
                        VkDescriptorSet gameViewportDescriptorSet,
                        bool hasGameCamera)
 {
+    updateSceneAutosave(ImGui::GetIO().DeltaTime);
+
     if (m_renderOnlyViewport && viewportDescriptorSet)
     {
         drawViewport(viewportDescriptorSet);
@@ -3908,13 +4458,13 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     drawGameViewport(gameViewportDescriptorSet, hasGameCamera);
 
     drawMaterialEditors();
+    drawAnimationTreePanels();
 
     drawDocument();
     drawAssets();
-    drawTerminal();
+    m_terminalPanel.draw(&m_showTerminal);
     drawBottomPanel();
-    drawHierarchy();
-    drawDetails();
+    drawRightSidebar();
     drawUITools();
     drawTerrainTools();
     drawEditorCameraSettings();
@@ -3927,6 +4477,9 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
 
 void Editor::updateAnimationPreview(float deltaTime)
 {
+    if (m_animationTreePanel)
+        m_animationTreePanel->update(deltaTime);
+
     if (!m_scene || m_currentMode != EditorMode::EDIT)
         return;
 
@@ -3998,6 +4551,27 @@ void Editor::drawMaterialEditors()
 
     m_materialEditor->setCenterDockId(m_centerDockId);
     m_materialEditor->draw();
+}
+
+void Editor::drawAnimationTreePanels()
+{
+    if (!m_animationTreePanel)
+        return;
+
+    m_animationTreePanel->setCenterDockId(m_centerDockId);
+    m_animationTreePanel->draw();
+}
+
+void Editor::setAnimTreePreviewDescriptorSet(VkDescriptorSet ds)
+{
+    if (m_animationTreePanel)
+        m_animationTreePanel->setPreviewDescriptorSet(ds);
+}
+
+void Editor::setAnimTreePreviewPass(AnimationTreePreviewPass *pass)
+{
+    if (m_animationTreePanel)
+        m_animationTreePanel->setPreviewPass(pass);
 }
 
 void Editor::drawDocument()
@@ -4287,6 +4861,7 @@ void Editor::setSelectedEntity(engine::Entity *entity)
     }
 
     m_selectedEntity = entity;
+    m_hierarchyPanel.setSelectedEntity(m_selectedEntity);
 
     if (m_selectedEntity)
     {
@@ -4381,18 +4956,22 @@ void Editor::handleInput()
     if (isCtrlDown && !shortcutBlockedByTextInput && ImGui::IsKeyPressed(ImGuiKey_V, false))
         performPasteAction();
 
-    bool sceneMutated = false;
-
     if (!assetsWindowConsumesDelete && ImGui::IsKeyPressed(ImGuiKey_Delete) && m_selectedEntity && m_scene && m_currentMode == EditorMode::EDIT)
     {
-        if (m_scene->destroyEntity(m_selectedEntity))
+        auto deleteCommand = actions::DeleteEntityCommand::capture(*m_scene, *m_selectedEntity, "Delete entity");
+        if (deleteCommand && executeEditorCommand(std::move(deleteCommand)))
         {
             setSelectedEntity(nullptr);
-            sceneMutated = true;
+            clearSelectedUIElement();
+            m_hasPendingObjectPick = false;
+            invalidateModelDetailsCache();
         }
     }
     else if (!assetsWindowConsumesDelete && ImGui::IsKeyPressed(ImGuiKey_Delete) && m_hasSelectedUIElement && m_scene && m_currentMode == EditorMode::EDIT)
     {
+        std::string beforeUIState;
+        m_scene->serializeUIState(beforeUIState);
+
         const auto &texts = m_scene->getUITexts();
         const auto &buttons = m_scene->getUIButtons();
         const auto &billboards = m_scene->getBillboards();
@@ -4429,12 +5008,16 @@ void Editor::handleInput()
         if (removedElement)
         {
             clearSelectedUIElement();
-            sceneMutated = true;
+
+            std::string afterUIState;
+            m_scene->serializeUIState(afterUIState);
+            recordExecutedEditorCommand(std::make_unique<actions::UIStateCommand>(
+                m_scene.get(),
+                std::move(beforeUIState),
+                std::move(afterUIState),
+                "Delete UI element"));
         }
     }
-
-    if (sceneMutated)
-        captureSceneActionSnapshot("Delete");
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape))
     {
@@ -4460,22 +5043,52 @@ void Editor::handleInput()
     }
 }
 
-void Editor::resetSceneActionHistory()
+void Editor::resetCommandHistory()
 {
-    if (!m_scene)
-        return;
-
-    if (!m_sceneActionHistory.reset(*m_scene, "Initial state"))
-        VX_EDITOR_WARNING_STREAM("Failed to initialize scene action history.\n");
+    m_commandHistory.clear();
 }
 
-void Editor::captureSceneActionSnapshot(const std::string &label)
+bool Editor::executeEditorCommand(std::unique_ptr<actions::IEditorCommand> command)
 {
-    if (!m_scene || m_currentMode != EditorMode::EDIT)
-        return;
+    if (!command)
+        return false;
 
-    if (!m_sceneActionHistory.capture(*m_scene, label))
-        VX_EDITOR_WARNING_STREAM("Failed to capture scene action snapshot: " << label << '\n');
+    if (!m_commandHistory.execute(std::move(command)))
+    {
+        VX_EDITOR_WARNING_STREAM("Failed to execute editor command.\n");
+        return false;
+    }
+
+    return true;
+}
+
+bool Editor::recordExecutedEditorCommand(std::unique_ptr<actions::IEditorCommand> command)
+{
+    if (!command)
+        return false;
+
+    if (!m_commandHistory.recordExecuted(std::move(command)))
+    {
+        VX_EDITOR_WARNING_STREAM("Failed to record executed editor command.\n");
+        return false;
+    }
+
+    return true;
+}
+
+bool Editor::recordCreatedEntityCommand(engine::Entity *entity, const std::string &label)
+{
+    if (!m_scene || !entity || m_currentMode != EditorMode::EDIT)
+        return false;
+
+    auto createCommand = actions::CreateEntityCommand::capture(*m_scene, *entity, label);
+    if (!createCommand)
+    {
+        VX_EDITOR_WARNING_STREAM("Failed to capture create-entity command for '" << label << "'.\n");
+        return false;
+    }
+
+    return recordExecutedEditorCommand(std::move(createCommand));
 }
 
 bool Editor::performUndoAction()
@@ -4488,13 +5101,13 @@ bool Editor::performUndoAction()
         return false;
     }
 
-    if (!m_sceneActionHistory.canUndo())
+    if (!m_commandHistory.canUndo())
     {
         m_notificationManager.showWarning("Nothing to undo");
         return false;
     }
 
-    if (!m_sceneActionHistory.undo(*m_scene))
+    if (!m_commandHistory.undo())
     {
         m_notificationManager.showError("Undo failed");
         return false;
@@ -4519,13 +5132,13 @@ bool Editor::performRedoAction()
         return false;
     }
 
-    if (!m_sceneActionHistory.canRedo())
+    if (!m_commandHistory.canRedo())
     {
         m_notificationManager.showWarning("Nothing to redo");
         return false;
     }
 
-    if (!m_sceneActionHistory.redo(*m_scene))
+    if (!m_commandHistory.redo())
     {
         m_notificationManager.showError("Redo failed");
         return false;
@@ -4590,9 +5203,18 @@ bool Editor::performPasteAction()
         setSelectedEntity(pastedEntity);
 
     invalidateModelDetailsCache();
-    captureSceneActionSnapshot("Paste entity");
+    if (engine::Entity *pastedEntity = m_scene->getEntityById(newEntityId))
+        recordCreatedEntityCommand(pastedEntity, "Paste entity");
     m_notificationManager.showSuccess("Pasted entity");
     return true;
+}
+
+void Editor::openAnimationTreeEditor(const std::filesystem::path &path,
+                                      engine::AnimatorComponent     *animator,
+                                      engine::SkeletalMeshComponent *skeletalMesh)
+{
+    if (m_animationTreePanel)
+        m_animationTreePanel->openTree(path, animator, skeletalMesh);
 }
 
 void Editor::openMaterialEditor(const std::filesystem::path &path)
@@ -4704,6 +5326,80 @@ bool Editor::saveMaterialToDisk(const std::filesystem::path &path, const engine:
     if (!cpuMaterial.customShaderHash.empty())
         json["custom_shader_hash"] = cpuMaterial.customShaderHash;
 
+    if (!cpuMaterial.noiseNodes.empty())
+    {
+        nlohmann::json nodesArr = nlohmann::json::array();
+        for (const auto &n : cpuMaterial.noiseNodes)
+        {
+            nlohmann::json entry;
+            switch (n.type)
+            {
+            case engine::CPUMaterial::NoiseNodeParams::Type::Value:
+                entry["type"] = "Value";
+                break;
+            case engine::CPUMaterial::NoiseNodeParams::Type::Gradient:
+                entry["type"] = "Gradient";
+                break;
+            case engine::CPUMaterial::NoiseNodeParams::Type::FBM:
+                entry["type"] = "FBM";
+                break;
+            case engine::CPUMaterial::NoiseNodeParams::Type::Voronoi:
+                entry["type"] = "Voronoi";
+                break;
+            }
+            switch (n.blendMode)
+            {
+            case engine::CPUMaterial::NoiseNodeParams::BlendMode::Replace:
+                entry["blend_mode"] = "Replace";
+                break;
+            case engine::CPUMaterial::NoiseNodeParams::BlendMode::Multiply:
+                entry["blend_mode"] = "Multiply";
+                break;
+            case engine::CPUMaterial::NoiseNodeParams::BlendMode::Add:
+                entry["blend_mode"] = "Add";
+                break;
+            }
+            entry["scale"] = n.scale;
+            entry["octaves"] = n.octaves;
+            entry["persistence"] = n.persistence;
+            entry["lacunarity"] = n.lacunarity;
+            entry["world_space"] = n.worldSpace;
+            entry["active"] = n.active;
+            entry["target"] = n.targetSlot;
+            entry["ramp_a"] = {n.rampColorA.r, n.rampColorA.g, n.rampColorA.b};
+            entry["ramp_b"] = {n.rampColorB.r, n.rampColorB.g, n.rampColorB.b};
+            nodesArr.push_back(entry);
+        }
+        json["noise_nodes"] = nodesArr;
+    }
+
+    if (!cpuMaterial.colorNodes.empty())
+    {
+        nlohmann::json nodesArr = nlohmann::json::array();
+        for (const auto &n : cpuMaterial.colorNodes)
+        {
+            nlohmann::json entry;
+            switch (n.blendMode)
+            {
+            case engine::CPUMaterial::ColorNodeParams::BlendMode::Replace:
+                entry["blend_mode"] = "Replace";
+                break;
+            case engine::CPUMaterial::ColorNodeParams::BlendMode::Multiply:
+                entry["blend_mode"] = "Multiply";
+                break;
+            case engine::CPUMaterial::ColorNodeParams::BlendMode::Add:
+                entry["blend_mode"] = "Add";
+                break;
+            }
+            entry["active"] = n.active;
+            entry["target"] = n.targetSlot;
+            entry["color"] = {n.color.r, n.color.g, n.color.b};
+            entry["strength"] = n.strength;
+            nodesArr.push_back(entry);
+        }
+        json["color_nodes"] = nodesArr;
+    }
+
     std::ofstream file(path);
     if (!file.is_open())
     {
@@ -4748,6 +5444,25 @@ bool Editor::reloadMaterialFromDisk(const std::filesystem::path &path)
     record.path = normalizedMaterialPath;
     record.cpuData = cpuMaterial;
 
+    auto applyCustomShaderPath = [&](engine::Material::SharedPtr &material)
+    {
+        if (!material)
+            return;
+
+        if (!cpuMaterial.customShaderHash.empty())
+        {
+            const std::string customShaderPath = "./resources/shaders/material_cache/" + cpuMaterial.customShaderHash + ".spv";
+            std::error_code existsError;
+            if (std::filesystem::exists(customShaderPath, existsError) && !existsError)
+            {
+                material->setCustomFragPath(customShaderPath);
+                return;
+            }
+        }
+
+        material->setCustomFragPath("");
+    };
+
     if (!record.gpu)
         record.gpu = engine::Material::create(ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color));
 
@@ -4770,6 +5485,7 @@ bool Editor::reloadMaterialFromDisk(const std::filesystem::path &path)
     record.gpu->setUVScale(cpuMaterial.uvScale);
     record.gpu->setUVOffset(cpuMaterial.uvOffset);
     record.gpu->setUVRotation(cpuMaterial.uvRotation);
+    applyCustomShaderPath(record.gpu);
 
     record.texture = ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color);
 
@@ -4809,6 +5525,25 @@ engine::Material::SharedPtr Editor::ensureMaterialLoaded(const std::string &mate
         record.path = normalizedMaterialPath;
         record.cpuData = cpuMaterial;
 
+        auto applyCustomShaderPath = [&](engine::Material::SharedPtr &material)
+        {
+            if (!material)
+                return;
+
+            if (!cpuMaterial.customShaderHash.empty())
+            {
+                const std::string customShaderPath = "./resources/shaders/material_cache/" + cpuMaterial.customShaderHash + ".spv";
+                std::error_code existsError;
+                if (std::filesystem::exists(customShaderPath, existsError) && !existsError)
+                {
+                    material->setCustomFragPath(customShaderPath);
+                    return;
+                }
+            }
+
+            material->setCustomFragPath("");
+        };
+
         if (!record.gpu)
             record.gpu = engine::Material::create(ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color));
         if (!record.gpu)
@@ -4830,6 +5565,7 @@ engine::Material::SharedPtr Editor::ensureMaterialLoaded(const std::string &mate
         record.gpu->setUVScale(cpuMaterial.uvScale);
         record.gpu->setUVOffset(cpuMaterial.uvOffset);
         record.gpu->setUVRotation(cpuMaterial.uvRotation);
+        applyCustomShaderPath(record.gpu);
 
         record.texture = ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color);
         return record.gpu;
@@ -5330,562 +6066,6 @@ bool Editor::exportModelMaterials(const std::filesystem::path &modelPath,
     return true;
 }
 
-void Editor::drawAssetDetails()
-{
-    if (m_selectedAssetPath.empty())
-    {
-        ImGui::TextUnformatted("Select an object or asset to view details");
-        return;
-    }
-
-    if (!std::filesystem::exists(m_selectedAssetPath))
-    {
-        ImGui::TextDisabled("Selected asset no longer exists");
-        if (ImGui::Button("Clear Asset Selection"))
-        {
-            m_selectedAssetPath.clear();
-            invalidateModelDetailsCache();
-        }
-        return;
-    }
-
-    auto project = m_currentProject.lock();
-    const std::filesystem::path projectRoot = project ? std::filesystem::path(project->fullPath) : std::filesystem::path{};
-    const std::filesystem::path assetPath = m_selectedAssetPath;
-    const bool isDirectory = std::filesystem::is_directory(assetPath);
-    const std::string extensionLower = toLowerCopy(assetPath.extension().string());
-
-    ImGui::Text("Name: %s", assetPath.filename().string().c_str());
-    ImGui::Text("Type: %s", isDirectory ? "Folder" : extensionLower.c_str());
-    ImGui::TextWrapped("Path: %s", assetPath.string().c_str());
-
-    if (!projectRoot.empty() && isPathWithinRoot(assetPath, projectRoot))
-    {
-        const std::string relativePath = toProjectRelativePathIfPossible(assetPath, projectRoot);
-        ImGui::TextWrapped("Project path: %s", relativePath.c_str());
-    }
-
-    if (!isDirectory)
-    {
-        std::error_code fileSizeError;
-        const auto fileSize = std::filesystem::file_size(assetPath, fileSizeError);
-        if (!fileSizeError)
-            ImGui::Text("File size: %.2f MB", static_cast<double>(fileSize) / (1024.0 * 1024.0));
-    }
-
-    if (isDirectory)
-    {
-        size_t entriesCount = 0;
-        std::error_code iteratorError;
-        for (std::filesystem::directory_iterator iterator(assetPath, iteratorError); !iteratorError && iterator != std::filesystem::directory_iterator(); iterator.increment(iteratorError))
-            ++entriesCount;
-
-        ImGui::Text("Entries: %zu", entriesCount);
-        return;
-    }
-
-    if (extensionLower == ".elixmat")
-    {
-        if (ImGui::Button("Open Material Editor"))
-            openMaterialEditor(assetPath);
-
-        auto materialAsset = engine::AssetsLoader::loadMaterial(assetPath.string());
-        if (!materialAsset.has_value())
-        {
-            ImGui::Separator();
-            ImGui::TextDisabled("Failed to parse material file");
-            return;
-        }
-
-        const auto &material = materialAsset.value().material;
-        ImGui::Separator();
-        const std::string materialName = material.name.empty() ? assetPath.stem().string() : material.name;
-        ImGui::Text("Material: %s", materialName.c_str());
-        ImGui::TextWrapped("Albedo: %s", makeTextureAssetDisplayName(material.albedoTexture).c_str());
-        ImGui::TextWrapped("Normal: %s", makeTextureAssetDisplayName(material.normalTexture).c_str());
-        ImGui::TextWrapped("ORM: %s", makeTextureAssetDisplayName(material.ormTexture).c_str());
-        ImGui::TextWrapped("Emissive: %s", makeTextureAssetDisplayName(material.emissiveTexture).c_str());
-        return;
-    }
-
-    if (isTextureAssetPath(assetPath))
-    {
-        ImGui::Separator();
-        ImGui::Text("Texture format: %s", extensionLower.c_str());
-        ImGui::TextWrapped("Use drag-and-drop into material slots to assign this texture.");
-        return;
-    }
-
-    if (isScriptAssetPath(assetPath) || isEditableTextPath(assetPath))
-    {
-        ImGui::Separator();
-        ImGui::TextUnformatted("Script / text asset");
-        if (ImGui::Button("Open In Text Editor"))
-            openTextDocument(assetPath);
-        return;
-    }
-
-    if (!isModelAssetPath(assetPath))
-        return;
-
-    const engine::ModelAsset *modelAsset = ensureModelAssetLoaded(assetPath.string());
-    ImGui::Separator();
-    ImGui::TextUnformatted("Model Import");
-
-    if (!modelAsset)
-    {
-        ImGui::TextDisabled("Failed to load model metadata");
-        if (ImGui::Button("Retry"))
-        {
-            ensureModelAssetLoaded(assetPath.string());
-            invalidateModelDetailsCache();
-        }
-        return;
-    }
-
-    const std::filesystem::path modelDirectory = assetPath.parent_path();
-
-    if (m_lastModelDetailsAssetPath != assetPath)
-    {
-        m_lastModelDetailsAssetPath = assetPath;
-        invalidateModelDetailsCache();
-
-        const std::filesystem::path defaultExportPath = assetPath.parent_path() / (assetPath.stem().string() + "_Materials");
-        std::memset(m_modelMaterialsExportDirectory, 0, sizeof(m_modelMaterialsExportDirectory));
-        std::strncpy(m_modelMaterialsExportDirectory, defaultExportPath.string().c_str(), sizeof(m_modelMaterialsExportDirectory) - 1);
-
-        std::memset(m_modelMaterialsTextureSearchDirectory, 0, sizeof(m_modelMaterialsTextureSearchDirectory));
-        std::strncpy(m_modelMaterialsTextureSearchDirectory, assetPath.parent_path().string().c_str(), sizeof(m_modelMaterialsTextureSearchDirectory) - 1);
-
-        m_modelTextureManualOverrides.clear();
-        m_selectedUnresolvedTexturePath.clear();
-        std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
-    }
-
-    std::filesystem::path textureSearchDirectory = std::filesystem::path(m_modelMaterialsTextureSearchDirectory);
-    if (!textureSearchDirectory.empty())
-    {
-        if (textureSearchDirectory.is_relative() && !projectRoot.empty())
-            textureSearchDirectory = projectRoot / textureSearchDirectory;
-
-        textureSearchDirectory = makeAbsoluteNormalized(textureSearchDirectory);
-    }
-
-    if (m_modelDetailsCacheDirty ||
-        m_modelDetailsCacheAssetPath != assetPath ||
-        m_modelDetailsCacheSearchDirectory != textureSearchDirectory)
-    {
-        rebuildModelDetailsCache(*modelAsset, modelDirectory, projectRoot, textureSearchDirectory);
-        m_modelDetailsCacheAssetPath = assetPath;
-    }
-
-    auto &materials = m_modelDetailsCache.materials;
-    auto &unresolvedTexturePathList = m_modelDetailsCache.unresolvedTexturePaths;
-
-    if (!m_selectedUnresolvedTexturePath.empty() &&
-        std::find(unresolvedTexturePathList.begin(), unresolvedTexturePathList.end(), m_selectedUnresolvedTexturePath) == unresolvedTexturePathList.end())
-    {
-        m_selectedUnresolvedTexturePath.clear();
-        std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
-    }
-
-    ImGui::Text("Meshes: %zu", modelAsset->meshes.size());
-    ImGui::Text("Vertices: %zu", m_modelDetailsCache.totalVertexCount);
-    ImGui::Text("Indices: %zu", m_modelDetailsCache.totalIndexCount);
-    ImGui::Text("Unique materials: %zu", materials.size());
-    ImGui::Text("Unresolved texture paths: %zu", unresolvedTexturePathList.size());
-    ImGui::Text("Has skeleton: %s", m_modelDetailsCache.hasSkeleton ? "Yes" : "No");
-    ImGui::Text("Animations: %zu", m_modelDetailsCache.animationCount);
-
-    if (ImGui::CollapsingHeader("Texture Resolver", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        ImGui::TextWrapped("Search folder remaps unresolved texture paths by filename (directory is replaced, filename stays unless you set manual override).");
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::InputText("Search folder", m_modelMaterialsTextureSearchDirectory, sizeof(m_modelMaterialsTextureSearchDirectory)))
-        {
-            textureSearchDirectory = std::filesystem::path(m_modelMaterialsTextureSearchDirectory);
-            if (!textureSearchDirectory.empty())
-            {
-                if (textureSearchDirectory.is_relative() && !projectRoot.empty())
-                    textureSearchDirectory = projectRoot / textureSearchDirectory;
-
-                textureSearchDirectory = makeAbsoluteNormalized(textureSearchDirectory);
-            }
-
-            m_modelDetailsCacheDirty = true;
-        }
-
-        if (ImGui::Button("Use Model Directory"))
-        {
-            std::memset(m_modelMaterialsTextureSearchDirectory, 0, sizeof(m_modelMaterialsTextureSearchDirectory));
-            std::strncpy(m_modelMaterialsTextureSearchDirectory, assetPath.parent_path().string().c_str(), sizeof(m_modelMaterialsTextureSearchDirectory) - 1);
-            textureSearchDirectory = makeAbsoluteNormalized(std::filesystem::path(m_modelMaterialsTextureSearchDirectory));
-            m_modelDetailsCacheDirty = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Apply Folder To All Unresolved"))
-        {
-            if (textureSearchDirectory.empty() || !std::filesystem::exists(textureSearchDirectory) || !std::filesystem::is_directory(textureSearchDirectory))
-            {
-                m_notificationManager.showError("Search folder is invalid");
-            }
-            else if (unresolvedTexturePathList.empty())
-            {
-                m_notificationManager.showInfo("No unresolved texture paths");
-            }
-            else
-            {
-                size_t mappedCount = 0;
-                size_t missingCount = 0;
-                bool overridesChanged = false;
-                auto previewOverrides = m_modelTextureManualOverrides;
-
-                for (const auto &unresolvedPath : unresolvedTexturePathList)
-                {
-                    const std::string fileName = extractFileNamePortable(unresolvedPath);
-
-                    if (fileName.empty())
-                    {
-                        ++missingCount;
-                        continue;
-                    }
-
-                    std::filesystem::path remappedPath;
-                    std::array<std::string, 2> candidateNames = {fileName, std::filesystem::path(fileName).stem().string() + ".tex.elixasset"};
-
-                    for (const auto &candidateName : candidateNames)
-                    {
-                        if (candidateName.empty())
-                            continue;
-
-                        std::filesystem::path candidatePath = textureSearchDirectory / candidateName;
-                        if (auto caseInsensitiveMatch = findCaseInsensitiveFileInDirectory(textureSearchDirectory, candidateName);
-                            caseInsensitiveMatch.has_value())
-                            candidatePath = caseInsensitiveMatch.value();
-
-                        std::error_code existsError;
-                        if (std::filesystem::exists(candidatePath, existsError) && !existsError)
-                        {
-                            remappedPath = candidatePath;
-                            break;
-                        }
-                    }
-
-                    if (remappedPath.empty())
-                    {
-                        const std::string defaultName = !candidateNames[1].empty() ? candidateNames[1] : candidateNames[0];
-                        remappedPath = textureSearchDirectory / defaultName;
-                    }
-
-                    remappedPath = remappedPath.lexically_normal();
-                    std::string remappedPathString = remappedPath.string();
-                    previewOverrides[unresolvedPath] = remappedPathString;
-
-                    bool remappedResolved = true;
-                    const std::string resolvedPreviewPath = resolveTexturePathForMaterialExport(unresolvedPath,
-                                                                                                modelDirectory,
-                                                                                                projectRoot,
-                                                                                                textureSearchDirectory,
-                                                                                                previewOverrides,
-                                                                                                remappedResolved,
-                                                                                                textureSearchDirectory,
-                                                                                                false);
-                    if (remappedResolved && !resolvedPreviewPath.empty())
-                    {
-                        remappedPathString = resolvedPreviewPath;
-                        previewOverrides[unresolvedPath] = remappedPathString;
-                    }
-
-                    auto overrideIt = m_modelTextureManualOverrides.find(unresolvedPath);
-                    if (overrideIt == m_modelTextureManualOverrides.end() || overrideIt->second != remappedPathString)
-                    {
-                        m_modelTextureManualOverrides[unresolvedPath] = remappedPathString;
-                        overridesChanged = true;
-                    }
-
-                    if (remappedResolved)
-                        ++mappedCount;
-                    else
-                        ++missingCount;
-                }
-
-                if (overridesChanged)
-                    m_modelDetailsCacheDirty = true;
-
-                if (mappedCount > 0)
-                    m_notificationManager.showSuccess("Mapped " + std::to_string(mappedCount) + " texture path(s)");
-
-                if (missingCount > 0)
-                    m_notificationManager.showWarning(std::to_string(missingCount) + " path(s) still missing after remap");
-            }
-        }
-
-        if (unresolvedTexturePathList.empty())
-            ImGui::TextUnformatted("All discovered texture paths are resolved with current rules.");
-        else
-        {
-            ImGui::TextUnformatted("Unresolved texture paths");
-            if (ImGui::BeginListBox("##UnresolvedTextureList", ImVec2(0.0f, 140.0f)))
-            {
-                for (const auto &texturePath : unresolvedTexturePathList)
-                {
-                    const bool selected = texturePath == m_selectedUnresolvedTexturePath;
-                    if (ImGui::Selectable(texturePath.c_str(), selected))
-                    {
-                        m_selectedUnresolvedTexturePath = texturePath;
-                        std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
-
-                        auto overrideIt = m_modelTextureManualOverrides.find(texturePath);
-                        const std::string &overrideValue = overrideIt != m_modelTextureManualOverrides.end() ? overrideIt->second : "";
-                        std::strncpy(m_selectedTextureOverrideBuffer, overrideValue.c_str(), sizeof(m_selectedTextureOverrideBuffer) - 1);
-                    }
-                }
-
-                ImGui::EndListBox();
-            }
-
-            if (!m_selectedUnresolvedTexturePath.empty())
-            {
-                ImGui::TextWrapped("Selected: %s", m_selectedUnresolvedTexturePath.c_str());
-                ImGui::SetNextItemWidth(-1.0f);
-                ImGui::InputText("Override path", m_selectedTextureOverrideBuffer, sizeof(m_selectedTextureOverrideBuffer));
-
-                if (ImGui::Button("Apply Override"))
-                {
-                    const std::string overridePath = m_selectedTextureOverrideBuffer;
-                    auto overrideIt = m_modelTextureManualOverrides.find(m_selectedUnresolvedTexturePath);
-                    if (overrideIt == m_modelTextureManualOverrides.end() || overrideIt->second != overridePath)
-                    {
-                        m_modelTextureManualOverrides[m_selectedUnresolvedTexturePath] = overridePath;
-                        m_modelDetailsCacheDirty = true;
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Clear Override"))
-                {
-                    const size_t erasedCount = m_modelTextureManualOverrides.erase(m_selectedUnresolvedTexturePath);
-                    std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
-                    if (erasedCount > 0)
-                        m_modelDetailsCacheDirty = true;
-                }
-
-                bool previewResolved = true;
-                const std::string previewPath = resolveTexturePathForMaterialExport(m_selectedUnresolvedTexturePath,
-                                                                                    modelDirectory,
-                                                                                    projectRoot,
-                                                                                    textureSearchDirectory,
-                                                                                    m_modelTextureManualOverrides,
-                                                                                    previewResolved,
-                                                                                    textureSearchDirectory,
-                                                                                    false);
-                ImGui::TextWrapped("Preview: %s", previewPath.empty() ? "<None>" : previewPath.c_str());
-                ImGui::TextDisabled("%s", previewResolved ? "Status: Resolved" : "Status: Unresolved");
-            }
-        }
-
-        if (!m_modelTextureManualOverrides.empty() && ImGui::TreeNode("Manual overrides"))
-        {
-            for (auto overrideIterator = m_modelTextureManualOverrides.begin(); overrideIterator != m_modelTextureManualOverrides.end();)
-            {
-                const std::string originalPath = overrideIterator->first;
-                const std::string overridePath = overrideIterator->second;
-
-                ImGui::PushID(originalPath.c_str());
-                ImGui::TextWrapped("%s", originalPath.c_str());
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Remove"))
-                {
-                    if (m_selectedUnresolvedTexturePath == originalPath)
-                    {
-                        m_selectedUnresolvedTexturePath.clear();
-                        std::memset(m_selectedTextureOverrideBuffer, 0, sizeof(m_selectedTextureOverrideBuffer));
-                    }
-
-                    overrideIterator = m_modelTextureManualOverrides.erase(overrideIterator);
-                    m_modelDetailsCacheDirty = true;
-                    ImGui::PopID();
-                    continue;
-                }
-                ImGui::TextWrapped(" -> %s", overridePath.c_str());
-                ImGui::PopID();
-
-                ++overrideIterator;
-            }
-
-            ImGui::TreePop();
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Imported materials", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        if (ImGui::BeginTable("ModelMaterialTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable))
-        {
-            ImGui::TableSetupColumn("Material");
-            ImGui::TableSetupColumn("Meshes");
-            ImGui::TableSetupColumn("Albedo");
-            ImGui::TableSetupColumn("Normal");
-            ImGui::TableSetupColumn("ORM");
-            ImGui::TableSetupColumn("Emissive");
-            ImGui::TableHeadersRow();
-
-            const size_t maxRowsToShow = std::min<size_t>(materials.size(), 128);
-            for (size_t materialIndex = 0; materialIndex < maxRowsToShow; ++materialIndex)
-            {
-                const auto &entry = materials[materialIndex];
-
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(entry.material.name.empty() ? "<Unnamed>" : entry.material.name.c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%zu", entry.meshUsageCount);
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(entry.albedoDisplayPath.c_str());
-                ImGui::TableSetColumnIndex(3);
-                ImGui::TextUnformatted(entry.normalDisplayPath.c_str());
-                ImGui::TableSetColumnIndex(4);
-                ImGui::TextUnformatted(entry.ormDisplayPath.c_str());
-                ImGui::TableSetColumnIndex(5);
-                ImGui::TextUnformatted(entry.emissiveDisplayPath.c_str());
-            }
-
-            ImGui::EndTable();
-
-            if (materials.size() > maxRowsToShow)
-                ImGui::TextDisabled("Showing first %zu of %zu materials", maxRowsToShow, materials.size());
-        }
-    }
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Material Export");
-    ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputText("Output folder", m_modelMaterialsExportDirectory, sizeof(m_modelMaterialsExportDirectory));
-
-    if (ImGui::Button("Use Model Folder"))
-    {
-        std::memset(m_modelMaterialsExportDirectory, 0, sizeof(m_modelMaterialsExportDirectory));
-        std::strncpy(m_modelMaterialsExportDirectory, assetPath.parent_path().string().c_str(), sizeof(m_modelMaterialsExportDirectory) - 1);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Use Default Export Folder"))
-    {
-        const std::filesystem::path defaultExportPath = assetPath.parent_path() / (assetPath.stem().string() + "_Materials");
-        std::memset(m_modelMaterialsExportDirectory, 0, sizeof(m_modelMaterialsExportDirectory));
-        std::strncpy(m_modelMaterialsExportDirectory, defaultExportPath.string().c_str(), sizeof(m_modelMaterialsExportDirectory) - 1);
-    }
-
-    const auto *selectedStaticMeshComponent = m_selectedEntity ? m_selectedEntity->getComponent<engine::StaticMeshComponent>() : nullptr;
-    const auto *selectedSkeletalMeshComponent = m_selectedEntity ? m_selectedEntity->getComponent<engine::SkeletalMeshComponent>() : nullptr;
-    const bool selectedEntityCanReceiveMaterials = selectedStaticMeshComponent || selectedSkeletalMeshComponent;
-    const size_t selectedEntitySlotCount = selectedStaticMeshComponent     ? selectedStaticMeshComponent->getMaterialSlotCount()
-                                           : selectedSkeletalMeshComponent ? selectedSkeletalMeshComponent->getMaterialSlotCount()
-                                                                           : 0;
-    const bool selectedEntitySlotCountMatchesModel = selectedEntitySlotCount == modelAsset->meshes.size();
-
-    auto runMaterialExport = [&](bool applyToSelectedEntity)
-    {
-        const std::filesystem::path exportPath = std::filesystem::path(m_modelMaterialsExportDirectory);
-        if (exportPath.empty())
-        {
-            m_notificationManager.showError("Output folder is empty");
-            return;
-        }
-
-        std::vector<std::string> perMeshMaterialPaths;
-        std::vector<std::string> *outputBindings = applyToSelectedEntity ? &perMeshMaterialPaths : nullptr;
-
-        if (!exportModelMaterials(assetPath,
-                                  exportPath,
-                                  textureSearchDirectory,
-                                  m_modelTextureManualOverrides,
-                                  outputBindings))
-        {
-            m_notificationManager.showError("Material export failed");
-            return;
-        }
-
-        if (!applyToSelectedEntity)
-            return;
-
-        if (!applyPerMeshMaterialPathsToSelectedEntity(perMeshMaterialPaths))
-        {
-            m_notificationManager.showWarning("Materials exported, but auto-apply to selected entity failed");
-            return;
-        }
-
-        m_notificationManager.showSuccess("Exported and applied materials to selected entity");
-    };
-
-    auto runApplyMaterialsOnly = [&]()
-    {
-        auto project = m_currentProject.lock();
-        const std::filesystem::path projectRoot = project ? std::filesystem::path(project->fullPath) : std::filesystem::path{};
-
-        std::filesystem::path materialsDirectory = std::filesystem::path(m_modelMaterialsExportDirectory);
-        if (materialsDirectory.empty())
-        {
-            m_notificationManager.showError("Output folder is empty");
-            return;
-        }
-
-        if (materialsDirectory.is_relative() && !projectRoot.empty())
-            materialsDirectory = projectRoot / materialsDirectory;
-
-        materialsDirectory = makeAbsoluteNormalized(materialsDirectory);
-
-        std::vector<std::string> perMeshMaterialPaths;
-        size_t matchedSlots = 0;
-        if (!buildPerMeshMaterialPathsFromDirectory(*modelAsset, materialsDirectory, perMeshMaterialPaths, matchedSlots))
-        {
-            m_notificationManager.showError("Failed to resolve materials from output folder");
-            return;
-        }
-
-        if (!applyPerMeshMaterialPathsToSelectedEntity(perMeshMaterialPaths))
-        {
-            m_notificationManager.showWarning("Resolved materials, but failed to apply to selected entity");
-            return;
-        }
-
-        m_notificationManager.showSuccess("Applied " + std::to_string(matchedSlots) + " material slot(s) from output folder");
-    };
-
-    if (ImGui::Button("Export Materials"))
-    {
-        runMaterialExport(false);
-    }
-
-    ImGui::SameLine();
-    if (!selectedEntityCanReceiveMaterials)
-        ImGui::BeginDisabled();
-
-    if (ImGui::Button("Export + Apply To Selected"))
-        runMaterialExport(true);
-
-    if (!selectedEntityCanReceiveMaterials)
-        ImGui::EndDisabled();
-
-    ImGui::SameLine();
-    if (!selectedEntityCanReceiveMaterials)
-        ImGui::BeginDisabled();
-
-    if (ImGui::Button("Apply Materials To Selected"))
-        runApplyMaterialsOnly();
-
-    if (!selectedEntityCanReceiveMaterials)
-        ImGui::EndDisabled();
-
-    if (!m_selectedEntity)
-        ImGui::TextDisabled("Select a scene entity with mesh component to enable auto-apply.");
-    else if (!selectedEntityCanReceiveMaterials)
-        ImGui::TextDisabled("Selected entity has no mesh component.");
-    else if (!selectedEntitySlotCountMatchesModel)
-        ImGui::TextDisabled("Slot mismatch: selected entity has %zu slot(s), model has %zu mesh slot(s).", selectedEntitySlotCount, modelAsset->meshes.size());
-    else
-        ImGui::TextDisabled("Auto-apply target: '%s' (%zu slot(s)).", m_selectedEntity->getName().c_str(), selectedEntitySlotCount);
-
-    ImGui::TextWrapped("Set a texture search folder, optionally add manual overrides for unresolved paths, then export or apply materials.");
-}
-
 bool Editor::applyMaterialToSelectedEntity(const std::string &materialPath, std::optional<size_t> slot, bool forceAllSlots)
 {
     auto project = m_currentProject.lock();
@@ -5996,13 +6176,6 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
     {
         auto *skeletalMeshComponent = entity->addComponent<engine::SkeletalMeshComponent>(spawnedMeshes, model->skeleton.value());
         skeletalMeshComponent->setAssetPath(assetPath);
-
-        if (!model->animations.empty())
-        {
-            auto *animatorComponent = entity->addComponent<engine::AnimatorComponent>();
-            animatorComponent->setAnimations(model->animations, &skeletalMeshComponent->getSkeleton());
-            animatorComponent->setSelectedAnimationIndex(0);
-        }
     }
     else
     {
@@ -6021,7 +6194,7 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
     }
 
     setSelectedEntity(entity.get());
-    captureSceneActionSnapshot("Spawn model");
+    recordCreatedEntityCommand(entity.get(), "Spawn model");
 
     VX_EDITOR_INFO_STREAM("Spawned entity '" << entityName << "' from model: " << assetPath);
     m_notificationManager.showSuccess("Spawned model: " + entityName);
@@ -6072,7 +6245,7 @@ void Editor::addPrimitiveEntity(const std::string &primitiveName)
     }
 
     setSelectedEntity(entity.get());
-    captureSceneActionSnapshot("Add primitive");
+    recordCreatedEntityCommand(entity.get(), "Add primitive");
 
     VX_EDITOR_INFO_STREAM("Added primitive entity: " << primitiveName);
     m_notificationManager.showSuccess("Added primitive: " + primitiveName);
@@ -6103,7 +6276,7 @@ void Editor::addEmptyEntity(const std::string &name)
     }
 
     setSelectedEntity(entity.get());
-    captureSceneActionSnapshot("Add empty entity");
+    recordCreatedEntityCommand(entity.get(), "Add empty entity");
     VX_EDITOR_INFO_STREAM("Added empty entity: " << entity->getName());
     m_notificationManager.showSuccess("Added empty entity");
 }
@@ -6137,7 +6310,7 @@ void Editor::addDefaultCharacterEntity(const std::string &name)
     entity->addComponent<engine::CharacterMovementComponent>(m_scene.get(), 0.35f, 1.0f);
 
     setSelectedEntity(entity.get());
-    captureSceneActionSnapshot("Add character");
+    recordCreatedEntityCommand(entity.get(), "Add character");
 
     VX_EDITOR_INFO_STREAM("Added default character entity: " << entity->getName());
     m_notificationManager.showSuccess("Added default character");
@@ -6220,6 +6393,87 @@ glm::vec3 Editor::computeBillboardPlacementWorldPosition(const glm::vec2 &ndcPos
 
     const float distance = std::max(0.1f, m_uiBillboardPlacementDistance);
     return m_editorCamera->getPosition() + rayDirection * distance;
+}
+
+bool Editor::trySelectEditorBillboardAtViewportPosition(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax)
+{
+    if (!m_scene || !m_editorCamera || !engine::EngineConfig::instance().getShowEditorBillboards())
+        return false;
+
+    const ImVec2 viewportSize(std::max(imageMax.x - imageMin.x, 0.0f), std::max(imageMax.y - imageMin.y, 0.0f));
+    if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
+        return false;
+
+    const glm::mat4 view = m_editorCamera->getViewMatrix();
+    const glm::mat4 projection = m_editorCamera->getProjectionMatrix();
+    const glm::vec3 right = glm::vec3(view[0][0], view[1][0], view[2][0]);
+    const glm::vec3 up = glm::vec3(view[0][1], view[1][1], view[2][1]);
+    constexpr float kEditorBillboardWorldSize = 0.4f; // Keep in sync with EditorBillboardRenderGraphPass.
+    const float halfSize = kEditorBillboardWorldSize * 0.5f;
+
+    engine::Entity *bestEntity = nullptr;
+    float bestDistanceSquared = std::numeric_limits<float>::max();
+
+    auto tryHitBillboard = [&](engine::Entity *entity, const glm::vec3 &iconWorldPosition)
+    {
+        ImVec2 topLeft;
+        ImVec2 topRight;
+        ImVec2 bottomLeft;
+        ImVec2 bottomRight;
+
+        const bool visible =
+            worldToScreen(iconWorldPosition + right * -halfSize + up * halfSize, view, projection, imageMin, viewportSize, topLeft) &&
+            worldToScreen(iconWorldPosition + right * halfSize + up * halfSize, view, projection, imageMin, viewportSize, topRight) &&
+            worldToScreen(iconWorldPosition + right * -halfSize + up * -halfSize, view, projection, imageMin, viewportSize, bottomLeft) &&
+            worldToScreen(iconWorldPosition + right * halfSize + up * -halfSize, view, projection, imageMin, viewportSize, bottomRight);
+        if (!visible)
+            return;
+
+        const float minX = std::min({topLeft.x, topRight.x, bottomLeft.x, bottomRight.x});
+        const float maxX = std::max({topLeft.x, topRight.x, bottomLeft.x, bottomRight.x});
+        const float minY = std::min({topLeft.y, topRight.y, bottomLeft.y, bottomRight.y});
+        const float maxY = std::max({topLeft.y, topRight.y, bottomLeft.y, bottomRight.y});
+
+        if (pixelPos.x < minX || pixelPos.x > maxX || pixelPos.y < minY || pixelPos.y > maxY)
+            return;
+
+        const glm::vec3 toIcon = iconWorldPosition - m_editorCamera->getPosition();
+        const float distanceSquared = glm::dot(toIcon, toIcon);
+        if (distanceSquared >= bestDistanceSquared)
+            return;
+
+        bestDistanceSquared = distanceSquared;
+        bestEntity = entity;
+    };
+
+    for (const auto &entity : m_scene->getEntities())
+    {
+        if (!entity || !entity->isEnabled())
+            continue;
+
+        auto *transform = entity->getComponent<engine::Transform3DComponent>();
+        if (!transform)
+            continue;
+
+        if (auto *cameraComponent = entity->getComponent<engine::CameraComponent>())
+        {
+            glm::vec3 iconWorldPosition = transform->getWorldPosition();
+            if (const auto camera = cameraComponent->getCamera())
+                iconWorldPosition = camera->getPosition();
+            tryHitBillboard(entity.get(), iconWorldPosition);
+        }
+
+        if (entity->getComponent<engine::LightComponent>())
+            tryHitBillboard(entity.get(), transform->getWorldPosition());
+    }
+
+    if (!bestEntity)
+        return false;
+
+    setSelectedEntity(bestEntity);
+    m_selectedMeshSlot.reset();
+    m_hasPendingObjectPick = false;
+    return true;
 }
 
 void Editor::clearSelectedUIElement()
@@ -6780,6 +7034,9 @@ void Editor::drawUITools()
         ImGui::Separator();
         if (ImGui::Button("Delete Selected UI Element"))
         {
+            std::string beforeUIState;
+            m_scene->serializeUIState(beforeUIState);
+
             bool removedElement = false;
             switch (m_uiSelectionType)
             {
@@ -6812,7 +7069,14 @@ void Editor::drawUITools()
             if (removedElement)
             {
                 clearSelectedUIElement();
-                captureSceneActionSnapshot("Delete UI element");
+
+                std::string afterUIState;
+                m_scene->serializeUIState(afterUIState);
+                recordExecutedEditorCommand(std::make_unique<actions::UIStateCommand>(
+                    m_scene.get(),
+                    std::move(beforeUIState),
+                    std::move(afterUIState),
+                    "Delete UI element"));
             }
         }
 
@@ -7098,22 +7362,7 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
         m_terrainTools.cancelBrushStroke();
 
     if (viewportFocused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
-    {
-        if (m_currentMode != EditorMode::EDIT)
-        {
-            m_notificationManager.showError("Cannot save scene while playing. Stop Play first.");
-            VX_EDITOR_WARNING_STREAM("Blocked Ctrl+S while not in Edit mode.\n");
-        }
-
-        auto project = m_currentProject.lock();
-        const std::filesystem::path scenePath = resolveCurrentScenePath();
-        if (m_scene && project && m_currentMode == EditorMode::EDIT && !scenePath.empty())
-        {
-            m_scene->saveSceneToFile(scenePath.string());
-            m_notificationManager.showInfo("Scene saved");
-            VX_EDITOR_INFO_STREAM("Scene saved to: " << scenePath.string());
-        }
-    }
+        saveCurrentScene(true, false);
 
     auto &window = core::VulkanContext::getContext()->getSwapchain()->getWindow();
     GLFWwindow *windowHandler = window.getRawHandler();
@@ -7131,7 +7380,8 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
             mouse.x >= imageMin.x && mouse.x < imageMax.x &&
             mouse.y >= imageMin.y && mouse.y < imageMax.y)
         {
-            if (!placeUIElementAtViewportPosition(mouse, imageMin, imageMax))
+            if (!placeUIElementAtViewportPosition(mouse, imageMin, imageMax) &&
+                !trySelectEditorBillboardAtViewportPosition(mouse, imageMin, imageMax))
             {
                 const float u = std::clamp((mouse.x - imageMin.x) / imageWidth, 0.0f, 0.999999f);
                 const float v = std::clamp((mouse.y - imageMin.y) / imageHeight, 0.0f, 0.999999f);

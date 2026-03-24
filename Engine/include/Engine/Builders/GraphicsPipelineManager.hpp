@@ -65,6 +65,7 @@ private:
     static inline core::Shader::SharedPtr depthPrepassStaticShader{nullptr};
     static inline core::Shader::SharedPtr depthPrepassSkinnedShader{nullptr};
     static inline core::Shader::SharedPtr taaShader{nullptr};
+    static inline core::Shader::SharedPtr animPreviewShader{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

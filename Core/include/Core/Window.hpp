@@ -48,8 +48,12 @@ public:
     void centerizedOnScreen();
 
     void setTitle(const std::string &title);
+    void getPosition(int *x, int *y) const;
     void setPosition(int x, int y);
     void setSize(int width, int height);
+    void maximize();
+    void restore();
+    bool isMaximized() const;
     /*
         will be called on about to close callback. If returns false -> window will not close, true -> window will be closed
     */

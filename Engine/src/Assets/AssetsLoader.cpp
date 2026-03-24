@@ -17,6 +17,7 @@
 #include <limits>
 #include <typeinfo>
 #include <unordered_map>
+#include <unordered_set>
 
 #if defined(ELIX_HAS_OPENEXR)
 #include <ImathBox.h>
@@ -109,6 +110,35 @@ namespace
     std::string extensionLower(const std::string &path)
     {
         return toLowerCopy(std::filesystem::path(path).extension().string());
+    }
+
+    void sanitizeAnimationClipNames(std::vector<elix::engine::Animation> &animations, const std::string &assetName)
+    {
+        std::unordered_set<std::string> usedNames;
+        usedNames.reserve(animations.size());
+
+        for (auto &animation : animations)
+        {
+            const bool isGenericName = animation.name.empty() ||
+                                       animation.name == "mixamo.com" ||
+                                       animation.name == "Take 001" ||
+                                       animation.name == "default";
+
+            std::string baseName = isGenericName ? assetName : animation.name;
+            if (baseName.empty())
+                baseName = "Animation";
+
+            std::string candidate = baseName;
+            std::size_t suffix = 2u;
+            while (usedNames.contains(candidate))
+            {
+                candidate = baseName + " (" + std::to_string(suffix) + ")";
+                ++suffix;
+            }
+
+            animation.name = std::move(candidate);
+            usedNames.insert(animation.name);
+        }
     }
 
     bool looksLikeWindowsAbsolutePath(const std::string &path)
@@ -1043,6 +1073,7 @@ std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
         if (model.has_value())
         {
             sanitizeModelMaterialData(model.value());
+            sanitizeAnimationClipNames(model->animations, sourcePath.stem().string());
             return model;
         }
 
@@ -1064,6 +1095,7 @@ std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
         importedModel->sourcePath = sourcePath.string();
         importedModel->assetPath = serializedPath.string();
         sanitizeModelMaterialData(importedModel.value());
+        sanitizeAnimationClipNames(importedModel->animations, sourcePath.stem().string());
 
         if (!serializer.writeModel(importedModel.value(), serializedPath.string()))
         {
@@ -1075,6 +1107,7 @@ std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
     if (auto serializedModel = serializer.readModel(serializedPath.string()); serializedModel.has_value())
     {
         sanitizeModelMaterialData(serializedModel.value());
+        sanitizeAnimationClipNames(serializedModel->animations, sourcePath.stem().string());
         return serializedModel;
     }
 
@@ -1183,6 +1216,121 @@ Texture::SharedPtr AssetsLoader::loadTextureGPU(const std::string &path,
         return nullptr;
 
     return createTextureGPU(textureAsset.value(), preferredLdrFormat);
+}
+
+bool AssetsLoader::importAnimationFromFBX(const std::string &fbxPath, const std::string &outputAssetPath)
+{
+    const std::filesystem::path normalizedSourcePath = normalizePath(fbxPath);
+    if (normalizedSourcePath.empty())
+        return false;
+
+    auto importedModel = importModelFromSource(normalizedSourcePath.string());
+    if (!importedModel.has_value())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to load FBX for animation import: " << normalizedSourcePath.string() << '\n');
+        return false;
+    }
+
+    if (importedModel->animations.empty())
+    {
+        VX_ENGINE_ERROR_STREAM("No animations found in FBX: " << normalizedSourcePath.string() << '\n');
+        return false;
+    }
+
+    const std::filesystem::path normalizedOutputPath = normalizePath(outputAssetPath);
+
+    AnimationAsset animationAsset{};
+    animationAsset.name = normalizedSourcePath.stem().string();
+    animationAsset.sourcePath = normalizedSourcePath.string();
+    animationAsset.assetPath = normalizedOutputPath.string();
+    animationAsset.animations = std::move(importedModel->animations);
+    sanitizeAnimationClipNames(animationAsset.animations, animationAsset.name);
+
+    AssetsSerializer serializer;
+    if (!serializer.writeAnimationAsset(animationAsset, normalizedOutputPath.string()))
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to serialize animation asset: " << normalizedOutputPath.string() << '\n');
+        return false;
+    }
+
+    return true;
+}
+
+bool AssetsLoader::exportAnimationsFromModel(const std::string &modelAssetPath, const std::string &outputAssetPath)
+{
+    const std::filesystem::path normalizedModelPath = normalizePath(modelAssetPath);
+    if (normalizedModelPath.empty())
+        return false;
+
+    auto model = loadModel(normalizedModelPath.string());
+    if (!model.has_value())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to load model asset for animation export: " << normalizedModelPath.string() << '\n');
+        return false;
+    }
+
+    if (model->animations.empty())
+    {
+        VX_ENGINE_ERROR_STREAM("Model has no animations to export: " << normalizedModelPath.string() << '\n');
+        return false;
+    }
+
+    const std::filesystem::path normalizedOutputPath = normalizePath(outputAssetPath);
+
+    AnimationAsset animationAsset{};
+    animationAsset.name = normalizedModelPath.stem().string();
+    animationAsset.sourcePath = normalizedModelPath.string();
+    animationAsset.assetPath = normalizedOutputPath.string();
+    animationAsset.animations = std::move(model->animations);
+    sanitizeAnimationClipNames(animationAsset.animations, animationAsset.name);
+
+    AssetsSerializer serializer;
+    if (!serializer.writeAnimationAsset(animationAsset, normalizedOutputPath.string()))
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to serialize exported animation asset: " << normalizedOutputPath.string() << '\n');
+        return false;
+    }
+
+    return true;
+}
+
+std::optional<AnimationAsset> AssetsLoader::loadAnimationAsset(const std::string &path)
+{
+    const std::filesystem::path sourcePath = normalizePath(path);
+    if (sourcePath.empty())
+        return std::nullopt;
+
+    AssetsSerializer serializer;
+    auto animAsset = serializer.readAnimationAsset(sourcePath.string());
+    if (!animAsset.has_value())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to load animation asset: " << sourcePath.string() << '\n');
+        return std::nullopt;
+    }
+
+    sanitizeAnimationClipNames(animAsset->animations, sourcePath.stem().string());
+
+    return animAsset;
+}
+
+std::optional<AnimationTree> AssetsLoader::loadAnimationTree(const std::string &path)
+{
+    const std::filesystem::path normalizedPath = normalizePath(path);
+    if (normalizedPath.empty())
+        return std::nullopt;
+
+    AssetsSerializer serializer;
+    return serializer.readAnimationTree(normalizedPath.string());
+}
+
+bool AssetsLoader::saveAnimationTree(const AnimationTree &tree, const std::string &path)
+{
+    const std::filesystem::path normalizedPath = normalizePath(path);
+    if (normalizedPath.empty())
+        return false;
+
+    AssetsSerializer serializer;
+    return serializer.writeAnimationTree(tree, normalizedPath.string());
 }
 
 ELIX_NESTED_NAMESPACE_END

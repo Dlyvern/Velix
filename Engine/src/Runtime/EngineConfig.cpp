@@ -176,14 +176,19 @@ bool EngineConfig::save() const
     }
 
     nlohmann::json json;
-    json["version"] = 6;
+    json["version"] = 8;
     json["preferred_ide"] = m_preferredIdeId;
     json["show_asset_thumbnails"] = m_showAssetThumbnails;
     json["show_model_asset_previews"] = m_showModelAssetPreviews;
     json["show_material_asset_previews"] = m_showMaterialAssetPreviews;
     json["show_texture_asset_previews"] = m_showTextureAssetPreviews;
     json["show_editor_billboards"] = m_showEditorBillboards;
+    json["show_hierarchy_panel"] = m_showHierarchyPanel;
+    json["show_details_panel"] = m_showDetailsPanel;
+    json["right_sidebar_split_ratio"] = m_rightSidebarSplitRatio;
     json["detailed_render_profiling"] = m_detailedRenderProfilingEnabled;
+    json["scene_autosave_enabled"] = m_sceneAutosaveEnabled;
+    json["scene_autosave_interval_minutes"] = m_sceneAutosaveIntervalMinutes;
 
     std::ofstream file(m_configFilePath);
     if (!file.is_open())
@@ -285,6 +290,36 @@ void EngineConfig::setShowEditorBillboards(bool enabled)
     m_showEditorBillboards = enabled;
 }
 
+bool EngineConfig::getShowHierarchyPanel() const
+{
+    return m_showHierarchyPanel;
+}
+
+void EngineConfig::setShowHierarchyPanel(bool enabled)
+{
+    m_showHierarchyPanel = enabled;
+}
+
+bool EngineConfig::getShowDetailsPanel() const
+{
+    return m_showDetailsPanel;
+}
+
+void EngineConfig::setShowDetailsPanel(bool enabled)
+{
+    m_showDetailsPanel = enabled;
+}
+
+float EngineConfig::getRightSidebarSplitRatio() const
+{
+    return m_rightSidebarSplitRatio;
+}
+
+void EngineConfig::setRightSidebarSplitRatio(float ratio)
+{
+    m_rightSidebarSplitRatio = std::clamp(ratio, 0.1f, 0.9f);
+}
+
 bool EngineConfig::getDetailedRenderProfilingEnabled() const
 {
     return m_detailedRenderProfilingEnabled;
@@ -293,6 +328,26 @@ bool EngineConfig::getDetailedRenderProfilingEnabled() const
 void EngineConfig::setDetailedRenderProfilingEnabled(bool enabled)
 {
     m_detailedRenderProfilingEnabled = enabled;
+}
+
+bool EngineConfig::getSceneAutosaveEnabled() const
+{
+    return m_sceneAutosaveEnabled;
+}
+
+void EngineConfig::setSceneAutosaveEnabled(bool enabled)
+{
+    m_sceneAutosaveEnabled = enabled;
+}
+
+float EngineConfig::getSceneAutosaveIntervalMinutes() const
+{
+    return m_sceneAutosaveIntervalMinutes;
+}
+
+void EngineConfig::setSceneAutosaveIntervalMinutes(float minutes)
+{
+    m_sceneAutosaveIntervalMinutes = std::clamp(minutes, 0.25f, 120.0f);
 }
 
 std::optional<EngineConfig::IdeInfo> EngineConfig::findPreferredVSCodeIde() const
@@ -387,7 +442,12 @@ void EngineConfig::applyDefaults()
     m_showMaterialAssetPreviews = true;
     m_showTextureAssetPreviews = true;
     m_showEditorBillboards = true;
+    m_showHierarchyPanel = true;
+    m_showDetailsPanel = true;
+    m_rightSidebarSplitRatio = 0.5f;
     m_detailedRenderProfilingEnabled = true;
+    m_sceneAutosaveEnabled = true;
+    m_sceneAutosaveIntervalMinutes = 5.0f;
 }
 
 bool EngineConfig::loadFromDisk()
@@ -432,8 +492,23 @@ bool EngineConfig::loadFromDisk()
     if (json.contains("show_editor_billboards") && json["show_editor_billboards"].is_boolean())
         m_showEditorBillboards = json["show_editor_billboards"].get<bool>();
 
+    if (json.contains("show_hierarchy_panel") && json["show_hierarchy_panel"].is_boolean())
+        m_showHierarchyPanel = json["show_hierarchy_panel"].get<bool>();
+
+    if (json.contains("show_details_panel") && json["show_details_panel"].is_boolean())
+        m_showDetailsPanel = json["show_details_panel"].get<bool>();
+
+    if (json.contains("right_sidebar_split_ratio") && json["right_sidebar_split_ratio"].is_number())
+        setRightSidebarSplitRatio(json["right_sidebar_split_ratio"].get<float>());
+
     if (json.contains("detailed_render_profiling") && json["detailed_render_profiling"].is_boolean())
         m_detailedRenderProfilingEnabled = json["detailed_render_profiling"].get<bool>();
+
+    if (json.contains("scene_autosave_enabled") && json["scene_autosave_enabled"].is_boolean())
+        m_sceneAutosaveEnabled = json["scene_autosave_enabled"].get<bool>();
+
+    if (json.contains("scene_autosave_interval_minutes") && json["scene_autosave_interval_minutes"].is_number())
+        setSceneAutosaveIntervalMinutes(json["scene_autosave_interval_minutes"].get<float>());
 
     return true;
 }
