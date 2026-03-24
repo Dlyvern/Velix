@@ -94,13 +94,74 @@ function Get-VulkanSdkSearchRoots {
     $systemDrive = if ($env:SystemDrive) { $env:SystemDrive } else { "C:" }
     $roots += (Join-Path $systemDrive "VulkanSDK")
 
+    if ($env:ProgramFiles) {
+        $roots += (Join-Path $env:ProgramFiles "VulkanSDK")
+    }
+
+    if (${env:ProgramFiles(x86)}) {
+        $roots += (Join-Path ${env:ProgramFiles(x86)} "VulkanSDK")
+    }
+
+    if ($env:LOCALAPPDATA) {
+        $roots += (Join-Path $env:LOCALAPPDATA "Programs\VulkanSDK")
+        $roots += (Join-Path $env:LOCALAPPDATA "VulkanSDK")
+    }
+
+    if ($env:USERPROFILE) {
+        $roots += (Join-Path $env:USERPROFILE "VulkanSDK")
+    }
+
+    $glslangValidator = Get-Command glslangValidator.exe -ErrorAction SilentlyContinue
+    if ($glslangValidator) {
+        $glslangDir = Split-Path -Parent $glslangValidator.Source
+        if ($glslangDir) {
+            $roots += (Split-Path -Parent $glslangDir)
+        }
+    }
+
+    return $roots |
+        Where-Object { $_ -and $_.Trim() -ne "" } |
+        Select-Object -Unique
+}
+
+function Get-VulkanSdkRootsFromRegistry {
+    $registryPaths = @(
+        "HKLM:\SOFTWARE\Khronos\Vulkan\SDK",
+        "HKCU:\SOFTWARE\Khronos\Vulkan\SDK",
+        "HKLM:\SOFTWARE\WOW6432Node\Khronos\Vulkan\SDK",
+        "HKCU:\SOFTWARE\WOW6432Node\Khronos\Vulkan\SDK"
+    )
+
+    $roots = @()
+    foreach ($registryPath in $registryPaths) {
+        if (-not (Test-Path -LiteralPath $registryPath)) {
+            continue
+        }
+
+        $properties = Get-ItemProperty -LiteralPath $registryPath
+        foreach ($property in $properties.PSObject.Properties) {
+            if ($property.Name.StartsWith("PS")) {
+                continue
+            }
+
+            $value = [string]$property.Value
+            if (-not [string]::IsNullOrWhiteSpace($value)) {
+                $roots += $value
+            }
+        }
+    }
+
     return $roots |
         Where-Object { $_ -and $_.Trim() -ne "" } |
         Select-Object -Unique
 }
 
 function Find-VulkanSdkRoot {
-    foreach ($searchRoot in (Get-VulkanSdkSearchRoots)) {
+    $searchRoots = @()
+    $searchRoots += Get-VulkanSdkSearchRoots
+    $searchRoots += Get-VulkanSdkRootsFromRegistry
+
+    foreach ($searchRoot in ($searchRoots | Select-Object -Unique)) {
         $sdkRoot = Find-DirectoryContainingFile $searchRoot "Include\vulkan\vulkan.h"
         if ($sdkRoot) {
             return $sdkRoot
@@ -173,6 +234,7 @@ function Ensure-VulkanSdk([switch]$ForceRefresh) {
     $installAttempts = @(
         [pscustomobject]@{
             Name = "local tool cache"
+            LaunchMode = "StartProcess"
             Arguments = @(
                 "--accept-licenses",
                 "--default-answer",
@@ -183,6 +245,17 @@ function Ensure-VulkanSdk([switch]$ForceRefresh) {
         },
         [pscustomobject]@{
             Name = "default VulkanSDK location"
+            LaunchMode = "StartProcess"
+            Arguments = @(
+                "--accept-licenses",
+                "--default-answer",
+                "--confirm-command",
+                "install"
+            )
+        },
+        [pscustomobject]@{
+            Name = "default VulkanSDK location (direct invocation)"
+            LaunchMode = "Direct"
             Arguments = @(
                 "--accept-licenses",
                 "--default-answer",
@@ -195,8 +268,17 @@ function Ensure-VulkanSdk([switch]$ForceRefresh) {
     $attemptResults = @()
     foreach ($attempt in $installAttempts) {
         Write-Step "Running Vulkan SDK installer via $($attempt.Name)"
-        $installerProcess = Start-Process -Wait -PassThru -FilePath $vulkanInstaller -ArgumentList $attempt.Arguments
-        $attemptResults += "$($attempt.Name): exit code $($installerProcess.ExitCode)"
+        $exitCode = $null
+        if ($attempt.LaunchMode -eq "Direct") {
+            & $vulkanInstaller @($attempt.Arguments)
+            $exitCode = $LASTEXITCODE
+        }
+        else {
+            $installerProcess = Start-Process -Wait -PassThru -FilePath $vulkanInstaller -ArgumentList $attempt.Arguments
+            $exitCode = $installerProcess.ExitCode
+        }
+
+        $attemptResults += "$($attempt.Name): exit code $exitCode"
 
         $sdkRoot = $null
         $deadline = (Get-Date).AddSeconds(30)
@@ -213,20 +295,23 @@ function Ensure-VulkanSdk([switch]$ForceRefresh) {
                 throw "Vulkan SDK was installed at $sdkRoot, but Bin\glslangValidator.exe is missing."
             }
 
-            if ($installerProcess.ExitCode -ne 0) {
-                Write-Warning "Vulkan SDK installer exited with code $($installerProcess.ExitCode), but a usable SDK was found at $sdkRoot."
+            if ($exitCode -ne 0) {
+                Write-Warning "Vulkan SDK installer exited with code $exitCode, but a usable SDK was found at $sdkRoot."
             }
             return $sdkRoot
         }
 
-        if ($installerProcess.ExitCode -ne 0) {
-            Write-Warning "Vulkan SDK installer attempt '$($attempt.Name)' exited with code $($installerProcess.ExitCode). Trying the next fallback."
+        if ($exitCode -ne 0) {
+            Write-Warning "Vulkan SDK installer attempt '$($attempt.Name)' exited with code $exitCode. Trying the next fallback."
         }
     }
 
-    $searchedRoots = (Get-VulkanSdkSearchRoots) -join ", "
+    $searchedRoots = @()
+    $searchedRoots += Get-VulkanSdkSearchRoots
+    $searchedRoots += Get-VulkanSdkRootsFromRegistry
+    $searchedRoots = ($searchedRoots | Select-Object -Unique) -join ", "
     $attemptSummary = $attemptResults -join "; "
-    throw "Bundled Vulkan SDK installer did not produce a usable SDK. Attempts: $attemptSummary. Searched: $searchedRoots"
+    throw "Bundled Vulkan SDK installer did not produce a usable SDK. Attempts: $attemptSummary. Searched: $searchedRoots. Install Vulkan SDK manually, then re-run this script with VULKAN_SDK set to the SDK root if needed."
 }
 
 function Import-VisualStudioBuildEnvironment {
