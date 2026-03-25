@@ -1,4 +1,5 @@
 #include "Engine/Utilities/BufferUtilities.hpp"
+#include "Core/VulkanContext.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(utilities)
@@ -49,6 +50,17 @@ void BufferUtilities::copyBufferRegion(core::Buffer &srcBuffer, core::Buffer &ds
         .size = size};
 
     vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+}
+
+VkDeviceAddress BufferUtilities::getBufferDeviceAddress(const core::Buffer &buffer)
+{
+    const auto context = core::VulkanContext::getContext();
+    if (!context || !context->hasBufferDeviceAddressSupport())
+        return 0u;
+
+    VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    addressInfo.buffer = buffer.vk();
+    return vkGetBufferDeviceAddress(context->getDevice(), &addressInfo);
 }
 
 ELIX_CUSTOM_NAMESPACE_END

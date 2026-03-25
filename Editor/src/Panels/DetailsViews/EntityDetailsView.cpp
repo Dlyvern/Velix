@@ -6,7 +6,10 @@
 
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/AudioComponent.hpp"
+#include "Engine/Components/ReflectionProbeComponent.hpp"
+#include "Engine/Components/DecalComponent.hpp"
 #include "Engine/Components/CameraComponent.hpp"
+#include "Core/VulkanContext.hpp"
 #include "Engine/Components/CharacterMovementComponent.hpp"
 #include "Engine/Components/CollisionComponent.hpp"
 #include "Engine/Components/LightComponent.hpp"
@@ -695,6 +698,19 @@ void EntityDetailsView::draw(Editor &editor)
             ImGui::CloseCurrentPopup();
         }
 
+        if (ImGui::Button("Reflection Probe"))
+        {
+            if (!m_selectedEntity->getComponent<engine::ReflectionProbeComponent>())
+            {
+                m_selectedEntity->addComponent<engine::ReflectionProbeComponent>();
+                ImGui::CloseCurrentPopup();
+            }
+            else
+            {
+                m_notificationManager.showWarning("Reflection Probe already exists on this entity");
+            }
+        }
+
         if (ImGui::Button("Particle System"))
         {
             auto *psComp = m_selectedEntity->addComponent<engine::ParticleSystemComponent>();
@@ -717,6 +733,19 @@ void EntityDetailsView::draw(Editor &editor)
             auto *psComp = m_selectedEntity->addComponent<engine::ParticleSystemComponent>();
             psComp->setParticleSystem(engine::ParticleSystem::createRain());
             ImGui::CloseCurrentPopup();
+        }
+
+        if (ImGui::Button("Decal"))
+        {
+            if (!m_selectedEntity->getComponent<engine::DecalComponent>())
+            {
+                m_selectedEntity->addComponent<engine::DecalComponent>();
+                ImGui::CloseCurrentPopup();
+            }
+            else
+            {
+                m_notificationManager.showWarning("Decal already exists on this entity");
+            }
         }
 
         ImGui::Separator();
@@ -1593,6 +1622,144 @@ void EntityDetailsView::draw(Editor &editor)
                     m_selectedEntity->removeComponent<engine::AudioComponent>();
                     return;
                 }
+            }
+        }
+        else if (auto *probeComponent = dynamic_cast<engine::ReflectionProbeComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Reflection Probe", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                ImGui::PushID("ReflectionProbeComp");
+
+                const std::string &currentHDR = probeComponent->hdrPath;
+                const bool hasHDR = !currentHDR.empty();
+
+                ImGui::TextUnformatted("HDR Environment:");
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", hasHDR
+                    ? std::filesystem::path(currentHDR).filename().string().c_str()
+                    : "<None>");
+
+                ImGui::Button("Drop .hdr file here##ProbeDrop");
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                    {
+                        std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
+                        std::string ext = std::filesystem::path(droppedPath).extension().string();
+                        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+                        if (ext == ".hdr" || ext == ".elixasset")
+                        {
+                            auto *pool = core::VulkanContext::getContext()->getPersistentDescriptorPool()->vk();
+                            probeComponent->setHDRPath(droppedPath, pool);
+                            if (probeComponent->hasCubemap())
+                                m_notificationManager.showSuccess("Reflection probe HDR loaded");
+                            else
+                                m_notificationManager.showError("Failed to load reflection probe HDR");
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                if (hasHDR && ImGui::Button("Clear##ProbeClear"))
+                {
+                    probeComponent->hdrPath.clear();
+                    probeComponent->reload(core::VulkanContext::getContext()->getPersistentDescriptorPool()->vk());
+                }
+
+                ImGui::Separator();
+
+                ImGui::DragFloat("Radius##ProbeRadius",    &probeComponent->radius,    0.1f, 0.1f, 500.0f, "%.1f");
+                ImGui::DragFloat("Intensity##ProbeIntens", &probeComponent->intensity, 0.01f, 0.0f, 10.0f, "%.2f");
+
+                ImGui::Separator();
+
+                const char *statusStr = probeComponent->hasCapturedScene()
+                    ? "Scene Captured"
+                    : (probeComponent->hasCubemap() ? "HDR Loaded" : "Not Captured");
+                ImGui::TextDisabled("Status: %s", statusStr);
+
+                ImGui::Spacing();
+
+                if (ImGui::Button("Capture Scene##ProbeCapture"))
+                    editor.requestProbeCapture(m_selectedEntity);
+
+                ImGui::SameLine();
+                ImGui::TextDisabled("(renders scene from probe position)");
+
+                ImGui::Separator();
+
+                if (ImGui::Button("Remove Reflection Probe"))
+                {
+                    m_selectedEntity->removeComponent<engine::ReflectionProbeComponent>();
+                    ImGui::PopID();
+                    return;
+                }
+
+                ImGui::PopID();
+            }
+        }
+        else if (auto *decalComponent = dynamic_cast<engine::DecalComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Decal", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                ImGui::PushID("DecalComp");
+
+                const bool hasMaterial = decalComponent->material != nullptr;
+                const std::string matLabel = hasMaterial
+                    ? (decalComponent->material->getName().empty()
+                        ? "<Unnamed>"
+                        : decalComponent->material->getName())
+                    : "<None>";
+
+                ImGui::TextUnformatted("Material:");
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", matLabel.c_str());
+
+                ImGui::Button("Drop .elixmat here##DecalMatDrop");
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                    {
+                        std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
+                        std::string extension = std::filesystem::path(droppedPath).extension().string();
+                        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c)
+                                       { return static_cast<char>(std::tolower(c)); });
+                        if (extension == ".elixmat")
+                        {
+                            auto mat = editor.ensureMaterialLoaded(droppedPath);
+                            if (mat)
+                            {
+                                decalComponent->material = mat;
+                                m_notificationManager.showSuccess("Decal material assigned");
+                            }
+                            else
+                            {
+                                m_notificationManager.showError("Failed to load decal material");
+                            }
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                if (hasMaterial && ImGui::Button("Clear Material##DecalClear"))
+                    decalComponent->material = nullptr;
+
+                ImGui::Separator();
+
+                ImGui::DragFloat3("Size##DecalSize",       &decalComponent->size.x,   0.05f, 0.01f, 500.0f, "%.2f");
+                ImGui::SliderFloat("Opacity##DecalOpacity", &decalComponent->opacity,  0.0f,  1.0f,  "%.2f");
+                ImGui::DragInt("Sort Order##DecalSort",    &decalComponent->sortOrder, 1.0f, -100, 100);
+
+                ImGui::Separator();
+
+                if (ImGui::Button("Remove Decal"))
+                {
+                    m_selectedEntity->removeComponent<engine::DecalComponent>();
+                    ImGui::PopID();
+                    return;
+                }
+
+                ImGui::PopID();
             }
         }
     }

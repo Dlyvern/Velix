@@ -152,5 +152,15 @@ void main()
     }
 
     vec3 reflectionColor = accum / float(nSamples);
-    imageStore(uOutput, pixel, vec4(litColor + F * reflectionColor * pc.rtReflectionStrength, 1.0));
+
+    // Smooth quadratic falloff: full at roughness=0, zero at the threshold.
+    float t          = roughness / max(pc.rtRoughnessThreshold, 0.001);
+    float specWeight = clamp((1.0 - t) * (1.0 - t) * pc.rtReflectionStrength, 0.0, 1.0);
+
+    // Mix-based compositing: replaces a fraction of litColor with reflectionColor.
+    // This preserves energy — no brightness is added, only redistributed.
+    // Avoids the blow-out that additive compositing causes with HDR environment maps.
+    vec3 reflBlend = F * specWeight;
+    vec3 result    = litColor * (vec3(1.0) - reflBlend) + reflectionColor * reflBlend;
+    imageStore(uOutput, pixel, vec4(result, 1.0));
 }

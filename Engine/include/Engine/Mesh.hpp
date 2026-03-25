@@ -38,7 +38,7 @@ struct CPUMesh
 
     // Cached geometry hash — computed once, reused every frame (static meshes never change)
     mutable std::size_t cachedGeometryHash{0};
-    mutable bool        geometryHashCached{false};
+    mutable bool geometryHashCached{false};
 
     template <typename VertexT>
     static CPUMesh build(const std::vector<VertexT> &vertices, const std::vector<uint32_t> &indices)
@@ -74,9 +74,9 @@ struct GPUMesh
     // Unified geometry buffer registration (set when the mesh is registered
     // in UnifiedGeometryBuffer; INVALID_VERTEX_OFFSET means not registered).
     static constexpr int32_t INVALID_VERTEX_OFFSET = INT32_MIN;
-    int32_t  unifiedVertexOffset{INVALID_VERTEX_OFFSET}; // vertex index offset in unified VB
-    uint32_t unifiedFirstIndex{0};                        // index offset in unified IB
-    bool     inUnifiedBuffer{false};
+    int32_t unifiedVertexOffset{INVALID_VERTEX_OFFSET}; // vertex index offset in unified VB
+    uint32_t unifiedFirstIndex{0};                      // index offset in unified IB
+    bool inUnifiedBuffer{false};
 
     GPUMesh() = default;
 
@@ -85,7 +85,7 @@ struct GPUMesh
         if (vertexData.empty() || indices.empty())
         {
             VX_ENGINE_WARNING_STREAM("Skipping GPUMesh creation for empty geometry. vertexBytes=" << vertexData.size()
-                                                                                                   << ", indices=" << indices.size() << '\n');
+                                                                                                  << ", indices=" << indices.size() << '\n');
             return nullptr;
         }
 

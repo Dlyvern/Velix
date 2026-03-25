@@ -6,6 +6,7 @@
 
 #include "imgui.h"
 #include "imgui_node_editor.h"
+#include <backends/imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <cctype>
@@ -23,6 +24,16 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 namespace
 {
+    struct PreviewCandidateInfo
+    {
+        size_t slot{0u};
+        engine::CPUMesh previewMesh{};
+        glm::vec3 boundsMin{0.0f};
+        glm::vec3 boundsMax{0.0f};
+        float score{-1.0f};
+        bool skinned{false};
+    };
+
     bool looksLikeWindowsAbsolutePath(const std::string &path)
     {
         return path.size() >= 3u &&
@@ -157,42 +168,6 @@ namespace
                mesh.vertexLayoutHash == engine::vertex::VertexTraits<engine::vertex::VertexSkinned>::layout().hash;
     }
 
-    bool isMeaningfullyAnimatedSkinnedMesh(const engine::CPUMesh &mesh)
-    {
-        if (!isSkinnedPreviewSource(mesh))
-            return false;
-
-        const size_t vertexCount = mesh.vertexData.size() / sizeof(engine::vertex::VertexSkinned);
-        if (vertexCount == 0u)
-            return false;
-
-        const auto *vertices = reinterpret_cast<const engine::vertex::VertexSkinned *>(mesh.vertexData.data());
-
-        std::unordered_set<int> uniqueBoneIds;
-        size_t multiInfluenceVertexCount = 0u;
-
-        for (size_t i = 0; i < vertexCount; ++i)
-        {
-            size_t activeInfluences = 0u;
-            for (int influence = 0; influence < 4; ++influence)
-            {
-                const int boneId = vertices[i].boneIds[influence];
-                const float weight = vertices[i].weights[influence];
-                if (boneId < 0 || weight <= 0.001f)
-                    continue;
-
-                uniqueBoneIds.insert(boneId);
-                ++activeInfluences;
-            }
-
-            if (activeInfluences > 1u)
-                ++multiInfluenceVertexCount;
-        }
-
-        return uniqueBoneIds.size() >= 4u &&
-               multiInfluenceVertexCount * 10u >= vertexCount;
-    }
-
     void updateSkinnedPreviewVertices(const engine::CPUMesh &sourceMesh,
                                       const std::vector<glm::mat4> &finalBones,
                                       std::vector<engine::vertex::Vertex3D> &ioVertices)
@@ -271,10 +246,41 @@ namespace
             ioMax = glm::max(ioMax, transformed);
         }
     }
+
+    bool buildPreviewCandidate(const engine::CPUMesh &sourceMesh,
+                               size_t slot,
+                               PreviewCandidateInfo &outCandidate)
+    {
+        engine::CPUMesh previewMesh{};
+        glm::vec3 localMin{};
+        glm::vec3 localMax{};
+        if (!buildPreviewMesh(sourceMesh, previewMesh, localMin, localMax))
+            return false;
+
+        glm::vec3 transformedMin(std::numeric_limits<float>::max());
+        glm::vec3 transformedMax(std::numeric_limits<float>::lowest());
+        expandBoundsByTransformedAabb(localMin, localMax, previewMesh.localTransform, transformedMin, transformedMax);
+
+        if (transformedMin.x > transformedMax.x ||
+            transformedMin.y > transformedMax.y ||
+            transformedMin.z > transformedMax.z)
+            return false;
+
+        outCandidate.slot = slot;
+        outCandidate.previewMesh = std::move(previewMesh);
+        outCandidate.boundsMin = transformedMin;
+        outCandidate.boundsMax = transformedMax;
+        outCandidate.score = glm::length(transformedMax - transformedMin);
+        outCandidate.skinned = isSkinnedPreviewSource(sourceMesh);
+        return true;
+    }
+
 } // namespace
 
 AnimationTreePanel::~AnimationTreePanel()
 {
+    invalidateLivePreviewDescriptor();
+
     for (auto &[key, ui] : m_uiStates)
     {
         if (ui.nodeEditorContext)
@@ -285,30 +291,86 @@ AnimationTreePanel::~AnimationTreePanel()
     }
 }
 
+void AnimationTreePanel::setPreviewPass(AnimationTreePreviewPass *pass)
+{
+    if (m_previewPass == pass)
+        return;
+
+    m_previewPass = pass;
+    invalidateLivePreviewDescriptor();
+}
+
+void AnimationTreePanel::setPreviewDescriptorSet(VkDescriptorSet ds)
+{
+    if (m_sharedPreviewDescriptorSet == ds)
+        return;
+
+    m_sharedPreviewDescriptorSet = ds;
+    invalidateLivePreviewDescriptor();
+}
+
+void AnimationTreePanel::invalidateLivePreviewDescriptor()
+{
+    if (m_livePreviewDescriptorSet != VK_NULL_HANDLE)
+        ImGui_ImplVulkan_RemoveTexture(m_livePreviewDescriptorSet);
+
+    m_livePreviewDescriptorSet = VK_NULL_HANDLE;
+    m_livePreviewImageView = VK_NULL_HANDLE;
+    m_livePreviewSampler = VK_NULL_HANDLE;
+}
+
+void AnimationTreePanel::refreshLivePreviewDescriptor()
+{
+    if (!m_previewPass)
+        return;
+
+    const VkImageView imageView = m_previewPass->getOutputImageView();
+    const VkSampler sampler = m_previewPass->getOutputSampler();
+    if (imageView == VK_NULL_HANDLE || sampler == VK_NULL_HANDLE)
+        return;
+
+    if (m_livePreviewDescriptorSet != VK_NULL_HANDLE &&
+        m_livePreviewImageView == imageView &&
+        m_livePreviewSampler == sampler)
+        return;
+
+    invalidateLivePreviewDescriptor();
+    m_livePreviewDescriptorSet = ImGui_ImplVulkan_AddTexture(
+        sampler,
+        imageView,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    m_livePreviewImageView = imageView;
+    m_livePreviewSampler = sampler;
+}
+
 void AnimationTreePanel::openTree(const std::filesystem::path &path,
-                                  engine::AnimatorComponent     *animator,
+                                  engine::AnimatorComponent *animator,
                                   engine::SkeletalMeshComponent *skeletalMesh)
 {
     const std::string key = path.lexically_normal().string();
+    const bool hasPreviewSource = animator && skeletalMesh;
 
     for (auto &editor : m_openEditors)
     {
         if (editor.path == path)
         {
             editor.open = true;
-            // Update preview context if new entity provided
-            if (animator && skeletalMesh)
+            auto it = m_uiStates.find(key);
+            if (it != m_uiStates.end())
             {
-                auto it = m_uiStates.find(key);
-                if (it != m_uiStates.end())
+                auto &preview = it->second.preview;
+                if (hasPreviewSource)
                 {
-                    auto &preview = it->second.preview;
-                    preview.animator     = animator;
+                    preview.animator = animator;
                     preview.skeletalMesh = skeletalMesh;
-                    preview.active       = true;
+                    preview.active = true;
                     preview.previewMeshes.clear(); // will be rebuilt lazily in update()
                     preview.modelMatrix = glm::mat4(1.0f);
                     preview.isFirstActivation = true;
+                }
+                else
+                {
+                    preview = AnimPreviewContext{};
                 }
             }
             return;
@@ -329,11 +391,11 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
         else
             ui.tree.name = path.stem().string();
 
-        if (animator && skeletalMesh)
+        if (hasPreviewSource)
         {
-            ui.preview.animator     = animator;
+            ui.preview.animator = animator;
             ui.preview.skeletalMesh = skeletalMesh;
-            ui.preview.active       = true;
+            ui.preview.active = true;
             ui.preview.isFirstActivation = true;
             // GPU meshes are created lazily in update() to avoid calling Vulkan during ImGui render phase
         }
@@ -408,7 +470,8 @@ void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
     ImGui::Separator();
 
     // Layout: left panel (parameters + preview) | right (node graph + inspector)
-    const float sideWidth = 220.0f;
+    const float totalWidth = ImGui::GetContentRegionAvail().x;
+    const float sideWidth = glm::clamp(totalWidth * 0.28f, 260.0f, 400.0f);
     const float totalHeight = ImGui::GetContentRegionAvail().y;
     const float inspectorHeight = 180.0f;
     const float graphHeight = totalHeight - inspectorHeight - ImGui::GetStyle().ItemSpacing.y;
@@ -434,10 +497,6 @@ void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
 
     ImGui::End();
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Parameters panel
-// ─────────────────────────────────────────────────────────────────────────────
 
 void AnimationTreePanel::drawParametersPanel(AnimTreeUIState &ui)
 {
@@ -537,10 +596,6 @@ void AnimationTreePanel::drawParametersPanel(AnimTreeUIState &ui)
         ui.dirty = true;
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Node graph
-// ─────────────────────────────────────────────────────────────────────────────
 
 void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesystem::path &path)
 {
@@ -670,7 +725,6 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
         ed::Link(ed::LinkId(transitionLinkId(i)), ed::PinId(fromOut), ed::PinId(toIn), color, selected ? 2.5f : 1.5f);
     }
 
-    // ── Create new transition by dragging pin ──
     // Helpers defined outside so they can be used for both validation and creation
     auto pinToStateOut = [&](ed::PinId pin) -> int
     {
@@ -835,7 +889,6 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
         ui.selectedTransitionIndex = -1;
     }
 
-    // ── Background context menu ──
     if (ed::ShowBackgroundContextMenu())
         ImGui::OpenPopup("AnimTreeBGMenu");
 
@@ -852,7 +905,6 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
     }
     ed::Resume();
 
-    // ── Add State popup ──
     ed::Suspend();
     if (ui.addStatePopupOpen)
         ImGui::OpenPopup("AddStatePopup##animtree");
@@ -894,7 +946,6 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
     }
     ed::Resume();
 
-    // ── Node context menu ──
     ed::NodeId ctxNode;
     if (ed::ShowNodeContextMenu(&ctxNode))
     {
@@ -974,10 +1025,6 @@ void AnimationTreePanel::drawStateContextMenu(AnimTreeUIState &ui, int stateInde
         ImGui::EndPopup();
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Transition inspector
-// ─────────────────────────────────────────────────────────────────────────────
 
 void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
 {
@@ -1115,10 +1162,6 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Preview: per-frame update
-// ─────────────────────────────────────────────────────────────────────────────
-
 void AnimationTreePanel::update(float deltaTime)
 {
     if (!m_previewPass)
@@ -1155,60 +1198,100 @@ void AnimationTreePanel::update(float deltaTime)
         if (preview.previewMeshes.empty() && preview.skeletalMesh)
         {
             const auto &cpuMeshes = preview.skeletalMesh->getMeshes();
-            const bool hasMeaningfullyAnimatedMeshes =
-                std::any_of(cpuMeshes.begin(), cpuMeshes.end(),
-                            [](const engine::CPUMesh &mesh)
-                            { return isMeaningfullyAnimatedSkinnedMesh(mesh); });
-            const bool hasSkinnedMeshes =
-                std::any_of(cpuMeshes.begin(), cpuMeshes.end(),
-                            [](const engine::CPUMesh &mesh)
-                            { return isSkinnedPreviewSource(mesh); });
-            preview.previewMeshes.reserve(cpuMeshes.size());
-            glm::vec3 previewMin(std::numeric_limits<float>::max());
-            glm::vec3 previewMax(std::numeric_limits<float>::lowest());
 
+            // Build candidates from all meshes
+            std::vector<PreviewCandidateInfo> candidates;
+            candidates.reserve(cpuMeshes.size());
             for (size_t slot = 0; slot < cpuMeshes.size(); ++slot)
             {
-                if (hasMeaningfullyAnimatedMeshes && !isMeaningfullyAnimatedSkinnedMesh(cpuMeshes[slot]))
-                    continue;
-                if (hasSkinnedMeshes && !isSkinnedPreviewSource(cpuMeshes[slot]))
-                    continue;
+                PreviewCandidateInfo candidate{};
+                if (buildPreviewCandidate(cpuMeshes[slot], slot, candidate))
+                    candidates.push_back(std::move(candidate));
+            }
 
-                engine::CPUMesh previewMesh{};
-                glm::vec3 meshMin{};
-                glm::vec3 meshMax{};
-                if (!buildPreviewMesh(cpuMeshes[slot], previewMesh, meshMin, meshMax))
-                    continue;
+            if (!candidates.empty())
+            {
+                // Find the best candidate by score (largest bounding diagonal = most body)
+                float bestScore = -1.0f;
+                for (const auto &c : candidates)
+                    if (c.score > bestScore) bestScore = c.score;
 
-                expandBoundsByTransformedAabb(meshMin, meshMax, previewMesh.localTransform, previewMin, previewMax);
+                // Include all candidates that are at least 10% the size of the primary.
+                // This collects body + clothing + accessories while excluding tiny decals/props.
+                const float scoreThreshold = bestScore * 0.1f;
 
-                auto gpu = engine::GPUMesh::createFromMesh(previewMesh);
-                if (gpu)
+                glm::vec3 combinedMin(std::numeric_limits<float>::max());
+                glm::vec3 combinedMax(std::numeric_limits<float>::lowest());
+
+                for (const auto &candidate : candidates)
                 {
-                    auto material = preview.skeletalMesh->getMaterialOverride(slot);
+                    if (candidate.score < scoreThreshold)
+                        continue;
+
+                    auto gpu = engine::GPUMesh::createFromMesh(candidate.previewMesh);
+                    if (!gpu)
+                        continue;
+
+                    auto material = preview.skeletalMesh->getMaterialOverride(candidate.slot);
                     if (!material)
-                        material = createPreviewMaterial(previewMesh.material, preview.skeletalMesh->getAssetPath());
+                        material = createPreviewMaterial(candidate.previewMesh.material,
+                                                         preview.skeletalMesh->getAssetPath());
                     gpu->material = material ? material : engine::Material::getDefaultMaterial();
 
                     PreviewMeshEntry entry{};
-                    entry.gpuMesh = std::move(gpu);
-                    entry.material = entry.gpuMesh->material ? entry.gpuMesh->material : engine::Material::getDefaultMaterial();
-                    entry.sourceMesh = cpuMeshes[slot];
-                    entry.localTransform = previewMesh.localTransform;
-                    entry.attachedBoneId = previewMesh.attachedBoneId;
-                    entry.skinned = isSkinnedPreviewSource(cpuMeshes[slot]);
+                    entry.gpuMesh      = std::move(gpu);
+                    entry.material     = entry.gpuMesh->material
+                                             ? entry.gpuMesh->material
+                                             : engine::Material::getDefaultMaterial();
+                    entry.sourceMesh   = cpuMeshes[candidate.slot];
+                    entry.localTransform  = candidate.previewMesh.localTransform;
+                    entry.attachedBoneId  = candidate.previewMesh.attachedBoneId;
+                    entry.skinned      = candidate.skinned;
                     if (entry.skinned)
-                        entry.dynamicVertices.resize(previewMesh.vertexData.size() / sizeof(engine::vertex::Vertex3D));
+                        entry.dynamicVertices.resize(
+                            candidate.previewMesh.vertexData.size() / sizeof(engine::vertex::Vertex3D));
+
+                    combinedMin = glm::min(combinedMin, candidate.boundsMin);
+                    combinedMax = glm::max(combinedMax, candidate.boundsMax);
+
                     preview.previewMeshes.push_back(std::move(entry));
                 }
-            }
 
-            if (!preview.previewMeshes.empty() &&
-                previewMin.x <= previewMax.x &&
-                previewMin.y <= previewMax.y &&
-                previewMin.z <= previewMax.z)
-            {
-                preview.modelMatrix = buildPreviewNormalizationTransform(previewMin, previewMax);
+                // Fallback: if nothing passed the threshold, add every candidate
+                if (preview.previewMeshes.empty())
+                {
+                    for (const auto &candidate : candidates)
+                    {
+                        auto gpu = engine::GPUMesh::createFromMesh(candidate.previewMesh);
+                        if (!gpu)
+                            continue;
+
+                        auto material = createPreviewMaterial(candidate.previewMesh.material,
+                                                              preview.skeletalMesh->getAssetPath());
+                        gpu->material = material ? material : engine::Material::getDefaultMaterial();
+
+                        PreviewMeshEntry entry{};
+                        entry.gpuMesh      = std::move(gpu);
+                        entry.material     = entry.gpuMesh->material
+                                                 ? entry.gpuMesh->material
+                                                 : engine::Material::getDefaultMaterial();
+                        entry.sourceMesh   = cpuMeshes[candidate.slot];
+                        entry.localTransform  = candidate.previewMesh.localTransform;
+                        entry.attachedBoneId  = candidate.previewMesh.attachedBoneId;
+                        entry.skinned      = candidate.skinned;
+                        if (entry.skinned)
+                            entry.dynamicVertices.resize(
+                                candidate.previewMesh.vertexData.size() / sizeof(engine::vertex::Vertex3D));
+
+                        combinedMin = glm::min(combinedMin, candidate.boundsMin);
+                        combinedMax = glm::max(combinedMax, candidate.boundsMax);
+
+                        preview.previewMeshes.push_back(std::move(entry));
+                    }
+                }
+
+                if (combinedMin.x <= combinedMax.x)
+                    preview.modelMatrix = buildPreviewNormalizationTransform(combinedMin, combinedMax);
             }
 
             if (preview.isFirstActivation)
@@ -1223,8 +1306,8 @@ void AnimationTreePanel::update(float deltaTime)
         // Build draw data from cached GPU meshes
         AnimPreviewDrawData data{};
         data.modelMatrix = preview.modelMatrix;
-        data.viewMatrix  = buildOrbitView(preview);
-        data.projMatrix  = buildOrbitProj();
+        data.viewMatrix = buildOrbitView(preview);
+        data.projMatrix = buildOrbitProj();
 
         const auto &finalBones = preview.skeletalMesh->getSkeleton().getFinalMatrices();
 
@@ -1268,10 +1351,6 @@ void AnimationTreePanel::update(float deltaTime)
         m_previewPass->setPreviewData(AnimPreviewDrawData{});
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Preview pane drawing
-// ─────────────────────────────────────────────────────────────────────────────
-
 void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
 {
     ImGui::Separator();
@@ -1286,13 +1365,18 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
     }
 
     const float avail = ImGui::GetContentRegionAvail().x;
-    const float previewH = avail * 0.5f;
+    // Use the available height minus a small footer (Reset Camera button + state text + spacing)
+    const float footerH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetStyle().ItemSpacing.y * 2.0f;
+    const float previewH = glm::max(ImGui::GetContentRegionAvail().y - footerH, avail * 0.6f);
     const ImVec2 previewSize(avail, previewH);
 
-    const VkDescriptorSet sharedDS = m_sharedPreviewDescriptorSet;
-    if (sharedDS != VK_NULL_HANDLE)
+    refreshLivePreviewDescriptor();
+
+    const VkDescriptorSet previewDescriptor =
+        (m_livePreviewDescriptorSet != VK_NULL_HANDLE) ? m_livePreviewDescriptorSet : m_sharedPreviewDescriptorSet;
+    if (previewDescriptor != VK_NULL_HANDLE)
     {
-        ImGui::Image((ImTextureID)(uintptr_t)sharedDS, previewSize);
+        ImGui::Image((ImTextureID)(uintptr_t)previewDescriptor, previewSize);
 
         if (ImGui::IsItemHovered())
         {
@@ -1301,9 +1385,9 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
             {
                 const ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
                 ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
-                preview.yaw   -= delta.x * 0.5f;
+                preview.yaw -= delta.x * 0.5f;
                 preview.pitch -= delta.y * 0.5f;
-                preview.pitch  = glm::clamp(preview.pitch, -89.0f, 89.0f);
+                preview.pitch = glm::clamp(preview.pitch, -89.0f, 89.0f);
             }
 
             // Zoom with scroll
@@ -1330,21 +1414,20 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
 void AnimationTreePanel::resetPreviewCamera(AnimPreviewContext &ctx)
 {
     ctx.target = glm::vec3(0.0f);
-    ctx.yaw = 28.0f;
-    ctx.pitch = 12.0f;
-    ctx.distance = 2.7f;
+    ctx.yaw = 15.0f;
+    ctx.pitch = 8.0f;
+    ctx.distance = 3.5f;
 }
 
 glm::mat4 AnimationTreePanel::buildOrbitView(const AnimPreviewContext &ctx) const
 {
-    const float yawRad   = glm::radians(ctx.yaw);
+    const float yawRad = glm::radians(ctx.yaw);
     const float pitchRad = glm::radians(ctx.pitch);
 
     const glm::vec3 offset{
         ctx.distance * std::cos(pitchRad) * std::sin(yawRad),
         ctx.distance * std::sin(pitchRad),
-        ctx.distance * std::cos(pitchRad) * std::cos(yawRad)
-    };
+        ctx.distance * std::cos(pitchRad) * std::cos(yawRad)};
 
     const glm::vec3 eye = ctx.target + offset;
     return glm::lookAt(eye, ctx.target, glm::vec3(0.0f, 1.0f, 0.0f));

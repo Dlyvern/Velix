@@ -88,8 +88,6 @@ bool PerFrameDataWorker::fillDirectionalLight(Camera *camera, DirectionalLight *
                 cascadeCenter += corner;
             cascadeCenter /= static_cast<float>(corners.size());
 
-            // Fit a bounding sphere instead of a tight AABB — rotation-invariant, prevents
-            // the ortho bounds from changing as the camera rotates (eliminates one source of shimmer)
             float sphereRadius = 0.0f;
             for (const auto &corner : corners)
                 sphereRadius = std::max(sphereRadius, glm::length(corner - cascadeCenter));
@@ -105,14 +103,11 @@ bool PerFrameDataWorker::fillDirectionalLight(Camera *camera, DirectionalLight *
             const float lightDistance = sphereRadius + zPadding + 50.0f;
             glm::mat4 lightView = glm::lookAt(cascadeCenter - dirWorld * lightDistance, cascadeCenter, lightUp);
 
-            // Square ortho projection sized to the sphere — stays constant as camera moves/rotates
             const float cascadeNear = std::max(0.1f, lightDistance - sphereRadius - zPadding);
-            const float cascadeFar  = lightDistance + sphereRadius + zPadding;
+            const float cascadeFar = lightDistance + sphereRadius + zPadding;
             glm::mat4 lightProj = glm::ortho(-sphereRadius, sphereRadius, -sphereRadius, sphereRadius, cascadeNear, cascadeFar);
             glm::mat4 lightMatrix = lightProj * lightView;
 
-            // Texel snapping: quantise the world-origin projection to the nearest shadow-map texel
-            // so the shadow map doesn't drift by sub-texel amounts as the camera translates
             if (shadowResolutionF > 0.0f)
             {
                 glm::vec4 shadowOrigin = lightMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);

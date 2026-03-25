@@ -372,10 +372,27 @@ void RTReflectionsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
 
     if (shouldUsePipelinePath())
     {
+        const VkPipelineLayout rtLayout =
+            (m_rtPipelineLayout != VK_NULL_HANDLE) ? m_rtPipelineLayout : m_pipelineLayout->vk();
+
         vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rayTracingPipeline);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout,
-                                0, 2, sets, 0, nullptr);
-        vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, 0, sizeof(pc), &pc);
+
+        if (m_rtPipelineLayout != VK_NULL_HANDLE && data.bindlessDescriptorSet != VK_NULL_HANDLE)
+        {
+            VkDescriptorSet rtSets[3] = {
+                data.cameraDescriptorSet,
+                m_descriptorSets[renderContext.currentImageIndex],
+                data.bindlessDescriptorSet};
+            vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtLayout,
+                                    0, 3, rtSets, 0, nullptr);
+        }
+        else
+        {
+            vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtLayout,
+                                    0, 2, sets, 0, nullptr);
+        }
+
+        vkCmdPushConstants(commandBuffer->vk(), rtLayout, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, 0, sizeof(pc), &pc);
         vkCmdTraceRaysKHR(commandBuffer->vk(), &m_raygenRegion, &m_missRegion, &m_hitRegion, &m_callableRegion, m_extent.width, m_extent.height, 1);
         return;
     }
@@ -539,11 +556,32 @@ void RTReflectionsRenderGraphPass::updateEnvironmentSkybox()
 
 void RTReflectionsRenderGraphPass::createRayTracingPipeline()
 {
-    destroyRayTracingPipeline();
+    destroyRayTracingPipeline(); // also clears m_rtPipelineLayout
 
     auto context = core::VulkanContext::getContext();
     if (!context || !context->hasRayTracingPipelineSupport())
         return;
+
+    // Build 3-set layout: set 0 = camera, set 1 = RT textures, set 2 = bindless.
+    // Must be created AFTER destroyRayTracingPipeline() and BEFORE vkCreateRayTracingPipelinesKHR.
+    if (m_textureSetLayout && EngineShaderFamilies::bindlessMaterialSetLayout != VK_NULL_HANDLE)
+    {
+        const VkDescriptorSetLayout setLayouts[3] = {
+            EngineShaderFamilies::cameraDescriptorSetLayout->vk(),
+            m_textureSetLayout->vk(),
+            EngineShaderFamilies::bindlessMaterialSetLayout};
+
+        const VkPushConstantRange pcRange =
+            PushConstant<RTReflectionsPC>::getRange(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
+
+        VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        layoutInfo.setLayoutCount = 3;
+        layoutInfo.pSetLayouts = setLayouts;
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &pcRange;
+
+        vkCreatePipelineLayout(context->getDevice(), &layoutInfo, nullptr, &m_rtPipelineLayout);
+    }
 
     m_raygenShader.loadFromFile("./resources/shaders/rt_reflections.rgen.spv", core::ShaderStage::RAYGEN);
     m_missShader.loadFromFile("./resources/shaders/rt_reflections.rmiss.spv", core::ShaderStage::MISS);
@@ -583,7 +621,7 @@ void RTReflectionsRenderGraphPass::createRayTracingPipeline()
     pipelineCreateInfo.groupCount = static_cast<uint32_t>(shaderGroups.size());
     pipelineCreateInfo.pGroups = shaderGroups.data();
     pipelineCreateInfo.maxPipelineRayRecursionDepth = 1;
-    pipelineCreateInfo.layout = m_pipelineLayout;
+    pipelineCreateInfo.layout = (m_rtPipelineLayout != VK_NULL_HANDLE) ? m_rtPipelineLayout : m_pipelineLayout->vk();
 
     if (vkCreateRayTracingPipelinesKHR(context->getDevice(), VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &m_rayTracingPipeline) != VK_SUCCESS)
         throw std::runtime_error("Failed to create RT reflections pipeline");
@@ -658,6 +696,12 @@ void RTReflectionsRenderGraphPass::destroyRayTracingPipeline()
     {
         vkDestroyPipeline(context->getDevice(), m_rayTracingPipeline, nullptr);
         m_rayTracingPipeline = VK_NULL_HANDLE;
+    }
+
+    if (context && m_rtPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(context->getDevice(), m_rtPipelineLayout, nullptr);
+        m_rtPipelineLayout = VK_NULL_HANDLE;
     }
 
     m_callableRegion = {};

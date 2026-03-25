@@ -68,8 +68,8 @@ public:
     {
         m_saveTreeFunction = std::move(fn);
     }
-    void setPreviewPass(AnimationTreePreviewPass *pass) { m_previewPass = pass; }
-    void setPreviewDescriptorSet(VkDescriptorSet ds)    { m_sharedPreviewDescriptorSet = ds; }
+    void setPreviewPass(AnimationTreePreviewPass *pass);
+    void setPreviewDescriptorSet(VkDescriptorSet ds);
 
     ~AnimationTreePanel();
 
@@ -126,6 +126,8 @@ private:
     void drawStateContextMenu(AnimTreeUIState &ui, int stateIndex);
     void drawPreviewPane(AnimTreeUIState &ui);
     void resetPreviewCamera(AnimPreviewContext &ctx);
+    void refreshLivePreviewDescriptor();
+    void invalidateLivePreviewDescriptor();
 
     glm::mat4 buildOrbitView(const AnimPreviewContext &ctx) const;
     glm::mat4 buildOrbitProj() const;
@@ -140,6 +142,9 @@ private:
 
     AnimationTreePreviewPass *m_previewPass{nullptr};
     VkDescriptorSet           m_sharedPreviewDescriptorSet{VK_NULL_HANDLE};
+    VkDescriptorSet           m_livePreviewDescriptorSet{VK_NULL_HANDLE};
+    VkImageView               m_livePreviewImageView{VK_NULL_HANDLE};
+    VkSampler                 m_livePreviewSampler{VK_NULL_HANDLE};
 };
 
 ELIX_NESTED_NAMESPACE_END

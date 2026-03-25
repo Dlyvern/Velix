@@ -573,6 +573,11 @@ void Texture::createDefaults()
     // even when no ORM texture is assigned.
     s_ormTexture->createFromPixels(packRGBA8(255, 255, 255, 255), VK_FORMAT_R8G8B8A8_UNORM);
     s_blackTexture->createFromPixels(packRGBA8(0, 0, 0, 255), VK_FORMAT_R8G8B8A8_SRGB);
+
+    s_blackCubemap = std::make_shared<Texture>();
+    // 4×2 all-zero equirectangular → 4×4×6 black cubemap
+    std::vector<float> blackEquirect(4 * 2 * 4, 0.0f);
+    s_blackCubemap->createCubemapFromEquirectangular(blackEquirect.data(), 4, 2, 4);
 }
 
 void Texture::destroyDefaults()
@@ -585,11 +590,14 @@ void Texture::destroyDefaults()
         s_ormTexture->destroy();
     if (s_blackTexture)
         s_blackTexture->destroy();
+    if (s_blackCubemap)
+        s_blackCubemap->destroy();
 
     s_whiteTexture.reset();
     s_normalTexture.reset();
     s_ormTexture.reset();
     s_blackTexture.reset();
+    s_blackCubemap.reset();
 }
 
 void Texture::destroy()
@@ -635,6 +643,11 @@ Texture::SharedPtr Texture::getDefaultOrmTexture()
 Texture::SharedPtr Texture::getDefaultBlackTexture()
 {
     return s_blackTexture;
+}
+
+Texture::SharedPtr Texture::getDefaultBlackCubemap()
+{
+    return s_blackCubemap;
 }
 
 uint32_t Texture::packRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a)

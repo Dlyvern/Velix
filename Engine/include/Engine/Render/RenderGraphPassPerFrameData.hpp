@@ -4,6 +4,7 @@
 #include "Core/Macros.hpp"
 
 #include "Engine/Entity.hpp"
+#include "Engine/EnvironmentSettings.hpp"
 #include "Engine/Mesh.hpp"
 
 #include "Engine/Builders/GraphicsPipelineKey.hpp"
@@ -133,6 +134,8 @@ public:
     glm::mat4 previewProjection;
 
     std::string skyboxHDRPath;
+    FogSettings fogSettings{};
+    size_t fogSettingsHash{0u};
 
     // Per-batch bounding spheres for GPU frustum culling (parallel to drawBatches).
     std::vector<GPUBatchBounds> batchBounds;

@@ -12,6 +12,7 @@
 #include "Engine/Shaders/ShaderFamily.hpp"
 #include "Engine/Scoped/ScopedTimer.hpp"
 #include "Engine/Utilities/AsyncGpuUpload.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Audio/AudioSystem.hpp"
 
@@ -132,6 +133,14 @@ bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
         VX_ENGINE_WARNING_STREAM("Engine config loaded with errors: " << engineConfig.getConfigFilePath() << '\n');
     else
         VX_ENGINE_INFO_STREAM("Engine config: " << engineConfig.getConfigFilePath() << '\n');
+
+    auto &renderSettings = RenderQualitySettings::getInstance();
+    renderSettings.enableSSR = engineConfig.getSSREnabled();
+    renderSettings.ssrMaxDistance = engineConfig.getSSRMaxDistance();
+    renderSettings.ssrThickness = engineConfig.getSSRThickness();
+    renderSettings.ssrStrength = engineConfig.getSSRStrength();
+    renderSettings.ssrSteps = engineConfig.getSSRSteps();
+    renderSettings.ssrRoughnessCutoff = engineConfig.getSSRRoughnessCutoff();
 
     if (!glfwInit())
     {

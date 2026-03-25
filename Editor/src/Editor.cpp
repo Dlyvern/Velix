@@ -150,6 +150,15 @@ namespace
         hashCombine(seed, static_cast<uint32_t>(settings.anisotropyMode));
         hashCombine(seed, settings.enableSmallFeatureCulling);
         hashCombine(seed, settings.smallFeatureCullingThreshold);
+        hashCombine(seed, settings.enableSSR);
+        hashCombine(seed, settings.ssrMaxDistance);
+        hashCombine(seed, settings.ssrThickness);
+        hashCombine(seed, settings.ssrStrength);
+        hashCombine(seed, settings.ssrSteps);
+        hashCombine(seed, settings.ssrRoughnessCutoff);
+        hashCombine(seed, static_cast<uint32_t>(settings.volumetricFogQuality));
+        hashCombine(seed, settings.overrideVolumetricFogSceneSetting);
+        hashCombine(seed, settings.volumetricFogOverrideEnabled);
         hashCombine(seed, settings.enableSSAO);
         hashCombine(seed, settings.ssaoRadius);
         hashCombine(seed, settings.ssaoBias);
@@ -2200,13 +2209,15 @@ void Editor::drawCustomTitleBar()
 
     const float leftStartX = style.WindowPadding.x;
     const float menuStartX = leftStartX + logoSize.x + 10.0f;
-    const VkDescriptorSet logoDescriptorSet = m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.tex.elixasset");
 
-    ImGui::SetCursorPos(ImVec2(leftStartX, logoY));
-    if (logoDescriptorSet != VK_NULL_HANDLE)
-        ImGui::Image(logoDescriptorSet, logoSize);
-    else
-        ImGui::Dummy(logoSize);
+    //!!!Imgui decsriptor sets broken for now...
+    // const VkDescriptorSet logoDescriptorSet = m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.tex.elixasset");
+
+    // ImGui::SetCursorPos(ImVec2(leftStartX, logoY));
+    // if (logoDescriptorSet != VK_NULL_HANDLE)
+    //     ImGui::Image(logoDescriptorSet, logoSize);
+    // else
+    //     ImGui::Dummy(logoSize);
 
     ImGui::SetCursorPos(ImVec2(menuStartX, controlsY));
 
@@ -3546,6 +3557,11 @@ void Editor::drawToolBar()
 
     ImGui::SameLine();
 
+    if (ImGui::Button("Environment"))
+        m_showEnvironmentSettings = !m_showEnvironmentSettings;
+
+    ImGui::SameLine();
+
     if (ImGui::Button("Camera Settings"))
         m_showEditorCameraSettings = !m_showEditorCameraSettings;
 
@@ -3814,6 +3830,37 @@ void Editor::drawRenderSettings()
         ImGui::Unindent();
     }
 
+    ImGui::SeparatorText("Screen Space Reflections");
+    ImGui::Checkbox("SSR##toggle", &settings.enableSSR);
+    if (settings.enableSSR)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Max Distance##ssr",      &settings.ssrMaxDistance,   0.5f, 1.0f,  50.0f, "%.1f");
+        ImGui::DragFloat("Thickness##ssr",         &settings.ssrThickness,     0.002f, 0.005f, 0.25f, "%.3f");
+        ImGui::DragFloat("Strength##ssr",          &settings.ssrStrength,      0.01f, 0.0f,  1.0f, "%.2f");
+        ImGui::DragFloat("Roughness Cutoff##ssr",  &settings.ssrRoughnessCutoff,0.01f, 0.05f,0.8f, "%.2f");
+        ImGui::DragInt("Steps##ssr",               &settings.ssrSteps,         1,    8,      256);
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Volumetric Fog");
+    {
+        const char *fogQualityItems[] = {"Off", "Low", "High"};
+        int fogQualityIndex = static_cast<int>(settings.volumetricFogQuality);
+        if (ImGui::Combo("Quality##volumetric_fog_quality", &fogQualityIndex, fogQualityItems, IM_ARRAYSIZE(fogQualityItems)))
+            settings.volumetricFogQuality = static_cast<engine::RenderQualitySettings::VolumetricFogQuality>(fogQualityIndex);
+
+        ImGui::Checkbox("Override Scene Fog##volumetric_fog_override", &settings.overrideVolumetricFogSceneSetting);
+        if (settings.overrideVolumetricFogSceneSetting)
+        {
+            ImGui::Indent();
+            ImGui::Checkbox("Fog Enabled##volumetric_fog_override_enabled", &settings.volumetricFogOverrideEnabled);
+            ImGui::Unindent();
+        }
+
+        ImGui::TextDisabled("Scene fog is authored in Environment Settings.");
+    }
+
     ImGui::SeparatorText("Bloom");
     ImGui::Checkbox("Bloom##toggle", &settings.enableBloom);
     if (settings.enableBloom)
@@ -3823,21 +3870,6 @@ void Editor::drawRenderSettings()
         ImGui::DragFloat("Knee##bloom", &settings.bloomKnee, 0.01f, 0.0f, 1.0f, "%.2f");
         ImGui::DragFloat("Strength##bloom", &settings.bloomStrength, 0.01f, 0.0f, 2.0f, "%.2f");
         ImGui::Unindent();
-    }
-
-    ImGui::SeparatorText("Environment");
-    if (m_scene && m_scene->hasSkyboxHDR())
-    {
-        ImGui::TextWrapped("HDR Skybox: %s", m_scene->getSkyboxHDRPath().c_str());
-        if (ImGui::Button("Remove HDR Skybox##render_settings"))
-        {
-            m_scene->clearSkyboxHDR();
-            m_notificationManager.showInfo("Removed HDR skybox from scene");
-        }
-    }
-    else
-    {
-        ImGui::TextDisabled("HDR Skybox: <None>");
     }
 
     ImGui::SeparatorText("Ambient Shadowing");
@@ -3865,6 +3897,16 @@ void Editor::drawRenderSettings()
         ImGui::SetItemTooltip("-1 = cool/blue, +1 = warm/orange");
         ImGui::DragFloat("Tint##cg", &settings.colorGradingTint, 0.01f, -1.0f, 1.0f, "%.2f");
         ImGui::SetItemTooltip("-1 = magenta, +1 = green");
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Motion Blur");
+    ImGui::Checkbox("Motion Blur##toggle", &settings.enableMotionBlur);
+    if (settings.enableMotionBlur)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Intensity##mb", &settings.motionBlurIntensity, 0.05f, 0.1f, 5.0f, "%.2f");
+        ImGui::DragInt("Samples##mb", &settings.motionBlurSamples, 1, 2, 32);
         ImGui::Unindent();
     }
 
@@ -3931,7 +3973,82 @@ void Editor::drawRenderSettings()
     ImGui::TextDisabled("Applies to texture sampling. Unsupported levels are clamped by GPU capabilities.");
 
     if (settingsHashBefore != hashRenderQualitySettings(settings))
+    {
+        engineConfig.setSSREnabled(settings.enableSSR);
+        engineConfig.setSSRMaxDistance(settings.ssrMaxDistance);
+        engineConfig.setSSRThickness(settings.ssrThickness);
+        engineConfig.setSSRStrength(settings.ssrStrength);
+        engineConfig.setSSRSteps(settings.ssrSteps);
+        engineConfig.setSSRRoughnessCutoff(settings.ssrRoughnessCutoff);
+        if (!engineConfig.save())
+            VX_EDITOR_WARNING_STREAM("Failed to save engine config\n");
+
         saveProjectConfig();
+    }
+
+    ImGui::End();
+}
+
+void Editor::drawEnvironmentSettings()
+{
+    if (!m_showEnvironmentSettings)
+        return;
+
+    if (!ImGui::Begin("Environment Settings", &m_showEnvironmentSettings))
+    {
+        ImGui::End();
+        return;
+    }
+
+    if (!m_scene)
+    {
+        ImGui::TextDisabled("No active scene.");
+        ImGui::End();
+        return;
+    }
+
+    auto &environment = m_scene->getEnvironmentSettings();
+    auto &fog = environment.fog;
+
+    ImGui::SeparatorText("Skybox");
+    if (m_scene->hasSkyboxHDR())
+    {
+        ImGui::TextWrapped("HDR Skybox: %s", m_scene->getSkyboxHDRPath().c_str());
+        if (ImGui::Button("Remove HDR Skybox##environment_settings"))
+        {
+            m_scene->clearSkyboxHDR();
+            m_notificationManager.showInfo("Removed HDR skybox from scene");
+        }
+    }
+    else
+    {
+        ImGui::TextDisabled("HDR Skybox: <None>");
+    }
+    ImGui::TextDisabled("Drop an .hdr or .exr file into the viewport to assign a skybox.");
+
+    ImGui::SeparatorText("Fog");
+    ImGui::Checkbox("Enable Fog", &fog.enabled);
+    if (fog.enabled)
+    {
+        ImGui::Indent();
+        ImGui::ColorEdit3("Tint", &fog.color.x);
+        ImGui::DragFloat("Density", &fog.density, 0.001f, 0.0f, 0.2f, "%.3f");
+        ImGui::DragFloat("Start Distance", &fog.startDistance, 0.1f, 0.0f, 200.0f, "%.1f");
+        ImGui::DragFloat("Max Opacity", &fog.maxOpacity, 0.01f, 0.0f, 1.0f, "%.2f");
+        ImGui::DragFloat("Height Base", &fog.heightBase, 0.1f, -100.0f, 100.0f, "%.1f");
+        ImGui::DragFloat("Height Falloff", &fog.heightFalloff, 0.001f, 0.0f, 1.0f, "%.3f");
+        ImGui::DragFloat("Anisotropy", &fog.anisotropy, 0.01f, -0.95f, 0.95f, "%.2f");
+        ImGui::SetItemTooltip("-0.95 = back-scattering, 0 = isotropic, 0.95 = strong forward shafts.");
+        ImGui::DragFloat("Shaft Intensity", &fog.shaftIntensity, 0.01f, 0.0f, 8.0f, "%.2f");
+        ImGui::DragFloat("Dust Amount", &fog.dustAmount, 0.01f, 0.0f, 1.0f, "%.2f");
+        ImGui::DragFloat("Noise Scale", &fog.noiseScale, 0.001f, 0.001f, 1.0f, "%.3f");
+        ImGui::DragFloat("Noise Scroll Speed", &fog.noiseScrollSpeed, 0.001f, 0.0f, 1.0f, "%.3f");
+        ImGui::Unindent();
+    }
+    else
+    {
+        ImGui::TextDisabled("Fog is scene-authored and disabled by default.");
+    }
 
     ImGui::End();
 }
@@ -4460,6 +4577,7 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     drawTerrainTools();
     drawEditorCameraSettings();
     drawRenderSettings();
+    drawEnvironmentSettings();
     drawBenchmark();
     drawDevTools();
 
@@ -5311,6 +5429,8 @@ bool Editor::saveMaterialToDisk(const std::filesystem::path &path, const engine:
     json["uv_location"] = {cpuMaterial.uvOffset.x, cpuMaterial.uvOffset.y};
     json["uv_rotation"] = cpuMaterial.uvRotation;
     json["uv_offset"] = {cpuMaterial.uvOffset.x, cpuMaterial.uvOffset.y};
+    json["domain"] = static_cast<uint8_t>(cpuMaterial.domain);
+    json["decal_blend_mode"] = static_cast<uint8_t>(cpuMaterial.decalBlendMode);
 
     if (!cpuMaterial.customExpression.empty())
         json["custom_expression"] = cpuMaterial.customExpression;

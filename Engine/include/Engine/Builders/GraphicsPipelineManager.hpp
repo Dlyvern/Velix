@@ -66,6 +66,15 @@ private:
     static inline core::Shader::SharedPtr depthPrepassSkinnedShader{nullptr};
     static inline core::Shader::SharedPtr taaShader{nullptr};
     static inline core::Shader::SharedPtr animPreviewShader{nullptr};
+    static inline core::Shader::SharedPtr ssrShader{nullptr};
+    static inline core::Shader::SharedPtr volumetricFogLightingShader{nullptr};
+    static inline core::Shader::SharedPtr volumetricFogTemporalShader{nullptr};
+    static inline core::Shader::SharedPtr volumetricFogCompositeShader{nullptr};
+    static inline core::Shader::SharedPtr probeCaptureShader{nullptr};
+    static inline core::Shader::SharedPtr debugBlitShader{nullptr};
+    static inline core::Shader::SharedPtr debugLinesShader{nullptr};
+    static inline core::Shader::SharedPtr motionBlurShader{nullptr};
+    static inline core::Shader::SharedPtr decalShader{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

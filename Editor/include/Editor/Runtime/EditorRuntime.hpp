@@ -22,6 +22,7 @@
 #include "Editor/RenderGraphPasses/PreviewAssetsRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/AnimationTreePreviewPass.hpp"
 #include "Editor/RenderGraphPasses/SelectionOverlayRenderGraphPass.hpp"
+#include "Editor/RenderGraphPasses/DebugOverlayRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/EditorBillboardRenderGraphPass.hpp"
 #include "Editor/ImGuiRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/UIRenderGraphPass.hpp"
@@ -30,6 +31,12 @@
 #include "Engine/Render/GraphPasses/CinematicEffectsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/DepthPrepassRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTReflectionsRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/SSRRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/DecalRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/VolumetricFogCompositeRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/VolumetricFogLightingRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/VolumetricFogTemporalRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/MotionBlurRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTShadowDenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTShadowsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTAORenderGraphPass.hpp"
@@ -126,15 +133,22 @@ private:
     engine::renderGraph::SMAAPassRenderGraphPass *m_smaaRenderGraphPass{nullptr};
     engine::renderGraph::TAARenderGraphPass *m_taaRenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
+    engine::renderGraph::SSRRenderGraphPass *m_ssrRenderGraphPass{nullptr};
+    engine::renderGraph::VolumetricFogLightingRenderGraphPass *m_volumetricFogLightingRenderGraphPass{nullptr};
+    engine::renderGraph::VolumetricFogTemporalRenderGraphPass *m_volumetricFogTemporalRenderGraphPass{nullptr};
+    engine::renderGraph::VolumetricFogCompositeRenderGraphPass *m_volumetricFogCompositeRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionsRenderGraphPass *m_rtReflectionsRenderGraphPass{nullptr};
     engine::renderGraph::RTAORenderGraphPass *m_rtaoRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionDenoiseRenderGraphPass *m_rtReflectionDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_cinematicEffectsRenderGraphPass{nullptr};
+    engine::renderGraph::MotionBlurRenderGraphPass       *m_motionBlurRenderGraphPass{nullptr};
     SelectionOverlayRenderGraphPass *m_selectionOverlayRenderGraphPass{nullptr};
+    DebugOverlayRenderGraphPass     *m_debugOverlayRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_uiRenderGraphPass{nullptr};
     EditorBillboardRenderGraphPass *m_editorBillboardRenderGraphPass{nullptr};
     ImGuiRenderGraphPass *m_imGuiRenderGraphPass{nullptr};
     engine::renderGraph::ParticleRenderGraphPass *m_particleRenderGraphPass{nullptr};
+    engine::renderGraph::DecalRenderGraphPass *m_decalRenderGraphPass{nullptr};
 
     engine::renderGraph::DepthPrepassRenderGraphPass *m_gameDepthPrepassRenderGraphPass{nullptr};
     engine::renderGraph::GBufferRenderGraphPass *m_gameGBufferRenderGraphPass{nullptr};
@@ -152,19 +166,28 @@ private:
     engine::renderGraph::SMAAPassRenderGraphPass *m_gameSMAARenderGraphPass{nullptr};
     engine::renderGraph::TAARenderGraphPass *m_gameTAARenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_gameContactShadowRenderGraphPass{nullptr};
+    engine::renderGraph::SSRRenderGraphPass *m_gameSSRRenderGraphPass{nullptr};
+    engine::renderGraph::VolumetricFogLightingRenderGraphPass *m_gameVolumetricFogLightingRenderGraphPass{nullptr};
+    engine::renderGraph::VolumetricFogTemporalRenderGraphPass *m_gameVolumetricFogTemporalRenderGraphPass{nullptr};
+    engine::renderGraph::VolumetricFogCompositeRenderGraphPass *m_gameVolumetricFogCompositeRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionsRenderGraphPass *m_gameRTReflectionsRenderGraphPass{nullptr};
     engine::renderGraph::RTAORenderGraphPass *m_gameRtaoRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionDenoiseRenderGraphPass *m_gameRtReflectionDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_gameCinematicEffectsRenderGraphPass{nullptr};
+    engine::renderGraph::MotionBlurRenderGraphPass       *m_gameMotionBlurRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_gameUIRenderGraphPass{nullptr};
+    engine::renderGraph::DecalRenderGraphPass *m_gameDecalRenderGraphPass{nullptr};
 
     VkExtent2D m_lastEditorRenderExtent{0u, 0u};
     VkExtent2D m_lastGameRenderExtent{0u, 0u};
     size_t m_editorRenderGraphTopologyHash{0u};
     size_t m_gameViewportRenderGraphTopologyHash{0u};
 
+    void captureReflectionProbe(engine::Entity *entity);
+
     bool m_shouldUpdate{false};
     bool m_isPlaySessionActive{false};
+    engine::Entity *m_pendingProbeCaptureEntity{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

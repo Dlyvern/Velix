@@ -4,6 +4,7 @@
 #include "Core/Macros.hpp"
 
 #include "Engine/Entity.hpp"
+#include "Engine/EnvironmentSettings.hpp"
 #include "Engine/Lights.hpp"
 
 #include "Engine/Physics/PhysicsScene.hpp"
@@ -64,6 +65,12 @@ public:
     const std::string &getSkyboxHDRPath() const;
     bool hasSkyboxHDR() const;
     void clearSkyboxHDR();
+    const FogSettings &getFogSettings() const;
+    FogSettings &getFogSettings();
+    void setFogSettings(const FogSettings &settings);
+    const SceneEnvironmentSettings &getEnvironmentSettings() const;
+    SceneEnvironmentSettings &getEnvironmentSettings();
+    void setEnvironmentSettings(const SceneEnvironmentSettings &settings);
 
     void update(float deltaTime);
     void fixedUpdate(float fixedDelta);
@@ -88,7 +95,7 @@ private:
     std::string m_name;
     PhysicsScene m_physicsScene;
     uint32_t m_nextEntityId{0};
-    std::string m_skyboxHDRPath;
+    SceneEnvironmentSettings m_environmentSettings{};
 
     std::vector<std::unique_ptr<ui::UIText>>    m_uiTexts;
     std::vector<std::unique_ptr<ui::UIButton>>  m_uiButtons;

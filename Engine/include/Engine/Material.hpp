@@ -17,6 +17,20 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
+enum class MaterialDomain : uint8_t
+{
+    Surface = 0,
+    DeferredDecal = 1
+};
+
+enum class DecalBlendMode : uint8_t
+{
+    ColorNormal = 0,
+    ColorOnly = 1,
+    NormalOnly = 2,
+    Emissive = 3
+};
+
 class Material
 {
 public:
@@ -90,6 +104,10 @@ public:
     void setAlphaCutoff(float cutoff);
     void setFlags(uint32_t flags);
     void setIor(float ior);
+    void setDomain(MaterialDomain domain);
+    MaterialDomain getDomain() const;
+    void setDecalBlendMode(DecalBlendMode blendMode);
+    DecalBlendMode getDecalBlendMode() const;
 
     const GPUParams &params() const;
 
@@ -126,6 +144,8 @@ private:
     std::vector<core::Buffer::SharedPtr> m_paramBuffers;
 
     std::string m_customFragPath;
+    MaterialDomain m_domain{MaterialDomain::Surface};
+    DecalBlendMode m_decalBlendMode{DecalBlendMode::ColorNormal};
 };
 
 class CPUMaterial
@@ -137,6 +157,8 @@ public:
     std::string ormTexture;
     std::string emissiveTexture;
     std::string name;
+    MaterialDomain domain{MaterialDomain::Surface};
+    DecalBlendMode decalBlendMode{DecalBlendMode::ColorNormal};
     glm::vec4 baseColorFactor{1.0f, 1.0f, 1.0f, 1.0f};
     glm::vec3 emissiveFactor{0.0f, 0.0f, 0.0f};
     float metallicFactor{0.0f};

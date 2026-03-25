@@ -87,29 +87,49 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     struct LightingPC
     {
         float shadowAmbientStrength;
-        float shadowMode;           // 0.0 = shadow maps, 1.0 = ray query, 2.0 = RT pipeline texture
-        float rtShadowSamples;      // rays per light (1=hard, 4-16=soft)
-        float rtShadowPenumbraSize; // virtual light radius → penumbra width
+        float shadowMode;               // 0.0 = shadow maps, 1.0 = ray query, 2.0 = RT pipeline texture
+        float rtShadowSamples;          // rays per light (1=hard, 4-16=soft)
+        float rtShadowPenumbraSize;     // virtual light radius → penumbra width
+        glm::vec4 probeWorldPos_radius; // xyz=probe world pos, w=radius (0=inactive)
+        float probeIntensity;
+        float _pad[3];
     };
 
-    static_assert(sizeof(LightingPC) == 16, "LightingPC push constant must stay 16 bytes");
+    static_assert(sizeof(LightingPC) == 48, "LightingPC push constant must stay 48 bytes");
 
     const float shadowMode = usePrecomputedRTShadows ? 2.0f
-                           : ((useRayQueryLighting && settings.enableRTShadows) ? 1.0f : 0.0f);
+                                                     : ((useRayQueryLighting && settings.enableRTShadows) ? 1.0f : 0.0f);
     const bool rtShadowsActive = shadowMode > 0.5f;
-    LightingPC pc{
-        std::clamp(settings.shadowAmbientStrength, 0.0f, 1.0f),
-        shadowMode,
-        rtShadowsActive ? static_cast<float>(std::clamp(settings.rtShadowSamples, 1, 16)) : 1.0f,
-        rtShadowsActive ? std::clamp(settings.rtShadowPenumbraSize, 0.0f, 2.0f) : 0.0f};
+    LightingPC pc{};
+    pc.shadowAmbientStrength = std::clamp(settings.shadowAmbientStrength, 0.0f, 1.0f);
+    pc.shadowMode = shadowMode;
+    pc.rtShadowSamples = rtShadowsActive ? static_cast<float>(std::clamp(settings.rtShadowSamples, 1, 16)) : 1.0f;
+    pc.rtShadowPenumbraSize = rtShadowsActive ? std::clamp(settings.rtShadowPenumbraSize, 0.0f, 2.0f) : 0.0f;
+    pc.probeWorldPos_radius = glm::vec4(m_probeWorldPos, m_probeRadius);
+    pc.probeIntensity = m_probeIntensity;
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout,
                        VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+
+    // If probe texture changed, update the descriptor set for the current image index
+    if (m_probeDescriptorDirty && m_probeImageView && m_probeSampler)
+    {
+        const uint32_t count = static_cast<uint32_t>(m_descriptorSets.size());
+        for (uint32_t idx = 0; idx < count; ++idx)
+        {
+            if (m_descriptorSets[idx] != VK_NULL_HANDLE)
+            {
+                DescriptorSetBuilder::begin()
+                    .addImage(m_probeImageView, m_probeSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 11)
+                    .update(core::VulkanContext::getContext()->getDevice(), m_descriptorSets[idx]);
+            }
+        }
+        m_probeDescriptorDirty = false;
+    }
 
     const uint32_t imageIndex = renderContext.currentImageIndex;
     VkDescriptorSet sets[2] = {
         data.cameraDescriptorSet,
-        m_descriptorSets[imageIndex]
-    };
+        m_descriptorSets[imageIndex]};
 
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout,
                             0, 2, sets, 0, nullptr);
@@ -149,6 +169,22 @@ void LightingRenderGraphPass::setExtent(VkExtent2D extent)
     requestRecompilation();
 }
 
+void LightingRenderGraphPass::setProbeData(VkImageView view, VkSampler sampler,
+                                           const glm::vec3 &worldPos, float radius, float intensity)
+{
+    const bool textureChanged = (view != m_probeImageView) || (sampler != m_probeSampler);
+
+    auto *blackCube = Texture::getDefaultBlackCubemap().get();
+    m_probeImageView = view ? view : (blackCube ? blackCube->vkImageView() : VK_NULL_HANDLE);
+    m_probeSampler = sampler ? sampler : (blackCube ? blackCube->vkSampler() : VK_NULL_HANDLE);
+    m_probeWorldPos = worldPos;
+    m_probeRadius = radius;
+    m_probeIntensity = intensity;
+
+    if (textureChanged)
+        m_probeDescriptorDirty = true;
+}
+
 void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
 {
     const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
@@ -157,7 +193,16 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
     m_descriptorSets.resize(imageCount);
 
     auto device = core::VulkanContext::getContext()->getDevice();
-    auto pool   = core::VulkanContext::getContext()->getPersistentDescriptorPool();
+    auto pool = core::VulkanContext::getContext()->getPersistentDescriptorPool();
+
+    // Ensure we have a valid probe view (fallback to black cubemap)
+    if (!m_probeImageView || !m_probeSampler)
+    {
+        auto *blackCube = Texture::getDefaultBlackCubemap().get();
+        m_probeImageView = blackCube ? blackCube->vkImageView() : VK_NULL_HANDLE;
+        m_probeSampler = blackCube ? blackCube->vkSampler() : VK_NULL_HANDLE;
+    }
+    m_probeDescriptorDirty = false;
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
@@ -207,6 +252,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                                       .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 8)
                                       .addImage(aoImageView, aoSampler, aoLayout, 9)
                                       .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
+                                      .addImage(m_probeImageView, m_probeSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 11)
                                       .build(device, pool, m_descriptorSetLayout);
         }
         else
@@ -222,6 +268,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                 .addImage(cubeTexture->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 8)
                 .addImage(aoImageView, aoSampler, aoLayout, 9)
                 .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
+                .addImage(m_probeImageView, m_probeSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 11)
                 .update(device, m_descriptorSets[i]);
         }
     }
@@ -338,14 +385,22 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
     rtShadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     rtShadowBinding.pImmutableSamplers = nullptr;
 
+    VkDescriptorSetLayoutBinding probeEnvBinding{};
+    probeEnvBinding.binding = 11;
+    probeEnvBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    probeEnvBinding.descriptorCount = 1;
+    probeEnvBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    probeEnvBinding.pImmutableSamplers = nullptr;
+
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{bindingNormal,
                                                                                                                       bindingAlbedo, bindingMaterial, bindingEmissive, bindingDepth,
-                                                                                                                      lightMapBinding, spotMapBinding, pointMapBinding, aoBinding, rtShadowBinding});
+                                                                                                                      lightMapBinding, spotMapBinding, pointMapBinding, aoBinding, rtShadowBinding,
+                                                                                                                      probeEnvBinding});
 
     VkPushConstantRange pcRange{};
     pcRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    pcRange.offset     = 0;
-    pcRange.size       = 16;
+    pcRange.offset = 0;
+    pcRange.size = 48;
 
     m_pipelineLayout = core::PipelineLayout::createShared(device,
                                                           std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{

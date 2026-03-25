@@ -104,6 +104,15 @@ void GraphicsPipelineManager::loadShaderModules()
     taaShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/taa.frag.spv");
     animPreviewShader = std::make_shared<core::Shader>("./resources/shaders/anim_preview.vert.spv",
                                                         "./resources/shaders/shader_simple_textured_mesh.frag.spv");
+    ssrShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssr.frag.spv");
+    volumetricFogLightingShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/volumetric_fog_lighting.frag.spv");
+    volumetricFogTemporalShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/volumetric_fog_temporal.frag.spv");
+    volumetricFogCompositeShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/volumetric_fog_composite.frag.spv");
+    probeCaptureShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_static.vert.spv", "./resources/shaders/probe_capture.frag.spv");
+    debugBlitShader  = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv",  "./resources/shaders/debug_blit.frag.spv");
+    debugLinesShader = std::make_shared<core::Shader>("./resources/shaders/debug_lines.vert.spv", "./resources/shaders/debug_lines.frag.spv");
+    motionBlurShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv",  "./resources/shaders/motion_blur.frag.spv");
+    decalShader      = std::make_shared<core::Shader>("./resources/shaders/decal.vert.spv",       "./resources/shaders/decal.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -149,6 +158,15 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(depthPrepassSkinnedShader);
     destroyShader(taaShader);
     destroyShader(animPreviewShader);
+    destroyShader(ssrShader);
+    destroyShader(volumetricFogLightingShader);
+    destroyShader(volumetricFogTemporalShader);
+    destroyShader(volumetricFogCompositeShader);
+    destroyShader(probeCaptureShader);
+    destroyShader(debugBlitShader);
+    destroyShader(debugLinesShader);
+    destroyShader(motionBlurShader);
+    destroyShader(decalShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -278,6 +296,33 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::AnimPreview:
         stages = animPreviewShader->getShaderStages();
         break;
+    case ShaderId::SSR:
+        stages = ssrShader->getShaderStages();
+        break;
+    case ShaderId::VolumetricFogLighting:
+        stages = volumetricFogLightingShader->getShaderStages();
+        break;
+    case ShaderId::VolumetricFogTemporal:
+        stages = volumetricFogTemporalShader->getShaderStages();
+        break;
+    case ShaderId::VolumetricFogComposite:
+        stages = volumetricFogCompositeShader->getShaderStages();
+        break;
+    case ShaderId::ProbeCapture:
+        stages = probeCaptureShader->getShaderStages();
+        break;
+    case ShaderId::DebugBlit:
+        stages = debugBlitShader->getShaderStages();
+        break;
+    case ShaderId::DebugLines:
+        stages = debugLinesShader->getShaderStages();
+        break;
+    case ShaderId::MotionBlur:
+        stages = motionBlurShader->getShaderStages();
+        break;
+    case ShaderId::Decal:
+        stages = decalShader->getShaderStages();
+        break;
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
@@ -326,7 +371,8 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::VertexSkinned))};
         vertexAttributeDescriptions = vertex::VertexSkinned::getAttributeDescriptions();
     }
-    else if (key.shader == ShaderId::SkyboxHDR || key.shader == ShaderId::Skybox || key.shader == ShaderId::SkyLight)
+    else if (key.shader == ShaderId::SkyboxHDR || key.shader == ShaderId::Skybox ||
+             key.shader == ShaderId::SkyLight  || key.shader == ShaderId::Decal)
     {
         VkVertexInputBindingDescription bindingDescription{};
         bindingDescription.binding = 0;
@@ -349,10 +395,14 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
              key.shader == ShaderId::BloomComposite ||
              key.shader == ShaderId::SSAO || key.shader == ShaderId::SMAA ||
              key.shader == ShaderId::TAA ||
+             key.shader == ShaderId::VolumetricFogLighting ||
+             key.shader == ShaderId::VolumetricFogTemporal ||
+             key.shader == ShaderId::VolumetricFogComposite ||
              key.shader == ShaderId::ContactShadow || key.shader == ShaderId::CinematicEffects ||
              key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||
              key.shader == ShaderId::Particle || key.shader == ShaderId::RTReflections ||
-             key.shader == ShaderId::RTAO)
+             key.shader == ShaderId::RTAO || key.shader == ShaderId::DebugBlit ||
+             key.shader == ShaderId::MotionBlur)
     {
         // Fullscreen / billboard passes generate vertices procedurally in the vertex shader
         vertexBindingDescriptions = {};
@@ -370,6 +420,20 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         vertexAttributeDescriptions = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex::Vertex3D, position)},
             {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex::Vertex3D, textureCoordinates)}};
+    }
+    else if (key.shader == ShaderId::DebugLines)
+    {
+        // DebugDraw::Vertex: vec3 position (offset 0) + vec4 color (offset 12)
+        VkVertexInputBindingDescription binding{};
+        binding.binding   = 0;
+        binding.stride    = 7 * sizeof(float); // 28 bytes
+        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        vertexBindingDescriptions = {binding};
+        vertexAttributeDescriptions = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT,       0},   // position
+            {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT,    12},  // color
+        };
     }
     else
     {

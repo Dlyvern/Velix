@@ -27,6 +27,9 @@
 #include "Engine/Render/GraphPasses/SkyLightRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/TonemapRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/UIRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/VolumetricFogCompositeRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/VolumetricFogLightingRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/VolumetricFogTemporalRenderGraphPass.hpp"
 #include "Engine/Render/RenderGraph/RenderGraph.hpp"
 #include "Engine/Runtime/ApplicationConfig.hpp"
 #include "Engine/Runtime/IRuntime.hpp"
@@ -96,6 +99,9 @@ private:
     renderGraph::RTAORenderGraphPass *m_rtaoRenderGraphPass{nullptr};
     renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
     renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
+    renderGraph::VolumetricFogLightingRenderGraphPass *m_volumetricFogLightingRenderGraphPass{nullptr};
+    renderGraph::VolumetricFogTemporalRenderGraphPass *m_volumetricFogTemporalRenderGraphPass{nullptr};
+    renderGraph::VolumetricFogCompositeRenderGraphPass *m_volumetricFogCompositeRenderGraphPass{nullptr};
     renderGraph::RTReflectionsRenderGraphPass *m_rtReflectionsRenderGraphPass{nullptr};
     renderGraph::RTReflectionDenoiseRenderGraphPass *m_rtReflectionDenoiseRenderGraphPass{nullptr};
     renderGraph::SkyLightRenderGraphPass *m_skyLightRenderGraphPass{nullptr};

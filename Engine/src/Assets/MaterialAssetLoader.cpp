@@ -106,6 +106,12 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
     if (json.contains("flags"))
         material.flags = json["flags"].get<uint32_t>();
 
+    if (json.contains("domain"))
+        material.domain = static_cast<MaterialDomain>(json["domain"].get<uint8_t>());
+
+    if (json.contains("decal_blend_mode"))
+        material.decalBlendMode = static_cast<DecalBlendMode>(json["decal_blend_mode"].get<uint8_t>());
+
     if (json.contains("uv_scale"))
     {
         const auto &uvScale = json["uv_scale"];

@@ -6,6 +6,8 @@
 #include "Core/CommandBuffer.hpp"
 #include "Core/CommandPool.hpp"
 #include "Core/DescriptorPool.hpp"
+#include "Core/Image.hpp"
+#include "Core/Sampler.hpp"
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 #include "Engine/Scene.hpp"
@@ -18,6 +20,8 @@
 #include "Engine/RayTracing/RayTracingGeometryCache.hpp"
 #include "Engine/RayTracing/RayTracingScene.hpp"
 #include "Engine/Render/UnifiedGeometryBuffer.hpp"
+#include "Engine/Render/GpuCullingSystem.hpp"
+#include "Engine/Render/BindlessRegistry.hpp"
 
 #include <typeindex>
 #include <unordered_map>
@@ -113,6 +117,20 @@ public:
     void disableGroup(const std::string &name);
     void enableGroup(const std::string &name);
 
+    struct ProbeCaptureResult
+    {
+        std::shared_ptr<core::Image>   image;
+        VkImageView                    cubeImageView{VK_NULL_HANDLE};
+        std::shared_ptr<core::Sampler> sampler;
+        bool success() const { return image && cubeImageView != VK_NULL_HANDLE && sampler; }
+    };
+
+    /// Renders all static draw batches from the probe world position to a cubemap.
+    /// If scene is provided, rebuilds draw batches without frustum culling so all scene
+    /// objects are captured regardless of editor camera position.
+    /// Blocks the GPU (vkDeviceWaitIdle + vkQueueWaitIdle) during capture.
+    ProbeCaptureResult captureSceneProbe(const glm::vec3 &probePos, uint32_t faceSize = 256, Scene *scene = nullptr);
+
     void prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime);
 
     void draw();
@@ -177,6 +195,10 @@ private:
 
     void recreateSwapChain();
 
+    /// Scans all passes for needsRecompilation() and recompiles dirty ones.
+    /// Returns true if any pass was recompiled.
+    bool recompileDirtyPasses();
+
     bool begin();
     void end();
 
@@ -239,29 +261,11 @@ private:
     static constexpr VkDeviceSize UNIFIED_VERTEX_BUFFER_SIZE = 512ULL * 1024 * 1024; // 512 MB
     static constexpr uint32_t UNIFIED_INDEX_BUFFER_COUNT = 64 * 1024 * 1024;         // 64 M indices
 
-    struct GpuCullPushConstants
-    {
-        uint32_t batchCount;
-        uint32_t pad[3];     // pad to align the vec4 array
-        glm::vec4 planes[6]; // normalised frustum planes
-    };
-
-    static constexpr uint32_t MAX_GPU_CULL_BATCHES = 30000u;
-
-    std::vector<core::Buffer::SharedPtr> m_batchBoundsSSBOs;    // vec4[] per batch
-    std::vector<core::Buffer::SharedPtr> m_indirectDrawBuffers; // VkDrawIndexedIndirectCommand[]
-    std::vector<VkDescriptorSet> m_gpuCullDescriptorSets;
-
-    VkDescriptorPool m_gpuCullDescriptorPool{VK_NULL_HANDLE};
-    VkDescriptorSetLayout m_gpuCullDescriptorSetLayout{VK_NULL_HANDLE};
-    VkPipelineLayout m_gpuCullPipelineLayout{VK_NULL_HANDLE};
-    VkPipeline m_gpuCullPipeline{VK_NULL_HANDLE};
+    GpuCullingSystem m_gpuCulling;
 
     std::array<glm::vec4, 6> m_lastFrustumPlanes{}; // stored in prepareFrame, used in begin()
     bool m_lastFrustumCullingEnabled{false};
 
-    void createGpuCullingPipeline();
-    void dispatchGpuCulling(VkCommandBuffer cmd);
     std::unordered_map<std::size_t, MeshLocalBounds> m_meshLocalBoundsByHash;
     std::unordered_map<std::string, Texture::SharedPtr> m_texturesByResolvedPath;
     std::unordered_set<std::string> m_failedTextureResolvedPaths;
@@ -272,21 +276,7 @@ private:
 
     bool m_presentToSwapchain{true};
 
-    VkDescriptorPool m_bindlessPool{VK_NULL_HANDLE};
-    VkDescriptorSet m_bindlessSet{VK_NULL_HANDLE};
-
-    core::Buffer::SharedPtr m_materialParamsSSBO;
-    std::vector<Material::GPUParams> m_cpuMaterialParams; // CPU mirror, indexed by materialIndex
-
-    std::unordered_map<Texture *, uint32_t> m_textureRegistry;   // texture ptr → slot in allTextures[]
-    std::unordered_map<Material *, uint32_t> m_materialRegistry; // material ptr → materialIndex
-
-    uint32_t m_nextTextureSlot{0};
-    uint32_t m_nextMaterialSlot{0};
-
-    void createBindlessResources();
-    uint32_t getOrRegisterTexture(Texture *tex);
-    uint32_t getOrRegisterMaterial(Material *mat);
+    BindlessRegistry m_bindlessRegistry;
 
     // Per-pass execution and barrier cache to avoid per-frame heap allocations.
     // Keyed by pass index in m_sortedRenderGraphPasses. Invalidated on recompile.

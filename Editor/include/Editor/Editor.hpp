@@ -418,6 +418,7 @@ private:
     bool m_showUITools{false};
     bool m_showTerrainTools{false};
     bool m_showRenderSettings{false};
+    bool m_showEnvironmentSettings{false};
     bool m_showEditorCameraSettings{false};
     bool m_showBenchmark{false};
     bool m_showHierarchyPanel{true};
@@ -448,11 +449,28 @@ private:
     std::shared_ptr<AssetsWindow> m_assetsWindow{nullptr};
     std::function<void(const std::filesystem::path &)> m_pendingSceneOpenRequestCallback{nullptr};
 
+    std::function<void(engine::Entity *)> m_probeCaptureCallback;
+
+public:
+    void setProbeCaptureCallback(std::function<void(engine::Entity *)> cb)
+    {
+        m_probeCaptureCallback = std::move(cb);
+    }
+
+    void requestProbeCapture(engine::Entity *entity)
+    {
+        if (m_probeCaptureCallback)
+            m_probeCaptureCallback(entity);
+    }
+
+private:
+
     void drawBottomPanel();
     void drawToolBar();
     void drawRightSidebar();
     void drawEditorCameraSettings();
     void drawRenderSettings();
+    void drawEnvironmentSettings();
     void drawBenchmark();
     void drawDevTools();
     void drawUITools();

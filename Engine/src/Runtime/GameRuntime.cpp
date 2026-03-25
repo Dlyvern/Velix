@@ -68,7 +68,19 @@ namespace
 #endif
     }
 
-    size_t renderGraphTopologyHash()
+    bool renderGraphUsesVolumetricFog(const elix::engine::RenderQualitySettings &settings,
+                                      const elix::engine::Scene *scene)
+    {
+        if (settings.volumetricFogQuality == elix::engine::RenderQualitySettings::VolumetricFogQuality::Off)
+            return false;
+
+        if (settings.overrideVolumetricFogSceneSetting)
+            return settings.volumetricFogOverrideEnabled && scene;
+
+        return scene && scene->getFogSettings().enabled;
+    }
+
+    size_t renderGraphTopologyHash(const elix::engine::Scene *scene)
     {
         const auto &settings = elix::engine::RenderQualitySettings::getInstance();
         const auto context = elix::core::VulkanContext::getContext();
@@ -81,6 +93,10 @@ namespace
         hashCombine(seed, settings.enableRayTracing && settings.enableRTShadows && supportsAnyRT);
         hashCombine(seed, settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT);
         hashCombine(seed, settings.enableRayTracing && settings.enableRTAO && supportsRayQuery);
+        hashCombine(seed, renderGraphUsesVolumetricFog(settings, scene));
+        hashCombine(seed, static_cast<uint32_t>(settings.volumetricFogQuality));
+        hashCombine(seed, settings.overrideVolumetricFogSceneSetting);
+        hashCombine(seed, settings.volumetricFogOverrideEnabled);
         return seed;
     }
 } // namespace
@@ -163,7 +179,7 @@ bool GameRuntime::init()
     scripting::setActiveScene(m_scene.get());
 
     initRenderGraph();
-    m_renderGraphTopologyHash = renderGraphTopologyHash();
+    m_renderGraphTopologyHash = renderGraphTopologyHash(m_scene.get());
 
     forEachScriptComponent([](ScriptComponent *scriptComponent)
                            {
@@ -206,7 +222,7 @@ void GameRuntime::tick(float deltaTime)
     if (m_shadowRenderGraphPass)
         m_shadowRenderGraphPass->syncQualitySettings();
 
-    const size_t currentTopologyHash = renderGraphTopologyHash();
+    const size_t currentTopologyHash = renderGraphTopologyHash(m_scene.get());
     if (currentTopologyHash != m_renderGraphTopologyHash)
     {
         initRenderGraph();
@@ -233,6 +249,9 @@ void GameRuntime::initRenderGraph()
     m_rtaoRenderGraphPass = nullptr;
     m_lightingRenderGraphPass = nullptr;
     m_contactShadowRenderGraphPass = nullptr;
+    m_volumetricFogLightingRenderGraphPass = nullptr;
+    m_volumetricFogTemporalRenderGraphPass = nullptr;
+    m_volumetricFogCompositeRenderGraphPass = nullptr;
     m_skyLightRenderGraphPass = nullptr;
     m_rtReflectionsRenderGraphPass = nullptr;
     m_rtReflectionDenoiseRenderGraphPass = nullptr;
@@ -254,6 +273,7 @@ void GameRuntime::initRenderGraph()
     const bool useRTShadows = settings.enableRayTracing && settings.enableRTShadows && supportsAnyRT;
     const bool useRTAO = settings.enableRayTracing && settings.enableRTAO && supportsRayQuery;
     const bool useRTReflections = settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT;
+    const bool useVolumetricFog = renderGraphUsesVolumetricFog(settings, m_scene.get());
 
     m_gBufferRenderGraphPass = m_renderGraph->addPass<renderGraph::GBufferRenderGraphPass>(false);
     m_shadowRenderGraphPass = m_renderGraph->addPass<renderGraph::ShadowRenderGraphPass>();
@@ -320,6 +340,29 @@ void GameRuntime::initRenderGraph()
             m_gBufferRenderGraphPass->getNormalTextureHandlers(),
             m_gBufferRenderGraphPass->getDepthTextureHandler());
         sceneColorInput = &m_rtReflectionDenoiseRenderGraphPass->getOutput();
+    }
+
+    if (useVolumetricFog)
+    {
+        m_volumetricFogLightingRenderGraphPass = m_renderGraph->addPass<renderGraph::VolumetricFogLightingRenderGraphPass>(
+            m_gBufferRenderGraphPass->getDepthTextureHandler(),
+            m_shadowRenderGraphPass->getDirectionalShadowHandler(),
+            m_shadowRenderGraphPass->getCubeShadowHandler(),
+            m_shadowRenderGraphPass->getSpotShadowHandler());
+
+        auto *fogInput = &m_volumetricFogLightingRenderGraphPass->getOutput();
+        if (settings.volumetricFogQuality == RenderQualitySettings::VolumetricFogQuality::High)
+        {
+            m_volumetricFogTemporalRenderGraphPass = m_renderGraph->addPass<renderGraph::VolumetricFogTemporalRenderGraphPass>(
+                *fogInput,
+                m_gBufferRenderGraphPass->getDepthTextureHandler());
+            fogInput = &m_volumetricFogTemporalRenderGraphPass->getOutput();
+        }
+
+        m_volumetricFogCompositeRenderGraphPass = m_renderGraph->addPass<renderGraph::VolumetricFogCompositeRenderGraphPass>(
+            *sceneColorInput,
+            *fogInput);
+        sceneColorInput = &m_volumetricFogCompositeRenderGraphPass->getOutput();
     }
 
     m_particleRenderGraphPass = m_renderGraph->addPass<renderGraph::ParticleRenderGraphPass>(
@@ -648,6 +691,12 @@ void GameRuntime::syncViewportExtent()
         m_lightingRenderGraphPass->setExtent(extent);
     if (m_contactShadowRenderGraphPass)
         m_contactShadowRenderGraphPass->setExtent(extent);
+    if (m_volumetricFogLightingRenderGraphPass)
+        m_volumetricFogLightingRenderGraphPass->setExtent(extent);
+    if (m_volumetricFogTemporalRenderGraphPass)
+        m_volumetricFogTemporalRenderGraphPass->setExtent(extent);
+    if (m_volumetricFogCompositeRenderGraphPass)
+        m_volumetricFogCompositeRenderGraphPass->setExtent(extent);
     if (m_rtReflectionsRenderGraphPass)
         m_rtReflectionsRenderGraphPass->setExtent(extent);
     if (m_rtReflectionDenoiseRenderGraphPass)

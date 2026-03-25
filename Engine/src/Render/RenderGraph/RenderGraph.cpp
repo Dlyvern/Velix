@@ -6,6 +6,8 @@
 #include "Engine/Render/ObjectIdEncoding.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
+#include "Engine/Caches/Hash.hpp"
+#include "Engine/Utilities/BufferUtilities.hpp"
 
 #include <iostream>
 #include <array>
@@ -29,6 +31,7 @@
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
+#include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
 
 #include "Engine/Utilities/AsyncGpuUpload.hpp"
@@ -80,12 +83,6 @@ struct LightSpaceMatrixUBO
 
 namespace
 {
-    template <typename TValue>
-    void hashCombine(size_t &seed, const TValue &value)
-    {
-        seed ^= std::hash<TValue>{}(value) + 0x9e3779b97f4a7c15ULL + (seed << 6u) + (seed >> 2u);
-    }
-
     struct TextureAliasSignature
     {
         VkExtent2D extent{0u, 0u};
@@ -118,34 +115,26 @@ namespace
         size_t operator()(const TextureAliasSignature &signature) const noexcept
         {
             size_t seed = 0u;
-            hashCombine(seed, signature.extent.width);
-            hashCombine(seed, signature.extent.height);
-            hashCombine(seed, static_cast<uint32_t>(signature.usage));
-            hashCombine(seed, static_cast<uint32_t>(signature.format));
-            hashCombine(seed, static_cast<uint32_t>(signature.initialLayout));
-            hashCombine(seed, static_cast<uint32_t>(signature.finalLayout));
-            hashCombine(seed, static_cast<uint32_t>(signature.sampleCount));
-            hashCombine(seed, signature.arrayLayers);
-            hashCombine(seed, signature.flags);
-            hashCombine(seed, static_cast<uint32_t>(signature.viewType));
+            elix::engine::hashing::hashCombine(seed, signature.extent.width);
+            elix::engine::hashing::hashCombine(seed, signature.extent.height);
+            elix::engine::hashing::hashCombine(seed, static_cast<uint32_t>(signature.usage));
+            elix::engine::hashing::hashCombine(seed, static_cast<uint32_t>(signature.format));
+            elix::engine::hashing::hashCombine(seed, static_cast<uint32_t>(signature.initialLayout));
+            elix::engine::hashing::hashCombine(seed, static_cast<uint32_t>(signature.finalLayout));
+            elix::engine::hashing::hashCombine(seed, static_cast<uint32_t>(signature.sampleCount));
+            elix::engine::hashing::hashCombine(seed, signature.arrayLayers);
+            elix::engine::hashing::hashCombine(seed, signature.flags);
+            elix::engine::hashing::hashCombine(seed, static_cast<uint32_t>(signature.viewType));
             return seed;
         }
     };
 
-    VkDeviceAddress getBufferDeviceAddress(const elix::core::Buffer &buffer)
-    {
-        auto context = elix::core::VulkanContext::getContext();
-        if (!context || !context->hasBufferDeviceAddressSupport())
-            return 0u;
-
-        VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
-        addressInfo.buffer = buffer.vk();
-        return vkGetBufferDeviceAddress(context->getDevice(), &addressInfo);
-    }
 }
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
+
+using namespace elix::engine::hashing;
 
 RenderGraph::~RenderGraph()
 {
@@ -177,18 +166,20 @@ RenderGraph::RenderGraph(bool presentToSwapchain) : m_presentToSwapchain(present
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
-        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
-            vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS)
-        {
-            throw std::runtime_error("Failed to create synchronization objects for a frame!");
-        }
+        auto result = vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]);
+
+        if (result != VK_SUCCESS)
+            throw std::runtime_error("Failed to create semaphore: " + core::helpers::vulkanResultToString(result));
+
+        result = vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]);
+
+        if (result != VK_SUCCESS)
+            throw std::runtime_error("Failed to create fence: " + core::helpers::vulkanResultToString(result));
     }
 
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-    {
         if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS)
             throw std::runtime_error("Failed to create renderFinished semaphore for image!");
-    }
 }
 
 void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling)
@@ -448,20 +439,16 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         return std::hash<uint32_t>()(bits);
     };
 
-    auto hashCombine = [](size_t &seed, size_t value)
-    {
-        seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
-    };
-
+    // Use elix::engine::hashing::hashCombine (defined in Hash.hpp)
     auto buildMaterialCacheKey = [&](const CPUMaterial &materialCPU) -> std::string
     {
         size_t seed = 0u;
-        hashCombine(seed, std::hash<std::string>()(materialCPU.name));
-        hashCombine(seed, std::hash<std::string>()(materialCPU.albedoTexture));
-        hashCombine(seed, std::hash<std::string>()(materialCPU.normalTexture));
-        hashCombine(seed, std::hash<std::string>()(materialCPU.ormTexture));
-        hashCombine(seed, std::hash<std::string>()(materialCPU.emissiveTexture));
-        hashCombine(seed, std::hash<uint32_t>()(materialCPU.flags));
+        hashCombine(seed, materialCPU.name);
+        hashCombine(seed, materialCPU.albedoTexture);
+        hashCombine(seed, materialCPU.normalTexture);
+        hashCombine(seed, materialCPU.ormTexture);
+        hashCombine(seed, materialCPU.emissiveTexture);
+        hashCombine(seed, materialCPU.flags);
         hashCombine(seed, hashFloat(materialCPU.baseColorFactor.x));
         hashCombine(seed, hashFloat(materialCPU.baseColorFactor.y));
         hashCombine(seed, hashFloat(materialCPU.baseColorFactor.z));
@@ -480,20 +467,20 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         hashCombine(seed, hashFloat(materialCPU.uvOffset.x));
         hashCombine(seed, hashFloat(materialCPU.uvOffset.y));
         hashCombine(seed, hashFloat(materialCPU.uvRotation));
-        hashCombine(seed, std::hash<std::string>()(materialCPU.customExpression));
-        hashCombine(seed, std::hash<std::string>()(materialCPU.customShaderHash));
+        hashCombine(seed, materialCPU.customExpression);
+        hashCombine(seed, materialCPU.customShaderHash);
 
         for (const auto &noiseNode : materialCPU.noiseNodes)
         {
-            hashCombine(seed, std::hash<uint8_t>()(static_cast<uint8_t>(noiseNode.type)));
-            hashCombine(seed, std::hash<uint8_t>()(static_cast<uint8_t>(noiseNode.blendMode)));
+            hashCombine(seed, static_cast<uint8_t>(noiseNode.type));
+            hashCombine(seed, static_cast<uint8_t>(noiseNode.blendMode));
             hashCombine(seed, hashFloat(noiseNode.scale));
-            hashCombine(seed, std::hash<int>()(noiseNode.octaves));
+            hashCombine(seed, noiseNode.octaves);
             hashCombine(seed, hashFloat(noiseNode.persistence));
             hashCombine(seed, hashFloat(noiseNode.lacunarity));
-            hashCombine(seed, std::hash<bool>()(noiseNode.worldSpace));
-            hashCombine(seed, std::hash<bool>()(noiseNode.active));
-            hashCombine(seed, std::hash<std::string>()(noiseNode.targetSlot));
+            hashCombine(seed, noiseNode.worldSpace);
+            hashCombine(seed, noiseNode.active);
+            hashCombine(seed, noiseNode.targetSlot);
             hashCombine(seed, hashFloat(noiseNode.rampColorA.x));
             hashCombine(seed, hashFloat(noiseNode.rampColorA.y));
             hashCombine(seed, hashFloat(noiseNode.rampColorA.z));
@@ -504,13 +491,13 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
         for (const auto &colorNode : materialCPU.colorNodes)
         {
-            hashCombine(seed, std::hash<uint8_t>()(static_cast<uint8_t>(colorNode.blendMode)));
+            hashCombine(seed, static_cast<uint8_t>(colorNode.blendMode));
             hashCombine(seed, hashFloat(colorNode.color.x));
             hashCombine(seed, hashFloat(colorNode.color.y));
             hashCombine(seed, hashFloat(colorNode.color.z));
             hashCombine(seed, hashFloat(colorNode.strength));
-            hashCombine(seed, std::hash<bool>()(colorNode.active));
-            hashCombine(seed, std::hash<std::string>()(colorNode.targetSlot));
+            hashCombine(seed, colorNode.active);
+            hashCombine(seed, colorNode.targetSlot);
         }
 
         return std::to_string(seed);
@@ -1007,40 +994,18 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
 
     const uint64_t skinnedVertexLayoutHash = vertex::VertexTraits<vertex::VertexSkinned>::layout().hash;
 
-    // Extract frustum planes from view-projection matrix (Gribb-Hartmann method, Vulkan depth [0,1])
-    std::array<glm::vec4, 6> frustumPlanes{};
-    if (enableFrustumCulling)
-    {
-        const glm::mat4 vp = projection * view;
-        auto row = [&](int r) -> glm::vec4
-        {
-            return glm::vec4(vp[0][r], vp[1][r], vp[2][r], vp[3][r]);
-        };
-        frustumPlanes[0] = row(3) + row(0); // Left
-        frustumPlanes[1] = row(3) - row(0); // Right
-        frustumPlanes[2] = row(3) + row(1); // Bottom
-        frustumPlanes[3] = row(3) - row(1); // Top
-        frustumPlanes[4] = row(2);          // Near (Vulkan: z_clip >= 0)
-        frustumPlanes[5] = row(3) - row(2); // Far
-        for (auto &p : frustumPlanes)
-        {
-            const float len = glm::length(glm::vec3(p));
-            if (len > 1e-6f)
-                p /= len;
-        }
-    }
+    // Extract frustum planes (Gribb-Hartmann, Vulkan depth [0,1]) via GpuCullingSystem.
+    const std::array<glm::vec4, 6> frustumPlanes = enableFrustumCulling
+                                                       ? GpuCullingSystem::extractFrustumPlanes(projection * view)
+                                                       : std::array<glm::vec4, 6>{};
+
     // Store for GPU culling dispatch in begin().
     m_lastFrustumPlanes = frustumPlanes;
     m_lastFrustumCullingEnabled = enableFrustumCulling;
 
     auto sphereInsideFrustum = [&](const glm::vec3 &center, float radius) -> bool
     {
-        for (const auto &plane : frustumPlanes)
-        {
-            if (glm::dot(glm::vec3(plane), center) + plane.w < -radius)
-                return false;
-        }
-        return true;
+        return GpuCullingSystem::isSphereInsideFrustum(center, radius, frustumPlanes);
     };
 
     const auto &sfcSettings = RenderQualitySettings::getInstance();
@@ -1220,11 +1185,21 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                     continue;
 
                 auto &shadingInstance = m_perFrameData.rtReflectionShadingInstances[instance.customInstanceIndex];
-                shadingInstance.vertexAddress = getBufferDeviceAddress(*entry->rayTracedMesh->vertexBuffer);
-                shadingInstance.indexAddress = getBufferDeviceAddress(*entry->rayTracedMesh->indexBuffer);
+                shadingInstance.vertexAddress = utilities::BufferUtilities::getBufferDeviceAddress(*entry->rayTracedMesh->vertexBuffer);
+                shadingInstance.indexAddress = utilities::BufferUtilities::getBufferDeviceAddress(*entry->rayTracedMesh->indexBuffer);
                 shadingInstance.vertexStride = instance.mesh->vertexStride;
-                shadingInstance.material = instance.mesh->material ? instance.mesh->material->params()
-                                                                   : Material::getDefaultMaterial()->params();
+                if (instance.mesh->material)
+                {
+                    shadingInstance.material = instance.mesh->material->params();
+                    shadingInstance.material.albedoTexIdx = m_bindlessRegistry.getOrRegisterTexture(instance.mesh->material->getAlbedoTexture().get());
+                    shadingInstance.material.normalTexIdx = m_bindlessRegistry.getOrRegisterTexture(instance.mesh->material->getNormalTexture().get());
+                    shadingInstance.material.ormTexIdx = m_bindlessRegistry.getOrRegisterTexture(instance.mesh->material->getOrmTexture().get());
+                    shadingInstance.material.emissiveTexIdx = m_bindlessRegistry.getOrRegisterTexture(instance.mesh->material->getEmissiveTexture().get());
+                }
+                else
+                {
+                    shadingInstance.material = Material::getDefaultMaterial()->params();
+                }
             }
         }
         else
@@ -1270,17 +1245,17 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         const uint32_t instanceIndex = static_cast<uint32_t>(m_perFrameData.perObjectInstances.size());
 
         // Register material in the bindless system and update the CPU-side params buffer.
-        const uint32_t materialIndex = m_bindlessSet != VK_NULL_HANDLE && reference.material
-                                           ? getOrRegisterMaterial(reference.material.get())
+        const uint32_t materialIndex = m_bindlessRegistry.isInitialized() && reference.material
+                                           ? m_bindlessRegistry.getOrRegisterMaterial(reference.material.get())
                                            : 0u;
-        if (m_bindlessSet != VK_NULL_HANDLE && reference.material && materialIndex < EngineShaderFamilies::MAX_BINDLESS_MATERIALS)
+        if (m_bindlessRegistry.isInitialized() && reference.material && materialIndex < EngineShaderFamilies::MAX_BINDLESS_MATERIALS)
         {
             Material::GPUParams params = reference.material->params();
-            params.albedoTexIdx = getOrRegisterTexture(reference.material->getAlbedoTexture().get());
-            params.normalTexIdx = getOrRegisterTexture(reference.material->getNormalTexture().get());
-            params.ormTexIdx = getOrRegisterTexture(reference.material->getOrmTexture().get());
-            params.emissiveTexIdx = getOrRegisterTexture(reference.material->getEmissiveTexture().get());
-            m_cpuMaterialParams[materialIndex] = params;
+            params.albedoTexIdx = m_bindlessRegistry.getOrRegisterTexture(reference.material->getAlbedoTexture().get());
+            params.normalTexIdx = m_bindlessRegistry.getOrRegisterTexture(reference.material->getNormalTexture().get());
+            params.ormTexIdx = m_bindlessRegistry.getOrRegisterTexture(reference.material->getOrmTexture().get());
+            params.emissiveTexIdx = m_bindlessRegistry.getOrRegisterTexture(reference.material->getEmissiveTexture().get());
+            m_bindlessRegistry.getCpuMaterialParams()[materialIndex] = params;
         }
 
         PerObjectInstanceData instanceData{};
@@ -1379,28 +1354,10 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         return batch.skinned == reference.skinned && hasSameGeometry(batch.mesh, reference.mesh);
     };
 
-    // Extract 6 frustum planes (Gribb-Hartmann) from a VP matrix, normalized for sphere tests
+    // Delegate frustum plane extraction to GpuCullingSystem.
     auto extractLightFrustumPlanes = [](const glm::mat4 &vp) -> std::array<glm::vec4, 6>
     {
-        auto row = [&](int r) -> glm::vec4
-        {
-            return glm::vec4(vp[0][r], vp[1][r], vp[2][r], vp[3][r]);
-        };
-        std::array<glm::vec4, 6> planes{
-            row(3) + row(0), // Left
-            row(3) - row(0), // Right
-            row(3) + row(1), // Bottom
-            row(3) - row(1), // Top
-            row(2),          // Near  (Vulkan [0,1] depth)
-            row(3) - row(2), // Far
-        };
-        for (auto &p : planes)
-        {
-            const float len = glm::length(glm::vec3(p));
-            if (len > 1e-6f)
-                p /= len;
-        }
-        return planes;
+        return GpuCullingSystem::extractFrustumPlanes(vp);
     };
 
     // Derive the world-space size covered by one shadow-map texel from the
@@ -1430,20 +1387,9 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 continue;
 
             // Per-light frustum culling: skip geometry outside this cascade/light view
-            if (cullPlanes && reference->worldBoundsRadius > 0.0f)
-            {
-                bool outside = false;
-                for (const auto &plane : *cullPlanes)
-                {
-                    if (glm::dot(glm::vec3(plane), reference->worldBoundsCenter) + plane.w < -reference->worldBoundsRadius)
-                    {
-                        outside = true;
-                        break;
-                    }
-                }
-                if (outside)
-                    continue;
-            }
+            if (cullPlanes && reference->worldBoundsRadius > 0.0f &&
+                !GpuCullingSystem::isSphereInsideFrustum(reference->worldBoundsCenter, reference->worldBoundsRadius, *cullPlanes))
+                continue;
 
             // Texel-size culling: skip meshes too small to contribute a visible
             // shadow in this cascade (diameter < minMeshRadius * 2).
@@ -1550,7 +1496,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     m_perFrameData.shadowPerObjectDescriptorSet = m_shadowPerObjectDescriptorSets[m_currentFrame];
 
     // ---- GPU culling buffers ----
-    if (!m_batchBoundsSSBOs.empty() && !m_indirectDrawBuffers.empty())
+    if (m_gpuCulling.isInitialized())
     {
         const uint32_t batchCount = static_cast<uint32_t>(m_perFrameData.drawBatches.size());
 
@@ -1558,20 +1504,20 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
         if (batchCount > 0)
         {
             glm::vec4 *boundsMapped = nullptr;
-            m_batchBoundsSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(boundsMapped));
+            m_gpuCulling.getBatchBoundsSSBO(m_currentFrame)->map(reinterpret_cast<void *&>(boundsMapped));
             for (uint32_t i = 0; i < batchCount; ++i)
             {
                 const GPUBatchBounds &b = m_perFrameData.batchBounds[i];
                 boundsMapped[i] = glm::vec4(b.center, b.radius);
             }
-            m_batchBoundsSSBOs[m_currentFrame]->unmap();
+            m_gpuCulling.getBatchBoundsSSBO(m_currentFrame)->unmap();
         }
 
         // Write VkDrawIndexedIndirectCommand[] from current draw batches.
         // The compute shader may zero out instanceCount for culled batches.
         {
             uint8_t *cmdMapped = nullptr;
-            m_indirectDrawBuffers[m_currentFrame]->map(reinterpret_cast<void *&>(cmdMapped));
+            m_gpuCulling.getIndirectDrawBuffer(m_currentFrame)->map(reinterpret_cast<void *&>(cmdMapped));
             for (uint32_t i = 0; i < batchCount; ++i)
             {
                 const DrawBatch &batch = m_perFrameData.drawBatches[i];
@@ -1583,11 +1529,315 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 cmd.firstInstance = 0u; // baseInstance comes from push constant
                 std::memcpy(cmdMapped + i * sizeof(VkDrawIndexedIndirectCommand), &cmd, sizeof(cmd));
             }
-            m_indirectDrawBuffers[m_currentFrame]->unmap();
+            m_gpuCulling.getIndirectDrawBuffer(m_currentFrame)->unmap();
         }
 
-        m_perFrameData.indirectDrawBuffer = m_indirectDrawBuffers[m_currentFrame]->vk();
+        m_perFrameData.indirectDrawBuffer = m_gpuCulling.getIndirectDrawBuffer(m_currentFrame)->vk();
     }
+}
+
+RenderGraph::ProbeCaptureResult RenderGraph::captureSceneProbe(const glm::vec3 &probePos, uint32_t faceSize, Scene *scene)
+{
+    if (m_currentFrame >= m_cameraDescriptorSets.size() || m_currentFrame >= m_cameraMapped.size())
+        return {};
+
+    if (scene)
+    {
+        prepareFrameDataFromScene(scene, glm::mat4(1.0f), glm::mat4(1.0f), false);
+
+        // Re-upload per-object instance data so the capture uses the new (complete) batches.
+        const VkDeviceSize requiredSize = static_cast<VkDeviceSize>(
+            m_perFrameData.perObjectInstances.size() * sizeof(PerObjectInstanceData));
+        if (requiredSize > 0)
+        {
+            const VkDeviceSize available = m_instanceSSBOs[m_currentFrame]->getSize();
+            if (requiredSize <= available)
+            {
+                PerObjectInstanceData *mapped = nullptr;
+                m_instanceSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(mapped));
+                std::memcpy(mapped, m_perFrameData.perObjectInstances.data(), requiredSize);
+                m_instanceSSBOs[m_currentFrame]->unmap();
+            }
+        }
+
+        m_perFrameData.perObjectDescriptorSet = m_perObjectDescriptorSets[m_currentFrame];
+    }
+
+    if (m_perFrameData.drawBatches.empty() ||
+        m_perFrameData.bindlessDescriptorSet == VK_NULL_HANDLE ||
+        m_perFrameData.perObjectDescriptorSet == VK_NULL_HANDLE)
+        return {};
+
+    vkDeviceWaitIdle(m_device);
+
+    // Six cube-face look directions and corresponding up vectors
+    static const glm::vec3 kFaceDirs[6] = {
+        {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    static const glm::vec3 kFaceUps[6] = {
+        {0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+
+    const VkFormat kColorFmt = VK_FORMAT_R16G16B16A16_SFLOAT;
+    const VkFormat kDepthFmt = VK_FORMAT_D32_SFLOAT;
+
+    // ── Create cubemap image (6 layers) ──────────────────────────────────────
+    auto captureImage = core::Image::createShared(
+        VkExtent2D{faceSize, faceSize},
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        core::memory::MemoryUsage::GPU_ONLY,
+        kColorFmt, VK_IMAGE_TILING_OPTIMAL,
+        6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
+
+    // ── Shared depth image ───────────────────────────────────────────────────
+    auto depthImage = core::Image::createShared(
+        VkExtent2D{faceSize, faceSize},
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        core::memory::MemoryUsage::GPU_ONLY,
+        kDepthFmt);
+
+    // ── Per-face 2D views (for rendering each layer separately) ──────────────
+    std::array<VkImageView, 6> faceViews{};
+    for (uint32_t i = 0; i < 6; ++i)
+    {
+        VkImageViewCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        ci.image = captureImage->vk();
+        ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        ci.format = kColorFmt;
+        ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, i, 1};
+        vkCreateImageView(m_device, &ci, nullptr, &faceViews[i]);
+    }
+
+    // ── Depth view ───────────────────────────────────────────────────────────
+    VkImageView depthView = VK_NULL_HANDLE;
+    {
+        VkImageViewCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        ci.image = depthImage->vk();
+        ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        ci.format = kDepthFmt;
+        ci.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        vkCreateImageView(m_device, &ci, nullptr, &depthView);
+    }
+
+    // ── Probe capture pipeline ───────────────────────────────────────────────
+    GraphicsPipelineKey key{};
+    key.shader = ShaderId::ProbeCapture;
+    key.blend = BlendMode::None;
+    key.cull = CullMode::Back;
+    key.depthTest = true;
+    key.depthWrite = true;
+    key.depthCompare = VK_COMPARE_OP_LESS;
+    key.polygonMode = VK_POLYGON_MODE_FILL;
+    key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    key.pipelineLayout = EngineShaderFamilies::bindlessMeshPipelineLayout;
+    key.colorFormats = {kColorFmt};
+    key.depthFormat = kDepthFmt;
+    const VkPipeline pipeline = GraphicsPipelineManager::getOrCreate(key);
+
+    auto cleanup = [&]()
+    {
+        for (auto v : faceViews)
+            if (v)
+                vkDestroyImageView(m_device, v, nullptr);
+        if (depthView)
+            vkDestroyImageView(m_device, depthView, nullptr);
+    };
+
+    if (!pipeline)
+    {
+        cleanup();
+        return {};
+    }
+
+    // ── One-shot command buffer ──────────────────────────────────────────────
+    auto ctx = core::VulkanContext::getContext();
+    auto cmdPool = ctx->getGraphicsCommandPool();
+    auto cmdBuf = core::CommandBuffer::createShared(*cmdPool);
+    cmdBuf->begin();
+
+    // Transition cubemap → COLOR_ATTACHMENT_OPTIMAL (all 6 layers)
+    {
+        auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+            *captureImage,
+            0, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6});
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(cmdBuf, &dep);
+    }
+
+    // Transition depth → DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+    {
+        auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+            *depthImage,
+            0, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+            {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1});
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(cmdBuf, &dep);
+    }
+
+    // 90° projection for cube faces (Vulkan Y-flip)
+    glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 500.0f);
+    proj[1][1] *= -1.0f;
+
+    const VkViewport vp{0.0f, 0.0f, static_cast<float>(faceSize), static_cast<float>(faceSize), 0.0f, 1.0f};
+    const VkRect2D sc{{0, 0}, {faceSize, faceSize}};
+    const VkPipelineLayout pipelineLayout = EngineShaderFamilies::bindlessMeshPipelineLayout;
+
+    struct CapturePushConstant
+    {
+        uint32_t baseInstance{0};
+        uint32_t padding[3]{0, 0, 0};
+        float time{0.0f};
+    };
+
+    for (uint32_t face = 0; face < 6; ++face)
+    {
+        // Update camera UBO in-place (safe after vkDeviceWaitIdle)
+        const glm::mat4 view = glm::lookAt(probePos, probePos + kFaceDirs[face], kFaceUps[face]);
+        CameraUBO ubo{view, proj, glm::inverse(view), glm::inverse(proj)};
+        std::memcpy(m_cameraMapped[m_currentFrame], &ubo, sizeof(CameraUBO));
+
+        // Color attachment – specific face
+        VkRenderingAttachmentInfo colorAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        colorAtt.imageView = faceViews[face];
+        colorAtt.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colorAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colorAtt.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+
+        // Depth attachment – reused for all faces (cleared each face)
+        VkRenderingAttachmentInfo depthAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depthAtt.imageView = depthView;
+        depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAtt.clearValue.depthStencil = {1.0f, 0};
+
+        VkRenderingInfo renderingInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        renderingInfo.renderArea = {{0, 0}, {faceSize, faceSize}};
+        renderingInfo.layerCount = 1;
+        renderingInfo.colorAttachmentCount = 1;
+        renderingInfo.pColorAttachments = &colorAtt;
+        renderingInfo.pDepthAttachment = &depthAtt;
+
+        vkCmdBeginRendering(cmdBuf, &renderingInfo);
+        vkCmdSetViewport(cmdBuf, 0, 1, &vp);
+        vkCmdSetScissor(cmdBuf, 0, 1, &sc);
+
+        vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+        const VkDescriptorSet camDS = m_cameraDescriptorSets[m_currentFrame];
+        const VkDescriptorSet bindless = m_perFrameData.bindlessDescriptorSet;
+        const VkDescriptorSet perObj = m_perFrameData.perObjectDescriptorSet;
+        vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &camDS, 0, nullptr);
+        vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &bindless, 0, nullptr);
+        vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 2, 1, &perObj, 0, nullptr);
+
+        VkBuffer boundUnifiedVB = VK_NULL_HANDLE;
+        VkBuffer boundUnifiedIB = VK_NULL_HANDLE;
+        VkBuffer boundVB = VK_NULL_HANDLE;
+        VkBuffer boundIB = VK_NULL_HANDLE;
+
+        const bool hasUnified = m_perFrameData.unifiedStaticVertexBuffer != VK_NULL_HANDLE &&
+                                m_perFrameData.unifiedStaticIndexBuffer != VK_NULL_HANDLE;
+
+        for (const auto &batch : m_perFrameData.drawBatches)
+        {
+            if (!batch.mesh || !batch.material || batch.skinned || batch.instanceCount == 0)
+                continue;
+
+            const bool useUnified = hasUnified && batch.mesh->inUnifiedBuffer;
+
+            if (useUnified)
+            {
+                if (m_perFrameData.unifiedStaticVertexBuffer != boundUnifiedVB)
+                {
+                    const VkDeviceSize off = 0;
+                    vkCmdBindVertexBuffers(cmdBuf, 0, 1, &m_perFrameData.unifiedStaticVertexBuffer, &off);
+                    boundUnifiedVB = m_perFrameData.unifiedStaticVertexBuffer;
+                    boundVB = VK_NULL_HANDLE;
+                }
+                if (m_perFrameData.unifiedStaticIndexBuffer != boundUnifiedIB)
+                {
+                    vkCmdBindIndexBuffer(cmdBuf, m_perFrameData.unifiedStaticIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+                    boundUnifiedIB = m_perFrameData.unifiedStaticIndexBuffer;
+                    boundIB = VK_NULL_HANDLE;
+                }
+            }
+            else
+            {
+                const VkBuffer vb = batch.mesh->vertexBuffer;
+                if (vb != boundVB)
+                {
+                    const VkDeviceSize off = 0;
+                    vkCmdBindVertexBuffers(cmdBuf, 0, 1, &vb, &off);
+                    boundVB = vb;
+                }
+                const VkBuffer ib = batch.mesh->indexBuffer;
+                if (ib != boundIB)
+                {
+                    vkCmdBindIndexBuffer(cmdBuf, ib, 0, batch.mesh->indexType);
+                    boundIB = ib;
+                }
+            }
+
+            CapturePushConstant pc{batch.firstInstance, {0, 0, 0}, m_perFrameData.elapsedTime};
+            vkCmdPushConstants(cmdBuf, pipelineLayout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(CapturePushConstant), &pc);
+
+            const uint32_t firstIndex = useUnified ? batch.mesh->unifiedFirstIndex : 0u;
+            const int32_t vertexOffset = useUnified ? batch.mesh->unifiedVertexOffset : 0;
+            vkCmdDrawIndexed(cmdBuf, batch.mesh->indicesCount, batch.instanceCount,
+                             firstIndex, vertexOffset, 0);
+        }
+
+        vkCmdEndRendering(cmdBuf);
+    }
+
+    // Transition cubemap → SHADER_READ_ONLY_OPTIMAL
+    {
+        auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(
+            *captureImage,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6});
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(cmdBuf, &dep);
+    }
+
+    cmdBuf->end();
+    cmdBuf->submit(ctx->getGraphicsQueue());
+    vkQueueWaitIdle(ctx->getGraphicsQueue());
+
+    cleanup();
+
+    // ── Final cube image view ─────────────────────────────────────────────────
+    VkImageView cubeView = VK_NULL_HANDLE;
+    {
+        VkImageViewCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        ci.image = captureImage->vk();
+        ci.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+        ci.format = kColorFmt;
+        ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6};
+        vkCreateImageView(m_device, &ci, nullptr, &cubeView);
+    }
+
+    auto sampler = core::Sampler::createShared(
+        VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_COMPARE_OP_ALWAYS,
+        VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_FALSE, 1.0f);
+
+    return {captureImage, cubeView, sampler};
 }
 
 void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime)
@@ -1602,13 +1852,8 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     m_perFrameData.unifiedStaticIndexBuffer = m_staticUnifiedGeometry.getIndexBuffer();
 
     // Upload accumulated material params to the GPU SSBO and expose the bindless set.
-    if (m_materialParamsSSBO && m_nextMaterialSlot > 0)
-    {
-        const VkDeviceSize uploadSize =
-            static_cast<VkDeviceSize>(m_nextMaterialSlot) * sizeof(Material::GPUParams);
-        m_materialParamsSSBO->upload(m_cpuMaterialParams.data(), uploadSize);
-    }
-    m_perFrameData.bindlessDescriptorSet = m_bindlessSet;
+    m_bindlessRegistry.uploadMaterialParams(m_bindlessRegistry.getRegisteredMaterialCount());
+    m_perFrameData.bindlessDescriptorSet = m_bindlessRegistry.getBindlessSet();
 
     CameraUBO cameraUBO{};
 
@@ -1637,6 +1882,8 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     m_perFrameData.previewProjection = previewCameraUBO.projection;
     m_perFrameData.previewView = previewCameraUBO.view;
     m_perFrameData.skyboxHDRPath = scene ? scene->getSkyboxHDRPath() : std::string{};
+    m_perFrameData.fogSettings = scene ? scene->getFogSettings() : FogSettings{};
+    m_perFrameData.fogSettingsHash = hashFogSettings(m_perFrameData.fogSettings);
 
     std::memcpy(m_previewCameraMapped[m_currentFrame], &previewCameraUBO, sizeof(CameraUBO));
 
@@ -1666,12 +1913,6 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     m_perFrameData.skyLightEnabled = false;
 
     LightSpaceMatrixUBO lightSpaceMatrixUBO{};
-    // lightSpaceMatrixUBO.lightSpaceMatrix = glm::mat4(1.0f);
-    // for (auto &matrix : lightSpaceMatrixUBO.directionalLightSpaceMatrices)
-    //     matrix = glm::mat4(1.0f);
-    // lightSpaceMatrixUBO.directionalCascadeSplits = glm::vec4(std::numeric_limits<float>::max());
-    // for (auto &matrix : lightSpaceMatrixUBO.spotLightSpaceMatrices)
-    //     matrix = glm::mat4(1.0f);
 
     const std::array<glm::vec3, ShadowConstants::POINT_SHADOW_FACES> pointFaceDirections{
         glm::vec3(1.0f, 0.0f, 0.0f),
@@ -2076,31 +2317,11 @@ bool RenderGraph::begin()
             shadowPass->syncActiveShadowCounts(m_perFrameData.activeSpotShadowCount, m_perFrameData.activePointShadowCount);
     }
 
-    std::vector<uint32_t> dirtyPassIds;
-    dirtyPassIds.reserve(m_renderGraphPasses.size());
-
-    for (const auto &[id, renderGraphPass] : m_renderGraphPasses)
-        if (renderGraphPass.renderGraphPass->needsRecompilation())
-            dirtyPassIds.push_back(renderGraphPass.id);
-
-    if (!dirtyPassIds.empty())
-    {
-        m_renderGraphProfiling->measureCpuStage(
-            m_currentFrame,
-            RenderGraphProfiling::CpuStage::Recompile,
-            [&]()
-            {
-                vkDeviceWaitIdle(m_device);
-                compile();
-
-                for (const uint32_t dirtyPassId : dirtyPassIds)
-                {
-                    auto *passData = findRenderGraphPassById(dirtyPassId);
-                    if (passData)
-                        passData->renderGraphPass->recompilationIsDone();
-                }
-            });
-    }
+    m_renderGraphProfiling->measureCpuStage(
+        m_currentFrame,
+        RenderGraphProfiling::CpuStage::Recompile,
+        [&]()
+        { recompileDirtyPasses(); });
 
     m_passContextData.currentFrame = m_currentFrame;
     m_passContextData.currentImageIndex = m_imageIndex;
@@ -2258,7 +2479,9 @@ bool RenderGraph::begin()
 
     // GPU frustum culling — zeroes instanceCount for batches outside the view frustum.
     // Must run before any render pass that reads VkDrawIndexedIndirectCommand[].
-    dispatchGpuCulling(primaryCommandBuffer->vk());
+    m_gpuCulling.dispatch(primaryCommandBuffer->vk(), m_currentFrame,
+                          static_cast<uint32_t>(m_perFrameData.drawBatches.size()),
+                          m_lastFrustumPlanes);
 
     m_renderGraphProfiling->beginFrameGpuProfiling(primaryCommandBuffer->vk(), m_currentFrame);
 
@@ -2640,8 +2863,7 @@ std::unordered_map<RGPResourceHandler, RGPResourceHandler> RenderGraph::buildAli
                       return a.firstUse < b.firstUse;
                   if (a.lastUse != b.lastUse)
                       return a.lastUse < b.lastUse;
-                  return a.handler.id < b.handler.id;
-              });
+                  return a.handler.id < b.handler.id; });
 
     std::unordered_map<TextureAliasSignature, std::vector<AliasSlot>, TextureAliasSignatureHasher> slotsBySignature;
     std::unordered_map<RGPResourceHandler, RGPResourceHandler> aliasRoots;
@@ -2736,6 +2958,31 @@ void RenderGraph::buildExecutionCacheForPass(size_t sortedPassIndex)
     }
 
     cached.valid = true;
+}
+
+bool RenderGraph::recompileDirtyPasses()
+{
+    std::vector<uint32_t> dirtyPassIds;
+    dirtyPassIds.reserve(m_renderGraphPasses.size());
+
+    for (const auto &[id, renderGraphPass] : m_renderGraphPasses)
+        if (renderGraphPass.renderGraphPass->needsRecompilation())
+            dirtyPassIds.push_back(renderGraphPass.id);
+
+    if (dirtyPassIds.empty())
+        return false;
+
+    vkDeviceWaitIdle(m_device);
+    compile();
+
+    for (const uint32_t dirtyPassId : dirtyPassIds)
+    {
+        auto *passData = findRenderGraphPassById(dirtyPassId);
+        if (passData)
+            passData->renderGraphPass->recompilationIsDone();
+    }
+
+    return true;
 }
 
 void RenderGraph::compile()
@@ -2930,267 +3177,8 @@ void RenderGraph::createRenderGraphResources()
     sortRenderGraphPasses();
     m_renderGraphProfiling->syncDetailedProfilingMode();
 
-    createGpuCullingPipeline();
-    createBindlessResources();
-}
-
-void RenderGraph::createBindlessResources()
-{
-    if (EngineShaderFamilies::bindlessMaterialSetLayout == VK_NULL_HANDLE)
-        return; // ShaderFamily not initialised yet
-
-    // Descriptor pool (must have UPDATE_AFTER_BIND for the texture array binding).
-    {
-        VkDescriptorPoolSize sizes[2];
-        sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        sizes[0].descriptorCount = EngineShaderFamilies::MAX_BINDLESS_TEXTURES;
-        sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        sizes[1].descriptorCount = 1;
-
-        VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        poolCI.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-        poolCI.maxSets = 1;
-        poolCI.poolSizeCount = 2;
-        poolCI.pPoolSizes = sizes;
-
-        vkCreateDescriptorPool(m_device, &poolCI, nullptr, &m_bindlessPool);
-    }
-
-    // Allocate the single global bindless descriptor set.
-    {
-        VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        allocInfo.descriptorPool = m_bindlessPool;
-        allocInfo.descriptorSetCount = 1;
-        allocInfo.pSetLayouts = &EngineShaderFamilies::bindlessMaterialSetLayout;
-
-        vkAllocateDescriptorSets(m_device, &allocInfo, &m_bindlessSet);
-    }
-
-    // Material params SSBO (CPU_TO_GPU — re-uploaded each frame).
-    const VkDeviceSize ssboSize =
-        static_cast<VkDeviceSize>(EngineShaderFamilies::MAX_BINDLESS_MATERIALS) * sizeof(Material::GPUParams);
-
-    m_materialParamsSSBO = core::Buffer::createShared(ssboSize,
-                                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                                      core::memory::MemoryUsage::CPU_TO_GPU);
-    m_cpuMaterialParams.resize(EngineShaderFamilies::MAX_BINDLESS_MATERIALS);
-
-    // Write the SSBO buffer descriptor to binding 1.
-    {
-        VkDescriptorBufferInfo bufInfo{};
-        bufInfo.buffer = m_materialParamsSSBO->vk();
-        bufInfo.offset = 0;
-        bufInfo.range = ssboSize;
-
-        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet = m_bindlessSet;
-        write.dstBinding = 1;
-        write.dstArrayElement = 0;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        write.pBufferInfo = &bufInfo;
-
-        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
-    }
-}
-
-uint32_t RenderGraph::getOrRegisterTexture(Texture *tex)
-{
-    if (!tex)
-        tex = Texture::getDefaultWhiteTexture().get();
-
-    auto it = m_textureRegistry.find(tex);
-    if (it != m_textureRegistry.end())
-        return it->second;
-
-    if (m_nextTextureSlot >= EngineShaderFamilies::MAX_BINDLESS_TEXTURES)
-    {
-        VX_ENGINE_WARNING_STREAM("BindlessTextureRegistry: MAX_BINDLESS_TEXTURES reached, returning slot 0");
-        return 0;
-    }
-
-    const uint32_t slot = m_nextTextureSlot++;
-    m_textureRegistry[tex] = slot;
-
-    VkDescriptorImageInfo imageInfo{};
-    imageInfo.imageView = tex->vkImageView();
-    imageInfo.sampler = tex->vkSampler();
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = m_bindlessSet;
-    write.dstBinding = 0;
-    write.dstArrayElement = slot;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo = &imageInfo;
-
-    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
-    return slot;
-}
-
-uint32_t RenderGraph::getOrRegisterMaterial(Material *mat)
-{
-    auto it = m_materialRegistry.find(mat);
-    if (it != m_materialRegistry.end())
-        return it->second;
-
-    if (m_nextMaterialSlot >= EngineShaderFamilies::MAX_BINDLESS_MATERIALS)
-    {
-        VX_ENGINE_WARNING_STREAM("BindlessMaterialRegistry: MAX_BINDLESS_MATERIALS reached, returning slot 0");
-        return 0;
-    }
-
-    const uint32_t slot = m_nextMaterialSlot++;
-    m_materialRegistry[mat] = slot;
-    return slot;
-}
-
-void RenderGraph::createGpuCullingPipeline()
-{
-    // ---- Buffers (one per frame in flight) ----
-    constexpr VkDeviceSize boundsBufferSize = static_cast<VkDeviceSize>(MAX_GPU_CULL_BATCHES) * sizeof(glm::vec4);
-    constexpr VkDeviceSize indirectBufferSize = static_cast<VkDeviceSize>(MAX_GPU_CULL_BATCHES) * sizeof(VkDrawIndexedIndirectCommand);
-
-    m_batchBoundsSSBOs.reserve(MAX_FRAMES_IN_FLIGHT);
-    m_indirectDrawBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
-
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-    {
-        m_batchBoundsSSBOs.push_back(core::Buffer::createShared(
-            boundsBufferSize,
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            core::memory::MemoryUsage::CPU_TO_GPU));
-
-        m_indirectDrawBuffers.push_back(core::Buffer::createShared(
-            indirectBufferSize,
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
-            core::memory::MemoryUsage::CPU_TO_GPU));
-    }
-
-    // ---- Descriptor set layout: binding 0 = bounds SSBO, binding 1 = draw-command SSBO ----
-    const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
-        {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-        {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-    }};
-
-    VkDescriptorSetLayoutCreateInfo dslCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dslCI.bindingCount = static_cast<uint32_t>(bindings.size());
-    dslCI.pBindings = bindings.data();
-    if (vkCreateDescriptorSetLayout(m_device, &dslCI, nullptr, &m_gpuCullDescriptorSetLayout) != VK_SUCCESS)
-    {
-        VX_ENGINE_ERROR_STREAM("GPU culling: failed to create descriptor set layout\n");
-        return;
-    }
-
-    // ---- Descriptor pool (2 storage-buffer descriptors per frame) ----
-    const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT * 2u};
-    VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    poolCI.maxSets = MAX_FRAMES_IN_FLIGHT;
-    poolCI.poolSizeCount = 1;
-    poolCI.pPoolSizes = &poolSize;
-    if (vkCreateDescriptorPool(m_device, &poolCI, nullptr, &m_gpuCullDescriptorPool) != VK_SUCCESS)
-    {
-        VX_ENGINE_ERROR_STREAM("GPU culling: failed to create descriptor pool\n");
-        return;
-    }
-
-    // ---- Allocate one descriptor set per frame ----
-    m_gpuCullDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-    {
-        VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        allocInfo.descriptorPool = m_gpuCullDescriptorPool;
-        allocInfo.descriptorSetCount = 1;
-        allocInfo.pSetLayouts = &m_gpuCullDescriptorSetLayout;
-        if (vkAllocateDescriptorSets(m_device, &allocInfo, &m_gpuCullDescriptorSets[i]) != VK_SUCCESS)
-        {
-            VX_ENGINE_ERROR_STREAM("GPU culling: failed to allocate descriptor set for frame " << i << "\n");
-            return;
-        }
-
-        const VkDescriptorBufferInfo boundsBI{m_batchBoundsSSBOs[i]->vk(), 0, VK_WHOLE_SIZE};
-        const VkDescriptorBufferInfo cmdBI{m_indirectDrawBuffers[i]->vk(), 0, VK_WHOLE_SIZE};
-
-        const std::array<VkWriteDescriptorSet, 2> writes{{
-            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_gpuCullDescriptorSets[i], 0, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &boundsBI, nullptr},
-            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_gpuCullDescriptorSets[i], 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &cmdBI, nullptr},
-        }};
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    }
-
-    // ---- Pipeline layout (1 descriptor set + push constants) ----
-    const VkPushConstantRange pcRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(GpuCullPushConstants)};
-    VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    plCI.setLayoutCount = 1;
-    plCI.pSetLayouts = &m_gpuCullDescriptorSetLayout;
-    plCI.pushConstantRangeCount = 1;
-    plCI.pPushConstantRanges = &pcRange;
-    if (vkCreatePipelineLayout(m_device, &plCI, nullptr, &m_gpuCullPipelineLayout) != VK_SUCCESS)
-    {
-        VX_ENGINE_ERROR_STREAM("GPU culling: failed to create pipeline layout\n");
-        return;
-    }
-
-    // ---- Load compute shader SPV ----
-    core::ShaderHandler computeShader;
-    computeShader.loadFromFile("resources/shaders/gpu_cull.comp.spv", core::ShaderStage::COMPUTE);
-    if (computeShader.getModule() == VK_NULL_HANDLE)
-    {
-        VX_ENGINE_ERROR_STREAM("GPU culling: failed to load gpu_cull.comp.spv\n");
-        return;
-    }
-
-    // ---- Compute pipeline ----
-    VkComputePipelineCreateInfo cpCI{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-    cpCI.stage = computeShader.getInfo();
-    cpCI.layout = m_gpuCullPipelineLayout;
-    if (vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &cpCI, nullptr, &m_gpuCullPipeline) != VK_SUCCESS)
-    {
-        VX_ENGINE_ERROR_STREAM("GPU culling: failed to create compute pipeline\n");
-        return;
-    }
-}
-
-void RenderGraph::dispatchGpuCulling(VkCommandBuffer cmd)
-{
-    (void)cmd;
-    // Disabled for now: this path has been causing camera-motion instability in the
-    // main scene rendering, where batches can disappear for a frame and leave the
-    // scene briefly black. The CPU-side visibility filtering still runs.
-    return;
-
-    if (m_gpuCullPipeline == VK_NULL_HANDLE)
-        return;
-
-    const uint32_t batchCount = static_cast<uint32_t>(m_perFrameData.drawBatches.size());
-    if (batchCount == 0)
-        return;
-
-    GpuCullPushConstants pc{};
-    pc.batchCount = batchCount;
-    std::copy(m_lastFrustumPlanes.begin(), m_lastFrustumPlanes.end(), pc.planes);
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_gpuCullPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_gpuCullPipelineLayout,
-                            0, 1, &m_gpuCullDescriptorSets[m_currentFrame], 0, nullptr);
-    vkCmdPushConstants(cmd, m_gpuCullPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-                       0, sizeof(GpuCullPushConstants), &pc);
-
-    const uint32_t groupCount = (batchCount + 63u) / 64u;
-    vkCmdDispatch(cmd, groupCount, 1, 1);
-
-    // Barrier: compute writes to indirect buffer → draw indirect reads it.
-    VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
-    barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-    barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
-    barrier.dstStageMask = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
-    barrier.dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
-
-    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    dep.memoryBarrierCount = 1;
-    dep.pMemoryBarriers = &barrier;
-    vkCmdPipelineBarrier2(cmd, &dep);
+    m_gpuCulling.initialize(m_device, MAX_FRAMES_IN_FLIGHT);
+    m_bindlessRegistry.initialize(m_device);
 }
 
 void RenderGraph::cleanResources()
@@ -3256,45 +3244,8 @@ void RenderGraph::cleanResources()
     m_rayTracingScene.clear();
     m_rayTracingGeometryCache.clear();
 
-    // GPU frustum-culling pipeline resources.
-    if (m_gpuCullPipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_gpuCullPipeline, nullptr);
-        m_gpuCullPipeline = VK_NULL_HANDLE;
-    }
-    if (m_gpuCullPipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_gpuCullPipelineLayout, nullptr);
-        m_gpuCullPipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_gpuCullDescriptorSetLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_gpuCullDescriptorSetLayout, nullptr);
-        m_gpuCullDescriptorSetLayout = VK_NULL_HANDLE;
-    }
-    if (m_gpuCullDescriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_gpuCullDescriptorPool, nullptr);
-        m_gpuCullDescriptorPool = VK_NULL_HANDLE;
-    }
-    m_gpuCullDescriptorSets.clear();
-    m_batchBoundsSSBOs.clear();
-    m_indirectDrawBuffers.clear();
-
-    // Bindless material resources.
-    m_materialParamsSSBO.reset();
-    m_cpuMaterialParams.clear();
-    m_textureRegistry.clear();
-    m_materialRegistry.clear();
-    m_nextTextureSlot = 0;
-    m_nextMaterialSlot = 0;
-    if (m_bindlessPool != VK_NULL_HANDLE)
-    {
-        // Descriptor sets allocated from the pool are freed with it.
-        vkDestroyDescriptorPool(m_device, m_bindlessPool, nullptr);
-        m_bindlessPool = VK_NULL_HANDLE;
-        m_bindlessSet = VK_NULL_HANDLE;
-    }
+    m_gpuCulling.cleanup(m_device);
+    m_bindlessRegistry.cleanup(m_device);
 
     // Sentinel: prevents ~RenderGraph() from calling cleanResources() a second time.
     m_device = VK_NULL_HANDLE;

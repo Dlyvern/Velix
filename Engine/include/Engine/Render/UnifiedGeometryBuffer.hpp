@@ -33,26 +33,26 @@ public:
                       int32_t &outVertexOffset, uint32_t &outFirstIndex);
 
     VkBuffer getVertexBuffer() const { return m_vertexBuffer ? m_vertexBuffer->vk() : VK_NULL_HANDLE; }
-    VkBuffer getIndexBuffer()  const { return m_indexBuffer  ? m_indexBuffer->vk()  : VK_NULL_HANDLE; }
+    VkBuffer getIndexBuffer() const { return m_indexBuffer ? m_indexBuffer->vk() : VK_NULL_HANDLE; }
 
     uint32_t getVertexStride() const { return m_vertexStride; }
-    bool     isInitialized()   const { return m_vertexBuffer != nullptr; }
+    bool isInitialized() const { return m_vertexBuffer != nullptr; }
 
     // Returns total capacity in vertices / indices.
     uint32_t vertexCapacity() const { return m_vertexStride > 0 ? static_cast<uint32_t>(m_maxVertexBytes / m_vertexStride) : 0u; }
-    uint32_t indexCapacity()  const { return m_maxIndices; }
-    uint32_t verticesUsed()   const { return m_vertexStride > 0 ? static_cast<uint32_t>(m_vertexBytesUsed / m_vertexStride) : 0u; }
-    uint32_t indicesUsed()    const { return m_indicesUsed; }
+    uint32_t indexCapacity() const { return m_maxIndices; }
+    uint32_t verticesUsed() const { return m_vertexStride > 0 ? static_cast<uint32_t>(m_vertexBytesUsed / m_vertexStride) : 0u; }
+    uint32_t indicesUsed() const { return m_indicesUsed; }
 
 private:
     core::Buffer::SharedPtr m_vertexBuffer{nullptr};
     core::Buffer::SharedPtr m_indexBuffer{nullptr};
 
-    uint32_t    m_vertexStride{0};
+    uint32_t m_vertexStride{0};
     VkDeviceSize m_vertexBytesUsed{0};
     VkDeviceSize m_maxVertexBytes{0};
-    uint32_t    m_indicesUsed{0};
-    uint32_t    m_maxIndices{0};
+    uint32_t m_indicesUsed{0};
+    uint32_t m_maxIndices{0};
 
     std::mutex m_mutex;
 };

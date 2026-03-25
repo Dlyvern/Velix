@@ -176,7 +176,7 @@ bool EngineConfig::save() const
     }
 
     nlohmann::json json;
-    json["version"] = 8;
+    json["version"] = 9;
     json["preferred_ide"] = m_preferredIdeId;
     json["show_asset_thumbnails"] = m_showAssetThumbnails;
     json["show_model_asset_previews"] = m_showModelAssetPreviews;
@@ -189,6 +189,12 @@ bool EngineConfig::save() const
     json["detailed_render_profiling"] = m_detailedRenderProfilingEnabled;
     json["scene_autosave_enabled"] = m_sceneAutosaveEnabled;
     json["scene_autosave_interval_minutes"] = m_sceneAutosaveIntervalMinutes;
+    json["enable_ssr"] = m_enableSSR;
+    json["ssr_max_distance"] = m_ssrMaxDistance;
+    json["ssr_thickness"] = m_ssrThickness;
+    json["ssr_strength"] = m_ssrStrength;
+    json["ssr_steps"] = m_ssrSteps;
+    json["ssr_roughness_cutoff"] = m_ssrRoughnessCutoff;
 
     std::ofstream file(m_configFilePath);
     if (!file.is_open())
@@ -350,6 +356,66 @@ void EngineConfig::setSceneAutosaveIntervalMinutes(float minutes)
     m_sceneAutosaveIntervalMinutes = std::clamp(minutes, 0.25f, 120.0f);
 }
 
+bool EngineConfig::getSSREnabled() const
+{
+    return m_enableSSR;
+}
+
+void EngineConfig::setSSREnabled(bool enabled)
+{
+    m_enableSSR = enabled;
+}
+
+float EngineConfig::getSSRMaxDistance() const
+{
+    return m_ssrMaxDistance;
+}
+
+void EngineConfig::setSSRMaxDistance(float distance)
+{
+    m_ssrMaxDistance = std::clamp(distance, 1.0f, 50.0f);
+}
+
+float EngineConfig::getSSRThickness() const
+{
+    return m_ssrThickness;
+}
+
+void EngineConfig::setSSRThickness(float thickness)
+{
+    m_ssrThickness = std::clamp(thickness, 0.005f, 0.25f);
+}
+
+float EngineConfig::getSSRStrength() const
+{
+    return m_ssrStrength;
+}
+
+void EngineConfig::setSSRStrength(float strength)
+{
+    m_ssrStrength = std::clamp(strength, 0.0f, 1.0f);
+}
+
+int EngineConfig::getSSRSteps() const
+{
+    return m_ssrSteps;
+}
+
+void EngineConfig::setSSRSteps(int steps)
+{
+    m_ssrSteps = std::clamp(steps, 8, 256);
+}
+
+float EngineConfig::getSSRRoughnessCutoff() const
+{
+    return m_ssrRoughnessCutoff;
+}
+
+void EngineConfig::setSSRRoughnessCutoff(float cutoff)
+{
+    m_ssrRoughnessCutoff = std::clamp(cutoff, 0.05f, 0.8f);
+}
+
 std::optional<EngineConfig::IdeInfo> EngineConfig::findPreferredVSCodeIde() const
 {
     if (isVSCodeIdeId(m_preferredIdeId))
@@ -448,6 +514,12 @@ void EngineConfig::applyDefaults()
     m_detailedRenderProfilingEnabled = true;
     m_sceneAutosaveEnabled = true;
     m_sceneAutosaveIntervalMinutes = 5.0f;
+    m_enableSSR = false;
+    m_ssrMaxDistance = 15.0f;
+    m_ssrThickness = 0.03f;
+    m_ssrStrength = 1.0f;
+    m_ssrSteps = 48;
+    m_ssrRoughnessCutoff = 0.4f;
 }
 
 bool EngineConfig::loadFromDisk()
@@ -509,6 +581,24 @@ bool EngineConfig::loadFromDisk()
 
     if (json.contains("scene_autosave_interval_minutes") && json["scene_autosave_interval_minutes"].is_number())
         setSceneAutosaveIntervalMinutes(json["scene_autosave_interval_minutes"].get<float>());
+
+    if (json.contains("enable_ssr") && json["enable_ssr"].is_boolean())
+        m_enableSSR = json["enable_ssr"].get<bool>();
+
+    if (json.contains("ssr_max_distance") && json["ssr_max_distance"].is_number())
+        setSSRMaxDistance(json["ssr_max_distance"].get<float>());
+
+    if (json.contains("ssr_thickness") && json["ssr_thickness"].is_number())
+        setSSRThickness(json["ssr_thickness"].get<float>());
+
+    if (json.contains("ssr_strength") && json["ssr_strength"].is_number())
+        setSSRStrength(json["ssr_strength"].get<float>());
+
+    if (json.contains("ssr_steps") && json["ssr_steps"].is_number_integer())
+        setSSRSteps(json["ssr_steps"].get<int>());
+
+    if (json.contains("ssr_roughness_cutoff") && json["ssr_roughness_cutoff"].is_number())
+        setSSRRoughnessCutoff(json["ssr_roughness_cutoff"].get<float>());
 
     return true;
 }

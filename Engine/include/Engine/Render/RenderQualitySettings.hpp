@@ -56,6 +56,13 @@ public:
         Pipeline = 2
     };
 
+    enum class VolumetricFogQuality : uint8_t
+    {
+        Off = 0,
+        Low = 1,
+        High = 2
+    };
+
     ShadowQuality shadowQuality{ShadowQuality::High};
     ShadowCascadeCount shadowCascadeCount{ShadowCascadeCount::X4};
     float shadowMaxDistance{180.0f};
@@ -89,6 +96,16 @@ public:
     // Range : [ -4, 0 ].
     float textureMipBias{-1.5f};
 
+    bool  enableSSR{false};
+    float ssrMaxDistance{15.0f};
+    float ssrThickness{0.03f};
+    float ssrStrength{1.0f};
+    int   ssrSteps{48};
+    float ssrRoughnessCutoff{0.4f};
+    VolumetricFogQuality volumetricFogQuality{VolumetricFogQuality::High};
+    bool overrideVolumetricFogSceneSetting{false};
+    bool volumetricFogOverrideEnabled{true};
+
     bool enableSSAO{true};
     float ssaoRadius{0.5f};
     float ssaoBias{0.025f};
@@ -121,6 +138,12 @@ public:
     float contactShadowLength{0.5f};
     float contactShadowStrength{0.8f};
     int contactShadowSteps{16};
+
+    bool  enableMotionBlur{false};
+    float motionBlurIntensity{1.0f};
+    int   motionBlurSamples{16};
+
+    bool enableDecals{true};
 
     bool enableVignette{false};
     float vignetteStrength{0.4f};

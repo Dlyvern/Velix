@@ -13,6 +13,8 @@
 #include "Engine/Components/AudioComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/Components/ParticleSystemComponent.hpp"
+#include "Engine/Components/ReflectionProbeComponent.hpp"
+#include "Core/VulkanContext.hpp"
 
 #include "Engine/Particles/Modules/SpawnModule.hpp"
 #include "Engine/Particles/Modules/LifetimeModule.hpp"
@@ -264,22 +266,52 @@ PhysicsScene &Scene::getPhysicsScene()
 
 void Scene::setSkyboxHDRPath(const std::string &path)
 {
-    m_skyboxHDRPath = path;
+    m_environmentSettings.skyboxHDRPath = path;
 }
 
 const std::string &Scene::getSkyboxHDRPath() const
 {
-    return m_skyboxHDRPath;
+    return m_environmentSettings.skyboxHDRPath;
 }
 
 bool Scene::hasSkyboxHDR() const
 {
-    return !m_skyboxHDRPath.empty();
+    return !m_environmentSettings.skyboxHDRPath.empty();
 }
 
 void Scene::clearSkyboxHDR()
 {
-    m_skyboxHDRPath.clear();
+    m_environmentSettings.skyboxHDRPath.clear();
+}
+
+const FogSettings &Scene::getFogSettings() const
+{
+    return m_environmentSettings.fog;
+}
+
+FogSettings &Scene::getFogSettings()
+{
+    return m_environmentSettings.fog;
+}
+
+void Scene::setFogSettings(const FogSettings &settings)
+{
+    m_environmentSettings.fog = settings;
+}
+
+const SceneEnvironmentSettings &Scene::getEnvironmentSettings() const
+{
+    return m_environmentSettings;
+}
+
+SceneEnvironmentSettings &Scene::getEnvironmentSettings()
+{
+    return m_environmentSettings;
+}
+
+void Scene::setEnvironmentSettings(const SceneEnvironmentSettings &settings)
+{
+    m_environmentSettings = settings;
 }
 
 ui::UIText *Scene::addUIText()
@@ -488,7 +520,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
         m_uiButtons.clear();
         m_billboards.clear();
         m_nextEntityId = 0;
-        m_skyboxHDRPath.clear();
+        m_environmentSettings = {};
     }
 
     reportStatus("Opening scene file...");
@@ -539,8 +571,36 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
     if (json.contains("environment") && json["environment"].is_object())
     {
         reportStatus("Loading environment...");
-        const std::string skyboxHDR = json["environment"].value("skybox_hdr", std::string{});
-        m_skyboxHDRPath = resolveScenePath(skyboxHDR);
+        const auto &environment = json["environment"];
+        const std::string skyboxHDR = environment.value("skybox_hdr", std::string{});
+        m_environmentSettings.skyboxHDRPath = resolveScenePath(skyboxHDR);
+
+        if (environment.contains("fog") && environment["fog"].is_object())
+        {
+            const auto &fog = environment["fog"];
+            auto &fogSettings = m_environmentSettings.fog;
+
+            fogSettings.enabled = fog.value("enabled", fogSettings.enabled);
+
+            if (fog.contains("color") && fog["color"].is_array() && fog["color"].size() == 3u &&
+                fog["color"][0].is_number() && fog["color"][1].is_number() && fog["color"][2].is_number())
+            {
+                fogSettings.color = glm::vec3(fog["color"][0].get<float>(),
+                                              fog["color"][1].get<float>(),
+                                              fog["color"][2].get<float>());
+            }
+
+            fogSettings.density = fog.value("density", fogSettings.density);
+            fogSettings.startDistance = fog.value("start_distance", fogSettings.startDistance);
+            fogSettings.maxOpacity = fog.value("max_opacity", fogSettings.maxOpacity);
+            fogSettings.heightBase = fog.value("height_base", fogSettings.heightBase);
+            fogSettings.heightFalloff = fog.value("height_falloff", fogSettings.heightFalloff);
+            fogSettings.anisotropy = fog.value("anisotropy", fogSettings.anisotropy);
+            fogSettings.shaftIntensity = fog.value("shaft_intensity", fogSettings.shaftIntensity);
+            fogSettings.dustAmount = fog.value("dust_amount", fogSettings.dustAmount);
+            fogSettings.noiseScale = fog.value("noise_scale", fogSettings.noiseScale);
+            fogSettings.noiseScrollSpeed = fog.value("noise_scroll_speed", fogSettings.noiseScrollSpeed);
+        }
     }
     else if (json.contains("enviroment"))
     {
@@ -552,13 +612,13 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
 
             if (environmentObject.contains("skybox_hdr") && environmentObject["skybox_hdr"].is_string())
             {
-                m_skyboxHDRPath = resolveScenePath(environmentObject["skybox_hdr"].get<std::string>());
+                m_environmentSettings.skyboxHDRPath = resolveScenePath(environmentObject["skybox_hdr"].get<std::string>());
                 break;
             }
 
             if (environmentObject.contains("skybox") && environmentObject["skybox"].is_string())
             {
-                m_skyboxHDRPath = resolveScenePath(environmentObject["skybox"].get<std::string>());
+                m_environmentSettings.skyboxHDRPath = resolveScenePath(environmentObject["skybox"].get<std::string>());
                 break;
             }
         }
@@ -1362,6 +1422,15 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                     psComp->playOnStart = componentJson.value("play_on_start", true);
                     psComp->setParticleSystem(ps);
                 }
+                else if (type == "reflection_probe")
+                {
+                    auto *probe = gameObject->addComponent<ReflectionProbeComponent>();
+                    probe->radius    = componentJson.value("radius", 5.0f);
+                    probe->intensity = componentJson.value("intensity", 1.0f);
+                    const std::string hdrPath = resolveScenePath(componentJson.value("hdr_path", std::string{}));
+                    if (!hdrPath.empty())
+                        probe->setHDRPath(hdrPath, core::VulkanContext::getContext()->getPersistentDescriptorPool());
+                }
             }
         }
 
@@ -1499,8 +1568,24 @@ void Scene::saveSceneToFile(const std::string &filePath)
         return p.string();
     };
 
-    if (!m_skyboxHDRPath.empty())
-        json["environment"] = {{"skybox_hdr", toRelativePath(m_skyboxHDRPath)}};
+    nlohmann::json environmentJson = nlohmann::json::object();
+    if (!m_environmentSettings.skyboxHDRPath.empty())
+        environmentJson["skybox_hdr"] = toRelativePath(m_environmentSettings.skyboxHDRPath);
+
+    environmentJson["fog"] = {
+        {"enabled", m_environmentSettings.fog.enabled},
+        {"color", {m_environmentSettings.fog.color.x, m_environmentSettings.fog.color.y, m_environmentSettings.fog.color.z}},
+        {"density", m_environmentSettings.fog.density},
+        {"start_distance", m_environmentSettings.fog.startDistance},
+        {"max_opacity", m_environmentSettings.fog.maxOpacity},
+        {"height_base", m_environmentSettings.fog.heightBase},
+        {"height_falloff", m_environmentSettings.fog.heightFalloff},
+        {"anisotropy", m_environmentSettings.fog.anisotropy},
+        {"shaft_intensity", m_environmentSettings.fog.shaftIntensity},
+        {"dust_amount", m_environmentSettings.fog.dustAmount},
+        {"noise_scale", m_environmentSettings.fog.noiseScale},
+        {"noise_scroll_speed", m_environmentSettings.fog.noiseScrollSpeed}};
+    json["environment"] = environmentJson;
 
     const auto &objects = getEntities();
 
@@ -2484,6 +2569,16 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
             componentsJson.push_back(std::move(componentJson));
         }
 
+        if (const auto *probe = object.getComponent<ReflectionProbeComponent>())
+        {
+            nlohmann::json j;
+            j["type"]      = "reflection_probe";
+            j["radius"]    = probe->radius;
+            j["intensity"] = probe->intensity;
+            j["hdr_path"]  = normalizeSerializedPath(probe->hdrPath);
+            componentsJson.push_back(std::move(j));
+        }
+
         objectJson["components"] = std::move(componentsJson);
         return objectJson;
     };
@@ -3255,6 +3350,15 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                 auto *particleSystemComponent = entity->addComponent<ParticleSystemComponent>();
                 particleSystemComponent->playOnStart = componentJson.value("play_on_start", true);
                 particleSystemComponent->setParticleSystem(particleSystem);
+            }
+            else if (type == "reflection_probe")
+            {
+                auto *probe = entity->addComponent<ReflectionProbeComponent>();
+                probe->radius    = componentJson.value("radius", 5.0f);
+                probe->intensity = componentJson.value("intensity", 1.0f);
+                const std::string hdrPath = resolveSerializedPath(componentJson.value("hdr_path", std::string{}));
+                if (!hdrPath.empty())
+                    probe->setHDRPath(hdrPath, core::VulkanContext::getContext()->getPersistentDescriptorPool());
             }
         }
     }

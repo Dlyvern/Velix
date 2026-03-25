@@ -52,13 +52,19 @@ layout(set = 1, binding = 7) uniform sampler2DArray spotShadowMaps;
 layout(set = 1, binding = 8) uniform samplerCubeArray cubeShadowMaps;
 layout(set = 1, binding = 9) uniform sampler2D uSSAO;
 layout(set = 1, binding = 10) uniform sampler2DArray uRTShadowFactors;
+layout(set = 1, binding = 11) uniform samplerCube uProbeEnv;
 
 layout(push_constant) uniform LightingPC
 {
     float shadowAmbientStrength;
-    float shadowMode;           // 0.0 = shadow maps, 2.0 = RT pipeline texture
+    float shadowMode;             // 0.0 = shadow maps, 2.0 = RT pipeline texture
     float rtShadowSamples;
-    float rtShadowPenumbraSize;
+    float rtShadowPenumbraSize;   // offset 12 — next vec4 starts at offset 16
+    vec4  probeWorldPos_radius;   // xyz=probe world pos, w=radius (0=inactive)
+    float probeIntensity;
+    float _pad0;
+    float _pad1;
+    float _pad2;
 } pc;
 
 vec3 reconstructViewPosition(vec2 uv, float depth)
@@ -433,5 +439,27 @@ void main()
     ambient *= (1.0 - clamp(pc.shadowAmbientStrength, 0.0, 1.0) * directionalShadowMax);
 
     vec3 color = ambient + lighting + emissive;
+
+    // Reflection probe: local environment specular contribution
+    if (pc.probeWorldPos_radius.w > 0.001)
+    {
+        float distToProbe = length(P_world - pc.probeWorldPos_radius.xyz);
+        float probeInfluence = 1.0 - smoothstep(0.0, pc.probeWorldPos_radius.w, distToProbe);
+        if (probeInfluence > 0.001)
+        {
+            vec3 V_world = normalize((camera.invView * vec4(V, 0.0)).xyz);
+            vec3 R_world = reflect(-V_world, N_world);
+            float mipLevel = roughness * float(max(textureQueryLevels(uProbeEnv) - 1, 0));
+            vec3 probeColor = textureLod(uProbeEnv, R_world, mipLevel).rgb;
+
+            float NdotV    = max(dot(N_view, V), 0.0);
+            float F0       = mix(0.04, 1.0, metallic);
+            float fresnel  = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+            float specMask = (1.0 - roughness * roughness);
+
+            color += probeColor * fresnel * specMask * pc.probeIntensity * probeInfluence * ao;
+        }
+    }
+
     outColor = vec4(color, alpha);
 }

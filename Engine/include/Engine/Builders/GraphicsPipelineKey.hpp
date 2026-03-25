@@ -44,6 +44,15 @@ enum class ShaderId : uint8_t
     DepthPrepassSkinned,
     TAA,
     AnimPreview,
+    SSR,
+    VolumetricFogLighting,
+    VolumetricFogTemporal,
+    VolumetricFogComposite,
+    ProbeCapture,
+    DebugBlit,
+    DebugLines,
+    MotionBlur,
+    Decal,
     None
 };
 

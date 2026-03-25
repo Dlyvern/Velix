@@ -67,6 +67,24 @@ public:
     float getSceneAutosaveIntervalMinutes() const;
     void setSceneAutosaveIntervalMinutes(float minutes);
 
+    bool getSSREnabled() const;
+    void setSSREnabled(bool enabled);
+
+    float getSSRMaxDistance() const;
+    void setSSRMaxDistance(float distance);
+
+    float getSSRThickness() const;
+    void setSSRThickness(float thickness);
+
+    float getSSRStrength() const;
+    void setSSRStrength(float strength);
+
+    int getSSRSteps() const;
+    void setSSRSteps(int steps);
+
+    float getSSRRoughnessCutoff() const;
+    void setSSRRoughnessCutoff(float cutoff);
+
     std::optional<IdeInfo> findPreferredVSCodeIde() const;
     bool hasVSCodeIde() const;
 
@@ -94,6 +112,12 @@ private:
     bool m_detailedRenderProfilingEnabled{true};
     bool m_sceneAutosaveEnabled{true};
     float m_sceneAutosaveIntervalMinutes{5.0f};
+    bool m_enableSSR{false};
+    float m_ssrMaxDistance{15.0f};
+    float m_ssrThickness{0.03f};
+    float m_ssrStrength{1.0f};
+    int m_ssrSteps{48};
+    float m_ssrRoughnessCutoff{0.4f};
     std::vector<IdeInfo> m_detectedIdes;
 };
 

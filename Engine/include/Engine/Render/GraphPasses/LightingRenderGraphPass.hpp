@@ -6,6 +6,8 @@
 #include "Core/PipelineLayout.hpp"
 #include "Core/Sampler.hpp"
 
+#include <glm/glm.hpp>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
@@ -27,6 +29,10 @@ public:
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
 
     void setExtent(VkExtent2D extent);
+
+    // Set the active reflection probe for this pass. Pass VK_NULL_HANDLE view to disable.
+    void setProbeData(VkImageView view, VkSampler sampler,
+                      const glm::vec3 &worldPos, float radius, float intensity);
 
     void compile(renderGraph::RGPResourcesStorage &storage) override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
@@ -70,6 +76,14 @@ private:
     core::Sampler::SharedPtr m_defaultSampler{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};
     Texture::SharedPtr m_defaultWhiteTexture{nullptr};
+
+    // Reflection probe state (updated per-frame by EditorRuntime)
+    VkImageView m_probeImageView{VK_NULL_HANDLE};
+    VkSampler   m_probeSampler{VK_NULL_HANDLE};
+    glm::vec3   m_probeWorldPos{0.0f};
+    float       m_probeRadius{0.0f};
+    float       m_probeIntensity{0.0f};
+    bool        m_probeDescriptorDirty{false};
 
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};

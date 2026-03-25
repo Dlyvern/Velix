@@ -3,6 +3,7 @@
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_ARB_gpu_shader_int64 : require
+#extension GL_EXT_nonuniform_qualifier : require
 
 const int   DIRECTIONAL_LIGHT_TYPE = 0;
 const int   SPOT_LIGHT_TYPE        = 1;
@@ -76,6 +77,8 @@ layout(std430, set = 1, binding = 6) readonly buffer ReflectionInstanceSSBO
 } instanceData;
 
 layout(set = 1, binding = 7) uniform samplerCube uEnvironmentMap;
+
+layout(set = 2, binding = 0) uniform sampler2D allTextures[];
 
 layout(push_constant) uniform RTPC
 {
@@ -198,6 +201,16 @@ void main()
 
     vec3 bary = vec3(1.0 - hitBarycentrics.x - hitBarycentrics.y, hitBarycentrics.x, hitBarycentrics.y);
 
+    MaterialParams mat = instance.material;
+
+    vec2 uv0 = v0.uv * bary.x + v1.uv * bary.y + v2.uv * bary.z;
+
+    // Match UV transform from gbuffer_static.frag: scale, rotate, offset
+    vec2 uv = uv0 * mat.uvTransform.xy;
+    float rotRad = radians(mat.uvRotation);
+    float c = cos(rotRad), s = sin(rotRad);
+    uv = mat2(c, -s, s, c) * uv + mat.uvTransform.zw;
+
     vec3 objectNormal = normalize(v0.normal * bary.x + v1.normal * bary.y + v2.normal * bary.z);
 
     // Transform normal: use inverse-transpose of object-to-world
@@ -212,10 +225,26 @@ void main()
     vec3 N_view      = normalize((camera.view * vec4(N_world, 0.0)).xyz);
     vec3 V_view      = normalize((camera.view * vec4(V_world, 0.0)).xyz);
 
-    vec3  albedo    = instance.material.baseColorFactor.rgb;
-    vec3  emissive  = instance.material.emissiveFactor.rgb;
-    float roughness = clamp(instance.material.roughnessFactor, 0.04, 1.0);
-    float metallic  = clamp(instance.material.metallicFactor,  0.0,  1.0);
+    // Sample albedo texture if available, otherwise use base color factor.
+    vec3 albedo = mat.baseColorFactor.rgb;
+    if (mat.albedoTexIdx > 0u)
+        albedo *= texture(allTextures[nonuniformEXT(mat.albedoTexIdx)], uv).rgb;
+
+    // Sample ORM texture (R=ao, G=roughness, B=metallic) if available.
+    float roughness = mat.roughnessFactor;
+    float metallic  = mat.metallicFactor;
+    if (mat.ormTexIdx > 0u)
+    {
+        vec3 orm = texture(allTextures[nonuniformEXT(mat.ormTexIdx)], uv).rgb;
+        roughness *= orm.g;
+        metallic  *= orm.b;
+    }
+    roughness = clamp(roughness, 0.04, 1.0);
+    metallic  = clamp(metallic,  0.0,  1.0);
+
+    vec3 emissive = mat.emissiveFactor.rgb;
+    if (mat.emissiveTexIdx > 0u)
+        emissive *= texture(allTextures[nonuniformEXT(mat.emissiveTexIdx)], uv).rgb;
 
     // Direct lighting
     vec3 Lo = vec3(0.0);

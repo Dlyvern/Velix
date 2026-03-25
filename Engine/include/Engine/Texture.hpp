@@ -52,6 +52,7 @@ public:
     static SharedPtr getDefaultNormalTexture();
     static SharedPtr getDefaultOrmTexture();
     static SharedPtr getDefaultBlackTexture();
+    static SharedPtr getDefaultBlackCubemap();
 
 private:
     bool generateMipmaps(core::CommandBuffer::SharedPtr commandBuffer);
@@ -70,6 +71,7 @@ private:
     static inline SharedPtr s_normalTexture{nullptr};
     static inline SharedPtr s_ormTexture{nullptr};
     static inline SharedPtr s_blackTexture{nullptr};
+    static inline SharedPtr s_blackCubemap{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

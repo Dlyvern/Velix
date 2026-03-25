@@ -270,4 +270,9 @@ const Material::GPUParams &Material::params() const { return m_params; }
 const std::string &Material::getCustomFragPath() const { return m_customFragPath; }
 void Material::setCustomFragPath(const std::string &path) { m_customFragPath = path; }
 
+void Material::setDomain(MaterialDomain domain) { m_domain = domain; }
+MaterialDomain Material::getDomain() const { return m_domain; }
+void Material::setDecalBlendMode(DecalBlendMode blendMode) { m_decalBlendMode = blendMode; }
+DecalBlendMode Material::getDecalBlendMode() const { return m_decalBlendMode; }
+
 ELIX_NESTED_NAMESPACE_END

@@ -66,6 +66,16 @@ private:
     int m_gtaoSteps{4};
     bool m_useBentNormals{false};
 
+    bool m_enableSSR{false};
+    float m_ssrMaxDistance{15.0f};
+    float m_ssrThickness{0.03f};
+    float m_ssrStrength{1.0f};
+    int m_ssrSteps{48};
+    float m_ssrRoughnessCutoff{0.4f};
+    int m_volumetricFogQuality{2};
+    bool m_overrideVolumetricFogSceneSetting{false};
+    bool m_volumetricFogOverrideEnabled{true};
+
     float m_shadowAmbientStrength{0.5f};
 
     bool m_enableBloom{true};

@@ -113,6 +113,16 @@ bool ProjectConfig::load(const std::filesystem::path &projectRoot)
     RI("gtao_steps", m_gtaoSteps);
     RB("use_bent_normals", m_useBentNormals);
 
+    RB("enable_ssr", m_enableSSR);
+    RF("ssr_max_distance", m_ssrMaxDistance);
+    RF("ssr_thickness", m_ssrThickness);
+    RF("ssr_strength", m_ssrStrength);
+    RI("ssr_steps", m_ssrSteps);
+    RF("ssr_roughness_cutoff", m_ssrRoughnessCutoff);
+    RI("volumetric_fog_quality", m_volumetricFogQuality);
+    RB("override_volumetric_fog_scene_setting", m_overrideVolumetricFogSceneSetting);
+    RB("volumetric_fog_override_enabled", m_volumetricFogOverrideEnabled);
+
     RF("shadow_ambient_strength", m_shadowAmbientStrength);
 
     RB("enable_bloom", m_enableBloom);
@@ -202,6 +212,15 @@ bool ProjectConfig::save(const std::filesystem::path &projectRoot) const
         {"gtao_directions", m_gtaoDirections},
         {"gtao_steps", m_gtaoSteps},
         {"use_bent_normals", m_useBentNormals},
+        {"enable_ssr", m_enableSSR},
+        {"ssr_max_distance", m_ssrMaxDistance},
+        {"ssr_thickness", m_ssrThickness},
+        {"ssr_strength", m_ssrStrength},
+        {"ssr_steps", m_ssrSteps},
+        {"ssr_roughness_cutoff", m_ssrRoughnessCutoff},
+        {"volumetric_fog_quality", m_volumetricFogQuality},
+        {"override_volumetric_fog_scene_setting", m_overrideVolumetricFogSceneSetting},
+        {"volumetric_fog_override_enabled", m_volumetricFogOverrideEnabled},
         {"shadow_ambient_strength", m_shadowAmbientStrength},
         {"enable_bloom", m_enableBloom},
         {"bloom_threshold", m_bloomThreshold},
@@ -296,6 +315,16 @@ void ProjectConfig::applyRenderSettings() const
     rs.gtaoSteps = std::clamp(m_gtaoSteps, 2, 8);
     rs.useBentNormals = m_useBentNormals;
 
+    rs.enableSSR = m_enableSSR;
+    rs.ssrMaxDistance = std::clamp(m_ssrMaxDistance, 1.0f, 50.0f);
+    rs.ssrThickness = std::clamp(m_ssrThickness, 0.005f, 0.25f);
+    rs.ssrStrength = std::clamp(m_ssrStrength, 0.0f, 1.0f);
+    rs.ssrSteps = std::clamp(m_ssrSteps, 8, 256);
+    rs.ssrRoughnessCutoff = std::clamp(m_ssrRoughnessCutoff, 0.05f, 0.8f);
+    rs.volumetricFogQuality = static_cast<RenderQualitySettings::VolumetricFogQuality>(std::clamp(m_volumetricFogQuality, 0, 2));
+    rs.overrideVolumetricFogSceneSetting = m_overrideVolumetricFogSceneSetting;
+    rs.volumetricFogOverrideEnabled = m_volumetricFogOverrideEnabled;
+
     rs.shadowAmbientStrength = std::clamp(m_shadowAmbientStrength, 0.0f, 1.0f);
     rs.enableBloom = m_enableBloom;
     rs.bloomThreshold = std::clamp(m_bloomThreshold, 0.0f, 5.0f);
@@ -352,6 +381,16 @@ void ProjectConfig::captureRenderSettings()
     m_gtaoDirections = rs.gtaoDirections;
     m_gtaoSteps = rs.gtaoSteps;
     m_useBentNormals = rs.useBentNormals;
+
+    m_enableSSR = rs.enableSSR;
+    m_ssrMaxDistance = rs.ssrMaxDistance;
+    m_ssrThickness = rs.ssrThickness;
+    m_ssrStrength = rs.ssrStrength;
+    m_ssrSteps = rs.ssrSteps;
+    m_ssrRoughnessCutoff = rs.ssrRoughnessCutoff;
+    m_volumetricFogQuality = static_cast<int>(rs.volumetricFogQuality);
+    m_overrideVolumetricFogSceneSetting = rs.overrideVolumetricFogSceneSetting;
+    m_volumetricFogOverrideEnabled = rs.volumetricFogOverrideEnabled;
 
     m_shadowAmbientStrength = rs.shadowAmbientStrength;
     m_enableBloom = rs.enableBloom;

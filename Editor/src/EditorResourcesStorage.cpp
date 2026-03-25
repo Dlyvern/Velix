@@ -13,38 +13,38 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 namespace
 {
-std::string resolveBundledEditorTextureSourcePath(const std::string &storageKey)
-{
-    if (storageKey == "./resources/textures/VelixFire.tex.elixasset")
-        return "./resources/textures/VelixFire.png";
-    if (storageKey == "./resources/textures/VelixV.tex.elixasset")
-        return "./resources/textures/VelixV.png";
+    std::string resolveBundledEditorTextureSourcePath(const std::string &storageKey)
+    {
+        if (storageKey == "./resources/textures/VelixFire.tex.elixasset")
+            return "./resources/textures/VelixFire.png";
+        if (storageKey == "./resources/textures/VelixV.tex.elixasset")
+            return "./resources/textures/VelixV.png";
 
-    return {};
-}
+        return {};
+    }
 
-engine::Texture::SharedPtr loadTextureDirectlyFromImageSource(const std::string &sourcePath, VkFormat format)
-{
-    if (sourcePath.empty())
-        return nullptr;
+    engine::Texture::SharedPtr loadTextureDirectlyFromImageSource(const std::string &sourcePath, VkFormat format)
+    {
+        if (sourcePath.empty())
+            return nullptr;
 
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    stbi_uc *pixels = stbi_load(sourcePath.c_str(), &width, &height, &channels, STBI_rgb_alpha);
-    if (!pixels)
-        return nullptr;
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        stbi_uc *pixels = stbi_load(sourcePath.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+        if (!pixels)
+            return nullptr;
 
-    engine::Texture::SharedPtr texture = std::make_shared<engine::Texture>();
-    const size_t byteCount = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
-    const bool created = texture->createFromMemory(pixels, byteCount, static_cast<uint32_t>(width), static_cast<uint32_t>(height), format, 4u);
-    stbi_image_free(pixels);
+        engine::Texture::SharedPtr texture = std::make_shared<engine::Texture>();
+        const size_t byteCount = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+        const bool created = texture->createFromMemory(pixels, byteCount, static_cast<uint32_t>(width), static_cast<uint32_t>(height), format, 4u);
+        stbi_image_free(pixels);
 
-    if (!created)
-        return nullptr;
+        if (!created)
+            return nullptr;
 
-    return texture;
-}
+        return texture;
+    }
 }
 
 void EditorResourcesStorage::loadNeededResources(bool backendRecreated)

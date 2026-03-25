@@ -16,30 +16,30 @@ void UnifiedGeometryBuffer::init(uint32_t vertexStride, VkDeviceSize maxVertexBy
         return;
     }
 
-    m_vertexStride    = vertexStride;
-    m_maxVertexBytes  = maxVertexBytes;
-    m_maxIndices      = maxIndices;
+    m_vertexStride = vertexStride;
+    m_maxVertexBytes = maxVertexBytes;
+    m_maxIndices = maxIndices;
     m_vertexBytesUsed = 0;
-    m_indicesUsed     = 0;
+    m_indicesUsed = 0;
 
     constexpr VkBufferUsageFlags vertexUsage =
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT  |
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT |
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT; // for future compute culling
 
     constexpr VkBufferUsageFlags indexUsage =
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT  |
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT  |
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT |
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 
     m_vertexBuffer = core::Buffer::createShared(maxVertexBytes, vertexUsage, core::memory::MemoryUsage::GPU_ONLY);
-    m_indexBuffer  = core::Buffer::createShared(static_cast<VkDeviceSize>(maxIndices) * sizeof(uint32_t), indexUsage, core::memory::MemoryUsage::GPU_ONLY);
+    m_indexBuffer = core::Buffer::createShared(static_cast<VkDeviceSize>(maxIndices) * sizeof(uint32_t), indexUsage, core::memory::MemoryUsage::GPU_ONLY);
 
     if (!m_vertexBuffer || !m_indexBuffer)
     {
         VX_ENGINE_ERROR_STREAM("UnifiedGeometryBuffer::init – failed to allocate GPU buffers");
         m_vertexBuffer = nullptr;
-        m_indexBuffer  = nullptr;
+        m_indexBuffer = nullptr;
     }
 }
 
@@ -72,11 +72,11 @@ bool UnifiedGeometryBuffer::registerMesh(const uint8_t *vertexData, VkDeviceSize
     }
 
     const VkDeviceSize vertexDstOffset = m_vertexBytesUsed;
-    const uint32_t     firstIndex      = m_indicesUsed;
-    const int32_t      vertexOffset    = static_cast<int32_t>(m_vertexBytesUsed / m_vertexStride);
+    const uint32_t firstIndex = m_indicesUsed;
+    const int32_t vertexOffset = static_cast<int32_t>(m_vertexBytesUsed / m_vertexStride);
 
     m_vertexBytesUsed += vertexBytes;
-    m_indicesUsed     += indexCount;
+    m_indicesUsed += indexCount;
 
     lock.unlock();
 
@@ -110,7 +110,7 @@ bool UnifiedGeometryBuffer::registerMesh(const uint8_t *vertexData, VkDeviceSize
     }
 
     outVertexOffset = vertexOffset;
-    outFirstIndex   = firstIndex;
+    outFirstIndex = firstIndex;
     return true;
 }
 
