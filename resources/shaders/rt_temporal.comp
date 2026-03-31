@@ -1,0 +1,98 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// Temporal accumulation for RT effects (GI, Reflections).
+// Camera-based reprojection: reprojects each pixel into the previous frame
+// using the stored inverse-view-projection and the previous frame VP matrix.
+// Neighbourhood clamping (3x3 AABB) prevents ghosting on disocclusion.
+// Blend: 10% current frame, 90% clamped history.
+
+layout(set = 0, binding = 0) uniform sampler2D uCurrentFrame; // denoised RT result this frame
+layout(set = 0, binding = 1) uniform sampler2D uDepth;        // current depth buffer
+layout(set = 0, binding = 2) uniform sampler2D uHistory;      // accumulated history (read)
+layout(set = 0, binding = 3, rgba16f) writeonly uniform image2D uOutput;     // output for downstream
+layout(set = 0, binding = 4, rgba16f) writeonly uniform image2D uHistoryOut; // write-back history
+
+layout(push_constant) uniform TemporalPC
+{
+    mat4 invViewProj;        // NDC → world  (current frame)
+    mat4 prevViewProjection; // world → NDC  (previous frame)
+} pc;
+
+const float BLEND_ALPHA = 0.1; // 10% new, 90% history
+
+void main()
+{
+    ivec2 coord   = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 imgSize = imageSize(uOutput);
+
+    if (coord.x >= imgSize.x || coord.y >= imgSize.y)
+        return;
+
+    vec2  uv      = (vec2(coord) + 0.5) / vec2(imgSize);
+    float depth   = texture(uDepth, uv).r;
+    vec4  current = texelFetch(uCurrentFrame, coord, 0);
+
+    // Sky pixels or disabled: pass through without blending.
+    if (depth >= 1.0)
+    {
+        imageStore(uOutput,     coord, current);
+        imageStore(uHistoryOut, coord, current);
+        return;
+    }
+
+    // Reconstruct world-space position from depth.
+    vec4 ndcPos   = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 worldPos = pc.invViewProj * ndcPos;
+    worldPos.xyz /= max(worldPos.w, 0.000001);
+
+    // Reproject into previous frame clip space.
+    vec4  prevClip = pc.prevViewProjection * vec4(worldPos.xyz, 1.0);
+    float prevW    = prevClip.w;
+
+    // Behind previous camera or degenerate — no valid history.
+    if (prevW <= 0.0)
+    {
+        imageStore(uOutput,     coord, current);
+        imageStore(uHistoryOut, coord, current);
+        return;
+    }
+
+    vec2 prevNDC = prevClip.xy / prevW;
+    vec2 prevUV  = prevNDC * 0.5 + 0.5;
+
+    // Out of previous frame bounds — disocclusion, skip history.
+    if (any(lessThan(prevUV, vec2(0.0))) || any(greaterThan(prevUV, vec2(1.0))))
+    {
+        imageStore(uOutput,     coord, current);
+        imageStore(uHistoryOut, coord, current);
+        return;
+    }
+
+    // 3×3 neighbourhood AABB of the current denoised frame.
+    // Clamps history into the plausible range of the current frame,
+    // eliminating ghosting when surfaces appear/disappear.
+    vec4 colorMin = vec4( 1e10);
+    vec4 colorMax = vec4(-1e10);
+    for (int dy = -1; dy <= 1; ++dy)
+    {
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            ivec2 nc = clamp(coord + ivec2(dx, dy), ivec2(0), imgSize - ivec2(1));
+            vec4  s  = texelFetch(uCurrentFrame, nc, 0);
+            colorMin = min(colorMin, s);
+            colorMax = max(colorMax, s);
+        }
+    }
+
+    // Sample history and clamp to neighbourhood AABB.
+    vec4 history = texture(uHistory, prevUV);
+    history      = clamp(history, colorMin, colorMax);
+
+    // Exponential moving average blend.
+    vec4 result = mix(history, current, BLEND_ALPHA);
+
+    imageStore(uOutput,     coord, result);
+    imageStore(uHistoryOut, coord, result);
+}

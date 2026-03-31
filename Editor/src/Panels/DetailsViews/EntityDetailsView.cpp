@@ -26,6 +26,9 @@
 #include "Engine/Particles/Modules/RendererModule.hpp"
 #include "Engine/Particles/Modules/SizeOverLifetimeModule.hpp"
 #include "Engine/Particles/Modules/SpawnModule.hpp"
+#include "Engine/Particles/Modules/VelocityOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/RotationOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/TurbulenceModule.hpp"
 #include "Engine/Primitives.hpp"
 
 #include <imgui.h>
@@ -729,12 +732,6 @@ void EntityDetailsView::draw(Editor &editor)
             ImGui::CloseCurrentPopup();
         }
 
-        if (ImGui::Button("Particle System (Rain)"))
-        {
-            auto *psComp = m_selectedEntity->addComponent<engine::ParticleSystemComponent>();
-            psComp->setParticleSystem(engine::ParticleSystem::createRain());
-            ImGui::CloseCurrentPopup();
-        }
 
         if (ImGui::Button("Decal"))
         {
@@ -1946,6 +1943,35 @@ void EntityDetailsView::draw(Editor &editor)
         {
             ImGui::Checkbox("Play On Start", &psComp->playOnStart);
 
+            // Drag-drop zone: drop .vfx.elixasset to load particle system from asset
+            ImGui::Button(psComp->vfxAssetPath.empty() ? "Drop .vfx.elixasset here##VFXDrop" : (std::string("VFX Asset: ") + std::filesystem::path(psComp->vfxAssetPath).filename().string()).c_str());
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                {
+                    const std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
+                    const std::string lowerPath = [&droppedPath]()
+                    {
+                        std::string s = droppedPath;
+                        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                        return s;
+                    }();
+                    constexpr const char *vfxSuffix = ".vfx.elixasset";
+                    if (lowerPath.size() > std::strlen(vfxSuffix) &&
+                        lowerPath.rfind(vfxSuffix) == lowerPath.size() - std::strlen(vfxSuffix))
+                    {
+                        if (psComp->loadFromAsset(droppedPath))
+                        {
+                            ps = psComp->getParticleSystem();
+                            m_notificationManager.showSuccess("VFX asset loaded");
+                        }
+                        else
+                            m_notificationManager.showError("Failed to load VFX asset");
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
             if (!ps)
             {
                 if (ImGui::Button("Create Empty System"))
@@ -1953,10 +1979,8 @@ void EntityDetailsView::draw(Editor &editor)
                     auto newSys = std::make_shared<engine::ParticleSystem>();
                     newSys->name = "Particle System";
                     psComp->setParticleSystem(newSys);
+                    ps = psComp->getParticleSystem();
                 }
-                ImGui::SameLine();
-                if (ImGui::Button("Create Rain Preset"))
-                    psComp->setParticleSystem(engine::ParticleSystem::createRain());
             }
             else
             {
@@ -1965,10 +1989,18 @@ void EntityDetailsView::draw(Editor &editor)
                 if (ImGui::InputText("Name##SysName", sysNameBuf, sizeof(sysNameBuf)))
                     ps->name = sysNameBuf;
 
-                if (ImGui::Button("Apply Rain Preset"))
+                if (ImGui::Button("Save as VFX Asset"))
                 {
-                    psComp->setParticleSystem(engine::ParticleSystem::createRain());
-                    ps = psComp->getParticleSystem();
+                    const std::string savePath = psComp->vfxAssetPath.empty()
+                        ? (std::string("assets/") + ps->name + ".vfx.elixasset")
+                        : psComp->vfxAssetPath;
+                    if (psComp->saveToAsset(savePath))
+                    {
+                        psComp->vfxAssetPath = savePath;
+                        m_notificationManager.showSuccess("VFX asset saved");
+                    }
+                    else
+                        m_notificationManager.showError("Failed to save VFX asset");
                 }
 
                 ImGui::Separator();
@@ -2058,6 +2090,16 @@ void EntityDetailsView::draw(Editor &editor)
                                     }
                                     ImGui::Checkbox("Surface Only", &spawn->shape.surfaceOnly);
                                 }
+
+                                // Sub-emitter on death
+                                ImGui::Separator();
+                                ImGui::TextUnformatted("Sub-Emitter on Death:");
+                                char subEmitterBuf[128] = {};
+                                std::strncpy(subEmitterBuf, spawn->subEmitterOnDeath.c_str(), sizeof(subEmitterBuf) - 1);
+                                if (ImGui::InputText("Target Emitter##SubEm", subEmitterBuf, sizeof(subEmitterBuf)))
+                                    spawn->subEmitterOnDeath = subEmitterBuf;
+                                ImGui::DragInt("Burst Count##SubEmBurst", &spawn->subEmitterBurstCount, 1, 1, 1000);
+
                                 ImGui::TreePop();
                             }
                         }
@@ -2226,6 +2268,55 @@ void EntityDetailsView::draw(Editor &editor)
                         }
                         else if (ImGui::SmallButton("+ Renderer"))
                             em->addModule<engine::RendererModule>();
+
+                        // VelocityOverLifetimeModule
+                        if (auto *volm = em->getModule<engine::VelocityOverLifetimeModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Velocity Over Lifetime##VOLMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                ImGui::TextUnformatted("Speed Multiplier Curve:");
+                                for (size_t ci = 0; ci < volm->speedCurve.size(); ++ci)
+                                {
+                                    ImGui::PushID(static_cast<int>(ci));
+                                    ImGui::DragFloat("t", &volm->speedCurve[ci].time, 0.01f, 0.0f, 1.0f);
+                                    ImGui::SameLine();
+                                    ImGui::DragFloat("v", &volm->speedCurve[ci].value, 0.01f, 0.0f, 10.0f);
+                                    ImGui::PopID();
+                                }
+                                if (ImGui::SmallButton("+ Point##VOL"))
+                                    volm->speedCurve.push_back({1.0f, 1.0f});
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Velocity Over Lifetime"))
+                            em->addModule<engine::VelocityOverLifetimeModule>();
+
+                        // RotationOverLifetimeModule
+                        if (auto *rolm = em->getModule<engine::RotationOverLifetimeModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Rotation Over Lifetime##ROLMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                ImGui::DragFloat("Min (rad/s)", &rolm->angularVelocityMin, 0.01f, -100.0f, 100.0f);
+                                ImGui::DragFloat("Max (rad/s)", &rolm->angularVelocityMax, 0.01f, -100.0f, 100.0f);
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Rotation Over Lifetime"))
+                            em->addModule<engine::RotationOverLifetimeModule>();
+
+                        // TurbulenceModule
+                        if (auto *turb = em->getModule<engine::TurbulenceModule>())
+                        {
+                            if (ImGui::TreeNodeEx("Turbulence##TurbMod", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                ImGui::DragFloat("Strength", &turb->strength, 0.01f, 0.0f, 100.0f);
+                                ImGui::DragFloat("Frequency", &turb->frequency, 0.01f, 0.01f, 100.0f);
+                                ImGui::DragFloat("Scroll Speed", &turb->scrollSpeed, 0.01f, 0.0f, 100.0f);
+                                ImGui::TreePop();
+                            }
+                        }
+                        else if (ImGui::SmallButton("+ Turbulence"))
+                            em->addModule<engine::TurbulenceModule>();
 
                         // Remove emitter
                         ImGui::Spacing();

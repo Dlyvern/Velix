@@ -198,6 +198,65 @@ namespace
         return settings.enablePostProcessing && settings.enableMotionBlur;
     }
 
+    void syncNearestReflectionProbe(elix::engine::renderGraph::LightingRenderGraphPass *lightingPass,
+                                    const elix::engine::Scene *scene,
+                                    const std::shared_ptr<elix::engine::Camera> &camera)
+    {
+        if (!lightingPass)
+            return;
+
+        if (!scene)
+        {
+            lightingPass->setProbeData(VK_NULL_HANDLE, VK_NULL_HANDLE, {}, 0.0f, 0.0f);
+            return;
+        }
+
+        const glm::vec3 cameraPos = camera ? camera->getPosition() : glm::vec3(0.0f);
+
+        elix::engine::ReflectionProbeComponent *bestProbe = nullptr;
+        glm::vec3 bestProbePos{0.0f};
+        float bestEdgeDistance = std::numeric_limits<float>::max();
+        float bestCenterDistance = std::numeric_limits<float>::max();
+
+        for (const auto &entity : scene->getEntities())
+        {
+            if (!entity || !entity->isEnabled())
+                continue;
+
+            auto *probe = entity->getComponent<elix::engine::ReflectionProbeComponent>();
+            auto *transform = entity->getComponent<elix::engine::Transform3DComponent>();
+            if (!probe || !transform || !probe->hasCubemap())
+                continue;
+
+            const glm::vec3 probePos = transform->getWorldPosition();
+            const float centerDistance = glm::length(cameraPos - probePos);
+            const float radius = std::max(probe->radius, 0.0f);
+            const float edgeDistance = std::max(centerDistance - radius, 0.0f);
+
+            if (edgeDistance < bestEdgeDistance ||
+                (edgeDistance == bestEdgeDistance && centerDistance < bestCenterDistance))
+            {
+                bestProbe = probe;
+                bestProbePos = probePos;
+                bestEdgeDistance = edgeDistance;
+                bestCenterDistance = centerDistance;
+            }
+        }
+
+        if (bestProbe)
+        {
+            lightingPass->setProbeData(
+                bestProbe->getProbeEnvView(),
+                bestProbe->getProbeEnvSampler(),
+                bestProbePos,
+                bestProbe->radius,
+                bestProbe->intensity);
+            return;
+        }
+
+        lightingPass->setProbeData(VK_NULL_HANDLE, VK_NULL_HANDLE, {}, 0.0f, 0.0f);
+    }
+
     bool renderGraphUsesParticles(const elix::engine::Scene *scene)
     {
         if (!scene)
@@ -263,7 +322,8 @@ namespace
 
     bool editorRenderGraphUsesAnimationTreePreview(const elix::editor::Editor *editor)
     {
-        return editor && editor->hasActiveAnimationPreview();
+        (void)editor;
+        return true;
     }
 
     size_t baseRenderGraphTopologyHash(const elix::engine::Scene *scene)
@@ -449,7 +509,10 @@ EditorRuntime::EditorRuntime(const engine::ApplicationConfig &config)
         throw std::runtime_error("Failed to init editor runtime");
     }
 
-    m_projectPath = std::filesystem::absolute(config.getArgs()[1]).string();
+    const std::filesystem::path inputProjectPath = std::filesystem::absolute(config.getArgs()[1]).lexically_normal();
+    m_projectPath = isProjectConfigFilePath(inputProjectPath)
+                        ? inputProjectPath.parent_path().string()
+                        : inputProjectPath.string();
 }
 
 void EditorRuntime::setLoadingStatus(std::string status)
@@ -518,7 +581,8 @@ bool EditorRuntime::init()
         return false;
     }
 
-    engine::AssetsLoader::setTextureAssetImportRootDirectory(std::filesystem::path(m_project->fullPath));
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*m_project);
+    engine::AssetsLoader::setTextureAssetImportRootDirectory(projectRoot);
 
     engine::ScriptsRegister *startupScriptsRegister = nullptr;
     std::string startupModulePath;
@@ -526,7 +590,7 @@ bool EditorRuntime::init()
 
     {
         const std::filesystem::path execDir = engine::diagnostics::getExecutableDirectory();
-        const std::filesystem::path projectDir = std::filesystem::path(m_project->fullPath);
+        const std::filesystem::path projectDir = projectRoot;
         auto &pm = engine::PluginManager::instance();
         pm.loadPluginsFromDirectory("resources/plugins");
         pm.loadPluginsFromDirectory(execDir / "Plugins");
@@ -745,6 +809,7 @@ void EditorRuntime::shutdownGameViewportRenderGraph()
     m_gameSkyLightRenderGraphPass = nullptr;
     m_gameParticleRenderGraphPass = nullptr;
     m_gameBloomRenderGraphPass = nullptr;
+    m_gameAutoExposureRenderGraphPass = nullptr;
     m_gameTonemapRenderGraphPass = nullptr;
     m_gameBloomCompositeRenderGraphPass = nullptr;
     m_gameFXAARenderGraphPass = nullptr;
@@ -759,6 +824,9 @@ void EditorRuntime::shutdownGameViewportRenderGraph()
     m_gameRtaoRenderGraphPass = nullptr;
     m_gameRtaoDenoiseRenderGraphPass = nullptr;
     m_gameRtReflectionDenoiseRenderGraphPass = nullptr;
+    m_gameRTGITemporalRenderGraphPass = nullptr;
+    m_gameRTReflectionTemporalRenderGraphPass = nullptr;
+    m_gameAutoExposureRenderGraphPass = nullptr;
     m_gameCinematicEffectsRenderGraphPass = nullptr;
     m_gameMotionBlurRenderGraphPass = nullptr;
     m_gameUIRenderGraphPass = nullptr;
@@ -797,11 +865,14 @@ void EditorRuntime::initEditorRenderGraph()
     m_rtaoRenderGraphPass = nullptr;
     m_rtaoDenoiseRenderGraphPass = nullptr;
     m_rtReflectionDenoiseRenderGraphPass = nullptr;
+    m_rtReflectionTemporalRenderGraphPass = nullptr;
     m_rtGIRenderGraphPass = nullptr;
     m_rtGIDenoiseRenderGraphPass = nullptr;
+    m_rtGITemporalRenderGraphPass = nullptr;
     m_particleRenderGraphPass = nullptr;
     m_decalRenderGraphPass = nullptr;
     m_bloomRenderGraphPass = nullptr;
+    m_autoExposureRenderGraphPass = nullptr;
     m_tonemapRenderGraphPass = nullptr;
     m_bloomCompositeRenderGraphPass = nullptr;
     m_fxaaRenderGraphPass = nullptr;
@@ -901,9 +972,19 @@ void EditorRuntime::initEditorRenderGraph()
                 m_gBufferRenderGraphPass->getDepthTextureHandler());
         }
     }
-    auto *giHandlers = m_rtGIDenoiseRenderGraphPass
-                           ? &m_rtGIDenoiseRenderGraphPass->getOutput()
-                           : (m_rtGIRenderGraphPass ? &m_rtGIRenderGraphPass->getOutput() : nullptr);
+    if (m_rtGIDenoiseRenderGraphPass && settings.enableRTGI)
+    {
+        m_rtGITemporalRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::RTTemporalAccumulationRenderGraphPass>(
+            m_rtGIDenoiseRenderGraphPass->getOutput(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler(),
+            "RT GI Temporal Accumulation");
+    }
+
+    auto *giHandlers = m_rtGITemporalRenderGraphPass
+                           ? &m_rtGITemporalRenderGraphPass->getOutput()
+                           : (m_rtGIDenoiseRenderGraphPass
+                                  ? &m_rtGIDenoiseRenderGraphPass->getOutput()
+                                  : (m_rtGIRenderGraphPass ? &m_rtGIRenderGraphPass->getOutput() : nullptr));
 
     m_lightingRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::LightingRenderGraphPass>(
         m_shadowRenderGraphPass->getDirectionalShadowHandler(),
@@ -955,7 +1036,11 @@ void EditorRuntime::initEditorRenderGraph()
             m_rtReflectionsRenderGraphPass->getOutput(),
             m_gBufferRenderGraphPass->getNormalTextureHandlers(),
             m_gBufferRenderGraphPass->getDepthTextureHandler());
-        hdrSceneInput = &m_rtReflectionDenoiseRenderGraphPass->getOutput();
+        m_rtReflectionTemporalRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::RTTemporalAccumulationRenderGraphPass>(
+            m_rtReflectionDenoiseRenderGraphPass->getOutput(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler(),
+            "RT Reflection Temporal Accumulation");
+        hdrSceneInput = &m_rtReflectionTemporalRenderGraphPass->getOutput();
     }
 
     if (useVolumetricFog)
@@ -996,8 +1081,15 @@ void EditorRuntime::initEditorRenderGraph()
             *hdrSceneInput);
     }
 
+    if (settings.enableAutoExposure)
+    {
+        m_autoExposureRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::AutoExposureRenderGraphPass>(
+            *hdrSceneInput);
+    }
+
     m_tonemapRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::TonemapRenderGraphPass>(
         *hdrSceneInput);
+    m_tonemapRenderGraphPass->setAutoExposurePass(m_autoExposureRenderGraphPass);
 
     auto *ldrSceneInput = &m_tonemapRenderGraphPass->getHandlers();
     if (useBloom && m_bloomRenderGraphPass)
@@ -1128,6 +1220,7 @@ void EditorRuntime::initGameViewportRenderGraph()
     m_gameSkyLightRenderGraphPass = nullptr;
     m_gameParticleRenderGraphPass = nullptr;
     m_gameBloomRenderGraphPass = nullptr;
+    m_gameAutoExposureRenderGraphPass = nullptr;
     m_gameTonemapRenderGraphPass = nullptr;
     m_gameBloomCompositeRenderGraphPass = nullptr;
     m_gameFXAARenderGraphPass = nullptr;
@@ -1141,6 +1234,8 @@ void EditorRuntime::initGameViewportRenderGraph()
     m_gameRtReflectionDenoiseRenderGraphPass = nullptr;
     m_gameRTGIRenderGraphPass = nullptr;
     m_gameRTGIDenoiseRenderGraphPass = nullptr;
+    m_gameRTGITemporalRenderGraphPass = nullptr;
+    m_gameRTReflectionTemporalRenderGraphPass = nullptr;
     m_gameCinematicEffectsRenderGraphPass = nullptr;
     m_gameMotionBlurRenderGraphPass = nullptr;
     m_gameUIRenderGraphPass = nullptr;
@@ -1225,11 +1320,21 @@ void EditorRuntime::initGameViewportRenderGraph()
                 m_gameRTGIRenderGraphPass->getOutput(),
                 m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
                 m_gameGBufferRenderGraphPass->getDepthTextureHandler());
+
+            if (settings.enableRTGI)
+            {
+                m_gameRTGITemporalRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::RTTemporalAccumulationRenderGraphPass>(
+                    m_gameRTGIDenoiseRenderGraphPass->getOutput(),
+                    m_gameGBufferRenderGraphPass->getDepthTextureHandler(),
+                    "RT GI Temporal Accumulation (Game)");
+            }
         }
     }
-    auto *gameGIHandlers = m_gameRTGIDenoiseRenderGraphPass
-                               ? &m_gameRTGIDenoiseRenderGraphPass->getOutput()
-                               : (m_gameRTGIRenderGraphPass ? &m_gameRTGIRenderGraphPass->getOutput() : nullptr);
+    auto *gameGIHandlers = m_gameRTGITemporalRenderGraphPass
+                               ? &m_gameRTGITemporalRenderGraphPass->getOutput()
+                               : (m_gameRTGIDenoiseRenderGraphPass
+                                      ? &m_gameRTGIDenoiseRenderGraphPass->getOutput()
+                                      : (m_gameRTGIRenderGraphPass ? &m_gameRTGIRenderGraphPass->getOutput() : nullptr));
 
     m_gameLightingRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::LightingRenderGraphPass>(
         m_gameShadowRenderGraphPass->getDirectionalShadowHandler(),
@@ -1281,7 +1386,11 @@ void EditorRuntime::initGameViewportRenderGraph()
             m_gameRTReflectionsRenderGraphPass->getOutput(),
             m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
             m_gameGBufferRenderGraphPass->getDepthTextureHandler());
-        hdrSceneInput = &m_gameRtReflectionDenoiseRenderGraphPass->getOutput();
+        m_gameRTReflectionTemporalRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::RTTemporalAccumulationRenderGraphPass>(
+            m_gameRtReflectionDenoiseRenderGraphPass->getOutput(),
+            m_gameGBufferRenderGraphPass->getDepthTextureHandler(),
+            "RT Reflection Temporal Accumulation (Game)");
+        hdrSceneInput = &m_gameRTReflectionTemporalRenderGraphPass->getOutput();
     }
 
     if (useVolumetricFog)
@@ -1322,8 +1431,15 @@ void EditorRuntime::initGameViewportRenderGraph()
             *hdrSceneInput);
     }
 
+    if (settings.enableAutoExposure)
+    {
+        m_gameAutoExposureRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::AutoExposureRenderGraphPass>(
+            *hdrSceneInput);
+    }
+
     m_gameTonemapRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::TonemapRenderGraphPass>(
         *hdrSceneInput);
+    m_gameTonemapRenderGraphPass->setAutoExposurePass(m_gameAutoExposureRenderGraphPass);
 
     auto *ldrSceneInput = &m_gameTonemapRenderGraphPass->getHandlers();
     if (useBloom && m_gameBloomRenderGraphPass)
@@ -1471,6 +1587,8 @@ void EditorRuntime::tick(float deltaTime)
     if (!m_activeScene || !m_editor || !m_renderGraph)
         return;
 
+    engine::ReflectionProbeComponent::flushDeferredCapturedCubemapReleases();
+
     const bool shaderReloadRequested = m_editor->consumeShaderReloadRequest();
     if (shaderReloadRequested)
         engine::GraphicsPipelineManager::reloadShaders();
@@ -1614,6 +1732,7 @@ void EditorRuntime::tick(float deltaTime)
 
     if (m_gameViewportRenderGraph && m_gameRenderCamera && shouldRenderGameViewport)
     {
+        syncNearestReflectionProbe(m_gameLightingRenderGraphPass, m_activeScene.get(), m_gameRenderCamera);
         m_gameViewportRenderGraph->prepareFrame(m_gameRenderCamera, m_activeScene.get(), deltaTime);
         m_gameViewportRenderGraph->draw();
 
@@ -1640,44 +1759,8 @@ void EditorRuntime::tick(float deltaTime)
         m_pendingProbeCaptureEntity = nullptr;
     }
 
-    if (m_lightingRenderGraphPass)
-    {
-        engine::ReflectionProbeComponent *nearestProbe    = nullptr;
-        glm::vec3                          nearestProbePos = {};
-        float                              nearestDist     = std::numeric_limits<float>::max();
-
-        const glm::vec3 cameraPos = m_editorRenderCamera ? m_editorRenderCamera->getPosition() : glm::vec3(0.0f);
-
-        for (const auto &entity : m_activeScene->getEntities())
-        {
-            if (!entity || !entity->isEnabled())
-                continue;
-            auto *probe     = entity->getComponent<engine::ReflectionProbeComponent>();
-            auto *transform = entity->getComponent<engine::Transform3DComponent>();
-            if (!probe || !transform || !probe->hasCubemap())
-                continue;
-
-            const glm::vec3 probePos = transform->getWorldPosition();
-            const float dist = glm::length(cameraPos - probePos);
-            if (dist < nearestDist)
-            {
-                nearestDist     = dist;
-                nearestProbe    = probe;
-                nearestProbePos = probePos;
-            }
-        }
-
-        if (nearestProbe)
-        {
-            m_lightingRenderGraphPass->setProbeData(
-                nearestProbe->getProbeEnvView(), nearestProbe->getProbeEnvSampler(),
-                nearestProbePos, nearestProbe->radius, nearestProbe->intensity);
-        }
-        else
-        {
-            m_lightingRenderGraphPass->setProbeData(VK_NULL_HANDLE, VK_NULL_HANDLE, {}, 0.0f, 0.0f);
-        }
-    }
+    syncNearestReflectionProbe(m_lightingRenderGraphPass, m_activeScene.get(), m_editorRenderCamera);
+    syncNearestReflectionProbe(m_gameLightingRenderGraphPass, m_activeScene.get(), m_gameRenderCamera);
 
     m_renderGraph->prepareFrame(m_editorRenderCamera, m_activeScene.get(), deltaTime);
 
@@ -1757,14 +1840,20 @@ void EditorRuntime::applyEditorViewportExtent(uint32_t width, uint32_t height)
         m_rtaoDenoiseRenderGraphPass->setExtent(extent);
     if (m_rtReflectionDenoiseRenderGraphPass)
         m_rtReflectionDenoiseRenderGraphPass->setExtent(extent);
+    if (m_rtReflectionTemporalRenderGraphPass)
+        m_rtReflectionTemporalRenderGraphPass->setExtent(extent);
     if (m_rtGIRenderGraphPass)
         m_rtGIRenderGraphPass->setExtent(extent);
     if (m_rtGIDenoiseRenderGraphPass)
         m_rtGIDenoiseRenderGraphPass->setExtent(extent);
+    if (m_rtGITemporalRenderGraphPass)
+        m_rtGITemporalRenderGraphPass->setExtent(extent);
     if (m_skyLightRenderGraphPass)
         m_skyLightRenderGraphPass->setExtent(extent);
     if (m_bloomRenderGraphPass)
         m_bloomRenderGraphPass->setExtent(extent);
+    if (m_autoExposureRenderGraphPass)
+        m_autoExposureRenderGraphPass->setExtent(extent);
     if (m_tonemapRenderGraphPass)
         m_tonemapRenderGraphPass->setExtent(extent);
     if (m_bloomCompositeRenderGraphPass)
@@ -1840,6 +1929,10 @@ void EditorRuntime::applyGameViewportExtent(uint32_t width, uint32_t height)
         m_gameRTGIRenderGraphPass->setExtent(extent);
     if (m_gameRTGIDenoiseRenderGraphPass)
         m_gameRTGIDenoiseRenderGraphPass->setExtent(extent);
+    if (m_gameRTGITemporalRenderGraphPass)
+        m_gameRTGITemporalRenderGraphPass->setExtent(extent);
+    if (m_gameRTReflectionTemporalRenderGraphPass)
+        m_gameRTReflectionTemporalRenderGraphPass->setExtent(extent);
     if (m_gameSkyLightRenderGraphPass)
         m_gameSkyLightRenderGraphPass->setExtent(extent);
     if (m_gameBloomRenderGraphPass)
@@ -1864,6 +1957,8 @@ void EditorRuntime::applyGameViewportExtent(uint32_t width, uint32_t height)
         m_gameUIRenderGraphPass->setExtent(extent);
     if (m_gameParticleRenderGraphPass)
         m_gameParticleRenderGraphPass->setExtent(extent);
+    if (m_gameAutoExposureRenderGraphPass)
+        m_gameAutoExposureRenderGraphPass->setExtent(extent);
 
     m_lastGameRenderExtent = extent;
 }

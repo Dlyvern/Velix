@@ -91,7 +91,7 @@ public:
         m_currentScenePath.clear();
         invalidateModelDetailsCache();
         m_assetsPreviewSystem.setProject(project.get());
-        m_terrainTools.setProjectRootPath(project ? std::filesystem::path(project->fullPath) : std::filesystem::path{});
+        m_terrainTools.setProjectRootPath(project ? resolveProjectRootPath(*project) : std::filesystem::path{});
         if (m_materialEditor)
             m_materialEditor->setProject(project.get());
 

@@ -44,6 +44,7 @@
 #include "Engine/Render/GraphPasses/RTReflectionDenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTIndirectDiffuseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTGIDenoiseRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTTemporalAccumulationRenderGraphPass.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -129,6 +130,7 @@ private:
     engine::renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
     engine::renderGraph::SkyLightRenderGraphPass *m_skyLightRenderGraphPass{nullptr};
     engine::renderGraph::BloomRenderGraphPass *m_bloomRenderGraphPass{nullptr};
+    engine::renderGraph::AutoExposureRenderGraphPass *m_autoExposureRenderGraphPass{nullptr};
     engine::renderGraph::TonemapRenderGraphPass *m_tonemapRenderGraphPass{nullptr};
     engine::renderGraph::BloomCompositeRenderGraphPass *m_bloomCompositeRenderGraphPass{nullptr};
     engine::renderGraph::FXAARenderGraphPass *m_fxaaRenderGraphPass{nullptr};
@@ -145,7 +147,9 @@ private:
     engine::renderGraph::RTAODenoiseRenderGraphPass *m_rtaoDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionDenoiseRenderGraphPass *m_rtReflectionDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::RTIndirectDiffuseRenderGraphPass *m_rtGIRenderGraphPass{nullptr};
-    engine::renderGraph::RTGIDenoiseRenderGraphPass       *m_rtGIDenoiseRenderGraphPass{nullptr};
+    engine::renderGraph::RTGIDenoiseRenderGraphPass                *m_rtGIDenoiseRenderGraphPass{nullptr};
+    engine::renderGraph::RTTemporalAccumulationRenderGraphPass     *m_rtGITemporalRenderGraphPass{nullptr};
+    engine::renderGraph::RTTemporalAccumulationRenderGraphPass     *m_rtReflectionTemporalRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_cinematicEffectsRenderGraphPass{nullptr};
     engine::renderGraph::MotionBlurRenderGraphPass       *m_motionBlurRenderGraphPass{nullptr};
     SelectionOverlayRenderGraphPass *m_selectionOverlayRenderGraphPass{nullptr};
@@ -166,6 +170,7 @@ private:
     engine::renderGraph::SkyLightRenderGraphPass *m_gameSkyLightRenderGraphPass{nullptr};
     engine::renderGraph::ParticleRenderGraphPass *m_gameParticleRenderGraphPass{nullptr};
     engine::renderGraph::BloomRenderGraphPass *m_gameBloomRenderGraphPass{nullptr};
+    engine::renderGraph::AutoExposureRenderGraphPass *m_gameAutoExposureRenderGraphPass{nullptr};
     engine::renderGraph::TonemapRenderGraphPass *m_gameTonemapRenderGraphPass{nullptr};
     engine::renderGraph::BloomCompositeRenderGraphPass *m_gameBloomCompositeRenderGraphPass{nullptr};
     engine::renderGraph::FXAARenderGraphPass *m_gameFXAARenderGraphPass{nullptr};
@@ -180,7 +185,9 @@ private:
     engine::renderGraph::RTAORenderGraphPass *m_gameRtaoRenderGraphPass{nullptr};
     engine::renderGraph::RTAODenoiseRenderGraphPass *m_gameRtaoDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionDenoiseRenderGraphPass *m_gameRtReflectionDenoiseRenderGraphPass{nullptr};
-    engine::renderGraph::RTIndirectDiffuseRenderGraphPass *m_gameRTGIRenderGraphPass{nullptr};
+    engine::renderGraph::RTIndirectDiffuseRenderGraphPass          *m_gameRTGIRenderGraphPass{nullptr};
+    engine::renderGraph::RTTemporalAccumulationRenderGraphPass     *m_gameRTGITemporalRenderGraphPass{nullptr};
+    engine::renderGraph::RTTemporalAccumulationRenderGraphPass     *m_gameRTReflectionTemporalRenderGraphPass{nullptr};
     engine::renderGraph::RTGIDenoiseRenderGraphPass       *m_gameRTGIDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_gameCinematicEffectsRenderGraphPass{nullptr};
     engine::renderGraph::MotionBlurRenderGraphPass       *m_gameMotionBlurRenderGraphPass{nullptr};

@@ -1,4 +1,5 @@
 #include "Engine/Components/ParticleSystemComponent.hpp"
+#include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Entity.hpp"
 #include "Engine/Scripting/VelixAPI.hpp"
@@ -77,6 +78,24 @@ void ParticleSystemComponent::reset()
 bool ParticleSystemComponent::isPlaying() const
 {
     return m_particleSystem && m_particleSystem->isPlaying();
+}
+
+bool ParticleSystemComponent::loadFromAsset(const std::string &path)
+{
+    auto result = AssetsLoader::loadParticleSystem(path);
+    if (!result.has_value())
+        return false;
+
+    vfxAssetPath = path;
+    setParticleSystem(std::move(*result));
+    return true;
+}
+
+bool ParticleSystemComponent::saveToAsset(const std::string &path) const
+{
+    if (!m_particleSystem)
+        return false;
+    return AssetsLoader::saveParticleSystem(*m_particleSystem, path);
 }
 
 ELIX_NESTED_NAMESPACE_END

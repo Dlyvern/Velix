@@ -3,6 +3,7 @@
 
 #include "Engine/Render/RenderTarget.hpp"
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/AutoExposureRenderGraphPass.hpp"
 #include "Core/Buffer.hpp"
 #include "Core/PipelineLayout.hpp"
 #include "Core/Sampler.hpp"
@@ -62,6 +63,11 @@ private:
     VkRect2D m_scissor;
 
     core::Sampler::SharedPtr m_defaultSampler{nullptr};
+
+    AutoExposureRenderGraphPass *m_autoExposurePass{nullptr};
+
+public:
+    void setAutoExposurePass(AutoExposureRenderGraphPass *pass) { m_autoExposurePass = pass; }
 };
 
 ELIX_NESTED_NAMESPACE_END

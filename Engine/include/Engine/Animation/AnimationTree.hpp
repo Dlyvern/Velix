@@ -46,7 +46,9 @@ struct AnimationTransitionCondition
         BoolTrue = 2,
         BoolFalse = 3,
         IntEqual = 4,
-        Trigger = 5
+        Trigger = 5,
+        IntGreater = 6,
+        IntLess = 7
     };
 
     Type type{Type::FloatGreater};

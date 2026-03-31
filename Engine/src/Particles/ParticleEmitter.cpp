@@ -21,6 +21,7 @@ void ParticleEmitter::update(float deltaTime, const glm::vec3 &worldPosition)
         return;
 
     m_time += deltaTime;
+    m_deathPositions.clear();
 
     auto *spawn = getModule<SpawnModule>();
 
@@ -55,6 +56,7 @@ void ParticleEmitter::update(float deltaTime, const glm::vec3 &worldPosition)
 
         if (p.isDead())
         {
+            m_deathPositions.push_back(p.position);
             freeParticle(i);
         }
         else

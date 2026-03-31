@@ -8,6 +8,7 @@
 #include "Engine/Assets/IAssetLoader.hpp"
 #include "Engine/Skeleton.hpp"
 #include "Engine/Terrain/TerrainAsset.hpp"
+#include "Engine/Particles/ParticleSystem.hpp"
 
 #include <filesystem>
 #include <string>
@@ -31,6 +32,8 @@ public:
     static std::optional<AnimationAsset> loadAnimationAsset(const std::string &path);
     static std::optional<AnimationTree> loadAnimationTree(const std::string &path);
     static bool saveAnimationTree(const AnimationTree &tree, const std::string &path);
+    static std::optional<ParticleSystem::SharedPtr> loadParticleSystem(const std::string &path);
+    static bool saveParticleSystem(const ParticleSystem &system, const std::string &path);
     static Texture::SharedPtr loadTextureGPU(const std::string &path,
                                              VkFormat preferredLdrFormat = VK_FORMAT_R8G8B8A8_SRGB);
     static Texture::SharedPtr createTextureGPU(const TextureAsset &textureAsset,

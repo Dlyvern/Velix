@@ -1364,4 +1364,24 @@ bool AssetsLoader::saveAnimationTree(const AnimationTree &tree, const std::strin
     return serializer.writeAnimationTree(tree, normalizedPath.string());
 }
 
+std::optional<ParticleSystem::SharedPtr> AssetsLoader::loadParticleSystem(const std::string &path)
+{
+    const std::filesystem::path normalizedPath = normalizePath(path);
+    if (normalizedPath.empty())
+        return std::nullopt;
+
+    AssetsSerializer serializer;
+    return serializer.readParticleSystem(normalizedPath.string());
+}
+
+bool AssetsLoader::saveParticleSystem(const ParticleSystem &system, const std::string &path)
+{
+    const std::filesystem::path normalizedPath = normalizePath(path);
+    if (normalizedPath.empty())
+        return false;
+
+    AssetsSerializer serializer;
+    return serializer.writeParticleSystem(system, normalizedPath.string());
+}
+
 ELIX_NESTED_NAMESPACE_END

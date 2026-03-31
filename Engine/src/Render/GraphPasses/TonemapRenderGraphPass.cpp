@@ -96,9 +96,13 @@ void TonemapRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
 
     vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
+    float exposure = 1.0f;
+    if (m_autoExposurePass && settings.enableAutoExposure)
+        exposure = m_autoExposurePass->getAdaptedExposure(renderContext.currentImageIndex);
+
     TonemapPC pc{};
     pc.tonemapParams = glm::vec4(
-        1.0f,
+        exposure,
         2.2f,
         settings.colorGradingSaturation,
         settings.colorGradingContrast);

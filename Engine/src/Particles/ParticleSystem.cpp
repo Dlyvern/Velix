@@ -72,6 +72,27 @@ void ParticleSystem::update(float deltaTime, const glm::vec3 &worldPosition)
 
         collMod->clearHits();
     }
+
+    // Dispatch sub-emitter bursts: for each emitter with subEmitterOnDeath set,
+    // find the target emitter by name and spawn a burst at each death position.
+    for (auto &emitter : m_emitters)
+    {
+        auto *spawnMod = emitter->getModule<SpawnModule>();
+        if (!spawnMod || spawnMod->subEmitterOnDeath.empty())
+            continue;
+
+        const auto &deaths = emitter->getDeathPositions();
+        if (deaths.empty())
+            continue;
+
+        auto *targetEmitter = getEmitter(spawnMod->subEmitterOnDeath);
+        if (targetEmitter)
+        {
+            const uint32_t burstCount = static_cast<uint32_t>(std::max(1, spawnMod->subEmitterBurstCount));
+            for (const auto &deathPos : deaths)
+                targetEmitter->spawnParticleAt(deathPos, burstCount);
+        }
+    }
 }
 
 void ParticleSystem::play()
@@ -104,51 +125,6 @@ void ParticleSystem::reset()
 
     for (auto &emitter : m_emitters)
         emitter->reset();
-}
-
-ParticleSystem::SharedPtr ParticleSystem::createRain()
-{
-    auto system = std::make_shared<ParticleSystem>();
-    system->name = "Rain";
-
-    auto *emitter = system->addEmitter("Rain Drops");
-
-    auto *spawn = emitter->addModule<SpawnModule>();
-    spawn->spawnRate = 600.0f;
-    spawn->burstCount = 0.0f;
-    spawn->loop = true;
-
-    spawn->shape.shape = EmitterShape::Box;
-    spawn->shape.extents = glm::vec3(25.0f, 0.0f, 25.0f); // flat spawn plane
-
-    auto *lifetime = emitter->addModule<LifetimeModule>();
-    lifetime->minLifetime = 1.8f;
-    lifetime->maxLifetime = 3.0f;
-
-    auto *vel = emitter->addModule<InitialVelocityModule>();
-    vel->baseVelocity = glm::vec3(0.0f, -14.0f, 0.0f); // straight down, fast
-    vel->randomness = glm::vec3(0.6f, 1.5f, 0.6f);     // slight horizontal scatter
-
-    auto *size = emitter->addModule<SizeOverLifetimeModule>();
-    size->baseSize = glm::vec2(0.02f, 0.18f); // thin elongated streak
-    size->curve = {{0.0f, 1.0f}, {0.7f, 1.0f}, {1.0f, 0.6f}};
-
-    auto *col = emitter->addModule<ColorOverLifetimeModule>();
-    col->gradient = {
-        {0.0f, glm::vec4(0.75f, 0.88f, 1.0f, 0.75f)}, // light blue, semi-transparent
-        {0.7f, glm::vec4(0.70f, 0.85f, 1.0f, 0.50f)}, // slightly more transparent
-        {1.0f, glm::vec4(0.65f, 0.82f, 1.0f, 0.00f)}, // fully transparent at death
-    };
-
-    auto *force = emitter->addModule<ForceModule>();
-    force->force = glm::vec3(0.0f, -2.0f, 0.0f); // gentle extra gravity (drops already fast)
-    force->drag = 0.02f;
-
-    auto *renderer = emitter->addModule<RendererModule>();
-    renderer->blendMode = ParticleBlendMode::AlphaBlend;
-    renderer->facingMode = ParticleFacingMode::VelocityAligned; // streaks align with fall
-
-    return system;
 }
 
 ELIX_NESTED_NAMESPACE_END

@@ -1,7 +1,19 @@
 #include "Engine/Assets/AssetsSerializer.hpp"
 #include "Engine/Assets/Compressor.hpp"
+#include "Engine/Particles/Modules/SpawnModule.hpp"
+#include "Engine/Particles/Modules/LifetimeModule.hpp"
+#include "Engine/Particles/Modules/InitialVelocityModule.hpp"
+#include "Engine/Particles/Modules/SizeOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/ColorOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/ForceModule.hpp"
+#include "Engine/Particles/Modules/RendererModule.hpp"
+#include "Engine/Particles/Modules/VelocityOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/RotationOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/TurbulenceModule.hpp"
 
 #include "Core/Logger.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cstring>
@@ -1274,6 +1286,396 @@ std::optional<AnimationTree> AssetsSerializer::readAnimationTree(const std::stri
         tree.assetPath = std::filesystem::path(path).lexically_normal().string();
 
     return tree;
+}
+
+bool AssetsSerializer::writeParticleSystem(const ParticleSystem &system, const std::string &outputPath) const
+{
+    nlohmann::json systemJson;
+    systemJson["name"] = system.name;
+
+    nlohmann::json emittersJson = nlohmann::json::array();
+    for (const auto &emitter : system.getEmitters())
+    {
+        nlohmann::json emitterJson;
+        emitterJson["name"] = emitter->name;
+        emitterJson["enabled"] = emitter->enabled;
+
+        nlohmann::json modulesJson;
+
+        if (auto *spawn = emitter->getModule<SpawnModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = spawn->isEnabled();
+            moduleJson["spawn_rate"] = spawn->spawnRate;
+            moduleJson["burst_count"] = spawn->burstCount;
+            moduleJson["loop"] = spawn->loop;
+            moduleJson["duration"] = spawn->duration;
+
+            std::string shapeString;
+            switch (spawn->shape.shape)
+            {
+            case EmitterShape::Sphere: shapeString = "sphere"; break;
+            case EmitterShape::Box: shapeString = "box"; break;
+            case EmitterShape::Cone: shapeString = "cone"; break;
+            case EmitterShape::Cylinder: shapeString = "cylinder"; break;
+            default: shapeString = "point"; break;
+            }
+
+            nlohmann::json shapeJson;
+            shapeJson["type"] = shapeString;
+            shapeJson["extents"] = {spawn->shape.extents.x, spawn->shape.extents.y, spawn->shape.extents.z};
+            shapeJson["radius"] = spawn->shape.radius;
+            shapeJson["angle"] = spawn->shape.angle;
+            shapeJson["height"] = spawn->shape.height;
+            shapeJson["surface_only"] = spawn->shape.surfaceOnly;
+            moduleJson["shape"] = std::move(shapeJson);
+
+            if (!spawn->subEmitterOnDeath.empty())
+            {
+                moduleJson["sub_emitter_on_death"] = spawn->subEmitterOnDeath;
+                moduleJson["sub_emitter_burst_count"] = spawn->subEmitterBurstCount;
+            }
+
+            modulesJson["spawn"] = std::move(moduleJson);
+        }
+
+        if (auto *lifetime = emitter->getModule<LifetimeModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = lifetime->isEnabled();
+            moduleJson["min"] = lifetime->minLifetime;
+            moduleJson["max"] = lifetime->maxLifetime;
+            modulesJson["lifetime"] = std::move(moduleJson);
+        }
+
+        if (auto *initialVelocity = emitter->getModule<InitialVelocityModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = initialVelocity->isEnabled();
+            moduleJson["base"] = {initialVelocity->baseVelocity.x, initialVelocity->baseVelocity.y, initialVelocity->baseVelocity.z};
+            moduleJson["randomness"] = {initialVelocity->randomness.x, initialVelocity->randomness.y, initialVelocity->randomness.z};
+            modulesJson["initial_velocity"] = std::move(moduleJson);
+        }
+
+        if (auto *sizeOverLifetime = emitter->getModule<SizeOverLifetimeModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = sizeOverLifetime->isEnabled();
+            moduleJson["base_size"] = {sizeOverLifetime->baseSize.x, sizeOverLifetime->baseSize.y};
+
+            nlohmann::json curveJson = nlohmann::json::array();
+            for (const auto &point : sizeOverLifetime->curve)
+                curveJson.push_back({{"t", point.time}, {"v", point.value}});
+            moduleJson["curve"] = std::move(curveJson);
+
+            modulesJson["size_over_lifetime"] = std::move(moduleJson);
+        }
+
+        if (auto *colorOverLifetime = emitter->getModule<ColorOverLifetimeModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = colorOverLifetime->isEnabled();
+
+            nlohmann::json gradientJson = nlohmann::json::array();
+            for (const auto &point : colorOverLifetime->gradient)
+                gradientJson.push_back({{"t", point.time}, {"color", {point.color.r, point.color.g, point.color.b, point.color.a}}});
+            moduleJson["gradient"] = std::move(gradientJson);
+
+            modulesJson["color_over_lifetime"] = std::move(moduleJson);
+        }
+
+        if (auto *force = emitter->getModule<ForceModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = force->isEnabled();
+            moduleJson["force"] = {force->force.x, force->force.y, force->force.z};
+            moduleJson["drag"] = force->drag;
+            modulesJson["force"] = std::move(moduleJson);
+        }
+
+        if (auto *renderer = emitter->getModule<RendererModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = renderer->isEnabled();
+            moduleJson["texture_path"] = renderer->texturePath;
+
+            std::string blendString;
+            switch (renderer->blendMode)
+            {
+            case ParticleBlendMode::Additive: blendString = "additive"; break;
+            case ParticleBlendMode::Premultiplied: blendString = "premultiplied"; break;
+            default: blendString = "alpha_blend"; break;
+            }
+            moduleJson["blend_mode"] = blendString;
+
+            std::string facingString;
+            switch (renderer->facingMode)
+            {
+            case ParticleFacingMode::VelocityAligned: facingString = "velocity_aligned"; break;
+            case ParticleFacingMode::WorldUp: facingString = "world_up"; break;
+            default: facingString = "camera_facing"; break;
+            }
+            moduleJson["facing_mode"] = facingString;
+            moduleJson["cast_shadows"] = renderer->castShadows;
+            moduleJson["soft_particles"] = renderer->softParticles;
+            moduleJson["soft_particle_range"] = renderer->softParticleRange;
+
+            modulesJson["renderer"] = std::move(moduleJson);
+        }
+
+        if (auto *vel = emitter->getModule<VelocityOverLifetimeModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = vel->isEnabled();
+            nlohmann::json curveJson = nlohmann::json::array();
+            for (const auto &point : vel->speedCurve)
+                curveJson.push_back({{"t", point.time}, {"v", point.value}});
+            moduleJson["speed_curve"] = std::move(curveJson);
+            modulesJson["velocity_over_lifetime"] = std::move(moduleJson);
+        }
+
+        if (auto *rot = emitter->getModule<RotationOverLifetimeModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = rot->isEnabled();
+            moduleJson["angular_velocity_min"] = rot->angularVelocityMin;
+            moduleJson["angular_velocity_max"] = rot->angularVelocityMax;
+            modulesJson["rotation_over_lifetime"] = std::move(moduleJson);
+        }
+
+        if (auto *turb = emitter->getModule<TurbulenceModule>())
+        {
+            nlohmann::json moduleJson;
+            moduleJson["enabled"] = turb->isEnabled();
+            moduleJson["strength"] = turb->strength;
+            moduleJson["frequency"] = turb->frequency;
+            moduleJson["scroll_speed"] = turb->scrollSpeed;
+            modulesJson["turbulence"] = std::move(moduleJson);
+        }
+
+        emitterJson["modules"] = std::move(modulesJson);
+        emittersJson.push_back(std::move(emitterJson));
+    }
+
+    systemJson["emitters"] = std::move(emittersJson);
+
+    const std::string payload = systemJson.dump();
+
+    std::error_code directoryError;
+    const auto outputFilesystemPath = std::filesystem::path(outputPath).lexically_normal();
+    const auto parentPath = outputFilesystemPath.parent_path();
+    if (!parentPath.empty())
+        std::filesystem::create_directories(parentPath, directoryError);
+
+    std::ofstream stream(outputFilesystemPath, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open())
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to open particle system output file: " << outputPath << '\n');
+        return false;
+    }
+
+    if (!writeHeader(stream, Asset::AssetType::PARTICLE_SYSTEM, static_cast<uint64_t>(payload.size())))
+        return false;
+
+    stream.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    return stream.good();
+}
+
+std::optional<ParticleSystem::SharedPtr> AssetsSerializer::readParticleSystem(const std::string &path) const
+{
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream.is_open())
+        return std::nullopt;
+
+    Asset::BinaryHeader header{};
+    if (!::readHeader(stream, header))
+        return std::nullopt;
+
+    if (static_cast<Asset::AssetType>(header.type) != Asset::AssetType::PARTICLE_SYSTEM)
+        return std::nullopt;
+
+    std::string payload(static_cast<size_t>(header.payloadSize), '\0');
+    stream.read(payload.data(), static_cast<std::streamsize>(header.payloadSize));
+    if (!stream.good() && !stream.eof())
+        return std::nullopt;
+
+    nlohmann::json sysJson;
+    try
+    {
+        sysJson = nlohmann::json::parse(payload);
+    }
+    catch (...)
+    {
+        return std::nullopt;
+    }
+
+    auto ps = std::make_shared<ParticleSystem>();
+    ps->name = sysJson.value("name", "Particle System");
+
+    if (sysJson.contains("emitters") && sysJson["emitters"].is_array())
+    {
+        for (const auto &emJson : sysJson["emitters"])
+        {
+            auto *emitter = ps->addEmitter(emJson.value("name", "Emitter"));
+            emitter->enabled = emJson.value("enabled", true);
+
+            if (!emJson.contains("modules"))
+                continue;
+            const auto &mods = emJson["modules"];
+
+            if (mods.contains("spawn"))
+            {
+                const auto &m = mods["spawn"];
+                auto *spawn = emitter->addModule<SpawnModule>();
+                spawn->setEnabled(m.value("enabled", true));
+                spawn->spawnRate = m.value("spawn_rate", 100.0f);
+                spawn->burstCount = m.value("burst_count", 0.0f);
+                spawn->loop = m.value("loop", true);
+                spawn->duration = m.value("duration", 5.0f);
+
+                if (m.contains("shape") && m["shape"].is_object())
+                {
+                    const auto &sh = m["shape"];
+                    const std::string shapeStr = sh.value("type", "point");
+                    if (shapeStr == "sphere") spawn->shape.shape = EmitterShape::Sphere;
+                    else if (shapeStr == "box") spawn->shape.shape = EmitterShape::Box;
+                    else if (shapeStr == "cone") spawn->shape.shape = EmitterShape::Cone;
+                    else if (shapeStr == "cylinder") spawn->shape.shape = EmitterShape::Cylinder;
+                    else spawn->shape.shape = EmitterShape::Point;
+
+                    if (sh.contains("extents") && sh["extents"].is_array() && sh["extents"].size() == 3)
+                        spawn->shape.extents = {sh["extents"][0], sh["extents"][1], sh["extents"][2]};
+                    spawn->shape.radius = sh.value("radius", 1.0f);
+                    spawn->shape.angle = sh.value("angle", 25.0f);
+                    spawn->shape.height = sh.value("height", 1.0f);
+                    spawn->shape.surfaceOnly = sh.value("surface_only", false);
+                }
+
+                spawn->subEmitterOnDeath = m.value("sub_emitter_on_death", std::string{});
+                spawn->subEmitterBurstCount = m.value("sub_emitter_burst_count", 1);
+            }
+
+            if (mods.contains("lifetime"))
+            {
+                const auto &m = mods["lifetime"];
+                auto *mod = emitter->addModule<LifetimeModule>();
+                mod->setEnabled(m.value("enabled", true));
+                mod->minLifetime = m.value("min", 1.0f);
+                mod->maxLifetime = m.value("max", 2.0f);
+            }
+
+            if (mods.contains("initial_velocity"))
+            {
+                const auto &m = mods["initial_velocity"];
+                auto *mod = emitter->addModule<InitialVelocityModule>();
+                mod->setEnabled(m.value("enabled", true));
+                if (m.contains("base") && m["base"].is_array() && m["base"].size() == 3)
+                    mod->baseVelocity = {m["base"][0], m["base"][1], m["base"][2]};
+                if (m.contains("randomness") && m["randomness"].is_array() && m["randomness"].size() == 3)
+                    mod->randomness = {m["randomness"][0], m["randomness"][1], m["randomness"][2]};
+            }
+
+            if (mods.contains("size_over_lifetime"))
+            {
+                const auto &m = mods["size_over_lifetime"];
+                auto *mod = emitter->addModule<SizeOverLifetimeModule>();
+                mod->setEnabled(m.value("enabled", true));
+                if (m.contains("base_size") && m["base_size"].is_array() && m["base_size"].size() == 2)
+                    mod->baseSize = {m["base_size"][0], m["base_size"][1]};
+                if (m.contains("curve") && m["curve"].is_array())
+                {
+                    mod->curve.clear();
+                    for (const auto &pt : m["curve"])
+                        mod->curve.push_back({pt.value("t", 0.0f), pt.value("v", 1.0f)});
+                }
+            }
+
+            if (mods.contains("color_over_lifetime"))
+            {
+                const auto &m = mods["color_over_lifetime"];
+                auto *mod = emitter->addModule<ColorOverLifetimeModule>();
+                mod->setEnabled(m.value("enabled", true));
+                if (m.contains("gradient") && m["gradient"].is_array())
+                {
+                    mod->gradient.clear();
+                    for (const auto &pt : m["gradient"])
+                    {
+                        GradientPoint gp;
+                        gp.time = pt.value("t", 0.0f);
+                        if (pt.contains("color") && pt["color"].is_array() && pt["color"].size() == 4)
+                            gp.color = {pt["color"][0], pt["color"][1], pt["color"][2], pt["color"][3]};
+                        mod->gradient.push_back(gp);
+                    }
+                }
+            }
+
+            if (mods.contains("force"))
+            {
+                const auto &m = mods["force"];
+                auto *mod = emitter->addModule<ForceModule>();
+                mod->setEnabled(m.value("enabled", true));
+                if (m.contains("force") && m["force"].is_array() && m["force"].size() == 3)
+                    mod->force = {m["force"][0], m["force"][1], m["force"][2]};
+                mod->drag = m.value("drag", 0.0f);
+            }
+
+            if (mods.contains("renderer"))
+            {
+                const auto &m = mods["renderer"];
+                auto *mod = emitter->addModule<RendererModule>();
+                mod->setEnabled(m.value("enabled", true));
+                mod->texturePath = m.value("texture_path", std::string{});
+
+                const std::string blendStr = m.value("blend_mode", "alpha_blend");
+                if (blendStr == "additive") mod->blendMode = ParticleBlendMode::Additive;
+                else if (blendStr == "premultiplied") mod->blendMode = ParticleBlendMode::Premultiplied;
+                else mod->blendMode = ParticleBlendMode::AlphaBlend;
+
+                const std::string faceStr = m.value("facing_mode", "camera_facing");
+                if (faceStr == "velocity_aligned") mod->facingMode = ParticleFacingMode::VelocityAligned;
+                else if (faceStr == "world_up") mod->facingMode = ParticleFacingMode::WorldUp;
+                else mod->facingMode = ParticleFacingMode::CameraFacing;
+
+                mod->castShadows = m.value("cast_shadows", false);
+                mod->softParticles = m.value("soft_particles", false);
+                mod->softParticleRange = m.value("soft_particle_range", 1.0f);
+            }
+
+            if (mods.contains("velocity_over_lifetime"))
+            {
+                const auto &m = mods["velocity_over_lifetime"];
+                auto *mod = emitter->addModule<VelocityOverLifetimeModule>();
+                mod->setEnabled(m.value("enabled", true));
+                if (m.contains("speed_curve") && m["speed_curve"].is_array())
+                {
+                    mod->speedCurve.clear();
+                    for (const auto &pt : m["speed_curve"])
+                        mod->speedCurve.push_back({pt.value("t", 0.0f), pt.value("v", 1.0f)});
+                }
+            }
+
+            if (mods.contains("rotation_over_lifetime"))
+            {
+                const auto &m = mods["rotation_over_lifetime"];
+                auto *mod = emitter->addModule<RotationOverLifetimeModule>();
+                mod->setEnabled(m.value("enabled", true));
+                mod->angularVelocityMin = m.value("angular_velocity_min", -1.0f);
+                mod->angularVelocityMax = m.value("angular_velocity_max", 1.0f);
+            }
+
+            if (mods.contains("turbulence"))
+            {
+                const auto &m = mods["turbulence"];
+                auto *mod = emitter->addModule<TurbulenceModule>();
+                mod->setEnabled(m.value("enabled", true));
+                mod->strength = m.value("strength", 1.0f);
+                mod->frequency = m.value("frequency", 1.0f);
+                mod->scrollSpeed = m.value("scroll_speed", 0.5f);
+            }
+        }
+    }
+
+    return ps;
 }
 
 ELIX_NESTED_NAMESPACE_END

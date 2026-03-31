@@ -5,6 +5,7 @@
 
 #include <glm/glm.hpp>
 #include <random>
+#include <string>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -41,6 +42,10 @@ public:
     float duration{5.0f}; // total system lifetime when loop == false
 
     EmitterShapeConfig shape;
+
+    // Sub-emitter: when set, triggers a burst in another emitter when particles die
+    std::string subEmitterOnDeath;
+    int subEmitterBurstCount{1};
 
     glm::vec3 samplePosition(const glm::vec3 &emitterWorldPos) const;
 

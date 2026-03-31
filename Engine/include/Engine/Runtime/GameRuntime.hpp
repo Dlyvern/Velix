@@ -22,6 +22,7 @@
 #include "Engine/Render/GraphPasses/RTShadowDenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTShadowsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/SSRRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/TAARenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SSAORenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
@@ -99,6 +100,7 @@ private:
     renderGraph::RTAODenoiseRenderGraphPass *m_rtaoDenoiseRenderGraphPass{nullptr};
     renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
     renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
+    renderGraph::SSRRenderGraphPass *m_ssrRenderGraphPass{nullptr};
     renderGraph::VolumetricFogLightingRenderGraphPass *m_volumetricFogLightingRenderGraphPass{nullptr};
     renderGraph::VolumetricFogTemporalRenderGraphPass *m_volumetricFogTemporalRenderGraphPass{nullptr};
     renderGraph::VolumetricFogCompositeRenderGraphPass *m_volumetricFogCompositeRenderGraphPass{nullptr};

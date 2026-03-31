@@ -603,6 +603,20 @@ bool AnimatorComponent::checkConditions(const AnimationTransition &t) const
                 return false;
             break;
         }
+        case AnimationTransitionCondition::Type::IntGreater:
+        {
+            const auto it = m_ints.find(cond.parameterName);
+            if (it == m_ints.end() || !(it->second > cond.intValue))
+                return false;
+            break;
+        }
+        case AnimationTransitionCondition::Type::IntLess:
+        {
+            const auto it = m_ints.find(cond.parameterName);
+            if (it == m_ints.end() || !(it->second < cond.intValue))
+                return false;
+            break;
+        }
         case AnimationTransitionCondition::Type::Trigger:
         {
             if (m_triggers.find(cond.parameterName) == m_triggers.end())

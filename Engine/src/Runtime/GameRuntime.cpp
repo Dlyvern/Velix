@@ -5,7 +5,9 @@
 
 #include "Engine/Components/CameraComponent.hpp"
 #include "Engine/Components/ParticleSystemComponent.hpp"
+#include "Engine/Components/ReflectionProbeComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
+#include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/PluginSystem/PluginLoader.hpp"
 #include "Engine/PluginSystem/PluginManager.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
@@ -17,6 +19,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <system_error>
 
 #if defined(_WIN32)
@@ -133,6 +136,70 @@ namespace
         return false;
     }
 
+    bool renderGraphUsesSSR(const elix::engine::RenderQualitySettings &settings)
+    {
+        return settings.enablePostProcessing && settings.enableSSR;
+    }
+
+    void syncNearestReflectionProbe(elix::engine::renderGraph::LightingRenderGraphPass *lightingPass,
+                                    const elix::engine::Scene *scene,
+                                    const std::shared_ptr<elix::engine::Camera> &camera)
+    {
+        if (!lightingPass)
+            return;
+
+        if (!scene)
+        {
+            lightingPass->setProbeData(VK_NULL_HANDLE, VK_NULL_HANDLE, {}, 0.0f, 0.0f);
+            return;
+        }
+
+        const glm::vec3 cameraPos = camera ? camera->getPosition() : glm::vec3(0.0f);
+
+        elix::engine::ReflectionProbeComponent *bestProbe = nullptr;
+        glm::vec3 bestProbePos{0.0f};
+        float bestEdgeDistance = std::numeric_limits<float>::max();
+        float bestCenterDistance = std::numeric_limits<float>::max();
+
+        for (const auto &entity : scene->getEntities())
+        {
+            if (!entity || !entity->isEnabled())
+                continue;
+
+            auto *probe = entity->getComponent<elix::engine::ReflectionProbeComponent>();
+            auto *transform = entity->getComponent<elix::engine::Transform3DComponent>();
+            if (!probe || !transform || !probe->hasCubemap())
+                continue;
+
+            const glm::vec3 probePos = transform->getWorldPosition();
+            const float centerDistance = glm::length(cameraPos - probePos);
+            const float radius = std::max(probe->radius, 0.0f);
+            const float edgeDistance = std::max(centerDistance - radius, 0.0f);
+
+            if (edgeDistance < bestEdgeDistance ||
+                (edgeDistance == bestEdgeDistance && centerDistance < bestCenterDistance))
+            {
+                bestProbe = probe;
+                bestProbePos = probePos;
+                bestEdgeDistance = edgeDistance;
+                bestCenterDistance = centerDistance;
+            }
+        }
+
+        if (bestProbe)
+        {
+            lightingPass->setProbeData(
+                bestProbe->getProbeEnvView(),
+                bestProbe->getProbeEnvSampler(),
+                bestProbePos,
+                bestProbe->radius,
+                bestProbe->intensity);
+            return;
+        }
+
+        lightingPass->setProbeData(VK_NULL_HANDLE, VK_NULL_HANDLE, {}, 0.0f, 0.0f);
+    }
+
     size_t renderGraphTopologyHash(const elix::engine::Scene *scene)
     {
         const auto &settings = elix::engine::RenderQualitySettings::getInstance();
@@ -146,6 +213,7 @@ namespace
         hashCombine(seed, settings.enableRayTracing && settings.enableRTShadows && supportsAnyRT);
         hashCombine(seed, settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT);
         hashCombine(seed, settings.enableRayTracing && settings.enableRTAO && supportsRayQuery);
+        hashCombine(seed, renderGraphUsesSSR(settings));
         hashCombine(seed, renderGraphUsesVolumetricFog(settings, scene));
         hashCombine(seed, static_cast<uint32_t>(settings.volumetricFogQuality));
         hashCombine(seed, settings.overrideVolumetricFogSceneSetting);
@@ -252,6 +320,8 @@ void GameRuntime::tick(float deltaTime)
     if (!m_initialized || !m_scene || !m_renderGraph)
         return;
 
+    ReflectionProbeComponent::flushDeferredCapturedCubemapReleases();
+
     if (SceneManager::instance().hasPendingRequests())
     {
         forEachScriptComponent([](ScriptComponent *scriptComponent)
@@ -284,6 +354,8 @@ void GameRuntime::tick(float deltaTime)
         m_renderGraphTopologyHash = currentTopologyHash;
     }
 
+    syncNearestReflectionProbe(m_lightingRenderGraphPass, m_scene.get(), m_renderCamera);
+
     m_renderGraph->prepareFrame(m_renderCamera, m_scene.get(), deltaTime);
     m_renderGraph->draw();
 }
@@ -305,6 +377,7 @@ void GameRuntime::initRenderGraph()
     m_rtaoDenoiseRenderGraphPass = nullptr;
     m_lightingRenderGraphPass = nullptr;
     m_contactShadowRenderGraphPass = nullptr;
+    m_ssrRenderGraphPass = nullptr;
     m_volumetricFogLightingRenderGraphPass = nullptr;
     m_volumetricFogTemporalRenderGraphPass = nullptr;
     m_volumetricFogCompositeRenderGraphPass = nullptr;
@@ -329,6 +402,7 @@ void GameRuntime::initRenderGraph()
     const bool useRTShadows = settings.enableRayTracing && settings.enableRTShadows && supportsAnyRT;
     const bool useRTAO = settings.enableRayTracing && settings.enableRTAO && supportsRayQuery;
     const bool useRTReflections = settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT;
+    const bool useSSR = renderGraphUsesSSR(settings);
     const bool useVolumetricFog = renderGraphUsesVolumetricFog(settings, m_scene.get());
     const bool useParticles = renderGraphUsesParticles(m_scene.get());
     const bool useUI = renderGraphUsesUI(m_scene.get());
@@ -391,6 +465,16 @@ void GameRuntime::initRenderGraph()
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
     auto *sceneColorInput = &m_skyLightRenderGraphPass->getOutput();
+    if (useSSR)
+    {
+        m_ssrRenderGraphPass = m_renderGraph->addPass<renderGraph::SSRRenderGraphPass>(
+            *sceneColorInput,
+            m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler(),
+            m_gBufferRenderGraphPass->getMaterialTextureHandlers());
+        sceneColorInput = &m_ssrRenderGraphPass->getOutput();
+    }
+
     if (useRTReflections)
     {
         m_rtReflectionsRenderGraphPass = m_renderGraph->addPass<renderGraph::RTReflectionsRenderGraphPass>(
@@ -735,6 +819,8 @@ void GameRuntime::syncViewportExtent()
         m_lightingRenderGraphPass->setExtent(extent);
     if (m_contactShadowRenderGraphPass)
         m_contactShadowRenderGraphPass->setExtent(extent);
+    if (m_ssrRenderGraphPass)
+        m_ssrRenderGraphPass->setExtent(extent);
     if (m_volumetricFogLightingRenderGraphPass)
         m_volumetricFogLightingRenderGraphPass->setExtent(extent);
     if (m_volumetricFogTemporalRenderGraphPass)

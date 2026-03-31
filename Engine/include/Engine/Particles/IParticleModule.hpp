@@ -20,6 +20,9 @@ enum class ParticleModuleType : uint8_t
     Force,
     Renderer,
     Collision,
+    VelocityOverLifetime,
+    RotationOverLifetime,
+    Turbulence,
     Custom
 };
 

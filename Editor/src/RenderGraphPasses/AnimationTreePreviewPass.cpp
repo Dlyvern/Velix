@@ -1,6 +1,7 @@
 #include "Editor/RenderGraphPasses/AnimationTreePreviewPass.hpp"
 
 #include "Core/VulkanContext.hpp"
+#include "Core/VulkanHelpers.hpp"
 #include "Core/Buffer.hpp"
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
 #include "Engine/Builders/GraphicsPipelineBuilder.hpp"
@@ -37,6 +38,7 @@ AnimationTreePreviewPass::AnimationTreePreviewPass()
     m_viewport = VkViewport{0.0f, 0.0f, static_cast<float>(PREVIEW_SIZE), static_cast<float>(PREVIEW_SIZE), 0.0f, 1.0f};
     m_scissor = VkRect2D{{0, 0}, {PREVIEW_SIZE, PREVIEW_SIZE}};
     m_clearValues[0].color = {0.12f, 0.12f, 0.12f, 1.0f};
+    m_clearValues[1].depthStencil = {1.0f, 0u};
 
     setDebugName("Animation tree preview pass");
 }
@@ -45,6 +47,7 @@ void AnimationTreePreviewPass::setup(engine::renderGraph::RGPResourcesBuilder &b
 {
     const auto device = core::VulkanContext::getContext()->getDevice();
     const VkExtent2D extent{PREVIEW_SIZE, PREVIEW_SIZE};
+    m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
 
     engine::renderGraph::RGPTextureDescription colorDesc(VK_FORMAT_R8G8B8A8_SRGB, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT);
     colorDesc.setExtent(extent);
@@ -53,6 +56,16 @@ void AnimationTreePreviewPass::setup(engine::renderGraph::RGPResourcesBuilder &b
     colorDesc.setAliasable(false);
     colorDesc.setDebugName("__ELIX_ANIMTREE_PREVIEW_COLOR__");
     m_colorHandler = builder.createTexture(colorDesc);
+
+    engine::renderGraph::RGPTextureDescription depthDesc(
+        m_depthFormat,
+        engine::renderGraph::RGPTextureUsage::DEPTH_STENCIL,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    depthDesc.setExtent(extent);
+    depthDesc.setAliasable(false);
+    depthDesc.setDebugName("__ELIX_ANIMTREE_PREVIEW_DEPTH__");
+    m_depthHandler = builder.createTexture(depthDesc);
 
     // Minimal camera descriptor set layout — only binding 0 (camera UBO).
     // The preview shader (shader_simple_textured_mesh) only reads binding 0,
@@ -82,10 +95,13 @@ void AnimationTreePreviewPass::setup(engine::renderGraph::RGPResourcesBuilder &b
 void AnimationTreePreviewPass::compile(engine::renderGraph::RGPResourcesStorage &storage)
 {
     m_colorTarget = storage.getTexture(m_colorHandler);
+    m_depthTarget = storage.getTexture(m_depthHandler);
 
     const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     m_cameraUBOs.resize(imageCount);
-    m_cameraDescriptorSets.resize(imageCount);
+    m_cameraDescriptorSets.resize(imageCount, VK_NULL_HANDLE);
+    const auto device = core::VulkanContext::getContext()->getDevice();
+    const auto pool = core::VulkanContext::getContext()->getPersistentDescriptorPool();
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
@@ -103,18 +119,23 @@ void AnimationTreePreviewPass::compile(engine::renderGraph::RGPResourcesStorage 
         defaultUBO.invProjection = glm::inverse(defaultUBO.projection);
         m_cameraUBOs[i]->upload(&defaultUBO, sizeof(PreviewCameraUBO));
 
-        if (!m_cameraDescriptorSetsInitialized)
+        if (!m_cameraDescriptorSetsInitialized || m_cameraDescriptorSets[i] == VK_NULL_HANDLE)
         {
             m_cameraDescriptorSets[i] = engine::DescriptorSetBuilder::begin()
                 .addBuffer(m_cameraUBOs[i], sizeof(PreviewCameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                .build(core::VulkanContext::getContext()->getDevice(),
-                       core::VulkanContext::getContext()->getPersistentDescriptorPool(),
+                .build(device,
+                       pool,
                        m_cameraDescriptorSetLayout);
+        }
+        else
+        {
+            engine::DescriptorSetBuilder::begin()
+                .addBuffer(m_cameraUBOs[i], sizeof(PreviewCameraUBO), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                .update(device, m_cameraDescriptorSets[i]);
         }
     }
 
-    if (!m_cameraDescriptorSetsInitialized)
-        m_cameraDescriptorSetsInitialized = true;
+    m_cameraDescriptorSetsInitialized = true;
 }
 
 void AnimationTreePreviewPass::record(core::CommandBuffer::SharedPtr commandBuffer,
@@ -142,13 +163,13 @@ void AnimationTreePreviewPass::record(core::CommandBuffer::SharedPtr commandBuff
     engine::GraphicsPipelineKey key{};
     key.shader = engine::ShaderId::PreviewMesh;
     key.cull = engine::CullMode::None;
-    key.depthTest = false;
-    key.depthWrite = false;
+    key.depthTest = true;
+    key.depthWrite = true;
     key.depthCompare = VK_COMPARE_OP_LESS;
     key.polygonMode = VK_POLYGON_MODE_FILL;
     key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     key.colorFormats = {VK_FORMAT_R8G8B8A8_SRGB};
-    key.depthFormat = VK_FORMAT_UNDEFINED;
+    key.depthFormat = m_depthFormat;
     key.pipelineLayout = m_pipelineLayout;
 
     auto pipeline = engine::GraphicsPipelineManager::getOrCreate(key);
@@ -171,7 +192,7 @@ void AnimationTreePreviewPass::record(core::CommandBuffer::SharedPtr commandBuff
 
         ModelOnly pushConstant{};
         pushConstant.model = model;
-        vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+        vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            sizeof(ModelOnly), &pushConstant);
 
         auto *mat = (i < m_pendingData.materials.size()) ? m_pendingData.materials[i] : nullptr;
@@ -207,11 +228,20 @@ AnimationTreePreviewPass::getRenderPassExecutions(const engine::RenderGraphPassC
     colorAttachment.clearValue = m_clearValues[0];
     exec.colorsRenderingItems = {colorAttachment};
 
+    VkRenderingAttachmentInfo depthAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    depthAttachment.imageView = m_depthTarget->vkImageView();
+    depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.clearValue = m_clearValues[1];
+    exec.depthRenderingItem = depthAttachment;
+
     exec.colorFormats = {VK_FORMAT_R8G8B8A8_SRGB};
-    exec.depthFormat = VK_FORMAT_UNDEFINED;
-    exec.useDepth = false;
+    exec.depthFormat = m_depthFormat;
+    exec.useDepth = true;
 
     exec.targets[m_colorHandler] = m_colorTarget;
+    exec.targets[m_depthHandler] = m_depthTarget;
 
     return {exec};
 }
@@ -219,6 +249,7 @@ AnimationTreePreviewPass::getRenderPassExecutions(const engine::RenderGraphPassC
 void AnimationTreePreviewPass::freeResources()
 {
     m_colorTarget = nullptr;
+    m_depthTarget = nullptr;
     m_cameraUBOs.clear();
     for (auto &ds : m_cameraDescriptorSets) ds = VK_NULL_HANDLE;
     m_cameraDescriptorSets.clear();

@@ -1,6 +1,16 @@
 #version 450
 
+layout(set = 0, binding = 0) uniform CameraUniformObject
+{
+    mat4 view;
+    mat4 projection;
+    mat4 invView;
+    mat4 invProjection;
+} cameraUniformObject;
+
 layout(location = 0) in vec2 fragTextureCoordinates;
+layout(location = 1) in vec3 fragWorldNormal;
+layout(location = 2) in vec3 fragWorldPosition;
 
 layout(location = 0) out vec4 outColor;
 
@@ -52,5 +62,24 @@ void main()
 {
     vec4 textureSample = texture(uAlbedoTex, getUV());
     vec4 baseColor = textureSample * material.baseColorFactor;
-    outColor = vec4(baseColor.rgb, 1.0);
+
+    vec3 normal = normalize(fragWorldNormal);
+    vec3 lightDir = normalize(vec3(0.45, 0.8, 0.35));
+    vec3 viewPos = cameraUniformObject.invView[3].xyz;
+    vec3 viewDir = normalize(viewPos - fragWorldPosition);
+    vec3 halfVector = normalize(lightDir + viewDir);
+
+    float ndl = max(dot(normal, lightDir), 0.0);
+    float hemi = normal.y * 0.5 + 0.5;
+    float rim = pow(1.0 - max(dot(normal, viewDir), 0.0), 2.0);
+    float specular = pow(max(dot(normal, halfVector), 0.0), 32.0);
+
+    vec3 lighting =
+        vec3(0.18) +
+        vec3(0.18, 0.2, 0.24) * hemi +
+        vec3(0.72, 0.7, 0.66) * ndl +
+        vec3(0.1, 0.12, 0.16) * rim +
+        vec3(0.18) * specular;
+
+    outColor = vec4(baseColor.rgb * lighting, 1.0);
 }

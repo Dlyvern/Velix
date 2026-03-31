@@ -23,6 +23,9 @@
 #include "Engine/Particles/Modules/SizeOverLifetimeModule.hpp"
 #include "Engine/Particles/Modules/ForceModule.hpp"
 #include "Engine/Particles/Modules/RendererModule.hpp"
+#include "Engine/Particles/Modules/VelocityOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/RotationOverLifetimeModule.hpp"
+#include "Engine/Particles/Modules/TurbulenceModule.hpp"
 
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
@@ -793,6 +796,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
             auto *skeletalMeshComponent = entity->getComponent<SkeletalMeshComponent>();
             Skeleton *skeleton = skeletalMeshComponent ? &skeletalMeshComponent->getSkeleton() : nullptr;
             const std::vector<std::string> externalAnimationAssetPaths = collectResolvedAnimationAssetPaths(componentJson);
+            const std::string treeAssetPath = resolveScenePath(componentJson.value("tree_asset_path", std::string{}));
 
             if (!animatorComponent)
             {
@@ -825,6 +829,9 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
             }
 
             animatorComponent->setExternalAnimationAssetPaths(externalAnimationAssetPaths);
+
+            if (!treeAssetPath.empty())
+                animatorComponent->loadTree(treeAssetPath);
         };
 
         size_t gameObjectIndex = 0;
@@ -1308,6 +1315,9 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                                         spawn->shape.height = sh.value("height", 1.0f);
                                         spawn->shape.surfaceOnly = sh.value("surface_only", false);
                                     }
+
+                                    spawn->subEmitterOnDeath = m.value("sub_emitter_on_death", std::string{});
+                                    spawn->subEmitterBurstCount = m.value("sub_emitter_burst_count", 1);
                                 }
 
                                 if (mods.contains("lifetime"))
@@ -1401,12 +1411,46 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                                     mod->softParticles = m.value("soft_particles", false);
                                     mod->softParticleRange = m.value("soft_particle_range", 1.0f);
                                 }
+
+                                if (mods.contains("velocity_over_lifetime"))
+                                {
+                                    const auto &m = mods["velocity_over_lifetime"];
+                                    auto *mod = emitter->addModule<VelocityOverLifetimeModule>();
+                                    mod->setEnabled(m.value("enabled", true));
+                                    if (m.contains("speed_curve") && m["speed_curve"].is_array())
+                                    {
+                                        mod->speedCurve.clear();
+                                        for (const auto &pt : m["speed_curve"])
+                                            mod->speedCurve.push_back({pt.value("t", 0.0f), pt.value("v", 1.0f)});
+                                    }
+                                }
+
+                                if (mods.contains("rotation_over_lifetime"))
+                                {
+                                    const auto &m = mods["rotation_over_lifetime"];
+                                    auto *mod = emitter->addModule<RotationOverLifetimeModule>();
+                                    mod->setEnabled(m.value("enabled", true));
+                                    mod->angularVelocityMin = m.value("angular_velocity_min", -1.0f);
+                                    mod->angularVelocityMax = m.value("angular_velocity_max", 1.0f);
+                                }
+
+                                if (mods.contains("turbulence"))
+                                {
+                                    const auto &m = mods["turbulence"];
+                                    auto *mod = emitter->addModule<TurbulenceModule>();
+                                    mod->setEnabled(m.value("enabled", true));
+                                    mod->strength = m.value("strength", 1.0f);
+                                    mod->frequency = m.value("frequency", 1.0f);
+                                    mod->scrollSpeed = m.value("scroll_speed", 0.5f);
+                                }
                             }
                         }
                     }
 
                     auto *psComp = gameObject->addComponent<ParticleSystemComponent>();
                     psComp->playOnStart = componentJson.value("play_on_start", true);
+                    if (componentJson.contains("vfx_asset_path"))
+                        psComp->vfxAssetPath = resolveScenePath(componentJson.value("vfx_asset_path", std::string{}));
                     psComp->setParticleSystem(ps);
                 }
                 else if (type == "reflection_probe")
@@ -1685,6 +1729,9 @@ void Scene::saveSceneToFile(const std::string &filePath)
 
                 j["animation_asset_paths"] = std::move(animationAssetPathsJson);
             }
+
+            if (const auto *tree = anim->getTree(); tree && !tree->assetPath.empty())
+                j["tree_asset_path"] = toRelativePath(tree->assetPath);
 
             componentsJson.push_back(j);
         }
@@ -2235,6 +2282,9 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
                 componentJson["animation_asset_paths"] = std::move(animationAssetPathsJson);
             }
 
+            if (const auto *tree = animator->getTree(); tree && !tree->assetPath.empty())
+                componentJson["tree_asset_path"] = normalizeSerializedPath(tree->assetPath);
+
             componentsJson.push_back(std::move(componentJson));
         }
 
@@ -2397,6 +2447,8 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
             nlohmann::json componentJson;
             componentJson["type"] = "particle_system";
             componentJson["play_on_start"] = particleSystemComponent->playOnStart;
+            if (!particleSystemComponent->vfxAssetPath.empty())
+                componentJson["vfx_asset_path"] = normalizeSerializedPath(particleSystemComponent->vfxAssetPath);
 
             nlohmann::json systemJson;
             systemJson["name"] = particleSystem->name;
@@ -2447,6 +2499,12 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
                     shapeJson["height"] = spawn->shape.height;
                     shapeJson["surface_only"] = spawn->shape.surfaceOnly;
                     moduleJson["shape"] = std::move(shapeJson);
+
+                    if (!spawn->subEmitterOnDeath.empty())
+                    {
+                        moduleJson["sub_emitter_on_death"] = spawn->subEmitterOnDeath;
+                        moduleJson["sub_emitter_burst_count"] = spawn->subEmitterBurstCount;
+                    }
 
                     modulesJson["spawn"] = std::move(moduleJson);
                 }
@@ -2545,6 +2603,36 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
                     moduleJson["soft_particle_range"] = renderer->softParticleRange;
 
                     modulesJson["renderer"] = std::move(moduleJson);
+                }
+
+                if (auto *vel = emitter->getModule<VelocityOverLifetimeModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = vel->isEnabled();
+                    nlohmann::json curveJson = nlohmann::json::array();
+                    for (const auto &point : vel->speedCurve)
+                        curveJson.push_back({{"t", point.time}, {"v", point.value}});
+                    moduleJson["speed_curve"] = std::move(curveJson);
+                    modulesJson["velocity_over_lifetime"] = std::move(moduleJson);
+                }
+
+                if (auto *rot = emitter->getModule<RotationOverLifetimeModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = rot->isEnabled();
+                    moduleJson["angular_velocity_min"] = rot->angularVelocityMin;
+                    moduleJson["angular_velocity_max"] = rot->angularVelocityMax;
+                    modulesJson["rotation_over_lifetime"] = std::move(moduleJson);
+                }
+
+                if (auto *turb = emitter->getModule<TurbulenceModule>())
+                {
+                    nlohmann::json moduleJson;
+                    moduleJson["enabled"] = turb->isEnabled();
+                    moduleJson["strength"] = turb->strength;
+                    moduleJson["frequency"] = turb->frequency;
+                    moduleJson["scroll_speed"] = turb->scrollSpeed;
+                    modulesJson["turbulence"] = std::move(moduleJson);
                 }
 
                 emitterJson["modules"] = std::move(modulesJson);
@@ -2731,6 +2819,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
         auto *skeletalMeshComponent = entity->getComponent<SkeletalMeshComponent>();
         Skeleton *skeleton = skeletalMeshComponent ? &skeletalMeshComponent->getSkeleton() : nullptr;
         const std::vector<std::string> externalAnimationAssetPaths = collectResolvedAnimationAssetPaths(componentJson);
+        const std::string treeAssetPath = resolveSerializedPath(componentJson.value("tree_asset_path", std::string{}));
 
         if (!animatorComponent)
         {
@@ -2763,6 +2852,9 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
         }
 
         animatorComponent->setExternalAnimationAssetPaths(externalAnimationAssetPaths);
+
+        if (!treeAssetPath.empty())
+            animatorComponent->loadTree(treeAssetPath);
     };
 
     Entity *restoredRoot = nullptr;

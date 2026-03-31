@@ -58,9 +58,9 @@ private:
     {
         glm::mat4 viewProj;
         glm::vec3 right;
-        float _pad0;
+        float softParticleRange;    // 0 = hard cutoff; > 0 enables soft blending
         glm::vec3 up;
-        float _pad1;
+        float softEnabled;          // 0.0 = disabled, 1.0 = enabled
     };
     static_assert(sizeof(ParticlePC) == 96);
 
@@ -77,6 +77,7 @@ private:
 
     std::vector<const RenderTarget *> m_outputRenderTargets;
     std::vector<const RenderTarget *> m_inputRenderTargets;
+    std::vector<const RenderTarget *> m_depthRenderTargets;
     std::vector<core::Buffer::SharedPtr> m_particleSSBOs;
 
     static constexpr uint32_t MAX_PARTICLE_TEXTURES = 8;
@@ -84,10 +85,12 @@ private:
     std::vector<VkDescriptorSet> m_descriptorSets;
     std::vector<VkDescriptorSet> m_passthroughSets;
     std::vector<VkDescriptorSet> m_textureSets;
+    std::vector<VkDescriptorSet> m_depthSets;
 
     core::DescriptorSetLayout::SharedPtr m_ssboDescriptorSetLayout;
     core::DescriptorSetLayout::SharedPtr m_passthroughDescriptorSetLayout;
     core::DescriptorSetLayout::SharedPtr m_textureDescriptorSetLayout;
+    core::DescriptorSetLayout::SharedPtr m_depthDescriptorSetLayout;
     core::PipelineLayout::SharedPtr m_particlePipelineLayout;
     core::PipelineLayout::SharedPtr m_passthroughPipelineLayout;
     core::Sampler::SharedPtr m_nearestSampler;

@@ -417,9 +417,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     else if (key.shader == ShaderId::PreviewMesh)
     {
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D))};
-        vertexAttributeDescriptions = {
-            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex::Vertex3D, position)},
-            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex::Vertex3D, textureCoordinates)}};
+        vertexAttributeDescriptions = vertex::Vertex3D::getAttributeDescriptions();
     }
     else if (key.shader == ShaderId::DebugLines)
     {

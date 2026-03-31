@@ -29,7 +29,11 @@ public:
 
     bool isPlaying() const;
 
+    bool loadFromAsset(const std::string &path);
+    bool saveToAsset(const std::string &path) const;
+
     bool playOnStart{true};
+    std::string vfxAssetPath;
 
 private:
     ParticleSystem::SharedPtr m_particleSystem;

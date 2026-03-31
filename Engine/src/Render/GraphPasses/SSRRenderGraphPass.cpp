@@ -224,8 +224,12 @@ void SSRRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
         s.ssrStrength,
         s.ssrRoughnessCutoff,
         (s.enableSSR && s.enablePostProcessing) ? 1.0f : 0.0f);
+    const bool hasEnvironmentTexture =
+        (m_environmentSkybox && m_environmentSkybox->hasTexture()) ||
+        (m_fallbackEnvironmentTexture && m_fallbackEnvironmentTexture->vkImageView() != VK_NULL_HANDLE &&
+         m_fallbackEnvironmentTexture->vkSampler() != VK_NULL_HANDLE);
     pc.environmentInfo = glm::vec4(
-        (m_environmentSkybox && m_environmentSkybox->hasTexture()) ? 1.0f : 0.0f,
+        hasEnvironmentTexture ? 1.0f : 0.0f,
         0.0f, 0.0f, 0.0f);
 
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,

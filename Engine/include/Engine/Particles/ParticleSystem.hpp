@@ -43,9 +43,6 @@ public:
     bool isPaused() const { return m_paused; }
     bool isStopped() const { return !m_playing; }
 
-    /// Returns a ready-to-use rain system (500 drops/s, box spawn, alpha-blended streaks).
-    static SharedPtr createRain();
-
 private:
     std::vector<std::unique_ptr<ParticleEmitter>> m_emitters;
 

@@ -2,6 +2,7 @@
 #define ELIX_ASSETS_SERIALIZER_HPP
 
 #include "Engine/Assets/Asset.hpp"
+#include "Engine/Particles/ParticleSystem.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -28,6 +29,9 @@ public:
     std::optional<AudioAsset> readAudio(const std::string &path) const;
     std::optional<AnimationAsset> readAnimationAsset(const std::string &path) const;
     std::optional<AnimationTree> readAnimationTree(const std::string &path) const;
+
+    bool writeParticleSystem(const ParticleSystem &system, const std::string &path) const;
+    std::optional<ParticleSystem::SharedPtr> readParticleSystem(const std::string &path) const;
 };
 
 ELIX_NESTED_NAMESPACE_END

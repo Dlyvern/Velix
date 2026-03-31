@@ -199,22 +199,26 @@ void main()
     roughnessAtten       = roughnessAtten * roughnessAtten;
     float reflectionWeight = clamp(F * roughnessAtten * pc.params1.y, 0.0, 1.0);
 
-    if (!hit)
+    vec3 reflectionColor = envColor;
+    float hitConfidence = 0.0;
+    if (hit)
+    {
+        vec3 hitReflectionColor = texture(uLitColor, hitUV).rgb;
+
+        // Screen-edge fade to hide the hard cutoff at the screen border.
+        vec2 edgeFade = smoothstep(vec2(0.0), vec2(0.12), hitUV) *
+                        (vec2(1.0) - smoothstep(vec2(0.88), vec2(1.0), hitUV));
+        float edgeWeight = edgeFade.x * edgeFade.y;
+        float facingWeight = smoothstep(0.05, 0.25, hitFacing);
+        float distanceWeight = 1.0 - smoothstep(maxDist * 0.65, maxDist, hitTravel);
+        hitConfidence = clamp(edgeWeight * facingWeight * distanceWeight, 0.0, 1.0);
+        reflectionColor = mix(envColor, hitReflectionColor, hitConfidence);
+    }
+    else if (pc.environmentInfo.x < 0.5)
     {
         outColor = vec4(litColor, 1.0);
         return;
     }
 
-    vec3 hitReflectionColor = texture(uLitColor, hitUV).rgb;
-
-    // Screen-edge fade to hide the hard cutoff at the screen border.
-    vec2 edgeFade = smoothstep(vec2(0.0), vec2(0.12), hitUV) *
-                    (vec2(1.0) - smoothstep(vec2(0.88), vec2(1.0), hitUV));
-    float edgeWeight = edgeFade.x * edgeFade.y;
-    float facingWeight = smoothstep(0.05, 0.25, hitFacing);
-    float distanceWeight = 1.0 - smoothstep(maxDist * 0.65, maxDist, hitTravel);
-    float hitConfidence = clamp(edgeWeight * facingWeight * distanceWeight, 0.0, 1.0);
-    float finalWeight = reflectionWeight * hitConfidence;
-
-    outColor = vec4(mix(litColor, hitReflectionColor, finalWeight), 1.0);
+    outColor = vec4(mix(litColor, reflectionColor, reflectionWeight), 1.0);
 }

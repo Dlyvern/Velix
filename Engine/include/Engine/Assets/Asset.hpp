@@ -110,7 +110,8 @@ public:
         MATERIAL = 3,
         AUDIO = 4,
         ANIMATION = 5,
-        ANIMATION_TREE = 6
+        ANIMATION_TREE = 6,
+        PARTICLE_SYSTEM = 7
     };
 
     struct BinaryHeader

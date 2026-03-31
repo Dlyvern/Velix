@@ -548,6 +548,51 @@ namespace
         return runtimeDirectory;
     }
 
+    bool containsVelixSdkConfig(const std::filesystem::path &prefix)
+    {
+        if (prefix.empty())
+            return false;
+
+        const std::vector<std::filesystem::path> configCandidates = {
+            prefix / "VelixSDKConfig.cmake",
+            prefix / "VelixSDK" / "VelixSDKConfig.cmake",
+            prefix / "lib" / "cmake" / "VelixSDK" / "VelixSDKConfig.cmake",
+        };
+
+        for (const auto &candidate : configCandidates)
+        {
+            std::error_code errorCode;
+            if (std::filesystem::exists(candidate, errorCode) && !errorCode &&
+                std::filesystem::is_regular_file(candidate, errorCode))
+                return true;
+        }
+
+        return false;
+    }
+
+    std::filesystem::path inferCMakePrefixPathFromSupportRoot(const std::filesystem::path &supportRoot)
+    {
+        if (supportRoot.empty())
+            return {};
+
+        const std::vector<std::filesystem::path> prefixCandidates = {
+            supportRoot,
+            supportRoot / "build",
+            supportRoot / "release_build",
+            supportRoot / "build-win",
+            supportRoot / "build-windows",
+            supportRoot / "staging" / "Velix",
+        };
+
+        for (const auto &candidate : prefixCandidates)
+        {
+            if (containsVelixSdkConfig(candidate))
+                return candidate;
+        }
+
+        return supportRoot;
+    }
+
     std::filesystem::path findRuntimeExecutableInSupportRoot(const std::filesystem::path &supportRoot,
                                                              const std::filesystem::path &runningExecutablePath,
                                                              ExportPlatform platform)
@@ -567,6 +612,20 @@ namespace
             supportRoot / "bin" / "Release" / executableName,
             supportRoot / "RelWithDebInfo" / executableName,
             supportRoot / "bin" / "RelWithDebInfo" / executableName,
+            supportRoot / "build" / executableName,
+            supportRoot / "build" / "Release" / executableName,
+            supportRoot / "build" / "RelWithDebInfo" / executableName,
+            supportRoot / "release_build" / executableName,
+            supportRoot / "release_build" / "Release" / executableName,
+            supportRoot / "release_build" / "RelWithDebInfo" / executableName,
+            supportRoot / "build-win" / executableName,
+            supportRoot / "build-win" / "Release" / executableName,
+            supportRoot / "build-win" / "RelWithDebInfo" / executableName,
+            supportRoot / "build-windows" / executableName,
+            supportRoot / "build-windows" / "Release" / executableName,
+            supportRoot / "build-windows" / "RelWithDebInfo" / executableName,
+            supportRoot / "staging" / "Velix" / executableName,
+            supportRoot / "staging" / "Velix" / "bin" / executableName,
         };
 
         for (const auto &candidate : candidates)
@@ -3331,7 +3390,7 @@ bool Editor::exportCurrentProjectPacketForTarget(Project &project,
                                                  ExportPlatform targetPlatform,
                                                  std::vector<std::filesystem::path> &outExportDirectories)
 {
-    const std::filesystem::path projectRoot = makeAbsoluteNormalized(project.fullPath);
+    const std::filesystem::path projectRoot = resolveProjectRootPath(project);
     const std::filesystem::path entryScenePath = makeAbsoluteNormalized(project.entryScene);
     const ExportPlatform hostPlatform = getHostExportPlatform();
     const ExportPlatformSettings &platformSettings = exportSettingsForPlatform(project, targetPlatform);
@@ -3375,6 +3434,9 @@ bool Editor::exportCurrentProjectPacketForTarget(Project &project,
         hostPlatform == ExportPlatform::Linux)
         resolved.cmakeToolchainFile = defaultWindowsToolchainFileForExport();
 
+    if (resolved.supportRootDir.empty() && targetPlatform != hostPlatform)
+        resolved.supportRootDir = findEngineSourceRootForExport();
+
     const std::filesystem::path runningExecutablePath = FileHelper::getExecutableFilePath();
     if (resolved.runtimeExecutablePath.empty())
     {
@@ -3400,9 +3462,16 @@ bool Editor::exportCurrentProjectPacketForTarget(Project &project,
 
     if (resolved.runtimeExecutablePath.empty())
     {
-        m_notificationManager.showError(std::string("Export failed: missing ") + exportPlatformDisplayName(targetPlatform) + " runtime executable.");
+        const std::string message = targetPlatform == ExportPlatform::Windows && hostPlatform == ExportPlatform::Linux
+                                        ? "Export failed: missing Windows runtime/support bundle."
+                                        : std::string("Export failed: missing ") + exportPlatformDisplayName(targetPlatform) + " runtime executable.";
+        m_notificationManager.showError(message);
         VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
-                                                         << ": runtime executable path is invalid.\n");
+                                                         << ": runtime executable path is invalid."
+                                                         << (targetPlatform == ExportPlatform::Windows && hostPlatform == ExportPlatform::Linux
+                                                                 ? " Configure Support Root or Runtime Executable in Export Project."
+                                                                 : "")
+                                                         << '\n');
         return false;
     }
 
@@ -3410,7 +3479,7 @@ bool Editor::exportCurrentProjectPacketForTarget(Project &project,
         resolved.supportRootDir = inferRuntimeRootFromExecutable(resolved.runtimeExecutablePath);
 
     resolved.runtimeRootDir = resolved.supportRootDir;
-    resolved.cmakePrefixPath = resolved.supportRootDir;
+    resolved.cmakePrefixPath = inferCMakePrefixPathFromSupportRoot(resolved.supportRootDir);
 
     if (resolved.cmakePrefixPath.empty())
     {
@@ -3638,6 +3707,90 @@ bool Editor::exportCurrentProjectPacketForTarget(Project &project,
         return true;
     };
 
+    auto copyProjectPathPreservingLayout = [&](const std::filesystem::path &sourcePath,
+                                               const std::string &assetName) -> bool
+    {
+        if (sourcePath.empty())
+            return true;
+
+        std::error_code existsError;
+        if (!std::filesystem::exists(sourcePath, existsError) || existsError)
+            return true;
+
+        std::error_code relativeError;
+        const std::filesystem::path relativePath = std::filesystem::relative(sourcePath, projectRoot, relativeError).lexically_normal();
+        if (relativeError || relativePath.empty() || relativePath == ".")
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                             << ": cannot place project " << assetName << " path '" << sourcePath
+                                                             << "' relative to project root '" << projectRoot << "'.\n");
+            return false;
+        }
+
+        const std::filesystem::path targetPath = resolved.exportDirectory / relativePath;
+        std::error_code directoryError;
+        if (std::filesystem::is_directory(sourcePath, directoryError) && !directoryError)
+            return copyDirectoryContents(sourcePath, targetPath);
+
+        return copyFile(sourcePath, targetPath, assetName);
+    };
+
+    std::vector<std::filesystem::path> projectRuntimeContentPaths;
+    auto enqueueProjectRuntimeContent = [&](const std::filesystem::path &candidatePath)
+    {
+        if (candidatePath.empty())
+            return;
+
+        const std::filesystem::path normalizedPath = makeAbsoluteNormalized(candidatePath);
+        std::error_code existsError;
+        if (!std::filesystem::exists(normalizedPath, existsError) || existsError)
+            return;
+
+        if (!isPathWithinRoot(normalizedPath, projectRoot))
+            return;
+
+        std::error_code directoryError;
+        const bool isDirectory = std::filesystem::is_directory(normalizedPath, directoryError) && !directoryError;
+
+        for (const auto &existingPath : projectRuntimeContentPaths)
+        {
+            if (existingPath == normalizedPath)
+                return;
+
+            std::error_code existingDirectoryError;
+            const bool existingIsDirectory = std::filesystem::is_directory(existingPath, existingDirectoryError) && !existingDirectoryError;
+            if (existingIsDirectory && isPathWithinRoot(normalizedPath, existingPath))
+                return;
+        }
+
+        if (isDirectory)
+        {
+            projectRuntimeContentPaths.erase(
+                std::remove_if(
+                    projectRuntimeContentPaths.begin(),
+                    projectRuntimeContentPaths.end(),
+                    [&](const std::filesystem::path &existingPath)
+                    {
+                        std::error_code existingDirectoryError;
+                        return std::filesystem::is_directory(existingPath, existingDirectoryError) &&
+                               !existingDirectoryError &&
+                               isPathWithinRoot(existingPath, normalizedPath);
+                    }),
+                projectRuntimeContentPaths.end());
+        }
+
+        projectRuntimeContentPaths.push_back(normalizedPath);
+    };
+
+    enqueueProjectRuntimeContent(project.resourcesDir.empty() ? std::filesystem::path{} : std::filesystem::path(project.resourcesDir));
+    if (!project.scenesDir.empty())
+        enqueueProjectRuntimeContent(std::filesystem::path(project.scenesDir));
+    else if (entryScenePath.parent_path() != projectRoot)
+        enqueueProjectRuntimeContent(entryScenePath.parent_path());
+    else
+        enqueueProjectRuntimeContent(entryScenePath);
+    enqueueProjectRuntimeContent(projectRoot / "project.settings");
+
     if (resolved.runtimeExecutablePath != runningExecutablePath)
         VX_EDITOR_INFO_STREAM("Game export will use " << exportPlatformDisplayName(targetPlatform)
                                                       << " runtime executable: " << resolved.runtimeExecutablePath << '\n');
@@ -3720,6 +3873,15 @@ bool Editor::exportCurrentProjectPacketForTarget(Project &project,
         if (!copyFile(sdkLibraryPath, targetPath, "VelixSDK runtime library"))
         {
             m_notificationManager.showError("Export failed while copying VelixSDK runtime library.");
+            return false;
+        }
+    }
+
+    for (const auto &contentPath : projectRuntimeContentPaths)
+    {
+        if (!copyProjectPathPreservingLayout(contentPath, "project content"))
+        {
+            m_notificationManager.showError("Export failed while copying project content.");
             return false;
         }
     }
@@ -4436,11 +4598,11 @@ void Editor::drawRenderSettings()
     if (settings.enableSSR)
     {
         ImGui::Indent();
-        ImGui::DragFloat("Max Distance##ssr",      &settings.ssrMaxDistance,   0.5f, 1.0f,  50.0f, "%.1f");
-        ImGui::DragFloat("Thickness##ssr",         &settings.ssrThickness,     0.002f, 0.005f, 0.25f, "%.3f");
-        ImGui::DragFloat("Strength##ssr",          &settings.ssrStrength,      0.01f, 0.0f,  1.0f, "%.2f");
-        ImGui::DragFloat("Roughness Cutoff##ssr",  &settings.ssrRoughnessCutoff,0.01f, 0.05f,0.8f, "%.2f");
-        ImGui::DragInt("Steps##ssr",               &settings.ssrSteps,         1,    8,      256);
+        ImGui::DragFloat("Max Distance##ssr", &settings.ssrMaxDistance, 0.5f, 1.0f, 50.0f, "%.1f");
+        ImGui::DragFloat("Thickness##ssr", &settings.ssrThickness, 0.002f, 0.005f, 0.25f, "%.3f");
+        ImGui::DragFloat("Strength##ssr", &settings.ssrStrength, 0.01f, 0.0f, 1.0f, "%.2f");
+        ImGui::DragFloat("Roughness Cutoff##ssr", &settings.ssrRoughnessCutoff, 0.01f, 0.05f, 0.8f, "%.2f");
+        ImGui::DragInt("Steps##ssr", &settings.ssrSteps, 1, 8, 256);
         ImGui::Unindent();
     }
 
@@ -4460,6 +4622,22 @@ void Editor::drawRenderSettings()
         }
 
         ImGui::TextDisabled("Scene fog is authored in Environment Settings.");
+    }
+
+    ImGui::SeparatorText("Auto Exposure");
+    ImGui::Checkbox("Auto Exposure##toggle", &settings.enableAutoExposure);
+    if (settings.enableAutoExposure)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Speed Up##ae", &settings.autoExposureSpeedUp, 0.1f, 0.1f, 10.0f, "%.1f");
+        ImGui::SetItemTooltip("Adaptation speed: dark scene -> bright exposure (s\u207B\u00B9)");
+        ImGui::DragFloat("Speed Down##ae", &settings.autoExposureSpeedDown, 0.1f, 0.1f, 10.0f, "%.1f");
+        ImGui::SetItemTooltip("Adaptation speed: bright scene -> dark exposure (s\u207B\u00B9)");
+        ImGui::DragFloat("Low Percent##ae", &settings.autoExposureLowPercent, 0.01f, 0.0f, 0.5f, "%.2f");
+        ImGui::SetItemTooltip("Fraction of darkest pixels to ignore");
+        ImGui::DragFloat("High Percent##ae", &settings.autoExposureHighPercent, 0.01f, 0.0f, 0.5f, "%.2f");
+        ImGui::SetItemTooltip("Fraction of brightest pixels to ignore");
+        ImGui::Unindent();
     }
 
     ImGui::SeparatorText("Bloom");
@@ -5647,7 +5825,11 @@ void Editor::handleInput()
     const bool isCtrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
     const bool isShiftDown = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
     const bool assetsWindowConsumesDelete = m_showAssetsWindow && m_assetsWindow && m_assetsWindow->hasKeyboardFocus();
+    const bool animationTreeConsumesDelete =
+        m_animationTreePanel && m_animationTreePanel->consumesDeleteShortcut();
     const bool shortcutBlockedByTextInput = io.WantTextInput || ImGui::GetActiveID() != 0;
+    const bool deleteShortcutBlocked =
+        assetsWindowConsumesDelete || animationTreeConsumesDelete || shortcutBlockedByTextInput;
 
     if (isCtrlDown && !shortcutBlockedByTextInput && ImGui::IsKeyPressed(ImGuiKey_Z, false))
     {
@@ -5666,7 +5848,7 @@ void Editor::handleInput()
     if (isCtrlDown && !shortcutBlockedByTextInput && ImGui::IsKeyPressed(ImGuiKey_V, false))
         performPasteAction();
 
-    if (!assetsWindowConsumesDelete && ImGui::IsKeyPressed(ImGuiKey_Delete) && m_selectedEntity && m_scene && m_currentMode == EditorMode::EDIT)
+    if (!deleteShortcutBlocked && ImGui::IsKeyPressed(ImGuiKey_Delete) && m_selectedEntity && m_scene && m_currentMode == EditorMode::EDIT)
     {
         auto deleteCommand = actions::DeleteEntityCommand::capture(*m_scene, *m_selectedEntity, "Delete entity");
         if (deleteCommand && executeEditorCommand(std::move(deleteCommand)))
@@ -5677,7 +5859,7 @@ void Editor::handleInput()
             invalidateModelDetailsCache();
         }
     }
-    else if (!assetsWindowConsumesDelete && ImGui::IsKeyPressed(ImGuiKey_Delete) && m_hasSelectedUIElement && m_scene && m_currentMode == EditorMode::EDIT)
+    else if (!deleteShortcutBlocked && ImGui::IsKeyPressed(ImGuiKey_Delete) && m_hasSelectedUIElement && m_scene && m_currentMode == EditorMode::EDIT)
     {
         std::string beforeUIState;
         m_scene->serializeUIState(beforeUIState);

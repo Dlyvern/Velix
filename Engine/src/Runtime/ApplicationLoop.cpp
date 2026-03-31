@@ -6,6 +6,7 @@
 #include "Engine/Assets/MaterialAssetLoader.hpp"
 #include "Engine/Assets/TerrainAssetLoader.hpp"
 #include "Engine/Physics/PhysXCore.hpp"
+#include "Engine/Components/ReflectionProbeComponent.hpp"
 #include "Engine/Scripting/VelixAPI.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Caches/GraphicsPipelineCache.hpp"
@@ -232,6 +233,8 @@ void ApplicationLoop::shutdown()
         m_runtime.reset();
     }
 
+    ReflectionProbeComponent::flushDeferredCapturedCubemapReleases();
+
     glfwTerminate();
 
     PhysXCore::shutdown();
@@ -246,7 +249,7 @@ void ApplicationLoop::shutdown()
     Material::deleteDefaultMaterial();
     Texture::destroyDefaults();
 
-    utilities::AsyncGpuUpload::flush(m_vulkanContext->getDevice());
+    utilities::AsyncGpuUpload::shutdown(m_vulkanContext->getDevice());
 
     AssetsLoader::clearAssetLoaders();
 

@@ -31,12 +31,15 @@ public:
     bool        hasCubemap() const;
     VkImageView getProbeEnvView() const;
     VkSampler   getProbeEnvSampler() const;
+    static void flushDeferredCapturedCubemapReleases();
 
     bool hasCapturedScene() const { return m_capturedImageView != VK_NULL_HANDLE; }
 
     void onDetach() override;
 
 private:
+    void releaseCapturedCubemap();
+
     std::unique_ptr<Skybox> m_skybox;
 
     // Scene-captured cubemap (set by captureSceneProbe)

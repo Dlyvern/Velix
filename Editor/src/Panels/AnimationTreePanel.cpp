@@ -1,6 +1,8 @@
 #include "Editor/Panels/AnimationTreePanel.hpp"
 #include "Editor/Project.hpp"
+#include "Engine/Assets/AssetManager.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
+#include "Engine/Caches/Hash.hpp"
 #include "Engine/Material.hpp"
 #include "Engine/Vertex.hpp"
 
@@ -24,6 +26,9 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 namespace
 {
+    constexpr float kPreviewMinDistance = 0.35f;
+    constexpr float kPreviewMaxDistance = 40.0f;
+
     struct PreviewCandidateInfo
     {
         size_t slot{0u};
@@ -168,6 +173,83 @@ namespace
                mesh.vertexLayoutHash == engine::vertex::VertexTraits<engine::vertex::VertexSkinned>::layout().hash;
     }
 
+    size_t computeAnimationTreeHash(const engine::AnimationTree &tree)
+    {
+        using engine::hashing::hashCombine;
+
+        size_t seed = 0u;
+        hashCombine(seed, tree.entryStateIndex);
+
+        for (const auto &state : tree.states)
+        {
+            hashCombine(seed, state.name);
+            hashCombine(seed, state.animationAssetPath);
+            hashCombine(seed, state.clipIndex);
+            hashCombine(seed, state.loop);
+            hashCombine(seed, state.speed);
+        }
+
+        for (const auto &transition : tree.transitions)
+        {
+            hashCombine(seed, transition.fromStateIndex);
+            hashCombine(seed, transition.toStateIndex);
+            hashCombine(seed, transition.blendDuration);
+            hashCombine(seed, transition.hasExitTime);
+            hashCombine(seed, transition.exitTime);
+
+            for (const auto &condition : transition.conditions)
+            {
+                hashCombine(seed, static_cast<uint32_t>(condition.type));
+                hashCombine(seed, condition.parameterName);
+                hashCombine(seed, condition.floatThreshold);
+                hashCombine(seed, condition.intValue);
+            }
+        }
+
+        for (const auto &parameter : tree.parameters)
+        {
+            hashCombine(seed, parameter.name);
+            hashCombine(seed, static_cast<uint32_t>(parameter.type));
+            hashCombine(seed, parameter.floatDefault);
+            hashCombine(seed, parameter.boolDefault);
+            hashCombine(seed, parameter.intDefault);
+        }
+        return seed;
+    }
+
+    bool ensurePreviewMeshSourceLoaded(AnimationTreePanel::AnimPreviewContext &preview)
+    {
+        if (!preview.skeletalMesh)
+            return false;
+
+        if (!preview.skeletalMesh->getMeshes().empty())
+            return true;
+
+        auto &handle = preview.skeletalMesh->getModelHandle();
+        if (handle.empty())
+            return false;
+
+        if (handle.state() == engine::AssetState::Unloaded)
+            engine::AssetManager::getInstance().requestLoad(handle);
+
+        if (handle.ready() && preview.skeletalMesh->getMeshes().empty())
+            preview.skeletalMesh->onModelLoaded();
+
+        return !preview.skeletalMesh->getMeshes().empty();
+    }
+
+    const engine::AnimationTreeParameter *findAnimationTreeParameter(const engine::AnimationTree &tree,
+                                                                     const std::string &name)
+    {
+        for (const auto &param : tree.parameters)
+        {
+            if (param.name == name)
+                return &param;
+        }
+
+        return nullptr;
+    }
+
     void updateSkinnedPreviewVertices(const engine::CPUMesh &sourceMesh,
                                       const std::vector<glm::mat4> &finalBones,
                                       std::vector<engine::vertex::Vertex3D> &ioVertices)
@@ -217,7 +299,7 @@ namespace
         const glm::vec3 center = (minPos + maxPos) * 0.5f;
         const glm::vec3 size = maxPos - minPos;
         const float maxAxis = std::max({size.x, size.y, size.z, 0.001f});
-        const float scale = 1.8f / maxAxis;
+        const float scale = 0.30f / maxAxis;
         return glm::scale(glm::mat4(1.0f), glm::vec3(scale)) *
                glm::translate(glm::mat4(1.0f), -center);
     }
@@ -376,6 +458,10 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
                     preview.animator = animator;
                     preview.skeletalMesh = skeletalMesh;
                     preview.active = true;
+                    preview.runtimeReady = false;
+                    preview.playing = true;
+                    preview.playbackSpeed = 1.0f;
+                    preview.syncedTreeHash = 0u;
                     preview.previewMeshes.clear(); // will be rebuilt lazily in update()
                     preview.modelMatrix = glm::mat4(1.0f);
                     preview.isFirstActivation = true;
@@ -408,6 +494,10 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
             ui.preview.animator = animator;
             ui.preview.skeletalMesh = skeletalMesh;
             ui.preview.active = true;
+            ui.preview.runtimeReady = false;
+            ui.preview.playing = true;
+            ui.preview.playbackSpeed = 1.0f;
+            ui.preview.syncedTreeHash = 0u;
             ui.preview.isFirstActivation = true;
             // GPU meshes are created lazily in update() to avoid calling Vulkan during ImGui render phase
         }
@@ -436,6 +526,8 @@ void AnimationTreePanel::closeTree(const std::filesystem::path &path)
 
 void AnimationTreePanel::draw()
 {
+    m_hasKeyboardFocus = false;
+
     for (auto &editor : m_openEditors)
         drawSingleEditor(editor);
 
@@ -462,9 +554,14 @@ void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
     ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_FirstUseEver);
     if (!ImGui::Begin(windowTitle.c_str(), &editor.open, flags))
     {
+        m_hasKeyboardFocus = m_hasKeyboardFocus ||
+                             ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         ImGui::End();
         return;
     }
+
+    m_hasKeyboardFocus = m_hasKeyboardFocus ||
+                         ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     // Toolbar
     if (ImGui::Button("Save"))
@@ -1074,15 +1171,67 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
     ImGui::Separator();
     ImGui::TextUnformatted("Conditions:");
 
+    if (ui.tree.parameters.empty())
+        ImGui::TextDisabled("Add parameters like speed or isRunning to drive transitions.");
+
     int removeCondIdx = -1;
     for (int ci = 0; ci < static_cast<int>(t.conditions.size()); ++ci)
     {
         auto &cond = t.conditions[static_cast<size_t>(ci)];
         ImGui::PushID(ci);
 
-        // Parameter name combo
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("If");
+        ImGui::SameLine();
+
         const char *curParamName = cond.parameterName.empty() ? "<select>" : cond.parameterName.c_str();
-        if (ImGui::BeginCombo("Param##cond", curParamName))
+        const engine::AnimationTreeParameter *selectedParam = findAnimationTreeParameter(ui.tree, cond.parameterName);
+        engine::AnimationTreeParameter::Type parameterType = engine::AnimationTreeParameter::Type::Float;
+        bool hasSelectedParameter = (selectedParam != nullptr);
+
+        if (selectedParam)
+        {
+            parameterType = selectedParam->type;
+        }
+        else
+        {
+            switch (cond.type)
+            {
+            case engine::AnimationTransitionCondition::Type::BoolTrue:
+            case engine::AnimationTransitionCondition::Type::BoolFalse:
+                parameterType = engine::AnimationTreeParameter::Type::Bool;
+                break;
+            case engine::AnimationTransitionCondition::Type::IntEqual:
+            case engine::AnimationTransitionCondition::Type::IntGreater:
+            case engine::AnimationTransitionCondition::Type::IntLess:
+                parameterType = engine::AnimationTreeParameter::Type::Int;
+                break;
+            case engine::AnimationTransitionCondition::Type::Trigger:
+                parameterType = engine::AnimationTreeParameter::Type::Trigger;
+                break;
+            case engine::AnimationTransitionCondition::Type::FloatGreater:
+            case engine::AnimationTransitionCondition::Type::FloatLess:
+            default:
+                parameterType = engine::AnimationTreeParameter::Type::Float;
+                break;
+            }
+        }
+
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const bool hasNumericThreshold = parameterType == engine::AnimationTreeParameter::Type::Float ||
+                                         parameterType == engine::AnimationTreeParameter::Type::Int;
+        const float controlsWidth = ImGui::GetContentRegionAvail().x;
+        const float removeWidth = ImGui::CalcTextSize("Remove").x + style.FramePadding.x * 2.0f;
+        const float opWidth = (parameterType == engine::AnimationTreeParameter::Type::Bool) ? 95.0f
+                              : (parameterType == engine::AnimationTreeParameter::Type::Trigger) ? 70.0f
+                                                                                                   : 60.0f;
+        const float valueWidth = hasNumericThreshold ? glm::clamp(controlsWidth * 0.16f, 80.0f, 130.0f) : 0.0f;
+        const float spacingWidth = style.ItemSpacing.x * (hasNumericThreshold ? 3.0f : 2.0f);
+        const float paramWidth = glm::max(140.0f, controlsWidth - removeWidth - opWidth - valueWidth - spacingWidth);
+
+        ImGui::SetNextItemWidth(paramWidth);
+
+        if (ImGui::BeginCombo("##parameter", curParamName))
         {
             for (const auto &param : ui.tree.parameters)
             {
@@ -1090,7 +1239,6 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
                 if (ImGui::Selectable(param.name.c_str(), sel))
                 {
                     cond.parameterName = param.name;
-                    // Auto-set condition type based on param type
                     switch (param.type)
                     {
                     case engine::AnimationTreeParameter::Type::Float:
@@ -1113,30 +1261,29 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
         }
 
         ImGui::SameLine();
+        ImGui::SetNextItemWidth(opWidth);
 
-        // Operator
-        switch (cond.type)
+        switch (parameterType)
         {
-        case engine::AnimationTransitionCondition::Type::FloatGreater:
-        case engine::AnimationTransitionCondition::Type::FloatLess:
+        case engine::AnimationTreeParameter::Type::Float:
         {
             int opIdx = (cond.type == engine::AnimationTransitionCondition::Type::FloatGreater) ? 0 : 1;
-            if (ImGui::Combo("##op", &opIdx, "> \0< \0"))
+            if (ImGui::Combo("##op", &opIdx, ">\0<\0"))
             {
                 cond.type = (opIdx == 0) ? engine::AnimationTransitionCondition::Type::FloatGreater
                                          : engine::AnimationTransitionCondition::Type::FloatLess;
                 ui.dirty = true;
             }
             ImGui::SameLine();
-            if (ImGui::DragFloat("##fthresh", &cond.floatThreshold, 0.01f))
+            ImGui::SetNextItemWidth(valueWidth);
+            if (ImGui::DragFloat("##fthresh", &cond.floatThreshold, 0.01f, 0.0f, 0.0f, "%.2f"))
                 ui.dirty = true;
             break;
         }
-        case engine::AnimationTransitionCondition::Type::BoolTrue:
-        case engine::AnimationTransitionCondition::Type::BoolFalse:
+        case engine::AnimationTreeParameter::Type::Bool:
         {
             int opIdx = (cond.type == engine::AnimationTransitionCondition::Type::BoolTrue) ? 0 : 1;
-            if (ImGui::Combo("##boolop", &opIdx, "True\0False\0"))
+            if (ImGui::Combo("##boolop", &opIdx, "is true\0is false\0"))
             {
                 cond.type = (opIdx == 0) ? engine::AnimationTransitionCondition::Type::BoolTrue
                                          : engine::AnimationTransitionCondition::Type::BoolFalse;
@@ -1144,18 +1291,51 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
             }
             break;
         }
-        case engine::AnimationTransitionCondition::Type::IntEqual:
+        case engine::AnimationTreeParameter::Type::Int:
+        {
+            int opIdx = 0;
+            if (cond.type == engine::AnimationTransitionCondition::Type::IntGreater)
+                opIdx = 1;
+            else if (cond.type == engine::AnimationTransitionCondition::Type::IntLess)
+                opIdx = 2;
+
+            if (ImGui::Combo("##intop", &opIdx, "==\0>\0<\0"))
+            {
+                switch (opIdx)
+                {
+                case 1:
+                    cond.type = engine::AnimationTransitionCondition::Type::IntGreater;
+                    break;
+                case 2:
+                    cond.type = engine::AnimationTransitionCondition::Type::IntLess;
+                    break;
+                case 0:
+                default:
+                    cond.type = engine::AnimationTransitionCondition::Type::IntEqual;
+                    break;
+                }
+                ui.dirty = true;
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(valueWidth);
             if (ImGui::InputInt("##ival", &cond.intValue))
                 ui.dirty = true;
             break;
-        case engine::AnimationTransitionCondition::Type::Trigger:
-            ImGui::TextDisabled("(trigger fires once)");
+        }
+        case engine::AnimationTreeParameter::Type::Trigger:
+            ImGui::TextDisabled("fires");
             break;
         }
 
         ImGui::SameLine();
-        if (ImGui::SmallButton("x##cond"))
+        if (ImGui::Button("Remove##cond"))
             removeCondIdx = ci;
+
+        if (!hasSelectedParameter)
+            ImGui::TextDisabled("Select a parameter to finish this condition.");
+
+        if (ci + 1 < static_cast<int>(t.conditions.size()))
+            ImGui::Separator();
 
         ImGui::PopID();
     }
@@ -1169,6 +1349,26 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
     if (ImGui::Button("+ Add Condition"))
     {
         engine::AnimationTransitionCondition cond{};
+        if (!ui.tree.parameters.empty())
+        {
+            const auto &firstParam = ui.tree.parameters.front();
+            cond.parameterName = firstParam.name;
+            switch (firstParam.type)
+            {
+            case engine::AnimationTreeParameter::Type::Float:
+                cond.type = engine::AnimationTransitionCondition::Type::FloatGreater;
+                break;
+            case engine::AnimationTreeParameter::Type::Bool:
+                cond.type = engine::AnimationTransitionCondition::Type::BoolTrue;
+                break;
+            case engine::AnimationTreeParameter::Type::Int:
+                cond.type = engine::AnimationTransitionCondition::Type::IntEqual;
+                break;
+            case engine::AnimationTreeParameter::Type::Trigger:
+                cond.type = engine::AnimationTransitionCondition::Type::Trigger;
+                break;
+            }
+        }
         t.conditions.push_back(cond);
         ui.dirty = true;
     }
@@ -1176,34 +1376,47 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
 
 void AnimationTreePanel::update(float deltaTime)
 {
-    if (!m_previewPass)
-        return;
-
     bool submittedPreview = false;
 
     for (auto &[key, ui] : m_uiStates)
     {
         auto &preview = ui.preview;
-        if (!preview.active || !preview.animator || !preview.skeletalMesh)
+        if (!preview.active || !preview.skeletalMesh)
             continue;
 
-        // Sync parameter slider defaults → live animator
-        for (const auto &param : ui.tree.parameters)
+        if (!ensurePreviewMeshSourceLoaded(preview))
+            continue;
+
+        const size_t treeHash = computeAnimationTreeHash(ui.tree);
+        const bool skeletonShapeChanged =
+            preview.runtimeReady &&
+            preview.previewSkeleton.getBonesCount() != preview.skeletalMesh->getSkeleton().getBonesCount();
+
+        if (skeletonShapeChanged)
         {
-            switch (param.type)
-            {
-            case engine::AnimationTreeParameter::Type::Float:
-                preview.animator->setFloat(param.name, param.floatDefault);
-                break;
-            case engine::AnimationTreeParameter::Type::Bool:
-                preview.animator->setBool(param.name, param.boolDefault);
-                break;
-            case engine::AnimationTreeParameter::Type::Int:
-                preview.animator->setInt(param.name, param.intDefault);
-                break;
-            default:
-                break;
-            }
+            preview.runtimeReady = false;
+            preview.syncedTreeHash = 0u;
+            preview.previewMeshes.clear();
+            preview.modelMatrix = glm::mat4(1.0f);
+        }
+
+        if (!preview.runtimeReady)
+        {
+            preview.previewSkeleton = preview.skeletalMesh->getSkeleton();
+            preview.previewSkeleton.calculateBindPoseTransforms();
+            preview.previewAnimator.bindSkeleton(&preview.previewSkeleton);
+            preview.syncedTreeHash = 0u;
+            preview.runtimeReady = true;
+        }
+
+        if (preview.syncedTreeHash != treeHash)
+        {
+            preview.previewSkeleton = preview.skeletalMesh->getSkeleton();
+            preview.previewSkeleton.calculateBindPoseTransforms();
+            preview.previewAnimator.bindSkeleton(&preview.previewSkeleton);
+            preview.previewAnimator.setTree(ui.tree);
+            preview.syncedTreeHash = treeHash;
+            preview.previewAnimator.update(0.0f);
         }
 
         // Lazily create GPU meshes the first time update() runs (safe Vulkan context)
@@ -1226,7 +1439,8 @@ void AnimationTreePanel::update(float deltaTime)
                 // Find the best candidate by score (largest bounding diagonal = most body)
                 float bestScore = -1.0f;
                 for (const auto &c : candidates)
-                    if (c.score > bestScore) bestScore = c.score;
+                    if (c.score > bestScore)
+                        bestScore = c.score;
 
                 // Include all candidates that are at least 10% the size of the primary.
                 // This collects body + clothing + accessories while excluding tiny decals/props.
@@ -1251,14 +1465,14 @@ void AnimationTreePanel::update(float deltaTime)
                     gpu->material = material ? material : engine::Material::getDefaultMaterial();
 
                     PreviewMeshEntry entry{};
-                    entry.gpuMesh      = std::move(gpu);
-                    entry.material     = entry.gpuMesh->material
-                                             ? entry.gpuMesh->material
-                                             : engine::Material::getDefaultMaterial();
-                    entry.sourceMesh   = cpuMeshes[candidate.slot];
-                    entry.localTransform  = candidate.previewMesh.localTransform;
-                    entry.attachedBoneId  = candidate.previewMesh.attachedBoneId;
-                    entry.skinned      = candidate.skinned;
+                    entry.gpuMesh = std::move(gpu);
+                    entry.material = entry.gpuMesh->material
+                                         ? entry.gpuMesh->material
+                                         : engine::Material::getDefaultMaterial();
+                    entry.sourceMesh = cpuMeshes[candidate.slot];
+                    entry.localTransform = candidate.previewMesh.localTransform;
+                    entry.attachedBoneId = candidate.previewMesh.attachedBoneId;
+                    entry.skinned = candidate.skinned;
                     if (entry.skinned)
                         entry.dynamicVertices.resize(
                             candidate.previewMesh.vertexData.size() / sizeof(engine::vertex::Vertex3D));
@@ -1283,14 +1497,14 @@ void AnimationTreePanel::update(float deltaTime)
                         gpu->material = material ? material : engine::Material::getDefaultMaterial();
 
                         PreviewMeshEntry entry{};
-                        entry.gpuMesh      = std::move(gpu);
-                        entry.material     = entry.gpuMesh->material
-                                                 ? entry.gpuMesh->material
-                                                 : engine::Material::getDefaultMaterial();
-                        entry.sourceMesh   = cpuMeshes[candidate.slot];
-                        entry.localTransform  = candidate.previewMesh.localTransform;
-                        entry.attachedBoneId  = candidate.previewMesh.attachedBoneId;
-                        entry.skinned      = candidate.skinned;
+                        entry.gpuMesh = std::move(gpu);
+                        entry.material = entry.gpuMesh->material
+                                             ? entry.gpuMesh->material
+                                             : engine::Material::getDefaultMaterial();
+                        entry.sourceMesh = cpuMeshes[candidate.slot];
+                        entry.localTransform = candidate.previewMesh.localTransform;
+                        entry.attachedBoneId = candidate.previewMesh.attachedBoneId;
+                        entry.skinned = candidate.skinned;
                         if (entry.skinned)
                             entry.dynamicVertices.resize(
                                 candidate.previewMesh.vertexData.size() / sizeof(engine::vertex::Vertex3D));
@@ -1305,15 +1519,19 @@ void AnimationTreePanel::update(float deltaTime)
                 if (combinedMin.x <= combinedMax.x)
                     preview.modelMatrix = buildPreviewNormalizationTransform(combinedMin, combinedMax);
             }
-
-            if (preview.isFirstActivation)
-            {
-                resetPreviewCamera(preview);
-                preview.isFirstActivation = false;
-            }
         }
 
-        preview.animator->update(deltaTime);
+        if (preview.isFirstActivation)
+        {
+            resetPreviewCamera(preview);
+            preview.isFirstActivation = false;
+        }
+
+        const float previewDeltaTime = preview.playing ? deltaTime * glm::max(preview.playbackSpeed, 0.0f) : 0.0f;
+        preview.previewAnimator.update(previewDeltaTime);
+
+        if (!m_previewPass)
+            continue;
 
         // Build draw data from cached GPU meshes
         AnimPreviewDrawData data{};
@@ -1321,7 +1539,7 @@ void AnimationTreePanel::update(float deltaTime)
         data.viewMatrix = buildOrbitView(preview);
         data.projMatrix = buildOrbitProj();
 
-        const auto &finalBones = preview.skeletalMesh->getSkeleton().getFinalMatrices();
+        const auto &finalBones = preview.previewSkeleton.getFinalMatrices();
 
         for (auto &previewMesh : preview.previewMeshes)
         {
@@ -1340,7 +1558,7 @@ void AnimationTreePanel::update(float deltaTime)
             glm::mat4 meshLocalTransform = previewMesh.localTransform;
             if (previewMesh.attachedBoneId >= 0)
             {
-                if (auto *attachmentBone = preview.skeletalMesh->getSkeleton().getBone(previewMesh.attachedBoneId))
+                if (auto *attachmentBone = preview.previewSkeleton.getBone(previewMesh.attachedBoneId))
                     meshLocalTransform = attachmentBone->finalTransformation * meshLocalTransform;
             }
 
@@ -1359,7 +1577,7 @@ void AnimationTreePanel::update(float deltaTime)
         break; // one active preview at a time
     }
 
-    if (!submittedPreview)
+    if (m_previewPass && !submittedPreview)
         m_previewPass->setPreviewData(AnimPreviewDrawData{});
 }
 
@@ -1370,16 +1588,15 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
 
     auto &preview = ui.preview;
 
-    if (!preview.active || !preview.animator)
+    if (!preview.active || !preview.skeletalMesh)
     {
         ImGui::TextDisabled("Open this tree via an entity's AnimatorComponent to enable preview.");
         return;
     }
 
     const float avail = ImGui::GetContentRegionAvail().x;
-    // Use the available height minus a small footer (Reset Camera button + state text + spacing)
-    const float footerH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetStyle().ItemSpacing.y * 2.0f;
-    const float previewH = glm::max(ImGui::GetContentRegionAvail().y - footerH, avail * 0.6f);
+    const float remainingY = ImGui::GetContentRegionAvail().y;
+    const float previewH = glm::clamp(glm::min(avail, remainingY * 0.6f), 180.0f, glm::max(180.0f, remainingY));
     const ImVec2 previewSize(avail, previewH);
 
     refreshLivePreviewDescriptor();
@@ -1392,20 +1609,43 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
 
         if (ImGui::IsItemHovered())
         {
-            // Orbit with left mouse drag
-            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+            // Orbit with right mouse drag
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Right))
             {
-                const ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
-                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+                const ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right, 0.0f);
+                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
                 preview.yaw -= delta.x * 0.5f;
                 preview.pitch -= delta.y * 0.5f;
                 preview.pitch = glm::clamp(preview.pitch, -89.0f, 89.0f);
             }
 
+            // Pan the camera target with middle mouse drag
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
+            {
+                const ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle, 0.0f);
+                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
+
+                const float yawRad = glm::radians(preview.yaw);
+                const float pitchRad = glm::radians(preview.pitch);
+                const glm::vec3 offset{
+                    preview.distance * std::cos(pitchRad) * std::sin(yawRad),
+                    preview.distance * std::sin(pitchRad),
+                    preview.distance * std::cos(pitchRad) * std::cos(yawRad)};
+                const glm::vec3 forward = glm::normalize(-offset);
+                const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+                const glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
+                const glm::vec3 up = glm::normalize(glm::cross(right, forward));
+                const float worldUnitsPerPixel =
+                    (2.0f * std::tan(glm::radians(45.0f) * 0.5f) * glm::max(preview.distance, 0.001f)) /
+                    glm::max(previewSize.y, 1.0f);
+
+                preview.target += (-delta.x * right + delta.y * up) * worldUnitsPerPixel;
+            }
+
             // Zoom with scroll
             const float scroll = ImGui::GetIO().MouseWheel;
             if (scroll != 0.0f)
-                preview.distance = glm::clamp(preview.distance - scroll * 0.3f, 0.5f, 20.0f);
+                preview.distance = glm::clamp(preview.distance - scroll * 0.45f, kPreviewMinDistance, kPreviewMaxDistance);
         }
     }
     else
@@ -1413,22 +1653,98 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
         ImGui::TextDisabled("(preview not ready)");
     }
 
+    if (ImGui::Button(preview.playing ? "Pause" : "Play"))
+        preview.playing = !preview.playing;
+
+    ImGui::SameLine();
+    if (ImGui::Button("Restart"))
+    {
+        preview.runtimeReady = false;
+        preview.syncedTreeHash = 0u;
+    }
+
+    ImGui::SameLine();
     if (ImGui::SmallButton("Reset Camera"))
         resetPreviewCamera(preview);
 
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::DragFloat("Speed##AnimTreePreviewSpeed", &preview.playbackSpeed, 0.01f, 0.05f, 3.0f, "%.2fx");
+
     // State info
-    const std::string stateName = preview.animator->getCurrentStateName();
+    const std::string stateName = preview.previewAnimator.getCurrentStateName();
     ImGui::Text("State: %s", stateName.empty() ? "(none)" : stateName.c_str());
-    if (preview.animator->isInTransition())
-        ImGui::TextDisabled("  -> %.0f%%", preview.animator->getCurrentStateNormalizedTime() * 100.0f);
+    if (preview.previewAnimator.isInTransition())
+        ImGui::TextDisabled("Transitioning %.0f%%", preview.previewAnimator.getCurrentStateNormalizedTime() * 100.0f);
+    ImGui::TextDisabled("RMB orbit, MMB pan, wheel zoom");
+
+    if (preview.skeletalMesh->getMeshes().empty())
+        ImGui::TextDisabled("Waiting for skeletal mesh data from the entity...");
+
+    if (ui.tree.parameters.empty())
+        return;
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Runtime Parameters");
+    ImGui::Separator();
+
+    for (const auto &param : ui.tree.parameters)
+    {
+        ImGui::PushID(param.name.c_str());
+
+        switch (param.type)
+        {
+        case engine::AnimationTreeParameter::Type::Float:
+        {
+            float value = preview.previewAnimator.getFloat(param.name);
+            if (ImGui::DragFloat(param.name.c_str(), &value, 0.01f))
+            {
+                preview.previewAnimator.setFloat(param.name, value);
+                preview.previewAnimator.update(0.0f);
+            }
+            break;
+        }
+        case engine::AnimationTreeParameter::Type::Bool:
+        {
+            bool value = preview.previewAnimator.getBool(param.name);
+            if (ImGui::Checkbox(param.name.c_str(), &value))
+            {
+                preview.previewAnimator.setBool(param.name, value);
+                preview.previewAnimator.update(0.0f);
+            }
+            break;
+        }
+        case engine::AnimationTreeParameter::Type::Int:
+        {
+            int value = preview.previewAnimator.getInt(param.name);
+            if (ImGui::InputInt(param.name.c_str(), &value))
+            {
+                preview.previewAnimator.setInt(param.name, value);
+                preview.previewAnimator.update(0.0f);
+            }
+            break;
+        }
+        case engine::AnimationTreeParameter::Type::Trigger:
+        {
+            if (ImGui::Button(("Fire: " + param.name).c_str()))
+            {
+                preview.previewAnimator.setTrigger(param.name);
+                preview.previewAnimator.update(0.0f);
+            }
+            break;
+        }
+        }
+
+        ImGui::PopID();
+    }
 }
 
 void AnimationTreePanel::resetPreviewCamera(AnimPreviewContext &ctx)
 {
-    ctx.target = glm::vec3(0.0f);
-    ctx.yaw = 15.0f;
-    ctx.pitch = 8.0f;
-    ctx.distance = 3.5f;
+    ctx.target = glm::vec3(0.0f, 0.35f, 0.0f);
+    ctx.yaw = 18.0f;
+    ctx.pitch = 14.0f;
+    ctx.distance = kPreviewMaxDistance;
 }
 
 glm::mat4 AnimationTreePanel::buildOrbitView(const AnimPreviewContext &ctx) const

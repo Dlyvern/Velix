@@ -55,6 +55,7 @@ layout(set = 1, binding = 7) uniform sampler2DArray spotShadowMaps;
 layout(set = 1, binding = 8) uniform samplerCubeArray cubeShadowMaps;
 layout(set = 1, binding = 9) uniform sampler2D uSSAO;
 layout(set = 1, binding = 10) uniform sampler2DArray uRTShadows;
+layout(set = 1, binding = 11) uniform samplerCube uProbeEnv;
 layout(set = 1, binding = 12) uniform sampler2D     uGIIrradiance;
 
 layout(push_constant) uniform LightingPC
@@ -63,8 +64,8 @@ layout(push_constant) uniform LightingPC
     float shadowMode;           // 0.0 = shadow maps, 1.0 = ray query inline (unused), 2.0 = precomputed RT shadow array
     float rtShadowSamples;      // number of rays per light (1 = hard, 4-16 = soft)
     float rtShadowPenumbraSize; // virtual light radius — larger = wider penumbra
-    vec4  _probeData;           // unused in ray query shader, kept for layout compatibility
-    float _probeIntensity;      // unused
+    vec4  probeWorldPos_radius; // xyz=probe world pos, w=radius (0=inactive)
+    float probeIntensity;
     float giEnabled;            // 1.0 when RT GI irradiance buffer is bound
     float giStrength;           // indirect diffuse intensity multiplier
     float _pad2;
@@ -531,5 +532,25 @@ void main()
     }
 
     vec3 color = ambient + lighting + emissive;
+
+    if (pc.probeWorldPos_radius.w > 0.001)
+    {
+        float distToProbe = length(P_world - pc.probeWorldPos_radius.xyz);
+        float probeInfluence = 1.0 - smoothstep(0.0, pc.probeWorldPos_radius.w, distToProbe);
+        if (probeInfluence > 0.001)
+        {
+            vec3 V_world = normalize((camera.invView * vec4(V, 0.0)).xyz);
+            vec3 R_world = reflect(-V_world, N_world);
+            float mipLevel = roughness * float(max(textureQueryLevels(uProbeEnv) - 1, 0));
+            vec3 probeColor = textureLod(uProbeEnv, R_world, mipLevel).rgb;
+
+            float NdotV = max(dot(N_world, V_world), 0.0);
+            vec3 F = fresnelSchlick(NdotV, mix(vec3(0.04), albedo, metallic));
+            float specMask = (1.0 - roughness * roughness);
+
+            color += probeColor * F * specMask * pc.probeIntensity * probeInfluence * ao;
+        }
+    }
+
     outColor = vec4(color, alpha);
 }

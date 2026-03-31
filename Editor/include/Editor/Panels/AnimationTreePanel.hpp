@@ -44,6 +44,12 @@ public:
         engine::AnimatorComponent    *animator{nullptr};
         engine::SkeletalMeshComponent*skeletalMesh{nullptr};
         bool                          active{false};
+        bool                          runtimeReady{false};
+        bool                          playing{true};
+        float                         playbackSpeed{1.0f};
+        std::size_t                   syncedTreeHash{0u};
+        engine::AnimatorComponent     previewAnimator{};
+        engine::Skeleton              previewSkeleton{};
         // Orbit camera
         float yaw{0.0f}, pitch{20.0f}, distance{3.0f};
         glm::vec3 target{0.0f};
@@ -71,6 +77,7 @@ public:
     void setPreviewPass(AnimationTreePreviewPass *pass);
     void setPreviewDescriptorSet(VkDescriptorSet ds);
     bool hasActivePreview() const;
+    [[nodiscard]] bool consumesDeleteShortcut() const { return m_hasKeyboardFocus; }
 
     ~AnimationTreePanel();
 
@@ -146,6 +153,7 @@ private:
     VkDescriptorSet           m_livePreviewDescriptorSet{VK_NULL_HANDLE};
     VkImageView               m_livePreviewImageView{VK_NULL_HANDLE};
     VkSampler                 m_livePreviewSampler{VK_NULL_HANDLE};
+    bool                      m_hasKeyboardFocus{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

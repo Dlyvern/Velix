@@ -114,12 +114,23 @@ void ParticleRenderGraphPass::setup(RGPResourcesBuilder &builder)
     m_textureDescriptorSetLayout = core::DescriptorSetLayout::createShared(
         device, std::vector<VkDescriptorSetLayoutBinding>{textureArrayBinding});
 
+    VkDescriptorSetLayoutBinding depthBinding{};
+    depthBinding.binding = 0;
+    depthBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    depthBinding.descriptorCount = 1;
+    depthBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    m_depthDescriptorSetLayout = core::DescriptorSetLayout::createShared(
+        device, std::vector<VkDescriptorSetLayoutBinding>{depthBinding});
+
     m_particlePipelineLayout = core::PipelineLayout::createShared(
         device,
         std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{
             *m_ssboDescriptorSetLayout,
-            *m_textureDescriptorSetLayout},
-        std::vector<VkPushConstantRange>{PushConstant<ParticlePC>::getRange(VK_SHADER_STAGE_VERTEX_BIT)});
+            *m_textureDescriptorSetLayout,
+            *m_depthDescriptorSetLayout},
+        std::vector<VkPushConstantRange>{
+            PushConstant<ParticlePC>::getRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)});
 
     m_nearestSampler = core::Sampler::createShared(
         VK_FILTER_NEAREST,
@@ -141,10 +152,12 @@ void ParticleRenderGraphPass::compile(RGPResourcesStorage &storage)
 
     m_outputRenderTargets.resize(imageCount);
     m_inputRenderTargets.resize(imageCount);
+    m_depthRenderTargets.resize(imageCount, nullptr);
     m_particleSSBOs.resize(imageCount);
     m_descriptorSets.resize(imageCount, VK_NULL_HANDLE);
     m_passthroughSets.resize(imageCount, VK_NULL_HANDLE);
     m_textureSets.resize(imageCount, VK_NULL_HANDLE);
+    m_depthSets.resize(imageCount, VK_NULL_HANDLE);
     m_preparedPushConstants.resize(imageCount);
     m_preparedVertexCounts.resize(imageCount, 0u);
 
@@ -155,6 +168,8 @@ void ParticleRenderGraphPass::compile(RGPResourcesStorage &storage)
     {
         m_outputRenderTargets[i] = storage.getTexture(m_outputHandlers[i]);
         m_inputRenderTargets[i] = storage.getTexture(m_colorInputHandlers[i]);
+        if (m_depthInputHandler)
+            m_depthRenderTargets[i] = storage.getTexture(*m_depthInputHandler);
 
         m_particleSSBOs[i] = core::Buffer::createShared(
             SSBO_SIZE,
@@ -224,6 +239,32 @@ void ParticleRenderGraphPass::compile(RGPResourcesStorage &storage)
             write.pImageInfo      = imageInfos.data();
             vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
         }
+
+        // Depth descriptor set (set 2) — used for soft particles.
+        // Always allocate; fill with the actual depth view if available, otherwise the default.
+        {
+            const bool hasDepth = m_depthRenderTargets[i] != nullptr;
+            const VkImageView depthView = hasDepth
+                ? m_depthRenderTargets[i]->vkImageView()
+                : m_defaultWhiteTexture->vkImageView();
+            // Depth images are in DEPTH_STENCIL_READ_ONLY when sampled; fallback white uses SHADER_READ_ONLY.
+            const VkImageLayout depthLayout = hasDepth
+                ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            if (!m_compiled)
+            {
+                m_depthSets[i] = DescriptorSetBuilder::begin()
+                    .addImage(depthView, m_nearestSampler->vk(), depthLayout, 0)
+                    .build(device, pool, m_depthDescriptorSetLayout);
+            }
+            else
+            {
+                DescriptorSetBuilder::begin()
+                    .addImage(depthView, m_nearestSampler->vk(), depthLayout, 0)
+                    .update(device, m_depthSets[i]);
+            }
+        }
     }
 
     m_compiled = true;
@@ -292,10 +333,41 @@ void ParticleRenderGraphPass::prepareRecord(const RenderGraphPassPerFrameData &d
     const VkDeviceSize uploadSize = gpuParticles.size() * sizeof(ParticleGPUData);
     m_particleSSBOs[imageIndex]->upload(gpuParticles.data(), uploadSize);
 
+    // Determine soft particle settings from any emitter that has soft particles enabled.
+    float softRange = 0.0f;
+    float softOn = 0.0f;
+    if (m_depthInputHandler && m_scene)
+    {
+        for (const auto &entity : m_scene->getEntities())
+        {
+            if (!entity || !entity->isEnabled()) continue;
+            for (auto *comp : entity->getComponents<ParticleSystemComponent>())
+            {
+                if (!comp) continue;
+                const ParticleSystem *ps = comp->getParticleSystem();
+                if (!ps) continue;
+                for (const auto &emitter : ps->getEmitters())
+                {
+                    if (!emitter) continue;
+                    if (const auto *rm = emitter->getModule<RendererModule>())
+                    {
+                        if (rm->softParticles)
+                        {
+                            softOn = 1.0f;
+                            softRange = std::max(softRange, rm->softParticleRange);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     ParticlePC pc{};
     pc.viewProj = data.projection * data.view;
     pc.right = cameraRight;
+    pc.softParticleRange = softRange;
     pc.up = cameraUp;
+    pc.softEnabled = softOn;
 
     m_preparedPushConstants[imageIndex] = pc;
     m_preparedVertexCounts[imageIndex] = static_cast<uint32_t>(gpuParticles.size()) * 6u;
@@ -348,6 +420,7 @@ void ParticleRenderGraphPass::cleanup()
     m_particleSSBOs.clear();
     m_outputRenderTargets.clear();
     m_inputRenderTargets.clear();
+    m_depthRenderTargets.clear();
 }
 
 void ParticleRenderGraphPass::collectParticleData(std::vector<ParticleGPUData> &out,
@@ -488,9 +561,16 @@ void ParticleRenderGraphPass::recordParticles(core::CommandBuffer::SharedPtr cmd
                             m_particlePipelineLayout, 1, 1,
                             &m_textureSets[imageIndex], 0, nullptr);
 
+    if (imageIndex < m_depthSets.size() && m_depthSets[imageIndex] != VK_NULL_HANDLE)
+    {
+        vkCmdBindDescriptorSets(cmd->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                m_particlePipelineLayout, 2, 1,
+                                &m_depthSets[imageIndex], 0, nullptr);
+    }
+
     const ParticlePC &pc = m_preparedPushConstants[imageIndex];
     vkCmdPushConstants(cmd->vk(), m_particlePipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(ParticlePC), &pc);
 
     profiling::cmdDraw(cmd, vertexCount, 1, 0, 0);

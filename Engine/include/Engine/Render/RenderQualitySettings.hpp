@@ -151,7 +151,14 @@ public:
     bool  enableRTGIDenoiser{true};
     float giStrength{1.0f};       // indirect diffuse intensity multiplier
 
-    bool enableVignette{false};
+    // Auto exposure (eye adaptation)
+    bool  enableAutoExposure{false};
+    float autoExposureSpeedUp{3.0f};    // s⁻¹ — adaptation speed when going darker→brighter
+    float autoExposureSpeedDown{1.5f};  // s⁻¹ — adaptation speed when going brighter→darker
+    float autoExposureLowPercent{0.10f};  // fraction of darkest pixels to exclude
+    float autoExposureHighPercent{0.10f}; // fraction of brightest pixels to exclude
+
+    bool  enableVignette{false};
     float vignetteStrength{0.4f};
     bool enableFilmGrain{false};
     float filmGrainStrength{0.03f};

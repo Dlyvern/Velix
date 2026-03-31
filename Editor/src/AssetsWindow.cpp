@@ -90,6 +90,7 @@ namespace
         constexpr const char *audioSuffix = ".audio.elixasset";
         constexpr const char *animationSuffix = ".anim.elixasset";
         constexpr const char *animTreeSuffix  = ".animtree.elixasset";
+        constexpr const char *vfxSuffix       = ".vfx.elixasset";
         constexpr const char *genericSuffix = ".elixasset";
 
         if (lowerFilename.size() > std::strlen(modelSuffix) &&
@@ -111,6 +112,10 @@ namespace
         if (lowerFilename.size() > std::strlen(animTreeSuffix) &&
             lowerFilename.rfind(animTreeSuffix) == lowerFilename.size() - std::strlen(animTreeSuffix))
             return filename.substr(0, filename.size() - std::strlen(animTreeSuffix));
+
+        if (lowerFilename.size() > std::strlen(vfxSuffix) &&
+            lowerFilename.rfind(vfxSuffix) == lowerFilename.size() - std::strlen(vfxSuffix))
+            return filename.substr(0, filename.size() - std::strlen(vfxSuffix));
 
         if (lowerFilename.size() > std::strlen(genericSuffix) &&
             lowerFilename.rfind(genericSuffix) == lowerFilename.size() - std::strlen(genericSuffix))
@@ -661,6 +666,17 @@ void AssetsWindow::draw()
             emptyTree.name = "NewAnimationTree";
             emptyTree.assetPath = treePath.string();
             engine::AssetsLoader::saveAnimationTree(emptyTree, treePath.string());
+
+            ImGui::CloseCurrentPopup();
+            refreshTree();
+        }
+
+        if (ImGui::Button("VFX"))
+        {
+            const std::filesystem::path vfxPath = m_currentDirectory / "NewVFX.vfx.elixasset";
+            auto emptySystem = std::make_shared<engine::ParticleSystem>();
+            emptySystem->name = "NewVFX";
+            engine::AssetsLoader::saveParticleSystem(*emptySystem, vfxPath.string());
 
             ImGui::CloseCurrentPopup();
             refreshTree();
@@ -1229,6 +1245,14 @@ void AssetsWindow::drawAssetGrid()
                         emptyTree.name     = "NewAnimationTree";
                         emptyTree.assetPath = treePath.string();
                         engine::AssetsLoader::saveAnimationTree(emptyTree, treePath.string());
+                        refreshTree();
+                    }
+                    if (ImGui::MenuItem("VFX"))
+                    {
+                        const std::filesystem::path vfxPath = m_contextAssetPath / "NewVFX.vfx.elixasset";
+                        auto emptySystem = std::make_shared<engine::ParticleSystem>();
+                        emptySystem->name = "NewVFX";
+                        engine::AssetsLoader::saveParticleSystem(*emptySystem, vfxPath.string());
                         refreshTree();
                     }
                     ImGui::EndMenu();

@@ -51,8 +51,11 @@ public:
 
 private:
     engine::renderGraph::RGPResourceHandler m_colorHandler{};
+    engine::renderGraph::RGPResourceHandler m_depthHandler{};
 
     const engine::RenderTarget *m_colorTarget{nullptr};
+    const engine::RenderTarget *m_depthTarget{nullptr};
+    VkFormat m_depthFormat{VK_FORMAT_UNDEFINED};
 
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};
@@ -65,7 +68,7 @@ private:
 
     VkViewport m_viewport{};
     VkRect2D m_scissor{};
-    std::array<VkClearValue, 1> m_clearValues{};
+    std::array<VkClearValue, 2> m_clearValues{};
 
     AnimPreviewDrawData m_pendingData{};
 };

@@ -81,11 +81,15 @@ public:
     bool isDirty() const { return m_dirty; }
     void clearDirty() { m_dirty = false; }
 
+    /// Returns positions where particles died this frame (cleared at the start of each update).
+    const std::vector<glm::vec3> &getDeathPositions() const { return m_deathPositions; }
+
 private:
     std::unordered_map<std::type_index, std::shared_ptr<IParticleModule>> m_modules;
 
-    std::vector<Particle> m_particles; // pre-allocated pool
-    std::vector<uint32_t> m_freeList;  // indices of dead particles
+    std::vector<Particle> m_particles;       // pre-allocated pool
+    std::vector<uint32_t> m_freeList;        // indices of dead particles
+    std::vector<glm::vec3> m_deathPositions; // positions of particles that died this frame
     uint32_t m_aliveCount{0};
 
     float m_spawnAccumulator{0.0f};
