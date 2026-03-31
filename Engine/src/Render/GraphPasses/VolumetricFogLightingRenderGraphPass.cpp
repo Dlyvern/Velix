@@ -248,6 +248,9 @@ VolumetricFogLightingRenderGraphPass::getRenderPassExecutions(const RenderGraphP
 
 void VolumetricFogLightingRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_fullExtent.width == extent.width && m_fullExtent.height == extent.height)
+        return;
+
     m_fullExtent = extent;
     updateInternalExtent();
     requestRecompilation();

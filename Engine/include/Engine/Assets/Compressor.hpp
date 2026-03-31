@@ -15,11 +15,19 @@ public:
     enum class Algorithm : uint8_t
     {
         None = 0,
-        Deflate = 1
+        Deflate = 1,
+        LZ4 = 2
     };
 
-    static bool compress(const std::vector<uint8_t> &input, std::vector<uint8_t> &output, Algorithm algorithm = Algorithm::Deflate, int compressionLevel = 6);
-    static bool decompress(const std::vector<uint8_t> &input, size_t expectedSize, std::vector<uint8_t> &output, Algorithm algorithm);
+    static bool compress(const std::vector<uint8_t> &input,
+                         std::vector<uint8_t> &output,
+                         Algorithm algorithm = Algorithm::Deflate,
+                         int compressionLevel = 6);
+
+    static bool decompress(const std::vector<uint8_t> &input,
+                           size_t expectedSize,
+                           std::vector<uint8_t> &output,
+                           Algorithm algorithm);
 };
 
 ELIX_NESTED_NAMESPACE_END

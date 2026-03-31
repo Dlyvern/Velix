@@ -678,6 +678,66 @@ std::optional<TextureAsset> AssetsSerializer::readTexture(const std::string &pat
     return textureAsset;
 }
 
+std::optional<TextureAsset> AssetsSerializer::readTexture(const std::vector<uint8_t> &bytes) const
+{
+    std::string str(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+    std::istringstream stream(std::move(str), std::ios::binary);
+    // Reuse path-based implementation via a temporary file path for error messages.
+    // The actual parse is identical — just redirect through istringstream.
+    Asset::BinaryHeader header{};
+    if (!::readHeader(stream, header))
+        return std::nullopt;
+
+    if (static_cast<Asset::AssetType>(header.type) != Asset::AssetType::TEXTURE)
+        return std::nullopt;
+
+    TextureAsset textureAsset{};
+    uint8_t encoding = 0u;
+
+    if (!readString(stream, textureAsset.name) ||
+        !readString(stream, textureAsset.sourcePath) ||
+        !readString(stream, textureAsset.assetPath) ||
+        !readPOD(stream, textureAsset.width) ||
+        !readPOD(stream, textureAsset.height) ||
+        !readPOD(stream, textureAsset.channels) ||
+        !readPOD(stream, encoding) ||
+        !readPOD(stream, textureAsset.vkFormat) ||
+        !readBytes(stream, textureAsset.pixels))
+        return std::nullopt;
+
+    textureAsset.encoding = static_cast<TextureAsset::PixelEncoding>(encoding);
+
+    const auto compressionAlgorithm = static_cast<Compressor::Algorithm>(header.reserved[0]);
+    if (compressionAlgorithm != Compressor::Algorithm::None)
+    {
+        const auto expectedSize = computeUncompressedTextureSize(textureAsset);
+        if (!expectedSize.has_value())
+            return std::nullopt;
+
+        std::vector<uint8_t> decompressedPixels;
+        if (!Compressor::decompress(textureAsset.pixels, static_cast<size_t>(expectedSize.value()), decompressedPixels, compressionAlgorithm))
+            return std::nullopt;
+
+        textureAsset.pixels = std::move(decompressedPixels);
+    }
+
+    const uint8_t extraMipCount = header.reserved[1];
+    if (extraMipCount > 0u)
+    {
+        textureAsset.mipChain.resize(extraMipCount);
+        for (uint8_t i = 0u; i < extraMipCount; ++i)
+        {
+            if (!readBytes(stream, textureAsset.mipChain[i]))
+            {
+                textureAsset.mipChain.resize(i);
+                break;
+            }
+        }
+    }
+
+    return textureAsset;
+}
+
 std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) const
 {
     std::ifstream stream(path, std::ios::binary);
@@ -789,6 +849,100 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
         std::ios::binary);
 
     return parseModelPayload(payloadStream, path, modelPayloadVersion);
+}
+
+std::optional<ModelAsset> AssetsSerializer::readModel(const std::vector<uint8_t> &bytes) const
+{
+    std::string str(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+    std::istringstream outerStream(std::move(str), std::ios::binary);
+
+    Asset::BinaryHeader header{};
+    if (!::readHeader(outerStream, header))
+        return std::nullopt;
+
+    if (static_cast<Asset::AssetType>(header.type) != Asset::AssetType::MODEL)
+        return std::nullopt;
+
+    constexpr uint8_t kLegacyModelPayloadVersion = 1u;
+    const uint8_t modelPayloadVersion = header.reserved[1] == 0u ? kLegacyModelPayloadVersion : header.reserved[1];
+
+    auto parseModelPayload = [](std::istream &payloadStream, const std::string &assetPath, uint8_t modelPayloadVersion) -> std::optional<ModelAsset>
+    {
+        constexpr uint8_t kModelPayloadVersionWithBoneAttachments = 2u;
+
+        ModelAsset modelAsset{{}, std::nullopt, {}};
+        if (!readString(payloadStream, modelAsset.sourcePath) ||
+            !readString(payloadStream, modelAsset.assetPath))
+            return std::nullopt;
+
+        uint32_t meshesCount = 0u;
+        if (!readPOD(payloadStream, meshesCount))
+            return std::nullopt;
+
+        if (meshesCount > (1u << 16))
+            return std::nullopt;
+
+        modelAsset.meshes.resize(meshesCount);
+        for (uint32_t meshIndex = 0; meshIndex < meshesCount; ++meshIndex)
+        {
+            auto &mesh = modelAsset.meshes[meshIndex];
+            if (!readString(payloadStream, mesh.name) ||
+                !readVector(payloadStream, mesh.vertexData, 1ull << 31) ||
+                !readVector(payloadStream, mesh.indices, 1ull << 31) ||
+                !readPOD(payloadStream, mesh.vertexStride) ||
+                !readPOD(payloadStream, mesh.vertexLayoutHash) ||
+                !readMaterial(payloadStream, mesh.material) ||
+                !readPOD(payloadStream, mesh.localTransform))
+                return std::nullopt;
+
+            mesh.attachedBoneId = -1;
+            if (modelPayloadVersion >= kModelPayloadVersionWithBoneAttachments &&
+                !readPOD(payloadStream, mesh.attachedBoneId))
+                return std::nullopt;
+        }
+
+        if (!readSkeleton(payloadStream, modelAsset.skeleton))
+            return std::nullopt;
+
+        if (!readAnimations(payloadStream, modelAsset.animations))
+            return std::nullopt;
+
+        if (modelAsset.assetPath.empty())
+            modelAsset.assetPath = std::filesystem::path(assetPath).lexically_normal().string();
+
+        return modelAsset;
+    };
+
+    const auto compressionAlgorithm = static_cast<Compressor::Algorithm>(header.reserved[0]);
+    if (compressionAlgorithm == Compressor::Algorithm::None)
+        return parseModelPayload(outerStream, {}, modelPayloadVersion);
+
+    uint64_t uncompressedSize = 0u;
+    if (!readPOD(outerStream, uncompressedSize) || uncompressedSize == 0u || uncompressedSize > (1ull << 33))
+        return std::nullopt;
+
+    const uint64_t payloadBytesInHeader = header.payloadSize;
+    if (payloadBytesInHeader < sizeof(uint64_t))
+        return std::nullopt;
+
+    const uint64_t compressedSize = payloadBytesInHeader - sizeof(uint64_t);
+    std::vector<uint8_t> compressedPayload(static_cast<size_t>(compressedSize));
+    if (compressedSize > 0u)
+    {
+        outerStream.read(reinterpret_cast<char *>(compressedPayload.data()), static_cast<std::streamsize>(compressedPayload.size()));
+        if (!outerStream.good())
+            return std::nullopt;
+    }
+
+    std::vector<uint8_t> decompressedPayload;
+    if (!Compressor::decompress(compressedPayload, static_cast<size_t>(uncompressedSize), decompressedPayload, compressionAlgorithm))
+        return std::nullopt;
+
+    std::istringstream payloadStream(
+        std::string(reinterpret_cast<const char *>(decompressedPayload.data()), decompressedPayload.size()),
+        std::ios::binary);
+
+    return parseModelPayload(payloadStream, {}, modelPayloadVersion);
 }
 
 bool AssetsSerializer::writeAudio(const AudioAsset &audioAsset, const std::string &outputPath) const

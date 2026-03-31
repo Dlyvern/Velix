@@ -14,10 +14,20 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(utilities)
 class AsyncGpuUpload
 {
 public:
+    struct TimelineWait
+    {
+        VkSemaphore semaphore{VK_NULL_HANDLE};
+        uint64_t value{0u};
+    };
+
     // Submit a single command buffer immediately (one vkQueueSubmit per call).
     // Use only for infrequent one-off uploads (skybox, IBL, etc.).
     static bool submit(core::CommandBuffer::SharedPtr commandBuffer, VkQueue queue,
                        std::vector<core::Buffer::SharedPtr> stagingBuffers = {});
+
+    static bool submitAndWait(core::CommandBuffer::SharedPtr commandBuffer, VkQueue queue);
+
+    static VkFence submitAsync(core::CommandBuffer::SharedPtr commandBuffer, VkQueue queue);
 
     // Enqueue a command buffer to be submitted in the next batchFlush() call.
     // Use this for texture uploads during frame preparation to avoid per-upload vkQueueSubmit overhead.
@@ -29,9 +39,11 @@ public:
     static bool batchFlush(VkQueue queue);
 
     static void collectFinished(VkDevice device);
+    static TimelineWait acquireReadyTimelineWait();
     static std::vector<VkSemaphore> acquireReadySemaphores();
     static void releaseSemaphores(VkDevice device, const std::vector<VkSemaphore> &semaphores);
     static void flush(VkDevice device);
+    static void shutdown(VkDevice device);
 };
 
 ELIX_CUSTOM_NAMESPACE_END

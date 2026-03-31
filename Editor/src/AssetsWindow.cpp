@@ -533,7 +533,7 @@ void AssetsWindow::pollAsyncImportJob()
     const std::filesystem::path destinationDirectory = m_asyncImportState->destinationDirectory;
     const std::filesystem::path lastImportedOutputPath = m_asyncImportState->lastImportedOutputPath;
 
-    const std::filesystem::path currentProjectRoot = m_currentProject ? std::filesystem::path(m_currentProject->fullPath).lexically_normal() : std::filesystem::path{};
+    const std::filesystem::path currentProjectRoot = m_currentProject ? resolveProjectRootPath(*m_currentProject) : std::filesystem::path{};
     const bool sameProject = !m_asyncImportProjectRoot.empty() && !currentProjectRoot.empty() && m_asyncImportProjectRoot == currentProjectRoot;
 
     if (sameProject && importedCount > 0u)
@@ -571,7 +571,7 @@ void AssetsWindow::setProject(Project *project)
         return;
     }
 
-    m_currentDirectory = m_currentProject->fullPath;
+    m_currentDirectory = resolveProjectRootPath(*m_currentProject);
     buildDirectoryTree();
 }
 
@@ -678,7 +678,7 @@ void AssetsWindow::refreshCurrentDirectory()
 {
     if (m_currentProject)
     {
-        m_currentDirectory = m_currentProject->fullPath;
+        m_currentDirectory = resolveProjectRootPath(*m_currentProject);
     }
 }
 
@@ -690,9 +690,12 @@ void AssetsWindow::drawSearchBar()
     ImGui::SameLine();
 
     std::filesystem::path currentPath = m_currentDirectory;
-    std::filesystem::path projectRoot = m_currentProject->fullPath;
+    std::filesystem::path projectRoot = resolveProjectRootPath(*m_currentProject);
 
-    std::filesystem::path relativePath = std::filesystem::relative(currentPath, projectRoot);
+    std::error_code relativeError;
+    std::filesystem::path relativePath = std::filesystem::relative(currentPath, projectRoot, relativeError);
+    if (relativeError)
+        relativePath.clear();
 
     if (ImGui::SmallButton("Project Root"))
         navigateToDirectory(projectRoot);
@@ -763,7 +766,7 @@ void AssetsWindow::drawSearchBar()
         std::filesystem::path destinationPath;
         if (m_currentProject)
         {
-            const std::filesystem::path projectRoot = std::filesystem::path(m_currentProject->fullPath).lexically_normal();
+            const std::filesystem::path projectRoot = resolveProjectRootPath(*m_currentProject);
             const std::filesystem::path resourcesDirectory = projectRoot / "resources";
             destinationPath = isPathWithinRoot(m_currentDirectory, projectRoot) ? m_currentDirectory : resourcesDirectory;
         }
@@ -1380,7 +1383,7 @@ void AssetsWindow::drawAssetGrid()
     if (ImGui::BeginPopupModal("Import Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         const char *importTypes[] = {"Auto Detect", "Model", "Texture", "Audio", "Animation"};
-        const std::filesystem::path projectRoot = m_currentProject ? std::filesystem::path(m_currentProject->fullPath).lexically_normal() : std::filesystem::path{};
+        const std::filesystem::path projectRoot = m_currentProject ? resolveProjectRootPath(*m_currentProject) : std::filesystem::path{};
         const bool importRunning = m_asyncImportState && !m_asyncImportState->finished.load(std::memory_order_acquire);
 
         ImGui::BeginDisabled(importRunning);
@@ -1926,7 +1929,7 @@ bool AssetsWindow::deleteAsset(const std::filesystem::path &path)
         m_contextAssetPath.clear();
 
     if (!m_currentDirectory.empty() && pathContains(path, m_currentDirectory))
-        m_currentDirectory = m_currentProject ? std::filesystem::path(m_currentProject->fullPath) : std::filesystem::current_path();
+        m_currentDirectory = m_currentProject ? resolveProjectRootPath(*m_currentProject) : std::filesystem::current_path();
 
     if (m_onAssetDeletedFunction)
         m_onAssetDeletedFunction(path);
@@ -1985,7 +1988,7 @@ bool AssetsWindow::createMaterialFromTexture(const std::filesystem::path &textur
     const auto materialPath = makeUniqueMaterialPath(texturePath.parent_path(), makeDisplayName(texturePath) + "_Material");
     std::string textureReference = texturePath.lexically_normal().string();
     if (m_currentProject)
-        textureReference = toProjectRelativePathIfPossible(texturePath.lexically_normal(), std::filesystem::path(m_currentProject->fullPath));
+        textureReference = toProjectRelativePathIfPossible(texturePath.lexically_normal(), resolveProjectRootPath(*m_currentProject));
 
     if (!writeDefaultMaterialAsset(materialPath, textureReference))
         return false;
@@ -2072,11 +2075,21 @@ void AssetsWindow::buildDirectoryTree()
     if (!m_currentProject)
         return;
 
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*m_currentProject);
+    std::error_code errorCode;
+    if (projectRoot.empty() || !std::filesystem::is_directory(projectRoot, errorCode) || errorCode)
+    {
+        m_treeRoot = std::make_shared<TreeNode>(
+            m_currentProject->name,
+            projectRoot);
+        return;
+    }
+
     m_treeRoot = std::make_shared<TreeNode>(
         m_currentProject->name,
-        m_currentProject->fullPath);
+        projectRoot);
 
-    buildTreeNode(m_treeRoot.get(), m_currentProject->fullPath);
+    buildTreeNode(m_treeRoot.get(), projectRoot);
     syncTreeWithCurrentDirectory();
 }
 
@@ -2157,8 +2170,9 @@ void AssetsWindow::navigateToDirectory(const std::filesystem::path &path)
 
 void AssetsWindow::goUpOneDirectory()
 {
+    const std::filesystem::path projectRoot = m_currentProject ? resolveProjectRootPath(*m_currentProject) : std::filesystem::path{};
     if (m_currentDirectory.has_parent_path() &&
-        m_currentDirectory != m_currentProject->fullPath)
+        m_currentDirectory != projectRoot)
     {
         navigateToDirectory(m_currentDirectory.parent_path());
     }

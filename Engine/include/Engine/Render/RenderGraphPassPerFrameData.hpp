@@ -14,6 +14,7 @@
 #include <vector>
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <unordered_map>
 
 #include <glm/glm.hpp>
@@ -24,18 +25,32 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 struct DrawItem
 {
-    std::vector<GPUMesh::SharedPtr> meshes;
-    std::vector<size_t> localMeshGeometryHashes;
-    std::vector<glm::vec3> localMeshBoundsCenters;
-    std::vector<float> localMeshBoundsRadii;
-    std::vector<glm::mat4> localMeshTransforms;
-    std::vector<glm::vec3> cachedWorldBoundsCenters;
-    std::vector<float> cachedWorldBoundsRadii;
-    glm::mat4 transform;
+    struct DrawMeshState
+    {
+        GPUMesh::SharedPtr mesh{nullptr};
+        MeshGeometryHash geometryHash{};
+        glm::mat4 localTransform{1.0f};
+        glm::vec3 localBoundsCenter{0.0f};
+        float localBoundsRadius{0.0f};
+        glm::vec3 worldBoundsCenter{0.0f};
+        float worldBoundsRadius{0.0f};
+    };
+
+    std::vector<DrawMeshState> meshStates;
+    glm::mat4 transform{1.0f};
     std::vector<glm::mat4> finalBones;
     uint32_t bonesOffset{0};
 
     GraphicsPipelineKey graphicsPipelineKey;
+};
+
+struct RenderGraphLightData
+{
+    glm::vec4 position{0.0f};
+    glm::vec4 direction{0.0f, 0.0f, -1.0f, 0.0f};
+    glm::vec4 colorStrength{1.0f};
+    glm::vec4 parameters{1.0f};
+    glm::vec4 shadowInfo{0.0f}; // x = casts shadow, y = shadow index, z = far/range, w = near
 };
 
 struct PerObjectInstanceData
@@ -90,6 +105,20 @@ struct ShadowConstants
     static constexpr uint32_t MAX_SPOT_SHADOWS = 3;
     static constexpr uint32_t MAX_POINT_SHADOWS = 1;
     static constexpr uint32_t POINT_SHADOW_FACES = 6;
+};
+
+struct RenderGraphLightSpaceMatrixUBO
+{
+    glm::mat4 lightSpaceMatrix{1.0f};
+    std::array<glm::mat4, ShadowConstants::MAX_DIRECTIONAL_CASCADES> directionalLightSpaceMatrices;
+    glm::vec4 directionalCascadeSplits{glm::vec4(std::numeric_limits<float>::max())};
+    std::array<glm::mat4, ShadowConstants::MAX_SPOT_SHADOWS> spotLightSpaceMatrices;
+
+    RenderGraphLightSpaceMatrixUBO()
+    {
+        directionalLightSpaceMatrices.fill(1.0f);
+        spotLightSpaceMatrices.fill(1.0f);
+    }
 };
 
 class RenderGraphPassPerFrameData

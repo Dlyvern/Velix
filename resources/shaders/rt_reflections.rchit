@@ -65,6 +65,8 @@ layout(set = 0, binding = 0) uniform CameraUBO
     mat4 invProjection;
 } camera;
 
+layout(set = 0, binding = 3) uniform accelerationStructureEXT uTLAS;
+
 layout(std430, set = 0, binding = 2) readonly buffer LightSSBO
 {
     int   lightCount;
@@ -180,6 +182,31 @@ vec3 sampleEnvironment(vec3 dir)
                                       : getSkyFallback(normalize(dir));
 }
 
+// ---------- Helpers ----------
+void buildOrthonormalBasis(vec3 N, out vec3 T, out vec3 B)
+{
+    vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    T = normalize(cross(up, N));
+    B = cross(N, T);
+}
+
+// GGX importance-sampled half-vector in world space.
+// phi: uniform [0,1) pseudo-random seed
+vec3 sampleGGX_H(vec3 N, float roughness, float phi)
+{
+    float a  = roughness * roughness;
+    float u1 = fract(phi * 0.7979);
+    float u2 = fract(phi * 1.2939);
+    float cosTheta = sqrt((1.0 - u1) / max(1.0 + (a * a - 1.0) * u1, 0.0001));
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+    float cosPhi   = cos(2.0 * PI * u2);
+    float sinPhi   = sin(2.0 * PI * u2);
+    vec3  H_local  = vec3(sinTheta * cosPhi, sinTheta * sinPhi, cosTheta);
+    vec3 T, B;
+    buildOrthonormalBasis(N, T, B);
+    return normalize(H_local.x * T + H_local.y * B + H_local.z * N);
+}
+
 // ---------- Main ----------
 void main()
 {
@@ -246,6 +273,15 @@ void main()
     if (mat.emissiveTexIdx > 0u)
         emissive *= texture(allTextures[nonuniformEXT(mat.emissiveTexIdx)], uv).rgb;
 
+    // Emissive fast path: skip full shading for area lights / emissive surfaces.
+    if (any(greaterThan(emissive, vec3(0.001))))
+    {
+        payload.hit      = 1u;
+        payload.hitT     = gl_HitTEXT;
+        payload.radiance = emissive;
+        return;
+    }
+
     // Direct lighting
     vec3 Lo = vec3(0.0);
     int count = min(lightData.lightCount, MAX_LIGHT_COUNT);
@@ -288,15 +324,15 @@ void main()
         Lo += evaluateBRDF(N_view, V_view, L, albedo, metallic, roughness) * radiance;
     }
 
-    // Environment ambient (one indirect bounce)
+    // Environment ambient
     vec3  F0        = mix(vec3(0.04), albedo, metallic);
     float NdotV     = max(dot(N_world, V_world), 0.0);
     vec3  F         = fresnelSchlick(NdotV, F0);
     vec3  kD        = (1.0 - F) * (1.0 - metallic);
-    vec3  envDiff   = sampleEnvironment(N_world)                       * kD * albedo * 0.25;
-    vec3  envSpec   = sampleEnvironment(reflect(-V_world, N_world))    * F           * 0.35;
+    vec3  envDiff   = sampleEnvironment(N_world)                    * kD * albedo * 0.25;
+    vec3  envSpec   = sampleEnvironment(reflect(-V_world, N_world)) * F           * 0.35;
 
     payload.hit      = 1u;
     payload.hitT     = gl_HitTEXT;
-    payload.radiance = Lo + envDiff + envSpec + emissive;
+    payload.radiance = Lo + envDiff + envSpec;
 }

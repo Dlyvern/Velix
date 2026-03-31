@@ -9,7 +9,6 @@
 #include "Engine/Shaders/ShaderFamily.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <filesystem>
 #include <glm/glm.hpp>
 #include <stdexcept>
@@ -21,21 +20,11 @@ namespace
 {
     constexpr uint32_t kMinReflectionSceneBufferCount = 2u;
     constexpr VkDeviceSize kMinReflectionSceneBufferSize = 16u;
-
-    VkDeviceSize alignUp(VkDeviceSize value, VkDeviceSize alignment)
-    {
-        if (alignment == 0)
-            return value;
-
-        return (value + alignment - 1) & ~(alignment - 1);
-    }
-
-    VkDeviceAddress getBufferDeviceAddress(const core::Buffer &buffer)
-    {
-        VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
-        addressInfo.buffer = buffer.vk();
-        return vkGetBufferDeviceAddress(core::VulkanContext::getContext()->getDevice(), &addressInfo);
-    }
+    constexpr VkShaderStageFlags kRasterPushConstantStages =
+        VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    constexpr VkShaderStageFlags kRtPushConstantStages =
+        VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR |
+        VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
 
     static_assert(offsetof(RTReflectionShadingInstanceData, material) == 32u);
     static_assert(sizeof(Material::GPUParams) == 96u);
@@ -106,8 +95,10 @@ bool RTReflectionsRenderGraphPass::canUsePipelinePath() const
     auto context = core::VulkanContext::getContext();
     return context &&
            context->hasRayTracingPipelineSupport() &&
-           m_rayTracingPipeline != VK_NULL_HANDLE &&
-           m_shaderBindingTable != nullptr;
+           m_rayTracingPipeline &&
+           m_rayTracingPipeline->isValid() &&
+           m_shaderBindingTable &&
+           m_shaderBindingTable->isValid();
 }
 
 bool RTReflectionsRenderGraphPass::shouldUsePipelinePath() const
@@ -163,15 +154,17 @@ void RTReflectionsRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &build
     const VkShaderStageFlags sampledStages = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
     const VkShaderStageFlags environmentStages =
         VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    const VkShaderStageFlags reflectionInstanceStages =
+        VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
     std::vector<VkDescriptorSetLayoutBinding> bindings = {
-        makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // normal
-        makeBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // albedo
-        makeBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // material
-        makeBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // depth
-        makeBinding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),                                              // lighting
-        makeBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_RAYGEN_BIT_KHR),                                      // output
-        makeBinding(6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_FRAGMENT_BIT), // RT shading instances
-        makeBinding(7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, environmentStages),                                          // environment cubemap
+        makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // normal
+        makeBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // albedo
+        makeBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // material
+        makeBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // depth
+        makeBinding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // lighting
+        makeBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_RAYGEN_BIT_KHR), // output
+        makeBinding(6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, reflectionInstanceStages),      // RT shading instances
+        makeBinding(7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, environmentStages),     // environment cubemap
     };
 
     m_textureSetLayout = core::DescriptorSetLayout::createShared(device, bindings);
@@ -182,7 +175,7 @@ void RTReflectionsRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &build
             *EngineShaderFamilies::cameraDescriptorSetLayout,
             *m_textureSetLayout},
         std::vector<VkPushConstantRange>{
-            PushConstant<RTReflectionsPC>::getRange(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR)});
+            PushConstant<RTReflectionsPC>::getRange(kRasterPushConstantStages)});
 
     m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
     m_depthSampler = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
@@ -374,8 +367,10 @@ void RTReflectionsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
     {
         const VkPipelineLayout rtLayout =
             (m_rtPipelineLayout != VK_NULL_HANDLE) ? m_rtPipelineLayout : m_pipelineLayout->vk();
+        const VkShaderStageFlags pushStages =
+            (m_rtPipelineLayout != VK_NULL_HANDLE) ? kRtPushConstantStages : kRasterPushConstantStages;
 
-        vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rayTracingPipeline);
+        vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rayTracingPipeline->vk());
 
         if (m_rtPipelineLayout != VK_NULL_HANDLE && data.bindlessDescriptorSet != VK_NULL_HANDLE)
         {
@@ -392,8 +387,15 @@ void RTReflectionsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
                                     0, 2, sets, 0, nullptr);
         }
 
-        vkCmdPushConstants(commandBuffer->vk(), rtLayout, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, 0, sizeof(pc), &pc);
-        vkCmdTraceRaysKHR(commandBuffer->vk(), &m_raygenRegion, &m_missRegion, &m_hitRegion, &m_callableRegion, m_extent.width, m_extent.height, 1);
+        vkCmdPushConstants(commandBuffer->vk(), rtLayout, pushStages, 0, sizeof(pc), &pc);
+        vkCmdTraceRaysKHR(commandBuffer->vk(),
+                          &m_shaderBindingTable->raygenRegion(),
+                          &m_shaderBindingTable->missRegion(),
+                          &m_shaderBindingTable->hitRegion(),
+                          &m_shaderBindingTable->callableRegion(),
+                          m_extent.width,
+                          m_extent.height,
+                          1);
         return;
     }
 
@@ -415,7 +417,7 @@ void RTReflectionsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
     vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout,
                             0, 2, sets, 0, nullptr);
-    vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+    vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, kRasterPushConstantStages, 0, sizeof(pc), &pc);
 
     profiling::cmdDraw(commandBuffer, 3, 1, 0, 0);
 }
@@ -454,6 +456,9 @@ std::vector<IRenderGraphPass::RenderPassExecution> RTReflectionsRenderGraphPass:
 
 void RTReflectionsRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent = extent;
     m_viewport = {0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f};
     m_scissor = {{0, 0}, extent};
@@ -572,7 +577,7 @@ void RTReflectionsRenderGraphPass::createRayTracingPipeline()
             EngineShaderFamilies::bindlessMaterialSetLayout};
 
         const VkPushConstantRange pcRange =
-            PushConstant<RTReflectionsPC>::getRange(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
+            PushConstant<RTReflectionsPC>::getRange(kRtPushConstantStages);
 
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         layoutInfo.setLayoutCount = 3;
@@ -586,11 +591,14 @@ void RTReflectionsRenderGraphPass::createRayTracingPipeline()
     m_raygenShader.loadFromFile("./resources/shaders/rt_reflections.rgen.spv", core::ShaderStage::RAYGEN);
     m_missShader.loadFromFile("./resources/shaders/rt_reflections.rmiss.spv", core::ShaderStage::MISS);
     m_closestHitShader.loadFromFile("./resources/shaders/rt_reflections.rchit.spv", core::ShaderStage::CLOSEST_HIT);
+    m_anyHitShader.loadFromFile("./resources/shaders/rt_reflections.rahit.spv", core::ShaderStage::ANY_HIT);
 
-    const std::array<VkPipelineShaderStageCreateInfo, 3> shaderStages = {
+    // Stage indices: 0=rgen, 1=rmiss, 2=rchit, 3=rahit
+    const std::array<VkPipelineShaderStageCreateInfo, 4> shaderStages = {
         m_raygenShader.getInfo(),
         m_missShader.getInfo(),
-        m_closestHitShader.getInfo()};
+        m_closestHitShader.getInfo(),
+        m_anyHitShader.getInfo()};
 
     std::array<VkRayTracingShaderGroupCreateInfoKHR, 3> shaderGroups{};
 
@@ -608,11 +616,14 @@ void RTReflectionsRenderGraphPass::createRayTracingPipeline()
     shaderGroups[1].anyHitShader = VK_SHADER_UNUSED_KHR;
     shaderGroups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
 
+    // Hit group: rchit (stage 2) + rahit (stage 3).
+    // For FORCE_OPAQUE instances (opaque geometry) the any-hit is skipped automatically.
+    // For non-opaque alpha-masked instances, the any-hit performs the alpha cutoff test.
     shaderGroups[2].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     shaderGroups[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     shaderGroups[2].generalShader = VK_SHADER_UNUSED_KHR;
     shaderGroups[2].closestHitShader = 2;
-    shaderGroups[2].anyHitShader = VK_SHADER_UNUSED_KHR;
+    shaderGroups[2].anyHitShader = 3;
     shaderGroups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
 
     VkRayTracingPipelineCreateInfoKHR pipelineCreateInfo{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
@@ -623,80 +634,29 @@ void RTReflectionsRenderGraphPass::createRayTracingPipeline()
     pipelineCreateInfo.maxPipelineRayRecursionDepth = 1;
     pipelineCreateInfo.layout = (m_rtPipelineLayout != VK_NULL_HANDLE) ? m_rtPipelineLayout : m_pipelineLayout->vk();
 
-    if (vkCreateRayTracingPipelinesKHR(context->getDevice(), VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &m_rayTracingPipeline) != VK_SUCCESS)
+    m_rayTracingPipeline = core::rtx::RayTracingPipeline::create(
+        std::vector<VkPipelineShaderStageCreateInfo>{shaderStages.begin(), shaderStages.end()},
+        std::vector<VkRayTracingShaderGroupCreateInfoKHR>{shaderGroups.begin(), shaderGroups.end()},
+        pipelineCreateInfo.layout,
+        1u);
+
+    if (!m_rayTracingPipeline || !m_rayTracingPipeline->isValid())
         throw std::runtime_error("Failed to create RT reflections pipeline");
 
-    createShaderBindingTable(static_cast<uint32_t>(shaderGroups.size()));
+    createShaderBindingTable();
 }
 
-void RTReflectionsRenderGraphPass::createShaderBindingTable(uint32_t groupCount)
+void RTReflectionsRenderGraphPass::createShaderBindingTable()
 {
-    auto context = core::VulkanContext::getContext();
-    const auto &rtProps = context->getRayTracingPipelineProperties();
-
-    const uint32_t handleSize = rtProps.shaderGroupHandleSize;
-    const uint32_t handleAlignment = rtProps.shaderGroupHandleAlignment;
-    const uint32_t baseAlignment = rtProps.shaderGroupBaseAlignment;
-    const VkDeviceSize handleSizeAligned = alignUp(handleSize, handleAlignment);
-
-    m_raygenRegion = {};
-    m_missRegion = {};
-    m_hitRegion = {};
-    m_callableRegion = {};
-
-    m_raygenRegion.stride = alignUp(handleSizeAligned, baseAlignment);
-    m_raygenRegion.size = m_raygenRegion.stride;
-
-    m_missRegion.stride = handleSizeAligned;
-    m_missRegion.size = alignUp(handleSizeAligned, baseAlignment);
-
-    m_hitRegion.stride = handleSizeAligned;
-    m_hitRegion.size = alignUp(handleSizeAligned, baseAlignment);
-
-    const VkDeviceSize sbtSize = m_raygenRegion.size + m_missRegion.size + m_hitRegion.size;
-    m_shaderBindingTable = core::Buffer::createShared(
-        sbtSize,
-        VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        core::memory::MemoryUsage::CPU_TO_GPU);
-
-    std::vector<uint8_t> shaderHandleStorage(static_cast<size_t>(groupCount) * handleSize);
-    if (vkGetRayTracingShaderGroupHandlesKHR(context->getDevice(),
-                                             m_rayTracingPipeline,
-                                             0,
-                                             groupCount,
-                                             shaderHandleStorage.size(),
-                                             shaderHandleStorage.data()) != VK_SUCCESS)
-    {
-        throw std::runtime_error("Failed to get RT reflections shader group handles");
-    }
-
-    void *mappedData = nullptr;
-    m_shaderBindingTable->map(mappedData);
-
-    auto *dst = static_cast<uint8_t *>(mappedData);
-    const VkDeviceSize missOffset = m_raygenRegion.size;
-    const VkDeviceSize hitOffset = missOffset + m_missRegion.size;
-
-    std::memcpy(dst, shaderHandleStorage.data(), handleSize);
-    std::memcpy(dst + missOffset, shaderHandleStorage.data() + handleSize, handleSize);
-    std::memcpy(dst + hitOffset, shaderHandleStorage.data() + handleSize * 2u, handleSize);
-
-    m_shaderBindingTable->unmap();
-
-    const VkDeviceAddress baseAddress = getBufferDeviceAddress(*m_shaderBindingTable);
-    m_raygenRegion.deviceAddress = baseAddress;
-    m_missRegion.deviceAddress = baseAddress + missOffset;
-    m_hitRegion.deviceAddress = baseAddress + hitOffset;
+    m_shaderBindingTable = core::rtx::ShaderBindingTable::create(*m_rayTracingPipeline, {0u}, {1u}, {2u});
+    if (!m_shaderBindingTable || !m_shaderBindingTable->isValid())
+        throw std::runtime_error("Failed to create RT reflections shader binding table");
 }
 
 void RTReflectionsRenderGraphPass::destroyRayTracingPipeline()
 {
     auto context = core::VulkanContext::getContext();
-    if (context && m_rayTracingPipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(context->getDevice(), m_rayTracingPipeline, nullptr);
-        m_rayTracingPipeline = VK_NULL_HANDLE;
-    }
+    m_rayTracingPipeline.reset();
 
     if (context && m_rtPipelineLayout != VK_NULL_HANDLE)
     {
@@ -704,21 +664,19 @@ void RTReflectionsRenderGraphPass::destroyRayTracingPipeline()
         m_rtPipelineLayout = VK_NULL_HANDLE;
     }
 
-    m_callableRegion = {};
-    m_hitRegion = {};
-    m_missRegion = {};
-    m_raygenRegion = {};
     m_shaderBindingTable.reset();
 
     m_closestHitShader.destroyVk();
     m_missShader.destroyVk();
     m_raygenShader.destroyVk();
+    m_anyHitShader.destroyVk();
 }
 
 void RTReflectionsRenderGraphPass::freeResources()
 {
     m_outputRenderTargets.clear();
-    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    for (auto &s : m_descriptorSets)
+        s = VK_NULL_HANDLE;
     m_descriptorSetsInitialized = false;
     outputs.color.set(MultiHandle{});
 }

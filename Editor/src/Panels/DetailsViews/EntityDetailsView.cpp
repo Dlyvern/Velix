@@ -149,7 +149,8 @@ namespace
     std::vector<std::string> collectProjectParticleTextureCandidates(const std::filesystem::path &projectRoot)
     {
         std::vector<std::string> result;
-        if (projectRoot.empty() || !std::filesystem::exists(projectRoot))
+        std::error_code directoryError;
+        if (projectRoot.empty() || !std::filesystem::is_directory(projectRoot, directoryError) || directoryError)
             return result;
 
         std::error_code iteratorError;
@@ -1295,7 +1296,7 @@ void EntityDetailsView::draw(Editor &editor)
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Open Editor"))
                         editor.openAnimationTreeEditor(tree->assetPath, animatorComponent,
-                            m_selectedEntity->getComponent<engine::SkeletalMeshComponent>());
+                                                       m_selectedEntity->getComponent<engine::SkeletalMeshComponent>());
 
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Clear"))
@@ -1636,8 +1637,8 @@ void EntityDetailsView::draw(Editor &editor)
                 ImGui::TextUnformatted("HDR Environment:");
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", hasHDR
-                    ? std::filesystem::path(currentHDR).filename().string().c_str()
-                    : "<None>");
+                                              ? std::filesystem::path(currentHDR).filename().string().c_str()
+                                              : "<None>");
 
                 ImGui::Button("Drop .hdr file here##ProbeDrop");
                 if (ImGui::BeginDragDropTarget())
@@ -1646,7 +1647,8 @@ void EntityDetailsView::draw(Editor &editor)
                     {
                         std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
                         std::string ext = std::filesystem::path(droppedPath).extension().string();
-                        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+                        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
+                                       { return static_cast<char>(std::tolower(c)); });
                         if (ext == ".hdr" || ext == ".elixasset")
                         {
                             auto *pool = core::VulkanContext::getContext()->getPersistentDescriptorPool()->vk();
@@ -1668,14 +1670,14 @@ void EntityDetailsView::draw(Editor &editor)
 
                 ImGui::Separator();
 
-                ImGui::DragFloat("Radius##ProbeRadius",    &probeComponent->radius,    0.1f, 0.1f, 500.0f, "%.1f");
+                ImGui::DragFloat("Radius##ProbeRadius", &probeComponent->radius, 0.1f, 0.1f, 500.0f, "%.1f");
                 ImGui::DragFloat("Intensity##ProbeIntens", &probeComponent->intensity, 0.01f, 0.0f, 10.0f, "%.2f");
 
                 ImGui::Separator();
 
                 const char *statusStr = probeComponent->hasCapturedScene()
-                    ? "Scene Captured"
-                    : (probeComponent->hasCubemap() ? "HDR Loaded" : "Not Captured");
+                                            ? "Scene Captured"
+                                            : (probeComponent->hasCubemap() ? "HDR Loaded" : "Not Captured");
                 ImGui::TextDisabled("Status: %s", statusStr);
 
                 ImGui::Spacing();
@@ -1705,11 +1707,13 @@ void EntityDetailsView::draw(Editor &editor)
                 ImGui::PushID("DecalComp");
 
                 const bool hasMaterial = decalComponent->material != nullptr;
-                const std::string matLabel = hasMaterial
-                    ? (decalComponent->material->getName().empty()
-                        ? "<Unnamed>"
-                        : decalComponent->material->getName())
-                    : "<None>";
+                // const std::string matLabel = hasMaterial
+                //                                  ? (decalComponent->material->getName().empty()
+                //                                         ? "<Unnamed>"
+                //                                         : decalComponent->material->getName())
+                //                                  : "<None>";
+
+                const std::string matLabel{"<NONE>"};
 
                 ImGui::TextUnformatted("Material:");
                 ImGui::SameLine();
@@ -1746,9 +1750,9 @@ void EntityDetailsView::draw(Editor &editor)
 
                 ImGui::Separator();
 
-                ImGui::DragFloat3("Size##DecalSize",       &decalComponent->size.x,   0.05f, 0.01f, 500.0f, "%.2f");
-                ImGui::SliderFloat("Opacity##DecalOpacity", &decalComponent->opacity,  0.0f,  1.0f,  "%.2f");
-                ImGui::DragInt("Sort Order##DecalSort",    &decalComponent->sortOrder, 1.0f, -100, 100);
+                ImGui::DragFloat3("Size##DecalSize", &decalComponent->size.x, 0.05f, 0.01f, 500.0f, "%.2f");
+                ImGui::SliderFloat("Opacity##DecalOpacity", &decalComponent->opacity, 0.0f, 1.0f, "%.2f");
+                ImGui::DragInt("Sort Order##DecalSort", &decalComponent->sortOrder, 1.0f, -100, 100);
 
                 ImGui::Separator();
 

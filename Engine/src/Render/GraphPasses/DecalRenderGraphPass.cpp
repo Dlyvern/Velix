@@ -28,24 +28,70 @@ namespace
 
     // Unit cube: [-0.5, 0.5]^3, position-only vertices (vec3)
     static const float s_cubeVerts[24] = {
-        -0.5f, -0.5f, -0.5f,
-         0.5f, -0.5f, -0.5f,
-         0.5f,  0.5f, -0.5f,
-        -0.5f,  0.5f, -0.5f,
-        -0.5f, -0.5f,  0.5f,
-         0.5f, -0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f,
-        -0.5f,  0.5f,  0.5f,
+        -0.5f,
+        -0.5f,
+        -0.5f,
+        0.5f,
+        -0.5f,
+        -0.5f,
+        0.5f,
+        0.5f,
+        -0.5f,
+        -0.5f,
+        0.5f,
+        -0.5f,
+        -0.5f,
+        -0.5f,
+        0.5f,
+        0.5f,
+        -0.5f,
+        0.5f,
+        0.5f,
+        0.5f,
+        0.5f,
+        -0.5f,
+        0.5f,
+        0.5f,
     };
 
     // 12 triangles (36 indices), CCW winding when viewed from outside
     static const uint32_t s_cubeIndices[36] = {
-        0, 2, 1,  0, 3, 2,  // -Z
-        4, 5, 6,  4, 6, 7,  // +Z
-        0, 4, 7,  0, 7, 3,  // -X
-        1, 2, 6,  1, 6, 5,  // +X
-        0, 1, 5,  0, 5, 4,  // -Y
-        3, 7, 6,  3, 6, 2,  // +Y
+        0,
+        2,
+        1,
+        0,
+        3,
+        2, // -Z
+        4,
+        5,
+        6,
+        4,
+        6,
+        7, // +Z
+        0,
+        4,
+        7,
+        0,
+        7,
+        3, // -X
+        1,
+        2,
+        6,
+        1,
+        6,
+        5, // +X
+        0,
+        1,
+        5,
+        0,
+        5,
+        4, // -Y
+        3,
+        7,
+        6,
+        3,
+        6,
+        2, // +Y
     };
 }
 
@@ -53,12 +99,8 @@ DecalRenderGraphPass::DecalRenderGraphPass(std::vector<RGPResourceHandler> &albe
                                            std::vector<RGPResourceHandler> &normalHandlers,
                                            std::vector<RGPResourceHandler> &materialHandlers,
                                            std::vector<RGPResourceHandler> &emissiveHandlers,
-                                           RGPResourceHandler              &depthHandler)
-    : m_albedoHandlers(albedoHandlers)
-    , m_normalHandlers(normalHandlers)
-    , m_materialHandlers(materialHandlers)
-    , m_emissiveHandlers(emissiveHandlers)
-    , m_depthHandler(depthHandler)
+                                           RGPResourceHandler &depthHandler)
+    : m_albedoHandlers(albedoHandlers), m_normalHandlers(normalHandlers), m_materialHandlers(materialHandlers), m_emissiveHandlers(emissiveHandlers), m_depthHandler(depthHandler)
 {
     setDebugName("Decal render graph pass");
     m_extent = core::VulkanContext::getContext()->getSwapchain()->getExtent();
@@ -81,8 +123,8 @@ void DecalRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     // Write to GBuffer channels (LOAD_OP_LOAD to preserve existing content)
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        builder.write(m_albedoHandlers[i],   RGPTextureUsage::COLOR_ATTACHMENT);
-        builder.write(m_normalHandlers[i],   RGPTextureUsage::COLOR_ATTACHMENT);
+        builder.write(m_albedoHandlers[i], RGPTextureUsage::COLOR_ATTACHMENT);
+        builder.write(m_normalHandlers[i], RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(m_materialHandlers[i], RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(m_emissiveHandlers[i], RGPTextureUsage::COLOR_ATTACHMENT);
     }
@@ -93,16 +135,16 @@ void DecalRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     auto makeBinding = [](uint32_t binding, VkDescriptorType type) -> VkDescriptorSetLayoutBinding
     {
         VkDescriptorSetLayoutBinding b{};
-        b.binding        = binding;
+        b.binding = binding;
         b.descriptorType = type;
         b.descriptorCount = 1;
-        b.stageFlags     = VK_SHADER_STAGE_FRAGMENT_BIT;
+        b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         return b;
     };
 
     m_depthSetLayout = core::DescriptorSetLayout::createShared(
         device, std::vector<VkDescriptorSetLayoutBinding>{
-            makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)});
+                    makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)});
 
     m_pipelineLayout = core::PipelineLayout::createShared(
         device,
@@ -130,11 +172,16 @@ void DecalRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        m_albedoTargets[i]   = storage.getTexture(m_albedoHandlers[i]);
-        m_normalTargets[i]   = storage.getTexture(m_normalHandlers[i]);
+        m_albedoTargets[i] = storage.getTexture(m_albedoHandlers[i]);
+        m_normalTargets[i] = storage.getTexture(m_normalHandlers[i]);
         m_materialTargets[i] = storage.getTexture(m_materialHandlers[i]);
         m_emissiveTargets[i] = storage.getTexture(m_emissiveHandlers[i]);
     }
+
+    if (!m_normalTargets.empty() && m_normalTargets.front())
+        m_extent = m_normalTargets.front()->getExtent();
+    else if (m_depthTarget)
+        m_extent = m_depthTarget->getExtent();
 
     // Build per-frame depth descriptor sets
     m_depthDescriptorSets.resize(imageCount, VK_NULL_HANDLE);
@@ -143,11 +190,11 @@ void DecalRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         for (uint32_t i = 0; i < imageCount; ++i)
         {
             m_depthDescriptorSets[i] = DescriptorSetBuilder::begin()
-                .addImage(m_depthTarget->vkImageView(), m_depthSampler,
-                          VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 0)
-                .build(core::VulkanContext::getContext()->getDevice(),
-                       core::VulkanContext::getContext()->getPersistentDescriptorPool(),
-                       m_depthSetLayout->vk());
+                                           .addImage(m_depthTarget->vkImageView(), m_depthSampler,
+                                                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 0)
+                                           .build(core::VulkanContext::getContext()->getDevice(),
+                                                  core::VulkanContext::getContext()->getPersistentDescriptorPool(),
+                                                  m_depthSetLayout->vk());
         }
         m_descriptorSetsInitialized = true;
     }
@@ -193,9 +240,9 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     // Collect and sort decal entities
     struct DecalEntry
     {
-        DecalComponent     *component;
-        glm::mat4           worldMatrix;
-        int                 sortOrder;
+        DecalComponent *component;
+        glm::mat4 worldMatrix;
+        int sortOrder;
     };
     std::vector<DecalEntry> decals;
 
@@ -216,14 +263,15 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
         return;
 
     std::stable_sort(decals.begin(), decals.end(),
-                     [](const DecalEntry &a, const DecalEntry &b) { return a.sortOrder < b.sortOrder; });
+                     [](const DecalEntry &a, const DecalEntry &b)
+                     { return a.sortOrder < b.sortOrder; });
 
-    RENDER_GRAPH_DRAW_PROFILE(cmd, "Decals");
+    // RENDER_GRAPH_DRAW_PROFILE(cmd, "Decals");
 
     const uint32_t frame = renderContext.currentFrame;
     const uint32_t imgIdx = renderContext.currentImageIndex;
 
-    const float invW = 1.0f / static_cast<float>(std::max(m_extent.width,  1u));
+    const float invW = 1.0f / static_cast<float>(std::max(m_extent.width, 1u));
     const float invH = 1.0f / static_cast<float>(std::max(m_extent.height, 1u));
 
     // Bind camera descriptor set (set 0)
@@ -247,9 +295,9 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
         // Pipeline
         GraphicsPipelineKey key{};
         key.shader = ShaderId::Decal;
-        key.blend  = BlendMode::AlphaBlend;
-        key.cull   = CullMode::None;
-        key.depthTest  = false;
+        key.blend = BlendMode::AlphaBlend;
+        key.cull = CullMode::None;
+        key.depthTest = false;
         key.depthWrite = false;
         key.pipelineLayout = m_pipelineLayout->vk();
         key.colorFormats = {
@@ -272,14 +320,14 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
 
         // Viewport/scissor
         VkViewport vp{0, 0, (float)m_extent.width, (float)m_extent.height, 0.0f, 1.0f};
-        VkRect2D   sc{{0, 0}, m_extent};
+        VkRect2D sc{{0, 0}, m_extent};
         vkCmdSetViewport(cmd, 0, 1, &vp);
-        vkCmdSetScissor(cmd,  0, 1, &sc);
+        vkCmdSetScissor(cmd, 0, 1, &sc);
 
         // Push constants
         DecalPC pc{};
         pc.worldViewProj = data.projection * data.view * entry.worldMatrix;
-        pc.worldToLocal  = glm::affineInverse(entry.worldMatrix);
+        pc.worldToLocal = glm::affineInverse(entry.worldMatrix);
         pc.params = {decal->opacity, invW, invH,
                      static_cast<float>(static_cast<int>(decal->material->getDecalBlendMode()))};
         vkCmdPushConstants(cmd, m_pipelineLayout->vk(),
@@ -301,14 +349,15 @@ std::vector<IRenderGraphPass::RenderPassExecution> DecalRenderGraphPass::getRend
     auto makeLoadAttachment = [](VkImageView view) -> VkRenderingAttachmentInfo
     {
         VkRenderingAttachmentInfo info{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-        info.imageView   = view;
+        info.imageView = view;
         info.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        info.loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD;
-        info.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
+        info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         return info;
     };
 
     RenderPassExecution exec;
+    exec.renderArea.offset = {0, 0};
     exec.renderArea.extent = m_extent;
     exec.useDepth = false;
 
@@ -326,11 +375,11 @@ std::vector<IRenderGraphPass::RenderPassExecution> DecalRenderGraphPass::getRend
         VK_FORMAT_R16G16B16A16_SFLOAT, // emissive
     };
 
-    exec.targets[m_normalHandlers[imgIdx]]   = m_normalTargets[imgIdx];
-    exec.targets[m_albedoHandlers[imgIdx]]   = m_albedoTargets[imgIdx];
+    exec.targets[m_normalHandlers[imgIdx]] = m_normalTargets[imgIdx];
+    exec.targets[m_albedoHandlers[imgIdx]] = m_albedoTargets[imgIdx];
     exec.targets[m_materialHandlers[imgIdx]] = m_materialTargets[imgIdx];
     exec.targets[m_emissiveHandlers[imgIdx]] = m_emissiveTargets[imgIdx];
-    exec.targets[m_depthHandler]             = m_depthTarget;
+    exec.targets[m_depthHandler] = m_depthTarget;
 
     return {exec};
 }

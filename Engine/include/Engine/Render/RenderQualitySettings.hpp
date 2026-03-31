@@ -145,6 +145,12 @@ public:
 
     bool enableDecals{true};
 
+    // RT Global Illumination (indirect diffuse)
+    bool  enableRTGI{false};
+    int   giSamples{1};           // hemisphere rays per pixel: 1=preview, 4=default, 16=high
+    bool  enableRTGIDenoiser{true};
+    float giStrength{1.0f};       // indirect diffuse intensity multiplier
+
     bool enableVignette{false};
     float vignetteStrength{0.4f};
     bool enableFilmGrain{false};

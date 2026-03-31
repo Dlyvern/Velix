@@ -1,47 +1,31 @@
 #include "Engine/RayTracing/RayTracedMesh.hpp"
 
 #include "Core/VulkanContext.hpp"
+
+#include "Engine/Utilities/AsyncGpuUpload.hpp"
 #include "Engine/Utilities/BufferUtilities.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(rayTracing)
 
-namespace
-{
-    bool submitAndWait(core::CommandBuffer::SharedPtr commandBuffer, VkQueue queue)
-    {
-        if (!commandBuffer || queue == VK_NULL_HANDLE)
-            return false;
-
-        auto context = core::VulkanContext::getContext();
-        if (!context)
-            return false;
-
-        VkFenceCreateInfo fenceCreateInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        VkFence fence = VK_NULL_HANDLE;
-        if (vkCreateFence(context->getDevice(), &fenceCreateInfo, nullptr, &fence) != VK_SUCCESS)
-            return false;
-
-        const bool submitted = commandBuffer->submit(queue, {}, {}, {}, fence);
-        const bool waited = submitted && vkWaitForFences(context->getDevice(), 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
-
-        vkDestroyFence(context->getDevice(), fence, nullptr);
-        return submitted && waited;
-    }
-} // namespace
-
-RayTracedMesh::SharedPtr RayTracedMesh::createFromMesh(const GPUMesh &mesh, core::CommandPool::SharedPtr commandPool)
+RayTracedMesh::SharedPtr RayTracedMesh::createFromMesh(const GPUMesh &mesh,
+                                                       core::CommandPool::SharedPtr commandPool,
+                                                       UploadSubmission *outPendingUpload)
 {
     auto rayTracedMesh = std::make_shared<RayTracedMesh>();
-    if (!rayTracedMesh->uploadFromMesh(mesh, commandPool))
+
+    if (!rayTracedMesh->uploadFromMesh(mesh, commandPool, outPendingUpload))
         return nullptr;
 
     return rayTracedMesh;
 }
 
-bool RayTracedMesh::uploadFromMesh(const GPUMesh &mesh, core::CommandPool::SharedPtr commandPool)
+bool RayTracedMesh::uploadFromMesh(const GPUMesh &mesh,
+                                   core::CommandPool::SharedPtr commandPool,
+                                   UploadSubmission *outPendingUpload)
 {
     auto context = core::VulkanContext::getContext();
+
     if (!context || !context->hasBufferDeviceAddressSupport() || !context->hasAccelerationStructureSupport())
         return false;
 
@@ -81,11 +65,60 @@ bool RayTracedMesh::uploadFromMesh(const GPUMesh &mesh, core::CommandPool::Share
     if (!commandBuffer->end())
         return false;
 
-    if (!submitAndWait(commandBuffer, context->getGraphicsQueue()))
-        return false;
-
     vertexBuffer = std::move(newVertexBuffer);
     indexBuffer = std::move(newIndexBuffer);
+
+    if (outPendingUpload)
+    {
+        outPendingUpload->fence = utilities::AsyncGpuUpload::submitAsync(commandBuffer, context->getGraphicsQueue());
+        if (outPendingUpload->fence == VK_NULL_HANDLE)
+            return false;
+
+        outPendingUpload->commandBuffer = std::move(commandBuffer);
+        return true;
+    }
+
+    if (!utilities::AsyncGpuUpload::submitAndWait(commandBuffer, context->getGraphicsQueue()))
+        return false;
+
+    return true;
+}
+
+bool RayTracedMesh::fillGeometryDesc(const GPUMesh &mesh,
+                                     const RayTracedMesh &rayTracedMesh,
+                                     core::rtx::TriangleGeometryDesc &geometryDesc)
+{
+    if (!rayTracedMesh.vertexBuffer || !rayTracedMesh.indexBuffer || mesh.vertexStride == 0u)
+        return false;
+
+    const uint32_t triangleCount = mesh.indicesCount / 3u;
+    const uint32_t vertexCount = static_cast<uint32_t>(rayTracedMesh.vertexBuffer->getSize() / mesh.vertexStride);
+    if (triangleCount == 0u || vertexCount == 0u)
+        return false;
+
+    VkAccelerationStructureGeometryTrianglesDataKHR triangles{
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
+    triangles.vertexFormat = rayTracedMesh.positionFormat;
+    triangles.vertexData.deviceAddress = utilities::BufferUtilities::getBufferDeviceAddress(*rayTracedMesh.vertexBuffer) + rayTracedMesh.positionOffset;
+    triangles.vertexStride = mesh.vertexStride;
+    triangles.maxVertex = vertexCount - 1u;
+    triangles.indexType = mesh.indexType;
+    triangles.indexData.deviceAddress = utilities::BufferUtilities::getBufferDeviceAddress(*rayTracedMesh.indexBuffer);
+    triangles.transformData.deviceAddress = 0u;
+
+    if (triangles.vertexData.deviceAddress == 0u || triangles.indexData.deviceAddress == 0u)
+        return false;
+
+    geometryDesc.vertexAddress = triangles.vertexData.deviceAddress;
+    geometryDesc.indexAddress = triangles.indexData.deviceAddress;
+    geometryDesc.vertexStride = triangles.vertexStride;
+    geometryDesc.vertexCount = vertexCount;
+    geometryDesc.triangleCount = triangleCount;
+    geometryDesc.vertexFormat = triangles.vertexFormat;
+    geometryDesc.indexType = triangles.indexType;
+    // Leave geometry flags at 0 so TLAS instance flags still control opacity behavior.
+    geometryDesc.geometryFlags = 0u;
+
     return true;
 }
 

@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <cstring>
+#include <cstdlib>
 #include <set>
 #include <limits>
 #include <algorithm>
@@ -57,11 +58,9 @@ VulkanContext::VulkanContext(platform::Window &window)
 #ifdef DEBUG_BUILD
     m_isValidationLayersEnabled = true;
 #else
+    // Allow validation layers in Release when explicitly requested.
     m_isValidationLayersEnabled = false;
 #endif
-
-    // TODO FIX ME(Validation layers are way to hungry for FPS)
-    m_isValidationLayersEnabled = false;
 
     initVulkan(window);
 }
@@ -121,6 +120,7 @@ void VulkanContext::createLogicalDevice()
 
     m_bufferDeviceAddressSupported = supportedV12.bufferDeviceAddress == VK_TRUE;
     m_depthClampSupported = supportedFeatures2.features.depthClamp == VK_TRUE;
+    m_timelineSemaphoreSupported = supportedV12.timelineSemaphore == VK_TRUE;
 
     if (!supportedV13.dynamicRendering)
         throw std::runtime_error("Selected GPU does not support dynamicRendering");
@@ -251,14 +251,18 @@ void VulkanContext::createLogicalDevice()
     features2.features.samplerAnisotropy = VK_TRUE;
     features2.features.imageCubeArray = VK_TRUE;
     features2.features.depthClamp = m_depthClampSupported ? VK_TRUE : VK_FALSE;
+    features2.features.shaderInt64 = supportedFeatures2.features.shaderInt64;
 
     features2.features.fillModeNonSolid = supportedFeatures2.features.fillModeNonSolid;
     features2.features.independentBlend = supportedFeatures2.features.independentBlend;
 
     VkPhysicalDeviceVulkan12Features v12{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-    v12.bufferDeviceAddress            = m_bufferDeviceAddressSupported ? VK_TRUE : VK_FALSE;
+    v12.bufferDeviceAddress = m_bufferDeviceAddressSupported ? VK_TRUE : VK_FALSE;
+    v12.timelineSemaphore = m_timelineSemaphoreSupported ? VK_TRUE : VK_FALSE;
     v12.descriptorBindingPartiallyBound = supportedV12.descriptorBindingPartiallyBound;
+    v12.runtimeDescriptorArray = supportedV12.runtimeDescriptorArray;
+    v12.shaderSampledImageArrayNonUniformIndexing = supportedV12.shaderSampledImageArrayNonUniformIndexing;
 
     VkPhysicalDeviceVulkan13Features v13{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
@@ -418,6 +422,11 @@ bool VulkanContext::hasRayQuerySupport() const
 bool VulkanContext::hasRayTracingPipelineSupport() const
 {
     return m_rayTracingSupport.rayTracingPipeline;
+}
+
+bool VulkanContext::hasTimelineSemaphoreSupport() const
+{
+    return m_timelineSemaphoreSupported;
 }
 
 bool VulkanContext::hasRayTracingDeviceFeaturesEnabled() const
@@ -739,8 +748,8 @@ void VulkanContext::pickPhysicalDevice()
 
     for (const auto &candidate : candidates)
     {
-        VX_CORE_INFO_STREAM("GPU: " << candidate.props.deviceName << std::endl);
-        VX_CORE_INFO_STREAM("Score: " << candidate.score << std::endl);
+        VX_CORE_INFO_STREAM("GPU: " << candidate.props.deviceName);
+        VX_CORE_INFO_STREAM("Score: " << candidate.score);
     }
 
     m_physicalDevice = candidates.front().device;
@@ -837,6 +846,8 @@ void VulkanContext::createInstance()
     createInfo.enabledExtensionCount = glfwExtensionCount;
     createInfo.ppEnabledExtensionNames = glfwExtensions;
 
+    bool validationLayersEnabledForInstance = false;
+
     if (m_isValidationLayersEnabled)
     {
         if (!checkValidationLayers())
@@ -848,6 +859,7 @@ void VulkanContext::createInstance()
         {
             createInfo.enabledLayerCount = static_cast<uint32_t>(m_validationLayers.size());
             createInfo.ppEnabledLayerNames = m_validationLayers.data();
+            validationLayersEnabledForInstance = true;
         }
     }
     else
@@ -859,6 +871,9 @@ void VulkanContext::createInstance()
     createInfo.ppEnabledExtensionNames = newExtensions.data();
 
     VX_VK_CHECK(vkCreateInstance(&createInfo, nullptr, &m_instance));
+
+    if (validationLayersEnabledForInstance)
+        VX_CORE_INFO_STREAM("[Vulkan] Validation layers enabled");
 
     volkLoadInstance(m_instance);
 }
@@ -913,7 +928,9 @@ std::vector<const char *> VulkanContext::getRequiredExtensions()
 
 void VulkanContext::createDebugger()
 {
-#ifdef DEBUG_BUILD
+    if (!m_isValidationLayersEnabled)
+        return;
+
     VkDebugUtilsMessengerCreateInfoEXT createInfo{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
     createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
                                  VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
@@ -929,8 +946,14 @@ void VulkanContext::createDebugger()
     auto function = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(m_instance, "vkCreateDebugUtilsMessengerEXT");
 
     if (function)
-        VX_VK_TRY(function(m_instance, &createInfo, nullptr, &m_debugMessenger));
-#endif
+    {
+        if (VX_VK_TRY(function(m_instance, &createInfo, nullptr, &m_debugMessenger)) == VK_SUCCESS)
+            VX_CORE_INFO_STREAM("[Vulkan] Debug utils messenger created");
+    }
+    else
+    {
+        VX_CORE_WARNING_STREAM("[Vulkan] Validation layers requested, but VK_EXT_debug_utils is unavailable");
+    }
 }
 
 void VulkanContext::cleanup()

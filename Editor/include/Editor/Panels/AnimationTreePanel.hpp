@@ -70,6 +70,7 @@ public:
     }
     void setPreviewPass(AnimationTreePreviewPass *pass);
     void setPreviewDescriptorSet(VkDescriptorSet ds);
+    bool hasActivePreview() const;
 
     ~AnimationTreePanel();
 

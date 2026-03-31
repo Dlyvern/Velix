@@ -16,7 +16,8 @@ enum class ShaderStage
     COMPUTE,
     RAYGEN,
     MISS,
-    CLOSEST_HIT
+    CLOSEST_HIT,
+    ANY_HIT
 };
 
 class ShaderHandler

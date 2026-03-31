@@ -123,6 +123,10 @@ public:
 
     void setAnimTreePreviewDescriptorSet(VkDescriptorSet ds);
     void setAnimTreePreviewPass(AnimationTreePreviewPass *pass);
+    bool hasActiveAnimationPreview() const
+    {
+        return m_animationTreePanel && m_animationTreePanel->hasActivePreview();
+    }
 
     void processPendingObjectSelection();
 
@@ -234,6 +238,9 @@ public:
 
     void setDockingFullscreen(bool value)
     {
+        if (m_isDockingWindowFullscreen == value)
+            return;
+
         m_isDockingWindowFullscreen = value;
 
         if (value)
@@ -391,6 +398,9 @@ private:
     bool hasUnsavedSceneChanges();
     void buildCurrentProject();
     void exportCurrentProjectPacket();
+    void drawExportProjectDialog();
+    bool saveProjectExportSettings();
+    bool exportCurrentProjectPacketForTarget(Project &project, ExportPlatform targetPlatform, std::vector<std::filesystem::path> &outExportDirectories);
 
     void setSelectedEntity(engine::Entity *entity);
     void focusSelectedEntity();
@@ -421,6 +431,7 @@ private:
     bool m_showEnvironmentSettings{false};
     bool m_showEditorCameraSettings{false};
     bool m_showBenchmark{false};
+    bool m_openExportProjectDialog{false};
     bool m_showHierarchyPanel{true};
     bool m_showDetailsPanel{true};
     bool m_isGameViewportVisible{false};

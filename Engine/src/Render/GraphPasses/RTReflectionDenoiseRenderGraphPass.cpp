@@ -190,6 +190,9 @@ RTReflectionDenoiseRenderGraphPass::getRenderPassExecutions(const RenderGraphPas
 
 void RTReflectionDenoiseRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent = extent;
     requestRecompilation();
 }

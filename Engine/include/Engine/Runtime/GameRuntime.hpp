@@ -3,7 +3,7 @@
 
 #include "Core/Macros.hpp"
 
-#include "Engine/Assets/ElixPacket.hpp"
+#include "Engine/Assets/ElixBundle.hpp"
 #include "Engine/Camera.hpp"
 #include "Engine/PluginSystem/PluginLoader.hpp"
 #include "Engine/Render/GraphPasses/BloomCompositeRenderGraphPass.hpp"
@@ -16,6 +16,7 @@
 #include "Engine/Render/GraphPasses/ParticleRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/PresentRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTAORenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTAODenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTReflectionDenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTReflectionsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTShadowDenoiseRenderGraphPass.hpp"
@@ -79,9 +80,7 @@ private:
 
     std::filesystem::path m_packetPath;
     std::filesystem::path m_modulePath;
-    std::filesystem::path m_extractionDirectory;
     std::filesystem::path m_entryScenePath;
-    ElixPacketManifest m_packetManifest{};
 
     LibraryHandle m_gameModuleLibrary{nullptr};
     std::vector<LibraryHandle> m_preloadedRuntimeLibraries;
@@ -97,6 +96,7 @@ private:
     renderGraph::RTShadowDenoiseRenderGraphPass *m_rtShadowDenoiseRenderGraphPass{nullptr};
     renderGraph::SSAORenderGraphPass *m_ssaoRenderGraphPass{nullptr};
     renderGraph::RTAORenderGraphPass *m_rtaoRenderGraphPass{nullptr};
+    renderGraph::RTAODenoiseRenderGraphPass *m_rtaoDenoiseRenderGraphPass{nullptr};
     renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
     renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
     renderGraph::VolumetricFogLightingRenderGraphPass *m_volumetricFogLightingRenderGraphPass{nullptr};

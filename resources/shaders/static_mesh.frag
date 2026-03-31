@@ -190,13 +190,53 @@ vec3 getLightRadianceAndDirection(in Light light, in vec3 fragPosView, out vec3 
     return vec3(0.0);
 }
 
-vec3 computeSpecular(vec3 N, vec3 V, vec3 L, vec3 specularColor, float roughness)
+float D_GGX(float NdotH, float a2)
 {
+    float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * d * d);
+}
+
+float G_SchlickGGX(float NdotX, float k)
+{
+    return NdotX / (NdotX * (1.0 - k) + k);
+}
+
+float G_Smith(float NdotV, float NdotL, float roughness)
+{
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return G_SchlickGGX(max(NdotV, 0.001), k) * G_SchlickGGX(max(NdotL, 0.001), k);
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0)
+{
+    return F0 + (1.0 - F0) * pow(1.0 - clamp(cosTheta, 0.0, 1.0), 5.0);
+}
+
+vec3 evaluateBRDF(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughness)
+{
+    float NdotL = max(dot(N, L), 0.0);
+    if (NdotL <= 0.0)
+        return vec3(0.0);
+
     vec3 H = normalize(V + L);
-    float shininess = mix(128.0, 8.0, clamp(roughness, 0.0, 1.0));
-    float specularStrength = pow(max(dot(N, H), 0.0), shininess);
-    specularStrength *= mix(1.0, 0.15, clamp(roughness, 0.0, 1.0));
-    return specularColor * specularStrength;
+    float NdotV = max(dot(N, V), 0.001);
+    float NdotH = max(dot(N, H), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+
+    float a = roughness * roughness;
+    float a2 = a * a;
+
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F = fresnelSchlick(HdotV, F0);
+    float D = D_GGX(NdotH, a2);
+    float G = G_Smith(NdotV, NdotL, roughness);
+
+    vec3 kD = (1.0 - F) * (1.0 - metallic);
+    vec3 diffuse = kD * albedo / PI;
+    vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
+
+    return (diffuse + specular) * NdotL;
 }
 
 void main()
@@ -221,8 +261,6 @@ void main()
 
     vec3 N = getNormalView(uv);
     vec3 V = normalize(-fragPositionView);
-    vec3 specularColor = mix(vec3(0.04), albedo, metallic);
-
     vec3 lighting = vec3(0.0);
     int count = min(lightData.lightCount, MAX_LIGHT_COUNT);
 
@@ -238,11 +276,7 @@ void main()
         if (NdotL <= 0.0)
             continue;
 
-        vec3 diffuseColor = mix(albedo, vec3(0.0), metallic);
-        vec3 diffuse = (diffuseColor / PI) * NdotL;
-        vec3 specular = computeSpecular(N, V, L, specularColor, roughness) * NdotL;
-
-        lighting += (diffuse + specular) * radiance * (1.0 - shadow);
+        lighting += evaluateBRDF(N, V, L, albedo, metallic, roughness) * radiance * (1.0 - shadow);
     }
 
     vec3 ambient = albedo * 0.03 * ao;

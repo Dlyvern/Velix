@@ -27,6 +27,10 @@ public:
     void syncQualitySettings();
     void syncActiveShadowCounts(uint32_t activeSpotCount, uint32_t activePointCount);
 
+    // When true, record() skips all draw calls and the shadow maps are cleared to
+    // depth=1.0 (no shadow). Use when RT shadows fully replace raster shadows.
+    void setSkipRendering(bool skip) { m_skipRendering = skip; }
+
     RGPResourceHandler &getDirectionalShadowHandler()
     {
         return m_depthTextureHandler;
@@ -89,6 +93,7 @@ private:
     uint32_t m_pointShadowCount{ShadowConstants::MAX_POINT_SHADOWS};
 
     VkClearValue m_clearValue;
+    bool m_skipRendering{false};
 
     RGPResourceHandler m_depthTextureHandler;
     RGPResourceHandler m_depthCubeTextureHandler;

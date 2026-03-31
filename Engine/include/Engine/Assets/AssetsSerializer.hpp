@@ -3,8 +3,10 @@
 
 #include "Engine/Assets/Asset.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <unordered_set>
+#include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -20,7 +22,9 @@ public:
     bool writeAnimationTree(const AnimationTree &tree, const std::string &outputPath) const;
 
     std::optional<TextureAsset> readTexture(const std::string &path) const;
+    std::optional<TextureAsset> readTexture(const std::vector<uint8_t> &bytes) const;
     std::optional<ModelAsset> readModel(const std::string &path) const;
+    std::optional<ModelAsset> readModel(const std::vector<uint8_t> &bytes) const;
     std::optional<AudioAsset> readAudio(const std::string &path) const;
     std::optional<AnimationAsset> readAnimationAsset(const std::string &path) const;
     std::optional<AnimationTree> readAnimationTree(const std::string &path) const;

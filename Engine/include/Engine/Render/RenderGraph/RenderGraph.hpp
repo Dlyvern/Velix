@@ -15,10 +15,14 @@
 #include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesCompiler.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
+#include "Engine/Render/RenderGraph/PerFrameDataWorker.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphProfilingData.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphProfiling.hpp"
 #include "Engine/RayTracing/RayTracingGeometryCache.hpp"
 #include "Engine/RayTracing/RayTracingScene.hpp"
+#include "Engine/RayTracing/SkinnedBlasBuilder.hpp"
+#include "Engine/Render/MeshGeometryRegistry.hpp"
+#include "Engine/Render/SceneMaterialResolver.hpp"
 #include "Engine/Render/UnifiedGeometryBuffer.hpp"
 #include "Engine/Render/GpuCullingSystem.hpp"
 #include "Engine/Render/BindlessRegistry.hpp"
@@ -133,6 +137,16 @@ public:
 
     void prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime);
 
+    void setCpuFrustumCullingEnabled(bool enabled)
+    {
+        m_enableCpuFrustumCulling = enabled;
+    }
+
+    void setCpuSmallFeatureCullingEnabled(bool enabled)
+    {
+        m_enableCpuSmallFeatureCulling = enabled;
+    }
+
     void draw();
     void setup();
 
@@ -145,6 +159,8 @@ public:
     {
         return m_imageIndex;
     }
+
+    std::vector<VkImageView> getImageViews(const std::vector<RGPResourceHandler> &handlers) const;
 
     static constexpr uint16_t MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -160,12 +176,6 @@ private:
     };
 
     std::vector<RGPConnection> m_connections;
-
-    struct MeshLocalBounds
-    {
-        glm::vec3 center{0.0f};
-        float radius{0.0f};
-    };
 
     RenderGraphPassData *findRenderGraphPassById(uint32_t id)
     {
@@ -252,9 +262,11 @@ private:
     std::vector<VkSemaphore> m_renderFinishedSemaphores;
     std::array<std::vector<VkSemaphore>, MAX_FRAMES_IN_FLIGHT> m_uploadWaitSemaphoresByFrame;
 
-    std::unordered_map<std::size_t, GPUMesh::SharedPtr> m_meshes;
+    MeshGeometryRegistry m_meshGeometryRegistry;
+    SceneMaterialResolver m_sceneMaterialResolver;
     rayTracing::RayTracingGeometryCache m_rayTracingGeometryCache;
     rayTracing::RayTracingScene m_rayTracingScene{MAX_FRAMES_IN_FLIGHT};
+    rayTracing::SkinnedBlasBuilder m_skinnedBlasBuilder;
 
     // Unified geometry buffer for static meshes – eliminates per-draw VB/IB rebinds.
     UnifiedGeometryBuffer m_staticUnifiedGeometry;
@@ -265,14 +277,8 @@ private:
 
     std::array<glm::vec4, 6> m_lastFrustumPlanes{}; // stored in prepareFrame, used in begin()
     bool m_lastFrustumCullingEnabled{false};
-
-    std::unordered_map<std::size_t, MeshLocalBounds> m_meshLocalBoundsByHash;
-    std::unordered_map<std::string, Texture::SharedPtr> m_texturesByResolvedPath;
-    std::unordered_set<std::string> m_failedTextureResolvedPaths;
-    std::unordered_map<std::string, Material::SharedPtr> m_materialsByAlbedoPath;
-    std::unordered_set<std::string> m_failedAlbedoTexturePaths;
-    std::unordered_map<std::string, Material::SharedPtr> m_materialsByAssetPath;
-    std::unordered_set<std::string> m_failedMaterialAssetPaths;
+    bool m_enableCpuFrustumCulling{true};
+    bool m_enableCpuSmallFeatureCulling{true};
 
     bool m_presentToSwapchain{true};
 

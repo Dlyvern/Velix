@@ -25,14 +25,17 @@ public:
         m_extent = extent;
     }
 
-    RenderTarget(VkDevice device, VkFormat format, VkImageAspectFlags aspect, core::Image::SharedPtr image) : m_device(device), m_format(format), m_aspect(aspect), m_image(image)
+    RenderTarget(VkDevice device, VkExtent2D extent, VkFormat format, VkImageAspectFlags aspect, core::Image::SharedPtr image)
+        : m_extent(extent), m_device(device), m_format(format), m_aspect(aspect), m_image(image)
     {
         createVkImageView();
     }
 
-    void resetVkImage(core::Image::SharedPtr image)
+    void resetVkImage(core::Image::SharedPtr image, VkExtent2D extent = {})
     {
         m_image = image;
+        if (extent.width != 0 || extent.height != 0)
+            m_extent = extent;
     }
 
     void createVkImage(VkExtent2D extent, VkImageUsageFlags usage, core::memory::MemoryUsage memFlags, VkFormat format, VkImageTiling tiling,
@@ -82,6 +85,16 @@ public:
         return m_imageView;
     }
 
+    const VkExtent2D &getExtent() const
+    {
+        return m_extent;
+    }
+
+    VkFormat getFormat() const
+    {
+        return m_format;
+    }
+
     core::Image::SharedPtr getImage() const
     {
         return m_image;
@@ -94,7 +107,7 @@ public:
     }
 
 private:
-    VkExtent2D m_extent;
+    VkExtent2D m_extent{};
     VkDevice m_device{VK_NULL_HANDLE};
     core::Image::SharedPtr m_image{nullptr};
     VkImageView m_imageView{VK_NULL_HANDLE};

@@ -16,11 +16,45 @@
 #include <memory>
 #include <cstdint>
 #include <string>
+#include <optional>
+#include <limits>
 
 #include <glm/glm.hpp>
 #include <cstring>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+
+struct MeshGeometryHash
+{
+    std::size_t value{0u};
+
+    bool isValid() const
+    {
+        return value != 0u;
+    }
+
+    explicit operator bool() const
+    {
+        return isValid();
+    }
+
+    bool operator==(const MeshGeometryHash &other) const = default;
+};
+
+struct MeshGeometryHashHasher
+{
+    std::size_t operator()(const MeshGeometryHash &hash) const noexcept
+    {
+        return hash.value;
+    }
+};
+
+struct MeshGeometryInfo
+{
+    MeshGeometryHash hash{};
+    glm::vec3 localBoundsCenter{0.0f};
+    float localBoundsRadius{0.0f};
+};
 
 struct CPUMesh
 {
@@ -35,10 +69,6 @@ struct CPUMesh
 
     CPUMaterial material;
     glm::mat4 localTransform{1.0f};
-
-    // Cached geometry hash — computed once, reused every frame (static meshes never change)
-    mutable std::size_t cachedGeometryHash{0};
-    mutable bool geometryHashCached{false};
 
     template <typename VertexT>
     static CPUMesh build(const std::vector<VertexT> &vertices, const std::vector<uint32_t> &indices)
@@ -56,6 +86,66 @@ struct CPUMesh
 
         return mesh;
     }
+
+    const MeshGeometryInfo &getGeometryInfo() const
+    {
+        if (!m_cachedGeometryInfo.has_value())
+            m_cachedGeometryInfo = buildGeometryInfo();
+
+        return *m_cachedGeometryInfo;
+    }
+
+    void invalidateGeometryInfo()
+    {
+        m_cachedGeometryInfo.reset();
+    }
+
+private:
+    MeshGeometryInfo buildGeometryInfo() const
+    {
+        MeshGeometryInfo info{};
+
+        std::size_t hashData{0u};
+        hashing::hash(hashData, vertexStride);
+        hashing::hash(hashData, vertexLayoutHash);
+
+        for (const auto &vertexByte : vertexData)
+            hashing::hash(hashData, vertexByte);
+
+        for (const auto &index : indices)
+            hashing::hash(hashData, index);
+
+        // Keep zero reserved as the "invalid / missing geometry" sentinel.
+        if (hashData == 0u)
+            hashData = 1u;
+
+        info.hash = MeshGeometryHash{hashData};
+
+        if (vertexStride < sizeof(glm::vec3) || vertexData.empty())
+            return info;
+
+        const uint32_t vertexCount = static_cast<uint32_t>(vertexData.size() / vertexStride);
+        if (vertexCount == 0u)
+            return info;
+
+        glm::vec3 minPosition(std::numeric_limits<float>::max());
+        glm::vec3 maxPosition(-std::numeric_limits<float>::max());
+
+        for (uint32_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+        {
+            glm::vec3 position(0.0f);
+            std::memcpy(&position, vertexData.data() + static_cast<size_t>(vertexIndex) * vertexStride, sizeof(glm::vec3));
+            minPosition = glm::min(minPosition, position);
+            maxPosition = glm::max(maxPosition, position);
+        }
+
+        info.localBoundsCenter = (minPosition + maxPosition) * 0.5f;
+        info.localBoundsRadius = glm::length((maxPosition - minPosition) * 0.5f);
+
+        return info;
+    }
+
+    mutable std::optional<MeshGeometryInfo> m_cachedGeometryInfo{};
 };
 
 struct GPUMesh

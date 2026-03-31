@@ -1,0 +1,88 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_ARB_gpu_shader_int64 : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+// Mirrors the layout in rt_reflections.rchit exactly.
+struct MaterialParams
+{
+    vec4  baseColorFactor;
+    vec4  emissiveFactor;
+    vec4  uvTransform;
+    float metallicFactor;
+    float roughnessFactor;
+    float normalScale;
+    float aoStrength;
+    uint  flags;
+    float alphaCutoff;
+    float uvRotation;
+    float ior;
+    uint  albedoTexIdx;
+    uint  normalTexIdx;
+    uint  ormTexIdx;
+    uint  emissiveTexIdx;
+};
+
+struct ReflectionInstance
+{
+    uint64_t     vertexAddress;
+    uint64_t     indexAddress;
+    uint         vertexStride;
+    uint         padding0;
+    uint         padding1;
+    uint         padding2;
+    MaterialParams material;
+};
+
+layout(std430, set = 1, binding = 6) readonly buffer ReflectionInstanceSSBO
+{
+    ReflectionInstance instances[];
+} instanceData;
+
+layout(set = 2, binding = 0) uniform sampler2D allTextures[];
+
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer IndexRef  { uint  index;  };
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer VertexRef
+{
+    vec3 position;
+    vec2 uv;
+    vec3 normal;
+    vec3 tangent;
+    vec3 bitangent;
+};
+
+hitAttributeEXT vec2 hitBarycentrics;
+
+uint loadIndex(uint64_t base, uint i) { return IndexRef(base + uint64_t(i) * 4ul).index; }
+
+void main()
+{
+    const ReflectionInstance inst = instanceData.instances[gl_InstanceCustomIndexEXT];
+    const MaterialParams     mat  = inst.material;
+
+    // No alpha cutoff → treat as fully opaque, confirm hit.
+    if (mat.alphaCutoff <= 0.0 || mat.albedoTexIdx == 0u)
+        return;
+
+    // Fetch triangle indices and interpolate UV at hit point.
+    const uint base = uint(gl_PrimitiveID) * 3u;
+    const uint i0   = loadIndex(inst.indexAddress, base);
+    const uint i1   = loadIndex(inst.indexAddress, base + 1u);
+    const uint i2   = loadIndex(inst.indexAddress, base + 2u);
+
+    VertexRef v0 = VertexRef(inst.vertexAddress + uint64_t(i0) * uint64_t(inst.vertexStride));
+    VertexRef v1 = VertexRef(inst.vertexAddress + uint64_t(i1) * uint64_t(inst.vertexStride));
+    VertexRef v2 = VertexRef(inst.vertexAddress + uint64_t(i2) * uint64_t(inst.vertexStride));
+
+    const float w  = 1.0 - hitBarycentrics.x - hitBarycentrics.y;
+    const vec2  uv = w * v0.uv + hitBarycentrics.x * v1.uv + hitBarycentrics.y * v2.uv;
+
+    const float alpha = texture(allTextures[nonuniformEXT(mat.albedoTexIdx)], uv).a
+                        * mat.baseColorFactor.a;
+
+    if (alpha < mat.alphaCutoff)
+        ignoreIntersectionEXT; // hole in the geometry — ray passes through
+    // else: confirm hit (default behaviour when main() returns)
+}

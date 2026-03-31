@@ -242,6 +242,11 @@ void ShadowRenderGraphPass::rebuildLayerViews()
 void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                                    const RenderGraphPassContext &renderContext)
 {
+    // When RT shadows are active, skip all draws — the render graph's vkCmdBeginRendering
+    // with loadOp=CLEAR already clears shadow maps to depth=1.0 (no shadow).
+    if (m_skipRendering)
+        return;
+
     if (renderContext.executionIndex >= m_executionInfos.size())
         return;
 

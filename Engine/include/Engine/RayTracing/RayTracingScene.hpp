@@ -2,8 +2,8 @@
 #define ELIX_RAY_TRACING_SCENE_HPP
 
 #include "Core/Macros.hpp"
+#include "Core/RTX/AccelerationStructure.hpp"
 #include "Engine/Mesh.hpp"
-#include "Engine/RayTracing/AccelerationStructure.hpp"
 #include "Engine/RayTracing/RayTracingGeometryCache.hpp"
 
 #include <glm/mat4x4.hpp>
@@ -20,13 +20,17 @@ class RayTracingScene
 public:
     struct InstanceInput
     {
-        std::size_t geometryHash{0u};
+        MeshGeometryHash geometryHash{};
         GPUMesh::SharedPtr mesh{nullptr};
         glm::mat4 transform{1.0f};
         uint32_t customInstanceIndex{0u};
         uint8_t mask{0xFFu};
         bool forceOpaque{true};
         bool disableTriangleFacingCull{false};
+
+        // If set, this BLAS is used directly (skips the geometry cache).
+        // Used for skinned meshes whose BLAS is built by SkinnedBlasBuilder.
+        core::rtx::AccelerationStructure::SharedPtr prebuiltBlas{nullptr};
     };
 
     explicit RayTracingScene(uint32_t framesInFlight = 2u);
@@ -38,14 +42,14 @@ public:
 
     void clear();
 
-    const AccelerationStructure::SharedPtr &getTLAS(uint32_t frameIndex) const;
+    const core::rtx::AccelerationStructure::SharedPtr &getTLAS(uint32_t frameIndex) const;
     uint32_t getInstanceCount(uint32_t frameIndex) const;
 
 private:
     struct FrameState
     {
         core::Buffer::SharedPtr instanceBuffer{nullptr};
-        AccelerationStructure::SharedPtr tlas{nullptr};
+        core::rtx::AccelerationStructure::SharedPtr tlas{nullptr};
         uint32_t instanceCount{0u};
         std::size_t contentHash{0u};
     };

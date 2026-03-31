@@ -4,6 +4,8 @@
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
 #include "Core/Buffer.hpp"
 #include "Core/PipelineLayout.hpp"
+#include "Core/RTX/RayTracingPipeline.hpp"
+#include "Core/RTX/ShaderBindingTable.hpp"
 #include "Core/Sampler.hpp"
 #include "Core/ShaderHandler.hpp"
 #include "Engine/Skybox.hpp"
@@ -17,8 +19,6 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-// Traces one reflection ray per pixel (more with rtReflectionSamples > 1)
-// against the TLAS and composites the result onto the lit image using Fresnel.
 class RTReflectionsRenderGraphPass : public IRenderGraphPass
 {
 public:
@@ -91,18 +91,15 @@ private:
     core::ShaderHandler m_raygenShader;
     core::ShaderHandler m_missShader;
     core::ShaderHandler m_closestHitShader;
-    core::Buffer::SharedPtr m_shaderBindingTable{nullptr};
+    core::ShaderHandler m_anyHitShader;
+    core::rtx::ShaderBindingTable::SharedPtr m_shaderBindingTable{nullptr};
 
-    VkPipeline m_rayTracingPipeline{VK_NULL_HANDLE};
-    VkStridedDeviceAddressRegionKHR m_raygenRegion{};
-    VkStridedDeviceAddressRegionKHR m_missRegion{};
-    VkStridedDeviceAddressRegionKHR m_hitRegion{};
-    VkStridedDeviceAddressRegionKHR m_callableRegion{};
+    core::rtx::RayTracingPipeline::SharedPtr m_rayTracingPipeline{nullptr};
 
     bool canUsePipelinePath() const;
     bool shouldUsePipelinePath() const;
     void createRayTracingPipeline();
-    void createShaderBindingTable(uint32_t groupCount);
+    void createShaderBindingTable();
     void destroyRayTracingPipeline();
     void updateReflectionSceneBuffer(const RenderGraphPassPerFrameData &data, uint32_t frameIndex);
     void ensureFallbackEnvironmentTexture();

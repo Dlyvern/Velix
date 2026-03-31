@@ -100,7 +100,7 @@ void ImGuiRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder &build
 {
     m_colorFormat = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();
 
-    m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    m_sampler = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                                             VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_COMPARE_OP_ALWAYS, VK_SAMPLER_MIPMAP_MODE_LINEAR);
 
     engine::renderGraph::RGPTextureDescription colorTextureDescription{m_colorFormat, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT};

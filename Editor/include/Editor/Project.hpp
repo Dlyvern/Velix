@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <cstdint>
 #include <optional>
+#include <filesystem>
 
 #include "Core/Macros.hpp"
 
@@ -79,6 +80,29 @@ struct ProjectCache
     std::unordered_map<std::string, ModelAssetRecord> modelsByPath;
 };
 
+enum class ExportTargetSelection : uint8_t
+{
+    Linux = 0,
+    Windows = 1,
+    Both = 2
+};
+
+enum class ExportPlatform : uint8_t
+{
+    Linux = 0,
+    Windows = 1
+};
+
+struct ExportPlatformSettings
+{
+    std::string buildDir;
+    std::string exportDir;
+    std::string cmakeGenerator;
+    std::string cmakeToolchainFile;
+    std::string supportRootDir;
+    std::string runtimeExecutablePath;
+};
+
 struct Project
 {
 public:
@@ -89,9 +113,19 @@ public:
     std::string scenesDir;
     std::string name;
     std::string fullPath;
+    std::string configPath;
     std::string buildDir;
     std::string sourcesDir;
     std::string exportDir;
+    ExportTargetSelection exportTargetSelection{
+#if defined(_WIN32)
+        ExportTargetSelection::Windows
+#else
+        ExportTargetSelection::Linux
+#endif
+    };
+    ExportPlatformSettings linuxExport;
+    ExportPlatformSettings windowsExport;
 
     void clearCache()
     {
@@ -100,6 +134,52 @@ public:
         cache.modelsByPath.clear();
     }
 };
+
+inline bool isProjectConfigFilePath(const std::filesystem::path &path)
+{
+    const std::string extension = path.extension().string();
+    return extension == ".elixproject" || extension == ".elixirproject";
+}
+
+inline std::filesystem::path resolveProjectRootPath(const Project &project)
+{
+    auto normalizeProjectRoot = [](const std::filesystem::path &candidate) -> std::filesystem::path
+    {
+        if (candidate.empty())
+            return {};
+
+        const std::filesystem::path normalized = candidate.lexically_normal();
+        std::error_code errorCode;
+        if (std::filesystem::is_directory(normalized, errorCode) && !errorCode)
+            return normalized;
+
+        errorCode.clear();
+        if (std::filesystem::is_regular_file(normalized, errorCode) && !errorCode && isProjectConfigFilePath(normalized))
+            return normalized.parent_path().lexically_normal();
+
+        if (isProjectConfigFilePath(normalized))
+            return normalized.parent_path().lexically_normal();
+
+        return {};
+    };
+
+    if (const std::filesystem::path fromFullPath = normalizeProjectRoot(project.fullPath); !fromFullPath.empty())
+        return fromFullPath;
+
+    if (const std::filesystem::path fromConfigPath = normalizeProjectRoot(project.configPath); !fromConfigPath.empty())
+        return fromConfigPath;
+
+    const std::filesystem::path fallback = project.fullPath.empty()
+                                               ? std::filesystem::path(project.configPath)
+                                               : std::filesystem::path(project.fullPath);
+    if (fallback.empty())
+        return {};
+
+    if (isProjectConfigFilePath(fallback))
+        return fallback.parent_path().lexically_normal();
+
+    return fallback.lexically_normal();
+}
 
 ELIX_NESTED_NAMESPACE_END
 

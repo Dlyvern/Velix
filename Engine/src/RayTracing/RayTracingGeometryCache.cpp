@@ -1,47 +1,53 @@
 #include "Engine/RayTracing/RayTracingGeometryCache.hpp"
 
+#include "Core/RTX/AccelerationStructureBuilder.hpp"
 #include "Core/VulkanContext.hpp"
-#include "Engine/RayTracing/MeshToRayTracedObjectsConverter.hpp"
+#include "Engine/Utilities/AsyncGpuUpload.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(rayTracing)
 
 namespace
 {
-    VkDeviceAddress getBufferDeviceAddress(const core::Buffer &buffer)
+    void destroyPendingMeshUpload(RayTracingGeometryCache::Entry &entry, bool wait)
     {
-        auto context = core::VulkanContext::getContext();
-        if (!context || !context->hasBufferDeviceAddressSupport())
-            return 0u;
+        if (entry.pendingMeshUploadFence != VK_NULL_HANDLE)
+        {
+            auto context = core::VulkanContext::getContext();
+            if (context)
+            {
+                if (wait)
+                    vkWaitForFences(context->getDevice(), 1, &entry.pendingMeshUploadFence, VK_TRUE, UINT64_MAX);
+                vkDestroyFence(context->getDevice(), entry.pendingMeshUploadFence, nullptr);
+            }
+        }
 
-        VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
-        addressInfo.buffer = buffer.vk();
-        return vkGetBufferDeviceAddress(context->getDevice(), &addressInfo);
+        entry.pendingMeshUploadFence = VK_NULL_HANDLE;
+        entry.pendingMeshUploadCommandBuffer.reset();
+        entry.meshUploadPending = false;
     }
 
-    bool submitAndWait(core::CommandBuffer::SharedPtr commandBuffer, VkQueue queue)
+    void destroyPendingBlasBuild(RayTracingGeometryCache::Entry &entry, bool wait)
     {
-        if (!commandBuffer || queue == VK_NULL_HANDLE)
-            return false;
+        if (entry.pendingBlasFence != VK_NULL_HANDLE)
+        {
+            auto context = core::VulkanContext::getContext();
+            if (context)
+            {
+                if (wait)
+                    vkWaitForFences(context->getDevice(), 1, &entry.pendingBlasFence, VK_TRUE, UINT64_MAX);
+                vkDestroyFence(context->getDevice(), entry.pendingBlasFence, nullptr);
+            }
+        }
 
-        auto context = core::VulkanContext::getContext();
-        if (!context)
-            return false;
-
-        VkFenceCreateInfo fenceCreateInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        VkFence fence = VK_NULL_HANDLE;
-        if (vkCreateFence(context->getDevice(), &fenceCreateInfo, nullptr, &fence) != VK_SUCCESS)
-            return false;
-
-        const bool submitted = commandBuffer->submit(queue, {}, {}, {}, fence);
-        const bool waited = submitted && vkWaitForFences(context->getDevice(), 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
-
-        vkDestroyFence(context->getDevice(), fence, nullptr);
-        return submitted && waited;
+        entry.pendingBlasFence = VK_NULL_HANDLE;
+        entry.pendingBlasCommandBuffer.reset();
+        entry.pendingScratchBuffer.reset();
+        entry.blasPending = false;
     }
 } // namespace
 
-const RayTracingGeometryCache::Entry *RayTracingGeometryCache::find(std::size_t geometryHash) const
+const RayTracingGeometryCache::Entry *RayTracingGeometryCache::find(MeshGeometryHash geometryHash) const
 {
     const auto it = m_entries.find(geometryHash);
     if (it == m_entries.end())
@@ -50,7 +56,7 @@ const RayTracingGeometryCache::Entry *RayTracingGeometryCache::find(std::size_t 
     return &it->second;
 }
 
-RayTracingGeometryCache::Entry *RayTracingGeometryCache::find(std::size_t geometryHash)
+RayTracingGeometryCache::Entry *RayTracingGeometryCache::find(MeshGeometryHash geometryHash)
 {
     const auto it = m_entries.find(geometryHash);
     if (it == m_entries.end())
@@ -59,37 +65,64 @@ RayTracingGeometryCache::Entry *RayTracingGeometryCache::find(std::size_t geomet
     return &it->second;
 }
 
-bool RayTracingGeometryCache::contains(std::size_t geometryHash) const
+bool RayTracingGeometryCache::contains(MeshGeometryHash geometryHash) const
 {
-    return m_entries.find(geometryHash) != m_entries.end();
+    return find(geometryHash) != nullptr;
 }
 
-RayTracedMesh::SharedPtr RayTracingGeometryCache::getOrCreate(std::size_t geometryHash,
+RayTracedMesh::SharedPtr RayTracingGeometryCache::getOrCreate(MeshGeometryHash geometryHash,
                                                               const GPUMesh &mesh,
                                                               core::CommandPool::SharedPtr commandPool)
 {
-    auto it = m_entries.find(geometryHash);
-    if (it != m_entries.end() && it->second.rayTracedMesh && !it->second.dirty)
-        return it->second.rayTracedMesh;
+    auto context = core::VulkanContext::getContext();
+    auto &entry = m_entries[geometryHash];
+    entry.geometryHash = geometryHash;
 
-    auto rayTracedMesh = RayTracedMesh::createFromMesh(mesh, commandPool);
+    if (entry.meshUploadPending && entry.pendingMeshUploadFence != VK_NULL_HANDLE)
+    {
+        const VkResult status = context ? vkGetFenceStatus(context->getDevice(), entry.pendingMeshUploadFence) : VK_ERROR_DEVICE_LOST;
+        if (status == VK_NOT_READY)
+            return nullptr;
+
+        destroyPendingMeshUpload(entry, false);
+        if (status != VK_SUCCESS)
+        {
+            entry.rayTracedMesh.reset();
+            return nullptr;
+        }
+
+        if (entry.rayTracedMesh && !entry.dirty)
+            return entry.rayTracedMesh;
+    }
+
+    if (entry.rayTracedMesh && !entry.dirty)
+        return entry.rayTracedMesh;
+
+    RayTracedMesh::UploadSubmission pendingUpload{};
+    auto rayTracedMesh = RayTracedMesh::createFromMesh(mesh, commandPool, &pendingUpload);
+
     if (!rayTracedMesh)
         return nullptr;
 
-    if (it == m_entries.end())
-        it = m_entries.emplace(geometryHash, Entry{}).first;
+    entry.rayTracedMesh = std::move(rayTracedMesh);
+    entry.dirty = false;
+    ++entry.version;
 
-    it->second.geometryHash = geometryHash;
-    it->second.rayTracedMesh = std::move(rayTracedMesh);
-    it->second.dirty = false;
-    ++it->second.version;
+    if (pendingUpload.fence != VK_NULL_HANDLE)
+    {
+        entry.pendingMeshUploadFence = pendingUpload.fence;
+        entry.pendingMeshUploadCommandBuffer = std::move(pendingUpload.commandBuffer);
+        entry.meshUploadPending = true;
+        return nullptr;
+    }
 
-    return it->second.rayTracedMesh;
+    return entry.rayTracedMesh;
 }
 
-AccelerationStructure::SharedPtr RayTracingGeometryCache::getOrCreateBLAS(std::size_t geometryHash,
-                                                                          const GPUMesh &mesh,
-                                                                          core::CommandPool::SharedPtr commandPool)
+core::rtx::AccelerationStructure::SharedPtr RayTracingGeometryCache::getOrCreateBLAS(
+    MeshGeometryHash geometryHash,
+    const GPUMesh &mesh,
+    core::CommandPool::SharedPtr commandPool)
 {
     auto context = core::VulkanContext::getContext();
     if (!context || !context->hasAccelerationStructureSupport())
@@ -98,6 +131,25 @@ AccelerationStructure::SharedPtr RayTracingGeometryCache::getOrCreateBLAS(std::s
     auto &entry = m_entries[geometryHash];
     entry.geometryHash = geometryHash;
 
+    // Poll an in-flight async BLAS build.
+    if (entry.blasPending && entry.pendingBlasFence != VK_NULL_HANDLE)
+    {
+        const VkResult status = vkGetFenceStatus(context->getDevice(), entry.pendingBlasFence);
+        if (status == VK_NOT_READY)
+            return nullptr; // Still building — skip this instance for this frame.
+
+        // Build complete (VK_SUCCESS) or failed — clean up regardless.
+        destroyPendingBlasBuild(entry, false);
+
+        if (status != VK_SUCCESS)
+        {
+            entry.blas.reset();
+            return nullptr;
+        }
+
+        return entry.blas;
+    }
+
     if (entry.blas && !entry.dirty)
         return entry.blas;
 
@@ -105,31 +157,19 @@ AccelerationStructure::SharedPtr RayTracingGeometryCache::getOrCreateBLAS(std::s
     if (!rayTracedMesh)
         return nullptr;
 
-    VkAccelerationStructureGeometryKHR geometry{};
-    VkAccelerationStructureBuildRangeInfoKHR rangeInfo{};
-    if (!MeshToRayTracedObjectsConverter::convert(mesh, *rayTracedMesh, geometry, rangeInfo))
+    core::rtx::TriangleGeometryDesc geometryDesc{};
+    if (!RayTracedMesh::fillGeometryDesc(mesh, *rayTracedMesh, geometryDesc))
         return nullptr;
 
-    VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
-        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
-    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-    buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    buildInfo.geometryCount = 1u;
-    buildInfo.pGeometries = &geometry;
-
-    const uint32_t primitiveCount = rangeInfo.primitiveCount;
-    VkAccelerationStructureBuildSizesInfoKHR sizeInfo{
-        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
-    vkGetAccelerationStructureBuildSizesKHR(
-        context->getDevice(),
-        VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-        &buildInfo,
-        &primitiveCount,
-        &sizeInfo);
+    const core::rtx::BuildSizes sizeInfo =
+        core::rtx::AccelerationStructureBuilder::queryBottomLevelSizes(
+            geometryDesc,
+            VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
 
     if (!entry.blas || entry.blas->size() < sizeInfo.accelerationStructureSize)
-        entry.blas = AccelerationStructure::create(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, sizeInfo.accelerationStructureSize);
+        entry.blas = core::rtx::AccelerationStructure::create(
+            VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+            sizeInfo.accelerationStructureSize);
 
     if (!entry.blas || !entry.blas->isValid())
         return nullptr;
@@ -138,13 +178,8 @@ AccelerationStructure::SharedPtr RayTracingGeometryCache::getOrCreateBLAS(std::s
         sizeInfo.buildScratchSize,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         core::memory::MemoryUsage::GPU_ONLY);
-
-    const VkDeviceAddress scratchAddress = scratchBuffer ? getBufferDeviceAddress(*scratchBuffer) : 0u;
-    if (scratchAddress == 0u)
+    if (!scratchBuffer)
         return nullptr;
-
-    buildInfo.dstAccelerationStructure = entry.blas->vk();
-    buildInfo.scratchData.deviceAddress = scratchAddress;
 
     auto pool = commandPool ? commandPool : context->getGraphicsCommandPool();
     if (!pool)
@@ -154,37 +189,64 @@ AccelerationStructure::SharedPtr RayTracingGeometryCache::getOrCreateBLAS(std::s
     if (!commandBuffer->begin())
         return nullptr;
 
-    const VkAccelerationStructureBuildRangeInfoKHR *buildRanges[] = {&rangeInfo};
-    vkCmdBuildAccelerationStructuresKHR(commandBuffer, 1u, &buildInfo, buildRanges);
+    core::rtx::AccelerationStructureBuilder::recordBottomLevelBuild(
+        *commandBuffer,
+        *entry.blas,
+        geometryDesc,
+        *scratchBuffer,
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+        VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
 
     if (!commandBuffer->end())
         return nullptr;
 
-    if (!submitAndWait(commandBuffer, context->getGraphicsQueue()))
+    // Submit asynchronously — the scratch buffer is kept alive in the Entry until the
+    // fence signals (polled on the next call to getOrCreateBLAS for this hash).
+    VkFence fence = utilities::AsyncGpuUpload::submitAsync(commandBuffer, context->getGraphicsQueue());
+    if (fence == VK_NULL_HANDLE)
         return nullptr;
 
-    entry.primitiveCount = primitiveCount;
+    entry.pendingBlasFence = fence;
+    entry.pendingBlasCommandBuffer = std::move(commandBuffer);
+    entry.pendingScratchBuffer = scratchBuffer;
+    entry.blasPending = true;
+    entry.primitiveCount = geometryDesc.triangleCount;
     entry.dirty = false;
-    return entry.blas;
+    // Return nullptr this frame; the BLAS will be available next frame once the build completes.
+    return nullptr;
 }
 
-void RayTracingGeometryCache::markDirty(std::size_t geometryHash)
+void RayTracingGeometryCache::markDirty(MeshGeometryHash geometryHash)
 {
     auto it = m_entries.find(geometryHash);
     if (it == m_entries.end())
         return;
 
+    destroyPendingMeshUpload(it->second, true);
+    destroyPendingBlasBuild(it->second, true);
     it->second.dirty = true;
+    it->second.rayTracedMesh.reset();
     it->second.blas.reset();
 }
 
-void RayTracingGeometryCache::erase(std::size_t geometryHash)
+void RayTracingGeometryCache::erase(MeshGeometryHash geometryHash)
 {
+    auto it = m_entries.find(geometryHash);
+    if (it != m_entries.end())
+    {
+        destroyPendingMeshUpload(it->second, true);
+        destroyPendingBlasBuild(it->second, true);
+    }
     m_entries.erase(geometryHash);
 }
 
 void RayTracingGeometryCache::clear()
 {
+    for (auto &[hash, entry] : m_entries)
+    {
+        destroyPendingMeshUpload(entry, true);
+        destroyPendingBlasBuild(entry, true);
+    }
     m_entries.clear();
 }
 

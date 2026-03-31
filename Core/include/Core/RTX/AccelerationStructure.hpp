@@ -1,15 +1,15 @@
-#ifndef ELIX_ACCELERATION_STRUCTURE_HPP
-#define ELIX_ACCELERATION_STRUCTURE_HPP
+#ifndef ELIX_CORE_RTX_ACCELERATION_STRUCTURE_HPP
+#define ELIX_CORE_RTX_ACCELERATION_STRUCTURE_HPP
 
-#include "Core/Macros.hpp"
 #include "Core/Buffer.hpp"
+#include "Core/Macros.hpp"
 
 #include <volk.h>
 
 #include <memory>
 
-ELIX_NESTED_NAMESPACE_BEGIN(engine)
-ELIX_CUSTOM_NAMESPACE_BEGIN(rayTracing)
+ELIX_NESTED_NAMESPACE_BEGIN(core)
+ELIX_CUSTOM_NAMESPACE_BEGIN(rtx)
 
 class AccelerationStructure
 {
@@ -58,6 +58,7 @@ private:
     bool createInternal(VkAccelerationStructureTypeKHR type, VkDeviceSize size);
     void refreshDeviceAddress();
 
+    VkDevice m_device{VK_NULL_HANDLE};
     VkAccelerationStructureKHR m_handle{VK_NULL_HANDLE};
     core::Buffer::SharedPtr m_buffer{nullptr};
     VkDeviceAddress m_deviceAddress{0u};
@@ -68,4 +69,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ACCELERATION_STRUCTURE_HPP
+#endif // ELIX_CORE_RTX_ACCELERATION_STRUCTURE_HPP

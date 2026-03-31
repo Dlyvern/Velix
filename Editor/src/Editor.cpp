@@ -25,7 +25,8 @@
 #include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Utilities/ImageUtilities.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
-#include "Engine/Assets/ElixPacket.hpp"
+#include "Engine/Assets/AssetManager.hpp"
+#include "Engine/Assets/ElixBundle.hpp"
 
 #include "Editor/FileHelper.hpp"
 #include "Editor/Actions/Commands/CreateEntityCommand.hpp"
@@ -76,9 +77,11 @@ namespace
     constexpr float kToolBarHeight = 34.0f;
     constexpr float kBottomBarHeight = 32.0f;
 
-    std::string quoteShellArgument(const std::filesystem::path &path)
+    const char *sharedLibraryExtensionForPlatform(ExportPlatform platform);
+    std::filesystem::path makeAbsoluteNormalized(const std::filesystem::path &path);
+
+    std::string quoteShellTextArgument(const std::string &value)
     {
-        std::string value = path.string();
         std::string escaped;
         escaped.reserve(value.size() + 2);
 
@@ -95,6 +98,11 @@ namespace
         }
 
         return "\"" + escaped + "\"";
+    }
+
+    std::string quoteShellArgument(const std::filesystem::path &path)
+    {
+        return quoteShellTextArgument(path.string());
     }
 
     std::string joinDetectedIdeNames(const std::vector<elix::engine::EngineConfig::IdeInfo> &ides)
@@ -291,7 +299,7 @@ namespace
         return 3;
     }
 
-    std::filesystem::path findGameModuleLibraryPath(const std::filesystem::path &buildDirectory)
+    std::filesystem::path findGameModuleLibraryPath(const std::filesystem::path &buildDirectory, ExportPlatform platform)
     {
         if (buildDirectory.empty() || !std::filesystem::exists(buildDirectory))
             return {};
@@ -305,8 +313,8 @@ namespace
         };
 
         const std::vector<std::string> moduleNames = {
-            std::string("GameModule") + SHARED_LIB_EXTENSION,
-            std::string("libGameModule") + SHARED_LIB_EXTENSION};
+            std::string("GameModule") + sharedLibraryExtensionForPlatform(platform),
+            std::string("libGameModule") + sharedLibraryExtensionForPlatform(platform)};
 
         for (const auto &searchRoot : searchRoots)
         {
@@ -330,7 +338,7 @@ namespace
                 continue;
 
             const auto path = entry.path();
-            if (path.extension() != SHARED_LIB_EXTENSION)
+            if (path.extension() != sharedLibraryExtensionForPlatform(platform))
                 continue;
 
             const std::string stem = path.stem().string();
@@ -423,6 +431,179 @@ namespace
 
         return {};
     }
+
+    constexpr ExportPlatform getHostExportPlatform()
+    {
+#if defined(_WIN32)
+        return ExportPlatform::Windows;
+#else
+        return ExportPlatform::Linux;
+#endif
+    }
+
+    const char *exportPlatformDisplayName(ExportPlatform platform)
+    {
+        switch (platform)
+        {
+        case ExportPlatform::Linux:
+            return "Linux";
+        case ExportPlatform::Windows:
+            return "Windows";
+        default:
+            return "Unknown";
+        }
+    }
+
+    const char *exportPlatformId(ExportPlatform platform)
+    {
+        switch (platform)
+        {
+        case ExportPlatform::Linux:
+            return "linux";
+        case ExportPlatform::Windows:
+            return "windows";
+        default:
+            return "unknown";
+        }
+    }
+
+    const char *executableExtensionForPlatform(ExportPlatform platform)
+    {
+        return platform == ExportPlatform::Windows ? ".exe" : "";
+    }
+
+    const char *sharedLibraryExtensionForPlatform(ExportPlatform platform)
+    {
+        return platform == ExportPlatform::Windows ? ".dll" : ".so";
+    }
+
+    std::vector<ExportPlatform> exportPlatformsFromSelection(ExportTargetSelection selection)
+    {
+        switch (selection)
+        {
+        case ExportTargetSelection::Both:
+            return {ExportPlatform::Linux, ExportPlatform::Windows};
+        case ExportTargetSelection::Windows:
+            return {ExportPlatform::Windows};
+        case ExportTargetSelection::Linux:
+        default:
+            return {ExportPlatform::Linux};
+        }
+    }
+
+    ExportPlatformSettings &exportSettingsForPlatform(Project &project, ExportPlatform platform)
+    {
+        return platform == ExportPlatform::Windows ? project.windowsExport : project.linuxExport;
+    }
+
+    const ExportPlatformSettings &exportSettingsForPlatform(const Project &project, ExportPlatform platform)
+    {
+        return platform == ExportPlatform::Windows ? project.windowsExport : project.linuxExport;
+    }
+
+    std::filesystem::path findEngineSourceRootForExport()
+    {
+        std::filesystem::path candidate = makeAbsoluteNormalized(FileHelper::getExecutableFilePath()).parent_path();
+        if (candidate.filename() == "bin")
+            candidate = candidate.parent_path();
+
+        for (std::filesystem::path current = candidate; !current.empty() && current.has_relative_path(); current = current.parent_path())
+        {
+            if (std::filesystem::exists(current / "CMakeLists.txt") &&
+                std::filesystem::exists(current / "Core") &&
+                std::filesystem::exists(current / "Engine") &&
+                std::filesystem::exists(current / "Editor") &&
+                std::filesystem::exists(current / "VelixSDK"))
+                return current;
+
+            if (current == current.root_path())
+                break;
+        }
+
+        return {};
+    }
+
+    std::filesystem::path defaultWindowsToolchainFileForExport()
+    {
+        const std::filesystem::path engineSourceRoot = findEngineSourceRootForExport();
+        if (engineSourceRoot.empty())
+            return {};
+
+        const std::filesystem::path candidate = engineSourceRoot / "cmake" / "toolchains" / "mingw-w64.cmake";
+        if (std::filesystem::exists(candidate))
+            return candidate;
+
+        return {};
+    }
+
+    std::filesystem::path inferRuntimeRootFromExecutable(const std::filesystem::path &runtimeExecutablePath)
+    {
+        if (runtimeExecutablePath.empty())
+            return {};
+
+        const std::filesystem::path runtimeDirectory = runtimeExecutablePath.parent_path();
+        if (runtimeDirectory.filename() == "bin")
+            return runtimeDirectory.parent_path();
+
+        return runtimeDirectory;
+    }
+
+    std::filesystem::path findRuntimeExecutableInSupportRoot(const std::filesystem::path &supportRoot,
+                                                             const std::filesystem::path &runningExecutablePath,
+                                                             ExportPlatform platform)
+    {
+        if (supportRoot.empty())
+            return {};
+
+        const std::string executableBaseName = runningExecutablePath.stem().string().empty()
+                                                   ? std::string("Velix")
+                                                   : runningExecutablePath.stem().string();
+        const std::string executableName = executableBaseName + executableExtensionForPlatform(platform);
+
+        const std::vector<std::filesystem::path> candidates = {
+            supportRoot / "bin" / executableName,
+            supportRoot / executableName,
+            supportRoot / "Release" / executableName,
+            supportRoot / "bin" / "Release" / executableName,
+            supportRoot / "RelWithDebInfo" / executableName,
+            supportRoot / "bin" / "RelWithDebInfo" / executableName,
+        };
+
+        for (const auto &candidate : candidates)
+        {
+            if (std::filesystem::exists(candidate) && std::filesystem::is_regular_file(candidate))
+                return candidate;
+        }
+
+        return {};
+    }
+
+    std::string exportTargetSelectionToString(ExportTargetSelection selection)
+    {
+        switch (selection)
+        {
+        case ExportTargetSelection::Windows:
+            return "windows";
+        case ExportTargetSelection::Both:
+            return "both";
+        case ExportTargetSelection::Linux:
+        default:
+            return "linux";
+        }
+    }
+
+    struct ResolvedExportPlatformSettings
+    {
+        ExportPlatform platform{ExportPlatform::Linux};
+        std::filesystem::path buildDirectory;
+        std::filesystem::path exportDirectory;
+        std::filesystem::path supportRootDir;
+        std::filesystem::path runtimeExecutablePath;
+        std::filesystem::path runtimeRootDir;
+        std::filesystem::path cmakeToolchainFile;
+        std::filesystem::path cmakePrefixPath;
+        std::string cmakeGenerator;
+    };
 
     std::string toLowerCopy(std::string text)
     {
@@ -858,6 +1039,8 @@ namespace
     {
         std::vector<std::string> texturePaths;
         std::unordered_set<std::string> uniquePaths;
+        std::error_code directoryError;
+        const bool canScanDirectory = !projectRoot.empty() && std::filesystem::is_directory(projectRoot, directoryError) && !directoryError;
 
         auto addTexturePath = [&](const std::filesystem::path &path)
         {
@@ -880,8 +1063,11 @@ namespace
         }
 
         std::error_code scanError;
-        for (std::filesystem::recursive_directory_iterator iterator(projectRoot, scanError);
-             !scanError && iterator != std::filesystem::recursive_directory_iterator();
+        for (std::filesystem::recursive_directory_iterator iterator(
+                 projectRoot,
+                 std::filesystem::directory_options::skip_permission_denied,
+                 scanError);
+             canScanDirectory && !scanError && iterator != std::filesystem::recursive_directory_iterator();
              iterator.increment(scanError))
         {
             std::error_code fileError;
@@ -2032,8 +2218,10 @@ void Editor::showDockSpace()
     if (m_isDockingWindowFullscreen)
     {
         ImGuiViewport *viewport = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(viewport->WorkPos);
-        ImGui::SetNextWindowSize(viewport->WorkSize);
+        // This dockspace owns the custom title bar / toolbar chrome itself, so it must
+        // match the full main viewport instead of a reduced work area.
+        ImGui::SetNextWindowPos(viewport->Pos);
+        ImGui::SetNextWindowSize(viewport->Size);
         ImGui::SetNextWindowViewport(viewport->ID);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -2051,6 +2239,9 @@ void Editor::showDockSpace()
     m_dockSpaceId = dockspaceId;
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), dockspaceFlags);
 
+    const ImVec2 dockHostPos = ImGui::GetWindowPos();
+    const ImVec2 dockHostSize = ImGui::GetWindowSize();
+
     ImGui::End();
 
     if (m_reinitDocking)
@@ -2059,12 +2250,12 @@ void Editor::showDockSpace()
 
         ImGui::DockBuilderRemoveNode(dockspaceId);
         ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-        const ImVec2 dockViewportSize = ImGui::GetMainViewport()->Size;
-        ImGui::DockBuilderSetNodeSize(dockspaceId, dockViewportSize);
+        ImGui::DockBuilderSetNodePos(dockspaceId, dockHostPos);
+        ImGui::DockBuilderSetNodeSize(dockspaceId, dockHostSize);
 
         ImGuiID dockMainId = dockspaceId;
 
-        const float totalDockHeight = std::max(1.0f, dockViewportSize.y);
+        const float totalDockHeight = std::max(1.0f, dockHostSize.y);
         const float titleBarFraction = std::clamp(kTitleBarHeight / totalDockHeight, 0.0f, 0.25f);
         ImGuiID titleBarDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Up, titleBarFraction, nullptr, &dockMainId);
         ImGui::DockBuilderDockWindow("TitleBar", titleBarDock);
@@ -2331,8 +2522,8 @@ void Editor::drawCustomTitleBar()
         if (ImGui::Button("Build Project"))
             buildCurrentProject();
 
-        if (ImGui::Button("Export Game (.elixpacket)"))
-            exportCurrentProjectPacket();
+        if (ImGui::Button("Export Project..."))
+            m_openExportProjectDialog = true;
 
         ImGui::Separator();
 
@@ -2376,7 +2567,7 @@ void Editor::drawCustomTitleBar()
 
         auto project = m_currentProject.lock();
         const auto preferredVSCode = engineConfig.findPreferredVSCodeIde();
-        const bool hasProject = project && !project->fullPath.empty() && std::filesystem::exists(project->fullPath);
+        const bool hasProject = project && !resolveProjectRootPath(*project).empty() && std::filesystem::exists(resolveProjectRootPath(*project));
         const bool canOpenProjectInVSCode = hasProject && preferredVSCode.has_value();
 
         if (!preferredVSCode)
@@ -2390,7 +2581,7 @@ void Editor::drawCustomTitleBar()
 
         if (ImGui::Button("Open Project in VSCode"))
         {
-            std::filesystem::path projectRoot = project->fullPath;
+            const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
             const std::string command = quoteShellArgument(preferredVSCode->command) + " " + quoteShellArgument(projectRoot);
 
             if (!syncProjectCompileCommands(*project))
@@ -2444,7 +2635,7 @@ void Editor::drawCustomTitleBar()
                 if (project)
                 {
                     std::filesystem::path scenesDir = project->scenesDir.empty()
-                                                          ? std::filesystem::path(project->fullPath) / "Scenes"
+                                                          ? resolveProjectRootPath(*project) / "Scenes"
                                                           : std::filesystem::path(project->scenesDir);
 
                     std::error_code ec;
@@ -2575,11 +2766,12 @@ void Editor::drawCustomTitleBar()
             s_foundScenes.clear();
             s_selectedScene = -1;
             auto project = m_currentProject.lock();
-            if (project && !project->fullPath.empty())
+            const std::filesystem::path projectRoot = project ? resolveProjectRootPath(*project) : std::filesystem::path{};
+            std::error_code ec;
+            if (!projectRoot.empty() && std::filesystem::is_directory(projectRoot, ec) && !ec)
             {
-                std::error_code ec;
                 for (const auto &entry : std::filesystem::recursive_directory_iterator(
-                         project->fullPath, std::filesystem::directory_options::skip_permission_denied, ec))
+                         projectRoot, std::filesystem::directory_options::skip_permission_denied, ec))
                 {
                     if (entry.is_regular_file())
                     {
@@ -2598,8 +2790,13 @@ void Editor::drawCustomTitleBar()
         ImGui::BeginChild("SceneList", ImVec2(520, 320), true);
         for (int i = 0; i < static_cast<int>(s_foundScenes.size()); ++i)
         {
-            const std::string label = project
-                                          ? std::filesystem::relative(s_foundScenes[i], project->fullPath).string()
+            const std::filesystem::path projectRoot = project ? resolveProjectRootPath(*project) : std::filesystem::path{};
+            std::error_code relativeError;
+            const std::filesystem::path relativePath = project
+                                                           ? std::filesystem::relative(s_foundScenes[i], projectRoot, relativeError)
+                                                           : std::filesystem::path{};
+            const std::string label = project && !relativeError && !relativePath.empty()
+                                          ? relativePath.string()
                                           : s_foundScenes[i].filename().string();
             if (ImGui::Selectable(label.c_str(), s_selectedScene == i, ImGuiSelectableFlags_AllowDoubleClick))
             {
@@ -2748,6 +2945,8 @@ void Editor::drawCustomTitleBar()
 
     if (ImGui::Button("X", ImVec2(buttonSize, buttonSize * 0.9f)))
         window.close();
+
+    drawExportProjectDialog();
 
     ImGui::End();
 
@@ -2934,7 +3133,7 @@ void Editor::buildCurrentProject()
         return;
     }
 
-    const std::filesystem::path projectRoot = project->fullPath;
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
     if (projectRoot.empty() || !std::filesystem::exists(projectRoot))
     {
         VX_EDITOR_ERROR_STREAM("Build aborted: invalid project path '" << project->fullPath << "'\n");
@@ -2988,7 +3187,7 @@ void Editor::buildCurrentProject()
         return;
     }
 
-    const auto moduleLibraryPath = findGameModuleLibraryPath(buildDirectory);
+    const auto moduleLibraryPath = findGameModuleLibraryPath(buildDirectory, getHostExportPlatform());
     if (moduleLibraryPath.empty())
     {
         VX_EDITOR_ERROR_STREAM("Build succeeded but GameModule library was not found in " << buildDirectory << '\n');
@@ -3052,6 +3251,527 @@ void Editor::buildCurrentProject()
     m_notificationManager.showSuccess("Build done. Loaded scripts: " + std::to_string(scriptsCount));
 }
 
+bool Editor::saveProjectExportSettings()
+{
+    auto project = m_currentProject.lock();
+    if (!project || project->configPath.empty())
+        return false;
+
+    std::ifstream input(project->configPath);
+    if (!input.is_open())
+        return false;
+
+    nlohmann::json json;
+    try
+    {
+        input >> json;
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
+
+    auto setStringOrErase = [](nlohmann::json &object, const char *key, const std::string &value)
+    {
+        if (value.empty())
+            object.erase(key);
+        else
+            object[key] = value;
+    };
+
+    auto serializeProjectPath = [&](const std::string &value) -> std::string
+    {
+        if (value.empty())
+            return {};
+
+        return toProjectRelativePathIfPossible(makeAbsoluteNormalized(value), projectRoot);
+    };
+
+    nlohmann::json &exportJson = json["export"];
+    if (!exportJson.is_object())
+        exportJson = nlohmann::json::object();
+
+    setStringOrErase(json, "export_dir", serializeProjectPath(project->exportDir));
+    setStringOrErase(exportJson, "output_dir", serializeProjectPath(project->exportDir));
+    exportJson["default_target"] = exportTargetSelectionToString(project->exportTargetSelection);
+
+    auto writePlatformSettings = [&](const char *platformName, const ExportPlatformSettings &settings)
+    {
+        nlohmann::json platformJson = exportJson.contains(platformName) && exportJson[platformName].is_object()
+                                          ? exportJson[platformName]
+                                          : nlohmann::json::object();
+
+        setStringOrErase(platformJson, "build_dir", serializeProjectPath(settings.buildDir));
+        setStringOrErase(platformJson, "output_dir", serializeProjectPath(settings.exportDir));
+        setStringOrErase(platformJson, "cmake_generator", settings.cmakeGenerator);
+        setStringOrErase(platformJson, "cmake_toolchain_file", serializeProjectPath(settings.cmakeToolchainFile));
+        setStringOrErase(platformJson, "support_root", serializeProjectPath(settings.supportRootDir));
+        setStringOrErase(platformJson, "runtime_executable", serializeProjectPath(settings.runtimeExecutablePath));
+
+        if (platformJson.empty())
+            exportJson.erase(platformName);
+        else
+            exportJson[platformName] = platformJson;
+    };
+
+    writePlatformSettings("linux", project->linuxExport);
+    writePlatformSettings("windows", project->windowsExport);
+
+    std::ofstream output(project->configPath, std::ios::trunc);
+    if (!output.is_open())
+        return false;
+
+    output << std::setw(4) << json << '\n';
+    return output.good();
+}
+
+bool Editor::exportCurrentProjectPacketForTarget(Project &project,
+                                                 ExportPlatform targetPlatform,
+                                                 std::vector<std::filesystem::path> &outExportDirectories)
+{
+    const std::filesystem::path projectRoot = makeAbsoluteNormalized(project.fullPath);
+    const std::filesystem::path entryScenePath = makeAbsoluteNormalized(project.entryScene);
+    const ExportPlatform hostPlatform = getHostExportPlatform();
+    const ExportPlatformSettings &platformSettings = exportSettingsForPlatform(project, targetPlatform);
+
+    const auto normalizeConfiguredPath = [](const std::string &value) -> std::filesystem::path
+    {
+        return value.empty() ? std::filesystem::path{} : makeAbsoluteNormalized(value);
+    };
+
+    ResolvedExportPlatformSettings resolved;
+    resolved.platform = targetPlatform;
+    resolved.buildDirectory = normalizeConfiguredPath(platformSettings.buildDir);
+    resolved.exportDirectory = normalizeConfiguredPath(platformSettings.exportDir);
+    resolved.supportRootDir = normalizeConfiguredPath(platformSettings.supportRootDir);
+    resolved.runtimeExecutablePath = normalizeConfiguredPath(platformSettings.runtimeExecutablePath);
+    resolved.cmakeToolchainFile = normalizeConfiguredPath(platformSettings.cmakeToolchainFile);
+    resolved.cmakeGenerator = platformSettings.cmakeGenerator;
+
+    if (resolved.buildDirectory.empty())
+    {
+        if (targetPlatform == hostPlatform)
+            resolved.buildDirectory = project.buildDir.empty() ? (projectRoot / "build") : makeAbsoluteNormalized(project.buildDir);
+        else
+            resolved.buildDirectory = projectRoot / ("build-" + std::string(exportPlatformId(targetPlatform)));
+    }
+
+    if (resolved.exportDirectory.empty())
+    {
+        const std::filesystem::path baseExportRoot = project.exportDir.empty()
+                                                         ? (projectRoot / "Export")
+                                                         : makeAbsoluteNormalized(project.exportDir);
+        const bool usePlatformSubdirectory = project.exportTargetSelection == ExportTargetSelection::Both ||
+                                             targetPlatform != hostPlatform;
+        resolved.exportDirectory = usePlatformSubdirectory
+                                       ? (baseExportRoot / exportPlatformDisplayName(targetPlatform))
+                                       : baseExportRoot;
+    }
+
+    if (resolved.cmakeToolchainFile.empty() &&
+        targetPlatform == ExportPlatform::Windows &&
+        hostPlatform == ExportPlatform::Linux)
+        resolved.cmakeToolchainFile = defaultWindowsToolchainFileForExport();
+
+    const std::filesystem::path runningExecutablePath = FileHelper::getExecutableFilePath();
+    if (resolved.runtimeExecutablePath.empty())
+    {
+        if (targetPlatform == hostPlatform)
+            resolved.runtimeExecutablePath = findPreferredRuntimeExecutableForExport(runningExecutablePath);
+
+        if (resolved.runtimeExecutablePath.empty() && !resolved.supportRootDir.empty())
+            resolved.runtimeExecutablePath = findRuntimeExecutableInSupportRoot(resolved.supportRootDir, runningExecutablePath, targetPlatform);
+    }
+
+    if (resolved.supportRootDir.empty())
+    {
+        if (targetPlatform == hostPlatform)
+        {
+            resolved.supportRootDir = FileHelper::getExecutablePath();
+            if (resolved.supportRootDir.filename() == "bin")
+                resolved.supportRootDir = resolved.supportRootDir.parent_path();
+        }
+
+        if (resolved.supportRootDir.empty())
+            resolved.supportRootDir = inferRuntimeRootFromExecutable(resolved.runtimeExecutablePath);
+    }
+
+    if (resolved.runtimeExecutablePath.empty())
+    {
+        m_notificationManager.showError(std::string("Export failed: missing ") + exportPlatformDisplayName(targetPlatform) + " runtime executable.");
+        VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                         << ": runtime executable path is invalid.\n");
+        return false;
+    }
+
+    if (resolved.supportRootDir.empty())
+        resolved.supportRootDir = inferRuntimeRootFromExecutable(resolved.runtimeExecutablePath);
+
+    resolved.runtimeRootDir = resolved.supportRootDir;
+    resolved.cmakePrefixPath = resolved.supportRootDir;
+
+    if (resolved.cmakePrefixPath.empty())
+    {
+        m_notificationManager.showError(std::string("Export failed: missing ") + exportPlatformDisplayName(targetPlatform) + " support root.");
+        VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                         << ": no support root / CMAKE_PREFIX_PATH was configured.\n");
+        return false;
+    }
+
+    if (hostPlatform == ExportPlatform::Linux &&
+        targetPlatform == ExportPlatform::Windows &&
+        resolved.cmakeToolchainFile.empty())
+    {
+        m_notificationManager.showError("Export failed: Windows toolchain file is not configured.");
+        VX_EDITOR_ERROR_STREAM("Game export failed for Windows: no cross-compilation toolchain file was configured.\n");
+        return false;
+    }
+
+    if (!resolved.cmakeToolchainFile.empty() && !std::filesystem::exists(resolved.cmakeToolchainFile))
+    {
+        m_notificationManager.showError("Export failed: toolchain file was not found.");
+        VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                         << ": toolchain file does not exist: " << resolved.cmakeToolchainFile << '\n');
+        return false;
+    }
+
+    if (!std::filesystem::exists(resolved.runtimeExecutablePath) || !std::filesystem::is_regular_file(resolved.runtimeExecutablePath))
+    {
+        m_notificationManager.showError(std::string("Export failed: ") + exportPlatformDisplayName(targetPlatform) + " runtime executable was not found.");
+        VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                         << ": runtime executable does not exist: " << resolved.runtimeExecutablePath << '\n');
+        return false;
+    }
+
+    std::error_code createDirectoryError;
+    std::filesystem::create_directories(resolved.exportDirectory, createDirectoryError);
+    if (createDirectoryError)
+    {
+        m_notificationManager.showError("Export failed: cannot create export directory.");
+        VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                         << ": could not create export directory '" << resolved.exportDirectory
+                                                         << "': " << createDirectoryError.message() << '\n');
+        return false;
+    }
+
+    std::string packetBaseName = sanitizeFileStem(project.name.empty()
+                                                      ? projectRoot.filename().string()
+                                                      : project.name);
+    if (packetBaseName.empty())
+        packetBaseName = "Game";
+
+    const std::filesystem::path packetPath = resolved.exportDirectory / (packetBaseName + ".elixbundle");
+
+    std::filesystem::path cmakePrefixPath = resolved.cmakePrefixPath;
+    if (cmakePrefixPath.filename() == "bin")
+        cmakePrefixPath = cmakePrefixPath.parent_path();
+
+    const std::filesystem::path cmakeExecutablePath = resolveCMakeExecutablePath();
+    const std::string cmakeCommandToken = makeExecutableCommandToken(cmakeExecutablePath);
+
+    std::string configureCommand = cmakeCommandToken + " -S " + quoteShellArgument(projectRoot) +
+                                   " -B " + quoteShellArgument(resolved.buildDirectory) +
+                                   " -DCMAKE_PREFIX_PATH=" + quoteShellArgument(cmakePrefixPath) +
+                                   " -DCMAKE_BUILD_TYPE=Release" +
+                                   " -DCMAKE_EXPORT_COMPILE_COMMANDS=ON";
+
+    if (!resolved.cmakeGenerator.empty())
+        configureCommand += " -G " + quoteShellTextArgument(resolved.cmakeGenerator);
+
+    if (!resolved.cmakeToolchainFile.empty())
+        configureCommand += " -DCMAKE_TOOLCHAIN_FILE=" + quoteShellArgument(resolved.cmakeToolchainFile);
+
+    VX_EDITOR_INFO_STREAM("Exporting " << exportPlatformDisplayName(targetPlatform)
+                                       << " build using support root " << resolved.supportRootDir << '\n');
+
+    const auto [configureResult, configureOutput] = FileHelper::executeCommand(configureCommand);
+    if (configureResult != 0)
+    {
+        m_notificationManager.showError(std::string("Export failed: ") + exportPlatformDisplayName(targetPlatform) + " configure error.");
+        VX_EDITOR_ERROR_STREAM("Game export configure failed for " << exportPlatformDisplayName(targetPlatform) << ".\n"
+                                                                   << configureOutput << '\n');
+        return false;
+    }
+
+    if (!syncProjectCompileCommands(project))
+        VX_EDITOR_WARNING_STREAM("Failed to sync compile_commands.json to project root during export.\n");
+
+    std::string buildCommand = cmakeCommandToken + " --build " + quoteShellArgument(resolved.buildDirectory) + " --config Release";
+#if defined(__linux__)
+    buildCommand += " -j";
+#endif
+
+    const auto [buildResult, buildOutput] = FileHelper::executeCommand(buildCommand);
+    if (buildResult != 0)
+    {
+        m_notificationManager.showError(std::string("Export failed: ") + exportPlatformDisplayName(targetPlatform) + " build failed.");
+        VX_EDITOR_ERROR_STREAM("Game export build failed for " << exportPlatformDisplayName(targetPlatform) << ".\n"
+                                                               << buildOutput << '\n');
+        return false;
+    }
+
+    const std::filesystem::path moduleLibraryPath = findGameModuleLibraryPath(resolved.buildDirectory, targetPlatform);
+    if (moduleLibraryPath.empty())
+    {
+        m_notificationManager.showError("Export failed: GameModule library was not found.");
+        VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                         << ": GameModule library was not found in build directory '"
+                                                         << resolved.buildDirectory << "'.\n");
+        return false;
+    }
+
+    engine::ElixBundleWriter bundleWriter;
+    engine::ElixBundleWriter::ExportOptions exportOptions;
+
+    exportOptions.excludedDirectories.push_back(projectRoot / ".git");
+    exportOptions.excludedDirectories.push_back(projectRoot / ".vscode");
+    exportOptions.excludedDirectories.push_back(resolved.buildDirectory);
+    exportOptions.excludedDirectories.push_back(resolved.exportDirectory);
+
+    std::string exportError;
+    if (!bundleWriter.writeProject(projectRoot, entryScenePath, packetPath, exportOptions, &exportError))
+    {
+        m_notificationManager.showError("Game export failed.");
+        VX_EDITOR_ERROR_STREAM("Failed to export .elixbundle for " << exportPlatformDisplayName(targetPlatform)
+                                                                   << ": " << exportError << '\n');
+        return false;
+    }
+
+    auto copyFile = [&](const std::filesystem::path &sourcePath,
+                        const std::filesystem::path &targetPath,
+                        const std::string &assetName) -> bool
+    {
+        if (sourcePath.empty() || !std::filesystem::exists(sourcePath) || !std::filesystem::is_regular_file(sourcePath))
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                             << ": " << assetName << " source file is missing: " << sourcePath << '\n');
+            return false;
+        }
+
+        std::error_code createParentDirectoryError;
+        std::filesystem::create_directories(targetPath.parent_path(), createParentDirectoryError);
+        if (createParentDirectoryError)
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                             << ": cannot create target directory for " << assetName << ": "
+                                                             << targetPath.parent_path() << " (" << createParentDirectoryError.message() << ")\n");
+            return false;
+        }
+
+        std::error_code copyError;
+        std::filesystem::copy_file(sourcePath, targetPath, std::filesystem::copy_options::overwrite_existing, copyError);
+        if (copyError)
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                             << ": cannot copy " << assetName << " from '" << sourcePath
+                                                             << "' to '" << targetPath << "' (" << copyError.message() << ")\n");
+            return false;
+        }
+
+        return true;
+    };
+
+    auto copyDirectoryContents = [&](const std::filesystem::path &sourceDirectory,
+                                     const std::filesystem::path &targetDirectory) -> bool
+    {
+        if (sourceDirectory.empty() || !std::filesystem::exists(sourceDirectory) || !std::filesystem::is_directory(sourceDirectory))
+            return true;
+
+        std::error_code createSubdirectoryError;
+        std::filesystem::create_directories(targetDirectory, createSubdirectoryError);
+        if (createSubdirectoryError)
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                             << ": cannot create directory '" << targetDirectory
+                                                             << "': " << createSubdirectoryError.message() << '\n');
+            return false;
+        }
+
+        std::error_code iteratorError;
+        std::filesystem::recursive_directory_iterator iterator(
+            sourceDirectory,
+            std::filesystem::directory_options::skip_permission_denied,
+            iteratorError);
+        if (iteratorError)
+        {
+            VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                             << ": cannot enumerate directory '" << sourceDirectory
+                                                             << "': " << iteratorError.message() << '\n');
+            return false;
+        }
+
+        for (auto it = iterator; it != std::filesystem::recursive_directory_iterator(); ++it)
+        {
+            std::error_code relativeError;
+            const std::filesystem::path relativePath = std::filesystem::relative(it->path(), sourceDirectory, relativeError).lexically_normal();
+            if (relativeError || relativePath.empty())
+            {
+                VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                                 << ": cannot compute relative path for '" << it->path() << "'.\n");
+                return false;
+            }
+
+            const std::filesystem::path targetPath = targetDirectory / relativePath;
+            if (it->is_directory())
+            {
+                std::error_code createDirectoryEntryError;
+                std::filesystem::create_directories(targetPath, createDirectoryEntryError);
+                if (createDirectoryEntryError)
+                {
+                    VX_EDITOR_ERROR_STREAM("Game export failed for " << exportPlatformDisplayName(targetPlatform)
+                                                                     << ": cannot create directory '" << targetPath
+                                                                     << "': " << createDirectoryEntryError.message() << '\n');
+                    return false;
+                }
+                continue;
+            }
+
+            if (!it->is_regular_file())
+                continue;
+
+            if (!copyFile(it->path(), targetPath, "directory asset"))
+                return false;
+        }
+
+        return true;
+    };
+
+    if (resolved.runtimeExecutablePath != runningExecutablePath)
+        VX_EDITOR_INFO_STREAM("Game export will use " << exportPlatformDisplayName(targetPlatform)
+                                                      << " runtime executable: " << resolved.runtimeExecutablePath << '\n');
+    else if (buildArtifactPreference(resolved.runtimeExecutablePath) >= 4)
+        VX_EDITOR_WARNING_STREAM("Game export is using a Debug runtime executable. Build the engine in Release to package optimized runtime binaries.\n");
+
+    const std::string packagedExecutableName = packetBaseName + executableExtensionForPlatform(targetPlatform);
+    const std::filesystem::path packagedExecutablePath = resolved.exportDirectory / packagedExecutableName;
+    if (!copyFile(resolved.runtimeExecutablePath, packagedExecutablePath, "runtime executable"))
+    {
+        m_notificationManager.showError("Export failed while copying runtime executable.");
+        return false;
+    }
+
+    if (targetPlatform != ExportPlatform::Windows)
+    {
+        std::error_code setPermissionsError;
+        std::filesystem::permissions(
+            packagedExecutablePath,
+            std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec,
+            std::filesystem::perm_options::add,
+            setPermissionsError);
+        if (setPermissionsError)
+            VX_EDITOR_WARNING_STREAM("Failed to add executable bit for '" << packagedExecutablePath
+                                                                          << "': " << setPermissionsError.message() << '\n');
+    }
+
+    const std::filesystem::path packagedModulePath = resolved.exportDirectory / moduleLibraryPath.filename();
+    if (!copyFile(moduleLibraryPath, packagedModulePath, "GameModule library"))
+    {
+        m_notificationManager.showError("Export failed while copying GameModule library.");
+        return false;
+    }
+
+    std::unordered_map<std::string, std::filesystem::path> preferredVelixSdkLibrariesByName;
+    std::error_code iteratorError;
+    std::filesystem::recursive_directory_iterator iterator(
+        resolved.buildDirectory,
+        std::filesystem::directory_options::skip_permission_denied,
+        iteratorError);
+    if (!iteratorError)
+    {
+        for (auto it = iterator; it != std::filesystem::recursive_directory_iterator(); ++it)
+        {
+            if (!it->is_regular_file())
+                continue;
+
+            const std::string fileName = it->path().filename().string();
+            if (fileName.find("VelixSDK") == std::string::npos)
+                continue;
+
+            const bool isMatchingRuntimeLibrary = targetPlatform == ExportPlatform::Windows
+                                                      ? it->path().extension() == ".dll"
+                                                      : fileName.find(".so") != std::string::npos;
+            if (!isMatchingRuntimeLibrary)
+                continue;
+
+            auto existing = preferredVelixSdkLibrariesByName.find(fileName);
+            if (existing == preferredVelixSdkLibrariesByName.end() ||
+                buildArtifactPreference(it->path()) < buildArtifactPreference(existing->second))
+                preferredVelixSdkLibrariesByName[fileName] = it->path();
+        }
+    }
+    else
+    {
+        VX_EDITOR_WARNING_STREAM("Failed to enumerate build directory for VelixSDK runtime libraries: " << iteratorError.message() << '\n');
+    }
+
+    std::vector<std::filesystem::path> velixSdkLibraries;
+    velixSdkLibraries.reserve(preferredVelixSdkLibrariesByName.size());
+    for (const auto &[_, path] : preferredVelixSdkLibrariesByName)
+        velixSdkLibraries.push_back(path);
+
+    std::sort(velixSdkLibraries.begin(), velixSdkLibraries.end(), [](const auto &lhs, const auto &rhs)
+              { return lhs.string() < rhs.string(); });
+
+    for (const auto &sdkLibraryPath : velixSdkLibraries)
+    {
+        const std::filesystem::path targetPath = resolved.exportDirectory / sdkLibraryPath.filename();
+        if (!copyFile(sdkLibraryPath, targetPath, "VelixSDK runtime library"))
+        {
+            m_notificationManager.showError("Export failed while copying VelixSDK runtime library.");
+            return false;
+        }
+    }
+
+    if (!copyDirectoryContents(resolved.runtimeRootDir / "resources", resolved.exportDirectory / "resources"))
+    {
+        m_notificationManager.showError("Export failed while copying runtime resources.");
+        return false;
+    }
+
+    if (!copyDirectoryContents(resolved.runtimeRootDir / "lib", resolved.exportDirectory / "lib"))
+    {
+        m_notificationManager.showError("Export failed while copying runtime libraries.");
+        return false;
+    }
+
+    const std::filesystem::path runtimeBinaryDirectory = resolved.runtimeExecutablePath.parent_path();
+    std::error_code runtimeIteratorError;
+    for (const auto &entry : std::filesystem::directory_iterator(runtimeBinaryDirectory, runtimeIteratorError))
+    {
+        if (runtimeIteratorError)
+        {
+            VX_EDITOR_WARNING_STREAM("Failed to enumerate runtime directory for dynamic libraries: " << runtimeIteratorError.message() << '\n');
+            break;
+        }
+
+        if (!entry.is_regular_file())
+            continue;
+
+        const std::string fileName = entry.path().filename().string();
+        const bool isRuntimeDependency = targetPlatform == ExportPlatform::Windows
+                                             ? entry.path().extension() == ".dll"
+                                             : fileName.find(".so") != std::string::npos;
+        if (!isRuntimeDependency)
+            continue;
+
+        const std::filesystem::path targetPath = resolved.exportDirectory / entry.path().filename();
+        if (!copyFile(entry.path(), targetPath, "runtime dependency"))
+        {
+            m_notificationManager.showError("Export failed while copying runtime dependency.");
+            return false;
+        }
+    }
+
+    outExportDirectories.push_back(resolved.exportDirectory);
+    VX_EDITOR_INFO_STREAM("Game export completed for " << exportPlatformDisplayName(targetPlatform) << ".\n"
+                                                       << "  Packet: " << packetPath << '\n'
+                                                       << "  Executable: " << packagedExecutablePath << '\n'
+                                                       << "  Module: " << packagedModulePath << '\n');
+    return true;
+}
+
 void Editor::exportCurrentProjectPacket()
 {
     if (m_currentMode != EditorMode::EDIT)
@@ -3069,7 +3789,7 @@ void Editor::exportCurrentProjectPacket()
         return;
     }
 
-    const std::filesystem::path projectRoot = makeAbsoluteNormalized(project->fullPath);
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
     if (projectRoot.empty() || !std::filesystem::exists(projectRoot))
     {
         m_notificationManager.showError("Export failed: invalid project path.");
@@ -3092,345 +3812,226 @@ void Editor::exportCurrentProjectPacket()
         return;
     }
 
-    std::filesystem::path exportDirectory = project->exportDir.empty()
-                                                ? (projectRoot / "Export")
-                                                : makeAbsoluteNormalized(project->exportDir);
+    if (!saveProjectExportSettings())
+        VX_EDITOR_WARNING_STREAM("Failed to persist export settings before packaging.\n");
 
-    std::error_code createDirectoryError;
-    std::filesystem::create_directories(exportDirectory, createDirectoryError);
-    if (createDirectoryError)
+    std::vector<std::filesystem::path> exportDirectories;
+    for (const ExportPlatform targetPlatform : exportPlatformsFromSelection(project->exportTargetSelection))
     {
-        m_notificationManager.showError("Export failed: cannot create export directory.");
-        VX_EDITOR_ERROR_STREAM("Game export failed: could not create export directory '" << exportDirectory
-                                                                                         << "': " << createDirectoryError.message() << '\n');
-        return;
+        if (!exportCurrentProjectPacketForTarget(*project, targetPlatform, exportDirectories))
+            return;
     }
 
-    std::string packetBaseName = sanitizeFileStem(project->name.empty()
-                                                      ? projectRoot.filename().string()
-                                                      : project->name);
-    if (packetBaseName.empty())
-        packetBaseName = "Game";
-
-    const std::filesystem::path packetPath = exportDirectory / (packetBaseName + ".elixpacket");
-
-    const std::filesystem::path buildDirectory = project->buildDir.empty() ? makeAbsoluteNormalized(projectRoot / "build")
-                                                                           : makeAbsoluteNormalized(std::filesystem::path(project->buildDir));
-    std::filesystem::path cmakePrefixPath = FileHelper::getExecutablePath();
-    if (cmakePrefixPath.filename() == "bin")
-        cmakePrefixPath = cmakePrefixPath.parent_path();
-
-    const std::filesystem::path cmakeExecutablePath = resolveCMakeExecutablePath();
-    const std::string cmakeCommandToken = makeExecutableCommandToken(cmakeExecutablePath);
-
-    const std::string configureCommand = cmakeCommandToken + " -S " + quoteShellArgument(projectRoot) +
-                                         " -B " + quoteShellArgument(buildDirectory) +
-                                         " -DCMAKE_PREFIX_PATH=" + quoteShellArgument(cmakePrefixPath) +
-                                         " -DCMAKE_BUILD_TYPE=Release" +
-                                         " -DCMAKE_EXPORT_COMPILE_COMMANDS=ON";
-
-    const auto [configureResult, configureOutput] = FileHelper::executeCommand(configureCommand);
-    if (configureResult != 0)
+    std::string successMessage = "Game export completed";
+    if (!exportDirectories.empty())
     {
-        m_notificationManager.showError("Export failed: cmake configure error.");
-        VX_EDITOR_ERROR_STREAM("Game export configure failed.\n"
-                               << configureOutput << '\n');
-        return;
-    }
-
-    if (!syncProjectCompileCommands(*project))
-        VX_EDITOR_WARNING_STREAM("Failed to sync compile_commands.json to project root during export.\n");
-
-    std::string buildCommand = cmakeCommandToken + " --build " + quoteShellArgument(buildDirectory) + " --config Release";
-#if defined(__linux__)
-    buildCommand += " -j";
-#endif
-    const auto [buildResult, buildOutput] = FileHelper::executeCommand(buildCommand);
-    if (buildResult != 0)
-    {
-        m_notificationManager.showError("Export failed: project build failed.");
-        VX_EDITOR_ERROR_STREAM("Game export build failed.\n"
-                               << buildOutput << '\n');
-        return;
-    }
-
-    const std::filesystem::path moduleLibraryPath = findGameModuleLibraryPath(buildDirectory);
-    if (moduleLibraryPath.empty())
-    {
-        m_notificationManager.showError("Export failed: GameModule library was not found.");
-        VX_EDITOR_ERROR_STREAM("Game export failed: GameModule library was not found in build directory '" << buildDirectory << "'.\n");
-        return;
-    }
-
-    engine::ElixPacketSerializer serializer;
-    engine::ElixPacketSerializer::ExportOptions exportOptions;
-
-    exportOptions.excludedDirectories.push_back(projectRoot / ".git");
-    exportOptions.excludedDirectories.push_back(projectRoot / ".vscode");
-    if (!project->buildDir.empty())
-        exportOptions.excludedDirectories.push_back(makeAbsoluteNormalized(project->buildDir));
-    exportOptions.excludedDirectories.push_back(exportDirectory);
-
-    std::string exportError;
-    if (!serializer.writeProject(projectRoot, entryScenePath, packetPath, exportOptions, &exportError))
-    {
-        m_notificationManager.showError("Game export failed.");
-        VX_EDITOR_ERROR_STREAM("Failed to export .elixpacket: " << exportError << '\n');
-        return;
-    }
-
-    auto copyFile = [&](const std::filesystem::path &sourcePath,
-                        const std::filesystem::path &targetPath,
-                        const std::string &assetName) -> bool
-    {
-        if (sourcePath.empty() || !std::filesystem::exists(sourcePath) || !std::filesystem::is_regular_file(sourcePath))
+        successMessage += ": ";
+        for (size_t i = 0; i < exportDirectories.size(); ++i)
         {
-            VX_EDITOR_ERROR_STREAM("Game export failed: " << assetName << " source file is missing: " << sourcePath << '\n');
-            return false;
+            if (i > 0)
+                successMessage += ", ";
+            successMessage += exportDirectories[i].string();
         }
+    }
 
-        std::error_code createParentDirectoryError;
-        std::filesystem::create_directories(targetPath.parent_path(), createParentDirectoryError);
-        if (createParentDirectoryError)
-        {
-            VX_EDITOR_ERROR_STREAM("Game export failed: cannot create target directory for " << assetName << ": " << targetPath.parent_path()
-                                                                                             << " (" << createParentDirectoryError.message() << ")\n");
-            return false;
-        }
+    m_notificationManager.showSuccess(successMessage);
+}
 
-        std::error_code copyError;
-        std::filesystem::copy_file(sourcePath, targetPath, std::filesystem::copy_options::overwrite_existing, copyError);
-        if (copyError)
-        {
-            VX_EDITOR_ERROR_STREAM("Game export failed: cannot copy " << assetName << " from '" << sourcePath << "' to '" << targetPath
-                                                                      << "' (" << copyError.message() << ")\n");
-            return false;
-        }
-
-        return true;
-    };
-
-    auto copyDirectoryContents = [&](const std::filesystem::path &sourceDirectory,
-                                     const std::filesystem::path &targetDirectory) -> bool
+void Editor::drawExportProjectDialog()
+{
+    if (m_openExportProjectDialog)
     {
-        if (sourceDirectory.empty() || !std::filesystem::exists(sourceDirectory) || !std::filesystem::is_directory(sourceDirectory))
+        ImGui::OpenPopup("Export Project");
+        m_openExportProjectDialog = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(860.0f, 640.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Export Project", nullptr, ImGuiWindowFlags_NoCollapse))
+        return;
+
+    auto project = m_currentProject.lock();
+    if (!project)
+    {
+        ImGui::TextWrapped("No project is currently loaded.");
+        if (ImGui::Button("Close"))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
+    const ExportPlatform hostPlatform = getHostExportPlatform();
+
+    auto inputStringField = [](const char *label, const char *hint, std::string &value, ImGuiInputTextFlags flags = 0) -> bool
+    {
+        std::array<char, 1024> buffer{};
+        std::strncpy(buffer.data(), value.c_str(), buffer.size() - 1);
+        if (ImGui::InputTextWithHint(label, hint, buffer.data(), buffer.size(), flags))
+        {
+            value = buffer.data();
             return true;
-
-        std::error_code createDirectoryError;
-        std::filesystem::create_directories(targetDirectory, createDirectoryError);
-        if (createDirectoryError)
-        {
-            VX_EDITOR_ERROR_STREAM("Game export failed: cannot create directory '" << targetDirectory << "': " << createDirectoryError.message() << '\n');
-            return false;
         }
 
-        std::error_code iteratorError;
-        std::filesystem::recursive_directory_iterator iterator(
-            sourceDirectory,
-            std::filesystem::directory_options::skip_permission_denied,
-            iteratorError);
-        if (iteratorError)
-        {
-            VX_EDITOR_ERROR_STREAM("Game export failed: cannot enumerate directory '" << sourceDirectory << "': " << iteratorError.message() << '\n');
-            return false;
-        }
-
-        for (auto it = iterator; it != std::filesystem::recursive_directory_iterator(); ++it)
-        {
-            std::error_code relativeError;
-            const std::filesystem::path relativePath = std::filesystem::relative(it->path(), sourceDirectory, relativeError).lexically_normal();
-            if (relativeError || relativePath.empty())
-            {
-                VX_EDITOR_ERROR_STREAM("Game export failed: cannot compute relative path for '" << it->path() << "'.\n");
-                return false;
-            }
-
-            const std::filesystem::path targetPath = targetDirectory / relativePath;
-
-            if (it->is_directory())
-            {
-                std::error_code createSubdirectoryError;
-                std::filesystem::create_directories(targetPath, createSubdirectoryError);
-                if (createSubdirectoryError)
-                {
-                    VX_EDITOR_ERROR_STREAM("Game export failed: cannot create directory '" << targetPath << "': " << createSubdirectoryError.message() << '\n');
-                    return false;
-                }
-
-                continue;
-            }
-
-            if (!it->is_regular_file())
-                continue;
-
-            std::error_code createParentDirectoryError;
-            std::filesystem::create_directories(targetPath.parent_path(), createParentDirectoryError);
-            if (createParentDirectoryError)
-            {
-                VX_EDITOR_ERROR_STREAM("Game export failed: cannot create target directory '" << targetPath.parent_path()
-                                                                                              << "': " << createParentDirectoryError.message() << '\n');
-                return false;
-            }
-
-            std::error_code copyError;
-            std::filesystem::copy_file(it->path(), targetPath, std::filesystem::copy_options::overwrite_existing, copyError);
-            if (copyError)
-            {
-                VX_EDITOR_ERROR_STREAM("Game export failed: cannot copy file '" << it->path() << "' to '" << targetPath
-                                                                                << "': " << copyError.message() << '\n');
-                return false;
-            }
-        }
-
-        return true;
+        return false;
     };
 
-    const std::filesystem::path runningExecutablePath = FileHelper::getExecutableFilePath();
-    const std::filesystem::path runtimeExecutablePath = findPreferredRuntimeExecutableForExport(runningExecutablePath);
-    if (runtimeExecutablePath.empty() || !std::filesystem::exists(runtimeExecutablePath) || !std::filesystem::is_regular_file(runtimeExecutablePath))
+    auto buildDefaultExportDirectory = [&](ExportPlatform platform) -> std::filesystem::path
     {
-        m_notificationManager.showError("Export failed: engine executable was not found.");
-        VX_EDITOR_ERROR_STREAM("Game export failed: runtime executable path is invalid: " << runtimeExecutablePath << '\n');
-        return;
-    }
+        const std::filesystem::path baseExportRoot = project->exportDir.empty()
+                                                         ? (projectRoot / "Export")
+                                                         : makeAbsoluteNormalized(project->exportDir);
+        const bool usePlatformSubdirectory = project->exportTargetSelection == ExportTargetSelection::Both ||
+                                             platform != hostPlatform;
+        return usePlatformSubdirectory
+                   ? (baseExportRoot / exportPlatformDisplayName(platform))
+                   : baseExportRoot;
+    };
 
-    if (runtimeExecutablePath != runningExecutablePath)
-        VX_EDITOR_INFO_STREAM("Game export will use runtime executable: " << runtimeExecutablePath << '\n');
-    else if (buildArtifactPreference(runtimeExecutablePath) >= 4)
-        VX_EDITOR_WARNING_STREAM("Game export is using a Debug runtime executable. Build the engine in Release to package optimized runtime binaries.\n");
-
-    std::string packagedExecutableName = packetBaseName;
-#if defined(_WIN32)
-    packagedExecutableName += ".exe";
-#endif
-    const std::filesystem::path packagedExecutablePath = exportDirectory / packagedExecutableName;
-
-    if (!copyFile(runtimeExecutablePath, packagedExecutablePath, "runtime executable"))
+    auto buildDefaultBuildDirectory = [&](ExportPlatform platform) -> std::filesystem::path
     {
-        m_notificationManager.showError("Export failed while copying runtime executable.");
-        return;
-    }
+        if (platform == hostPlatform)
+            return project->buildDir.empty() ? (projectRoot / "build") : makeAbsoluteNormalized(project->buildDir);
 
-#if !defined(_WIN32)
-    std::error_code setPermissionsError;
-    std::filesystem::permissions(
-        packagedExecutablePath,
-        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec,
-        std::filesystem::perm_options::add,
-        setPermissionsError);
-    if (setPermissionsError)
-        VX_EDITOR_WARNING_STREAM("Failed to add executable bit for '" << packagedExecutablePath << "': " << setPermissionsError.message() << '\n');
-#endif
+        return projectRoot / ("build-" + std::string(exportPlatformId(platform)));
+    };
 
-    const std::filesystem::path packagedModulePath = exportDirectory / moduleLibraryPath.filename();
-    if (!copyFile(moduleLibraryPath, packagedModulePath, "GameModule library"))
+    const float targetCardWidth = (ImGui::GetContentRegionAvail().x - 24.0f) / 3.0f;
+
+    auto drawTargetCard = [&](const char *id,
+                              const char *title,
+                              const char *description,
+                              const char *subtitle,
+                              ExportTargetSelection selectionValue)
     {
-        m_notificationManager.showError("Export failed while copying GameModule library.");
-        return;
-    }
+        const bool isSelected = project->exportTargetSelection == selectionValue;
+        const ImVec2 cardSize(targetCardWidth, 112.0f);
 
-    std::unordered_map<std::string, std::filesystem::path> preferredVelixSdkLibrariesByName;
-    std::error_code iteratorError;
-    std::filesystem::recursive_directory_iterator iterator(
-        buildDirectory,
-        std::filesystem::directory_options::skip_permission_denied,
-        iteratorError);
-    if (!iteratorError)
+        ImGui::PushID(id);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, isSelected ? ImVec4(0.12f, 0.18f, 0.25f, 1.0f)
+                                                           : ImVec4(0.08f, 0.09f, 0.11f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border, isSelected ? ImVec4(0.27f, 0.63f, 0.92f, 1.0f)
+                                                          : ImVec4(0.20f, 0.22f, 0.25f, 1.0f));
+        ImGui::BeginChild("##TargetCard", cardSize, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        if (ImGui::IsWindowHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+            project->exportTargetSelection = selectionValue;
+
+        ImGui::TextUnformatted(title);
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", subtitle);
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", description);
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+        ImGui::PopID();
+    };
+
+    auto drawPlatformSettings = [&](ExportPlatform platform)
     {
-        for (auto it = iterator; it != std::filesystem::recursive_directory_iterator(); ++it)
+        ExportPlatformSettings &settings = exportSettingsForPlatform(*project, platform);
+        const bool isHostTarget = platform == hostPlatform;
+        const std::filesystem::path defaultBuildDir = buildDefaultBuildDirectory(platform);
+        const std::filesystem::path defaultExportDir = buildDefaultExportDirectory(platform);
+        const std::filesystem::path defaultToolchain = platform == ExportPlatform::Windows && hostPlatform == ExportPlatform::Linux
+                                                           ? defaultWindowsToolchainFileForExport()
+                                                           : std::filesystem::path{};
+
+        ImGui::PushID(exportPlatformId(platform));
+        const std::string header = std::string(exportPlatformDisplayName(platform)) + " Target Settings";
+        if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
         {
-            if (!it->is_regular_file())
-                continue;
+            if (platform == ExportPlatform::Windows && hostPlatform == ExportPlatform::Linux)
+            {
+                ImGui::TextWrapped("Cross-exporting to Windows from Linux needs a MinGW toolchain and a Windows Velix support root containing the target runtime and VelixSDK package.");
+            }
+            else if (isHostTarget)
+            {
+                ImGui::TextWrapped("Leaving Support Root and Runtime Executable blank uses the current running engine build for this platform.");
+            }
+            else
+            {
+                ImGui::TextWrapped("Point Support Root at a target install or staging folder that contains the runtime executable, resources, and lib/cmake/VelixSDK.");
+            }
 
-            const std::string fileName = it->path().filename().string();
-            if (fileName.find("VelixSDK") == std::string::npos)
-                continue;
+            inputStringField("Build Directory", "Defaults to a platform-specific build folder", settings.buildDir);
+            ImGui::TextDisabled("Default: %s", defaultBuildDir.string().c_str());
 
-#if defined(_WIN32)
-            if (it->path().extension() != ".dll")
-                continue;
-#else
-            if (fileName.find(".so") == std::string::npos)
-                continue;
-#endif
-            auto existing = preferredVelixSdkLibrariesByName.find(fileName);
-            if (existing == preferredVelixSdkLibrariesByName.end() ||
-                buildArtifactPreference(it->path()) < buildArtifactPreference(existing->second))
-                preferredVelixSdkLibrariesByName[fileName] = it->path();
+            inputStringField("Output Directory", "Defaults to Export/<Platform>", settings.exportDir);
+            ImGui::TextDisabled("Default: %s", defaultExportDir.string().c_str());
+
+            inputStringField("Support Root", "Install/staging folder with runtime + VelixSDK", settings.supportRootDir);
+            if (!settings.supportRootDir.empty())
+                ImGui::TextDisabled("Used as CMAKE_PREFIX_PATH and runtime root");
+
+            inputStringField("Runtime Executable", "Optional explicit override (e.g. Velix.exe)", settings.runtimeExecutablePath);
+            inputStringField("CMake Generator", "Optional, e.g. Ninja", settings.cmakeGenerator);
+
+            if (platform == ExportPlatform::Windows || !settings.cmakeToolchainFile.empty())
+            {
+                inputStringField("Toolchain File", "Optional except for Linux -> Windows cross-export", settings.cmakeToolchainFile);
+                if (!defaultToolchain.empty())
+                    ImGui::TextDisabled("Default: %s", defaultToolchain.string().c_str());
+            }
+
+            if (ImGui::Button("Reset To Defaults"))
+                settings = ExportPlatformSettings{};
         }
-    }
-    else
+        ImGui::PopID();
+    };
+
+    ImGui::Text("Package Targets");
+    ImGui::TextDisabled("Choose which runtime package the project should produce.");
+    ImGui::Spacing();
+
+    drawTargetCard("LinuxCard",
+                   "Linux",
+                   "Native Linux runtime and GameModule package.",
+                   hostPlatform == ExportPlatform::Linux ? "Fastest path on this host" : "Cross-target",
+                   ExportTargetSelection::Linux);
+    ImGui::SameLine();
+    drawTargetCard("WindowsCard",
+                   "Windows",
+                   "Produce a .exe package with Windows runtime dependencies.",
+                   hostPlatform == ExportPlatform::Linux ? "Cross-compile target" : "Native on Windows",
+                   ExportTargetSelection::Windows);
+    ImGui::SameLine();
+    drawTargetCard("BothCard",
+                   "Both",
+                   "Build and package Linux and Windows outputs in one export pass.",
+                   "Separate output folders",
+                   ExportTargetSelection::Both);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Advanced");
+    ImGui::TextDisabled("Per-platform build, support, and packaging overrides.");
+    ImGui::Spacing();
+
+    for (const ExportPlatform platform : exportPlatformsFromSelection(project->exportTargetSelection))
+        drawPlatformSettings(platform);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::Button("Save Settings"))
     {
-        VX_EDITOR_WARNING_STREAM("Failed to enumerate build directory for VelixSDK runtime libraries: " << iteratorError.message() << '\n');
+        if (saveProjectExportSettings())
+            m_notificationManager.showSuccess("Export settings saved");
+        else
+            m_notificationManager.showWarning("Failed to save export settings");
     }
 
-    std::vector<std::filesystem::path> velixSdkLibraries;
-    velixSdkLibraries.reserve(preferredVelixSdkLibrariesByName.size());
-    for (const auto &[_, path] : preferredVelixSdkLibrariesByName)
-        velixSdkLibraries.push_back(path);
+    ImGui::SameLine();
+    if (ImGui::Button("Export Now"))
+        exportCurrentProjectPacket();
 
-    std::sort(velixSdkLibraries.begin(), velixSdkLibraries.end(), [](const auto &lhs, const auto &rhs)
-              { return lhs.string() < rhs.string(); });
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel"))
+        ImGui::CloseCurrentPopup();
 
-    for (const auto &sdkLibraryPath : velixSdkLibraries)
-    {
-        const std::filesystem::path targetPath = exportDirectory / sdkLibraryPath.filename();
-        if (!copyFile(sdkLibraryPath, targetPath, "VelixSDK runtime library"))
-        {
-            m_notificationManager.showError("Export failed while copying VelixSDK runtime library.");
-            return;
-        }
-    }
-
-    const std::filesystem::path runtimeDirectory = runtimeExecutablePath.parent_path();
-
-    if (!copyDirectoryContents(runtimeDirectory / "resources", exportDirectory / "resources"))
-    {
-        m_notificationManager.showError("Export failed while copying runtime resources.");
-        return;
-    }
-
-    if (!copyDirectoryContents(runtimeDirectory / "lib", exportDirectory / "lib"))
-    {
-        m_notificationManager.showError("Export failed while copying runtime libraries.");
-        return;
-    }
-
-    std::error_code runtimeIteratorError;
-    for (const auto &entry : std::filesystem::directory_iterator(runtimeDirectory, runtimeIteratorError))
-    {
-        if (runtimeIteratorError)
-        {
-            VX_EDITOR_WARNING_STREAM("Failed to enumerate runtime directory for optional dynamic libraries: " << runtimeIteratorError.message() << '\n');
-            break;
-        }
-
-        if (!entry.is_regular_file())
-            continue;
-
-        const std::string fileName = entry.path().filename().string();
-        const bool isFmodRuntime =
-#if defined(_WIN32)
-            fileName == "fmod.dll";
-#else
-            fileName.rfind("libfmod.so", 0) == 0;
-#endif
-        if (!isFmodRuntime)
-            continue;
-
-        const std::filesystem::path targetPath = exportDirectory / entry.path().filename();
-        if (!copyFile(entry.path(), targetPath, "FMOD runtime library"))
-        {
-            m_notificationManager.showError("Export failed while copying FMOD runtime library.");
-            return;
-        }
-    }
-
-    m_notificationManager.showSuccess("Game export completed: " + exportDirectory.string());
-    VX_EDITOR_INFO_STREAM("Game export completed.\n"
-                          << "  Packet: " << packetPath << '\n'
-                          << "  Executable: " << packagedExecutablePath << '\n'
-                          << "  Module: " << packagedModulePath << '\n');
+    ImGui::EndPopup();
 }
 
 void Editor::drawToolBar()
@@ -4080,7 +4681,7 @@ void Editor::saveProjectConfig()
         m_projectConfig.setCameraSettings(cam);
     }
 
-    if (!m_projectConfig.save(std::filesystem::path(project->fullPath)))
+    if (!m_projectConfig.save(resolveProjectRootPath(*project)))
         VX_EDITOR_WARNING_STREAM("Failed to save project config\n");
 }
 
@@ -4090,7 +4691,7 @@ void Editor::loadProjectConfig()
     if (!project)
         return;
 
-    m_projectConfig.load(std::filesystem::path(project->fullPath));
+    m_projectConfig.load(resolveProjectRootPath(*project));
     m_projectConfig.applyRenderSettings();
 
     if (!m_editorCamera)
@@ -5343,7 +5944,7 @@ engine::Texture::SharedPtr Editor::ensureProjectTextureLoaded(const std::string 
     if (!project)
         return nullptr;
 
-    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
     const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
 
     auto &record = project->cache.texturesByPath[normalizedTexturePath];
@@ -5374,7 +5975,7 @@ engine::Texture::SharedPtr Editor::ensureProjectTextureLoadedPreview(const std::
     if (!project)
         return nullptr;
 
-    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
     const std::string normalizedTexturePath = resolveTexturePathAgainstProjectRoot(texturePath, projectRoot);
 
     auto &record = project->cache.texturesByPath[normalizedTexturePath];
@@ -5404,7 +6005,7 @@ bool Editor::saveMaterialToDisk(const std::filesystem::path &path, const engine:
     nlohmann::json json;
     std::filesystem::path projectRoot;
     if (auto project = m_currentProject.lock(); project)
-        projectRoot = std::filesystem::path(project->fullPath);
+        projectRoot = resolveProjectRootPath(*project);
 
     const std::string albedoTexturePath = toMaterialTextureReferencePath(cpuMaterial.albedoTexture, projectRoot);
     const std::string normalTexturePath = toMaterialTextureReferencePath(cpuMaterial.normalTexture, projectRoot);
@@ -5546,7 +6147,7 @@ bool Editor::reloadMaterialFromDisk(const std::filesystem::path &path)
     if (cpuMaterial.name.empty())
         cpuMaterial.name = path.stem().string();
 
-    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
     const std::string normalizedMaterialPath = resolveMaterialPathAgainstProjectRoot(path.string(), projectRoot);
     normalizeMaterialTexturePaths(cpuMaterial, path, projectRoot);
     sanitizeMaterialCpuData(cpuMaterial, false);
@@ -5612,7 +6213,7 @@ engine::Material::SharedPtr Editor::ensureMaterialLoaded(const std::string &mate
     if (!project)
         return nullptr;
 
-    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
     const std::string normalizedMaterialPath = resolveMaterialPathAgainstProjectRoot(materialPath, projectRoot);
 
     auto it = project->cache.materialsByPath.find(normalizedMaterialPath);
@@ -5941,7 +6542,7 @@ bool Editor::applyPerMeshMaterialPathsToSelectedEntity(const std::vector<std::st
 
     const size_t slotCount = staticMeshComponent ? staticMeshComponent->getMaterialSlotCount() : skeletalMeshComponent->getMaterialSlotCount();
     const size_t slotLimit = std::min(slotCount, perMeshMaterialPaths.size());
-    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
 
     if (slotLimit == 0)
         return false;
@@ -6023,7 +6624,7 @@ bool Editor::exportModelMaterials(const std::filesystem::path &modelPath,
         return false;
 
     if (exportDirectory.is_relative())
-        exportDirectory = std::filesystem::path(project->fullPath) / exportDirectory;
+        exportDirectory = resolveProjectRootPath(*project) / exportDirectory;
 
     exportDirectory = makeAbsoluteNormalized(exportDirectory);
 
@@ -6078,7 +6679,7 @@ bool Editor::exportModelMaterials(const std::filesystem::path &modelPath,
     size_t exportedMaterials = 0;
 
     const std::filesystem::path modelDirectory = modelPath.parent_path();
-    const std::filesystem::path projectRoot = std::filesystem::path(project->fullPath);
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*project);
     std::unordered_map<std::string, std::string> exportedPathBySignature;
     exportedPathBySignature.reserve(materialEntries.size());
 
@@ -6201,7 +6802,7 @@ bool Editor::applyMaterialToSelectedEntity(const std::string &materialPath, std:
         return false;
     }
 
-    const std::string normalizedMaterialPath = resolveMaterialPathAgainstProjectRoot(materialPath, std::filesystem::path(project->fullPath));
+    const std::string normalizedMaterialPath = resolveMaterialPathAgainstProjectRoot(materialPath, resolveProjectRootPath(*project));
     auto material = ensureMaterialLoaded(normalizedMaterialPath);
     if (!material)
     {
@@ -6698,6 +7299,21 @@ void Editor::drawBenchmark()
     ImGui::Text("VRAM: %ld MB   RAM: %ld MB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM(),
                 core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
     ImGui::Text("Draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
+
+    {
+        const auto stats = engine::AssetManager::getInstance().getStats();
+        ImGui::Separator();
+        ImGui::Text("Assets");
+        ImGui::Text("  Textures : %u loaded", stats.loadedTextures);
+        ImGui::Text("  Models   : %u loaded", stats.loadedModels);
+        ImGui::Text("  Materials: %u loaded", stats.loadedMaterials);
+        if (stats.loadingInProgress > 0)
+            ImGui::TextColored({1.0f, 0.8f, 0.0f, 1.0f}, "  Streaming: %u in flight", stats.loadingInProgress);
+        if (stats.failed > 0)
+            ImGui::TextColored({1.0f, 0.2f, 0.2f, 1.0f}, "  Failed   : %u", stats.failed);
+        ImGui::Text("  CPU mem  : %.1f MB", static_cast<double>(stats.cpuMemoryBytes) / (1024.0 * 1024.0));
+    }
+
     ImGui::Separator();
 
     ImGui::Text("CPU prepare frame : %.3f ms", m_renderGraphProfilingData.cpuPrepareFrameMs);
@@ -7240,14 +7856,29 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 
         return;
     }
-    else
-        ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_None);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    if (m_centerDockId != 0)
+        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Appearing);
+    ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
     ImGui::Image(viewportDescriptorSet, ImVec2(viewportPanelSize.x, viewportPanelSize.y));
     const ImVec2 imageMin = ImGui::GetItemRectMin();
     const ImVec2 imageMax = ImGui::GetItemRectMax();
     const bool imageHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+
+    auto it = m_drawQueue.find("Viewport");
+    if (it != m_drawQueue.end())
+    {
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        const ImVec2 imageSize(imageMax.x - imageMin.x, imageMax.y - imageMin.y);
+
+        for (auto &fn : it->second)
+            fn(drawList, imageMin, imageSize);
+
+        it->second.clear();
+    }
 
     if (m_uiPlacementGridEnabled)
     {
@@ -7416,10 +8047,12 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 
     drawGuizmo();
 
-    uint32_t x = static_cast<uint32_t>(viewportPanelSize.x);
-    uint32_t y = static_cast<uint32_t>(viewportPanelSize.y);
+    const uint32_t x = static_cast<uint32_t>(std::max(std::lround(viewportPanelSize.x), 0l));
+    const uint32_t y = static_cast<uint32_t>(std::max(std::lround(viewportPanelSize.y), 0l));
 
-    bool sizeChanged = (m_viewportSizeX != x || m_viewportSizeY != y);
+    const bool sizeChanged =
+        (std::abs(static_cast<int64_t>(m_viewportSizeX) - static_cast<int64_t>(x)) > 1) ||
+        (std::abs(static_cast<int64_t>(m_viewportSizeY) - static_cast<int64_t>(y)) > 1);
 
     if (sizeChanged)
     {
@@ -7577,18 +8210,24 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
     }
 
     ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 void Editor::drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGameCamera)
 {
-    const bool gameViewportWindowVisible = ImGui::Begin("Game Viewport", nullptr, ImGuiWindowFlags_None);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    if (m_centerDockId != 0)
+        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Appearing);
+    const bool gameViewportWindowVisible = ImGui::Begin("Game Viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     m_isGameViewportVisible = gameViewportWindowVisible && !ImGui::IsWindowCollapsed();
 
     const ImVec2 viewportPanelSize = gameViewportWindowVisible ? ImGui::GetContentRegionAvail() : ImVec2(0.0f, 0.0f);
-    const uint32_t x = static_cast<uint32_t>(std::max(viewportPanelSize.x, 0.0f));
-    const uint32_t y = static_cast<uint32_t>(std::max(viewportPanelSize.y, 0.0f));
+    const uint32_t x = static_cast<uint32_t>(std::max(std::lround(viewportPanelSize.x), 0l));
+    const uint32_t y = static_cast<uint32_t>(std::max(std::lround(viewportPanelSize.y), 0l));
 
-    const bool sizeChanged = (m_gameViewportSizeX != x || m_gameViewportSizeY != y);
+    const bool sizeChanged =
+        (std::abs(static_cast<int64_t>(m_gameViewportSizeX) - static_cast<int64_t>(x)) > 1) ||
+        (std::abs(static_cast<int64_t>(m_gameViewportSizeY) - static_cast<int64_t>(y)) > 1);
     if (sizeChanged)
     {
         m_gameViewportSizeX = x;
@@ -7614,6 +8253,7 @@ void Editor::drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGam
     }
 
     ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 void Editor::processPendingObjectSelection()

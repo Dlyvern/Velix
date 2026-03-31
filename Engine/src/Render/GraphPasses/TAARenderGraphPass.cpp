@@ -329,6 +329,9 @@ TAARenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &render
 
 void TAARenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent = extent;
     m_viewport = {0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f};
     m_scissor = {{0, 0}, extent};

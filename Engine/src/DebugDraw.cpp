@@ -258,4 +258,10 @@ void DebugDraw::collectVertices(std::vector<Vertex> &out)
             out.push_back(vert);
 }
 
+bool DebugDraw::hasShapes()
+{
+    std::lock_guard<std::mutex> lock(mutex());
+    return !shapes().empty();
+}
+
 ELIX_NESTED_NAMESPACE_END

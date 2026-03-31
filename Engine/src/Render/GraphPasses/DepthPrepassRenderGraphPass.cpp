@@ -34,6 +34,9 @@ DepthPrepassRenderGraphPass::DepthPrepassRenderGraphPass()
 
 void DepthPrepassRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent   = extent;
     m_viewport = VkViewport{0.0f, 0.0f,
                             static_cast<float>(extent.width), static_cast<float>(extent.height),

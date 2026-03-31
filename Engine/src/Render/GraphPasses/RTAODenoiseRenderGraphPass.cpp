@@ -1,0 +1,252 @@
+#include "Engine/Render/GraphPasses/RTAODenoiseRenderGraphPass.hpp"
+
+#include "Core/VulkanContext.hpp"
+#include "Engine/Builders/DescriptorSetBuilder.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
+#include "Engine/Shaders/PushConstant.hpp"
+
+#include <glm/gtc/matrix_inverse.hpp>
+#include <stdexcept>
+
+ELIX_NESTED_NAMESPACE_BEGIN(engine)
+ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
+
+RTAODenoiseRenderGraphPass::RTAODenoiseRenderGraphPass(std::vector<RGPResourceHandler> &rawAOHandlers,
+                                                       std::vector<RGPResourceHandler> &normalHandlers,
+                                                       RGPResourceHandler &depthHandler)
+    : m_rawAOHandlers(rawAOHandlers),
+      m_normalHandlers(normalHandlers),
+      m_depthHandler(depthHandler)
+{
+    setDebugName("RTAO denoise render graph pass");
+    setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
+    outputs.ao.setOwner(this);
+}
+
+bool RTAODenoiseRenderGraphPass::shouldDenoise() const
+{
+    const auto &settings = RenderQualitySettings::getInstance();
+    const auto  context  = core::VulkanContext::getContext();
+    if (!settings.enableRayTracing || !settings.enableRTAO || !context || m_computePipeline == VK_NULL_HANDLE)
+        return false;
+    if (settings.rayTracingMode == RenderQualitySettings::RayTracingMode::Pipeline)
+        return context->hasRayTracingPipelineSupport();
+    if (settings.rayTracingMode == RenderQualitySettings::RayTracingMode::RayQuery)
+        return context->hasRayQuerySupport();
+    return false;
+}
+
+void RTAODenoiseRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
+{
+    const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
+
+    for (uint32_t i = 0; i < imageCount; ++i)
+    {
+        builder.read(m_rawAOHandlers[i], RGPTextureUsage::SAMPLED);
+        builder.read(m_normalHandlers[i], RGPTextureUsage::SAMPLED);
+    }
+    builder.read(m_depthHandler, RGPTextureUsage::SAMPLED);
+
+    RGPTextureDescription outputDescription{m_aoFormat, RGPTextureUsage::COLOR_ATTACHMENT_STORAGE};
+    outputDescription.setInitialLayout(VK_IMAGE_LAYOUT_GENERAL);
+    outputDescription.setFinalLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    outputDescription.setCustomExtentFunction([this] { return m_extent; });
+
+    for (uint32_t i = 0; i < imageCount; ++i)
+    {
+        outputDescription.setDebugName("__ELIX_RTAO_DENOISED_" + std::to_string(i) + "__");
+        auto handler = builder.createTexture(outputDescription);
+        m_outputHandlers.push_back(handler);
+        builder.write(handler, RGPTextureUsage::COLOR_ATTACHMENT_STORAGE);
+    }
+    outputs.ao.set(m_outputHandlers);
+
+    auto device = core::VulkanContext::getContext()->getDevice();
+
+    auto makeBinding = [](uint32_t binding, VkDescriptorType type) -> VkDescriptorSetLayoutBinding
+    {
+        VkDescriptorSetLayoutBinding b{};
+        b.binding         = binding;
+        b.descriptorType  = type;
+        b.descriptorCount = 1;
+        b.stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+        return b;
+    };
+
+    m_descriptorSetLayout = core::DescriptorSetLayout::createShared(
+        device,
+        std::vector<VkDescriptorSetLayoutBinding>{
+            makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER), // AO input
+            makeBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER), // normals
+            makeBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER), // depth
+            makeBinding(3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)});        // AO output
+
+    m_pipelineLayout = core::PipelineLayout::createShared(
+        device,
+        std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{*m_descriptorSetLayout},
+        std::vector<VkPushConstantRange>{
+            PushConstant<RTAODenoisePC>::getRange(VK_SHADER_STAGE_COMPUTE_BIT)});
+
+    m_aoSampler     = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
+    m_normalSampler = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
+    m_depthSampler  = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
+
+    createComputePipeline();
+}
+
+void RTAODenoiseRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
+{
+    const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
+    m_outputRenderTargets.resize(imageCount);
+    m_descriptorSets.resize(imageCount);
+
+    const auto *depthTarget = storage.getTexture(m_depthHandler);
+
+    for (uint32_t i = 0; i < imageCount; ++i)
+    {
+        const auto *rawAOTarget   = storage.getTexture(m_rawAOHandlers[i]);
+        const auto *normalTarget  = storage.getTexture(m_normalHandlers[i]);
+        const auto *outputTarget  = storage.getTexture(m_outputHandlers[i]);
+
+        m_outputRenderTargets[i] = outputTarget;
+
+        if (!m_descriptorSetsInitialized)
+        {
+            m_descriptorSets[i] = DescriptorSetBuilder::begin()
+                                      .addImage(rawAOTarget->vkImageView(),  m_aoSampler,     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                                      .addImage(normalTarget->vkImageView(), m_normalSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
+                                      .addImage(depthTarget->vkImageView(),  m_depthSampler,  VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 2)
+                                      .addStorageImage(outputTarget->vkImageView(), VK_IMAGE_LAYOUT_GENERAL, 3)
+                                      .build(core::VulkanContext::getContext()->getDevice(),
+                                             core::VulkanContext::getContext()->getPersistentDescriptorPool(),
+                                             m_descriptorSetLayout);
+        }
+        else
+        {
+            DescriptorSetBuilder::begin()
+                .addImage(rawAOTarget->vkImageView(),  m_aoSampler,     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                .addImage(normalTarget->vkImageView(), m_normalSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
+                .addImage(depthTarget->vkImageView(),  m_depthSampler,  VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 2)
+                .addStorageImage(outputTarget->vkImageView(), VK_IMAGE_LAYOUT_GENERAL, 3)
+                .update(core::VulkanContext::getContext()->getDevice(), m_descriptorSets[i]);
+        }
+    }
+
+    if (!m_descriptorSetsInitialized)
+        m_descriptorSetsInitialized = true;
+}
+
+void RTAODenoiseRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
+                                        const RenderGraphPassPerFrameData &data,
+                                        const RenderGraphPassContext &renderContext)
+{
+    const auto *outputTarget = m_outputRenderTargets[renderContext.currentImageIndex];
+    if (!outputTarget || m_extent.width == 0u || m_extent.height == 0u)
+        return;
+
+    if (!shouldDenoise())
+    {
+        VkClearColorValue clearColor{};
+        clearColor.float32[0] = 1.0f; // White = fully unoccluded when disabled
+        VkImageSubresourceRange clearRange{};
+        clearRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        clearRange.baseMipLevel   = 0;
+        clearRange.levelCount     = 1;
+        clearRange.baseArrayLayer = 0;
+        clearRange.layerCount     = 1;
+        vkCmdClearColorImage(commandBuffer->vk(), outputTarget->getImage()->vk(),
+                             VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &clearRange);
+        return;
+    }
+
+    RTAODenoisePC pushConstants{};
+    pushConstants.invProjection = glm::inverse(data.projection);
+    pushConstants.params0 = glm::vec4(
+        1.0f / static_cast<float>(m_extent.width),
+        1.0f / static_cast<float>(m_extent.height),
+        1.0f,   // enabled
+        0.22f); // normalSigma
+    pushConstants.params1 = glm::vec4(
+        0.75f,  // depthSigma
+        0.0f, 0.0f, 0.0f);
+
+    vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline);
+    vkCmdBindDescriptorSets(commandBuffer,
+                            VK_PIPELINE_BIND_POINT_COMPUTE,
+                            m_pipelineLayout,
+                            0, 1,
+                            &m_descriptorSets[renderContext.currentImageIndex],
+                            0, nullptr);
+    vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+
+    const uint32_t groupCountX = (m_extent.width  + 7u) / 8u;
+    const uint32_t groupCountY = (m_extent.height + 7u) / 8u;
+    vkCmdDispatch(commandBuffer->vk(), groupCountX, groupCountY, 1u);
+}
+
+std::vector<IRenderGraphPass::RenderPassExecution> RTAODenoiseRenderGraphPass::getRenderPassExecutions(
+    const RenderGraphPassContext &renderContext) const
+{
+    IRenderGraphPass::RenderPassExecution execution{};
+    execution.mode               = IRenderGraphPass::ExecutionMode::Direct;
+    execution.useDepth           = false;
+    execution.depthFormat        = VK_FORMAT_UNDEFINED;
+    execution.renderArea.offset  = {0, 0};
+    execution.renderArea.extent  = m_extent;
+    execution.targets[m_outputHandlers[renderContext.currentImageIndex]] = m_outputRenderTargets[renderContext.currentImageIndex];
+    return {execution};
+}
+
+void RTAODenoiseRenderGraphPass::setExtent(VkExtent2D extent)
+{
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
+    m_extent = extent;
+    requestRecompilation();
+}
+
+void RTAODenoiseRenderGraphPass::cleanup()
+{
+    destroyComputePipeline();
+}
+
+void RTAODenoiseRenderGraphPass::createComputePipeline()
+{
+    destroyComputePipeline();
+
+    auto context = core::VulkanContext::getContext();
+    if (!context)
+        return;
+
+    m_computeShader.loadFromFile("./resources/shaders/rt_ao_denoise.comp.spv", core::ShaderStage::COMPUTE);
+
+    VkComputePipelineCreateInfo pipelineCreateInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipelineCreateInfo.stage  = m_computeShader.getInfo();
+    pipelineCreateInfo.layout = m_pipelineLayout;
+
+    if (vkCreateComputePipelines(context->getDevice(), VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &m_computePipeline) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create RTAO denoise compute pipeline");
+}
+
+void RTAODenoiseRenderGraphPass::destroyComputePipeline()
+{
+    auto context = core::VulkanContext::getContext();
+    if (context && m_computePipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(context->getDevice(), m_computePipeline, nullptr);
+        m_computePipeline = VK_NULL_HANDLE;
+    }
+    m_computeShader.destroyVk();
+}
+
+void RTAODenoiseRenderGraphPass::freeResources()
+{
+    m_outputRenderTargets.clear();
+    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+    outputs.ao.set(MultiHandle{});
+}
+
+ELIX_CUSTOM_NAMESPACE_END
+ELIX_NESTED_NAMESPACE_END

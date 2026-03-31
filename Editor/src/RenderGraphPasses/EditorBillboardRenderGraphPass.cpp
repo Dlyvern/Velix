@@ -631,6 +631,9 @@ EditorBillboardRenderGraphPass::getRenderPassExecutions(
 
 void EditorBillboardRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent = extent;
     m_viewport = {0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
     m_scissor = {{0, 0}, extent};

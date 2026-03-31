@@ -216,6 +216,9 @@ std::vector<IRenderGraphPass::RenderPassExecution> RTShadowDenoiseRenderGraphPas
 
 void RTShadowDenoiseRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent = extent;
     requestRecompilation();
 }

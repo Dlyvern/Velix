@@ -51,6 +51,8 @@ namespace
             return VK_SHADER_STAGE_MISS_BIT_KHR;
         case ShaderStage::CLOSEST_HIT:
             return VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+        case ShaderStage::ANY_HIT:
+            return VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
         }
 
         throw std::runtime_error("Unsupported shader stage");

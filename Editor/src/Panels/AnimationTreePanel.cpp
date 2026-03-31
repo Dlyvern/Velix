@@ -309,6 +309,18 @@ void AnimationTreePanel::setPreviewDescriptorSet(VkDescriptorSet ds)
     invalidateLivePreviewDescriptor();
 }
 
+bool AnimationTreePanel::hasActivePreview() const
+{
+    for (const auto &[_, ui] : m_uiStates)
+    {
+        const auto &preview = ui.preview;
+        if (preview.active && preview.animator && preview.skeletalMesh)
+            return true;
+    }
+
+    return false;
+}
+
 void AnimationTreePanel::invalidateLivePreviewDescriptor()
 {
     if (m_livePreviewDescriptorSet != VK_NULL_HANDLE)

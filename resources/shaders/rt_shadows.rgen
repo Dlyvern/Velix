@@ -108,7 +108,7 @@ float traceShadowRay(vec3 origin, vec3 direction, float tMax)
         gl_RayFlagsTerminateOnFirstHitEXT |
         gl_RayFlagsOpaqueEXT |
         gl_RayFlagsCullBackFacingTrianglesEXT,
-        0xFF,
+        0x01, // opaque instances only; alpha-masked use 0x02 (visible in reflections/GI only)
         0,
         0,
         0,

@@ -4,6 +4,7 @@
 #include "Core/VulkanContext.hpp"
 
 #include "Engine/Components/CameraComponent.hpp"
+#include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/PluginSystem/PluginLoader.hpp"
 #include "Engine/PluginSystem/PluginManager.hpp"
@@ -13,7 +14,6 @@
 #include "Engine/Scripting/VelixAPI.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -49,12 +49,12 @@ namespace
         return absolutePath.lexically_normal();
     }
 
-    bool hasElixPacketExtension(const std::filesystem::path &path)
+    bool hasElixBundleExtension(const std::filesystem::path &path)
     {
         std::string extension = path.extension().string();
         std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character)
                        { return static_cast<char>(std::tolower(character)); });
-        return extension == ".elixpacket";
+        return extension == ".elixbundle";
     }
 
     std::string sharedLibraryExtension()
@@ -80,6 +80,59 @@ namespace
         return scene && scene->getFogSettings().enabled;
     }
 
+    bool renderGraphUsesParticles(const elix::engine::Scene *scene)
+    {
+        if (!scene)
+            return false;
+
+        for (const auto &entity : scene->getEntities())
+        {
+            if (!entity || !entity->isEnabled())
+                continue;
+
+            for (auto *particleSystemComponent : entity->getComponents<elix::engine::ParticleSystemComponent>())
+            {
+                if (!particleSystemComponent)
+                    continue;
+
+                const auto *particleSystem = particleSystemComponent->getParticleSystem();
+                if (!particleSystem)
+                    continue;
+
+                if (particleSystem->isPlaying())
+                    return true;
+
+                for (const auto &emitter : particleSystem->getEmitters())
+                {
+                    if (emitter && emitter->enabled && emitter->getAliveCount() > 0u)
+                        return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool renderGraphUsesUI(const elix::engine::Scene *scene)
+    {
+        if (!scene)
+            return false;
+
+        for (const auto &text : scene->getUITexts())
+            if (text && text->isEnabled())
+                return true;
+
+        for (const auto &button : scene->getUIButtons())
+            if (button && button->isEnabled())
+                return true;
+
+        for (const auto &billboard : scene->getBillboards())
+            if (billboard && billboard->isEnabled())
+                return true;
+
+        return false;
+    }
+
     size_t renderGraphTopologyHash(const elix::engine::Scene *scene)
     {
         const auto &settings = elix::engine::RenderQualitySettings::getInstance();
@@ -97,6 +150,8 @@ namespace
         hashCombine(seed, static_cast<uint32_t>(settings.volumetricFogQuality));
         hashCombine(seed, settings.overrideVolumetricFogSceneSetting);
         hashCombine(seed, settings.volumetricFogOverrideEnabled);
+        hashCombine(seed, renderGraphUsesParticles(scene));
+        hashCombine(seed, renderGraphUsesUI(scene));
         return seed;
     }
 } // namespace
@@ -127,7 +182,7 @@ bool GameRuntime::shouldRunForConfig(const ApplicationConfig &config)
         if (lowerArgument == "--game" || lowerArgument == "--packet")
             return true;
 
-        if (hasElixPacketExtension(std::filesystem::path(args[index])))
+        if (hasElixBundleExtension(std::filesystem::path(args[index])))
             return true;
     }
 
@@ -247,6 +302,7 @@ void GameRuntime::initRenderGraph()
     m_rtShadowDenoiseRenderGraphPass = nullptr;
     m_ssaoRenderGraphPass = nullptr;
     m_rtaoRenderGraphPass = nullptr;
+    m_rtaoDenoiseRenderGraphPass = nullptr;
     m_lightingRenderGraphPass = nullptr;
     m_contactShadowRenderGraphPass = nullptr;
     m_volumetricFogLightingRenderGraphPass = nullptr;
@@ -274,6 +330,8 @@ void GameRuntime::initRenderGraph()
     const bool useRTAO = settings.enableRayTracing && settings.enableRTAO && supportsRayQuery;
     const bool useRTReflections = settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT;
     const bool useVolumetricFog = renderGraphUsesVolumetricFog(settings, m_scene.get());
+    const bool useParticles = renderGraphUsesParticles(m_scene.get());
+    const bool useUI = renderGraphUsesUI(m_scene.get());
 
     m_gBufferRenderGraphPass = m_renderGraph->addPass<renderGraph::GBufferRenderGraphPass>(false);
     m_shadowRenderGraphPass = m_renderGraph->addPass<renderGraph::ShadowRenderGraphPass>();
@@ -299,11 +357,17 @@ void GameRuntime::initRenderGraph()
             m_gBufferRenderGraphPass->getDepthTextureHandler(),
             m_gBufferRenderGraphPass->getNormalTextureHandlers(),
             m_ssaoRenderGraphPass->getAOHandlers());
+
+        m_rtaoDenoiseRenderGraphPass = m_renderGraph->addPass<renderGraph::RTAODenoiseRenderGraphPass>(
+            m_rtaoRenderGraphPass->getAOHandlers(),
+            m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler());
     }
 
     auto *rtShadowHandlers = m_rtShadowDenoiseRenderGraphPass ? &m_rtShadowDenoiseRenderGraphPass->getOutput() : nullptr;
-    auto *aoHandlers = m_rtaoRenderGraphPass ? &m_rtaoRenderGraphPass->getAOHandlers()
-                                             : &m_ssaoRenderGraphPass->getAOHandlers();
+    auto *aoHandlers = m_rtaoDenoiseRenderGraphPass ? &m_rtaoDenoiseRenderGraphPass->getOutput()
+                     : (m_rtaoRenderGraphPass        ? &m_rtaoRenderGraphPass->getAOHandlers()
+                     :                                  &m_ssaoRenderGraphPass->getAOHandlers());
 
     m_lightingRenderGraphPass = m_renderGraph->addPass<renderGraph::LightingRenderGraphPass>(
         m_shadowRenderGraphPass->getDirectionalShadowHandler(),
@@ -365,15 +429,19 @@ void GameRuntime::initRenderGraph()
         sceneColorInput = &m_volumetricFogCompositeRenderGraphPass->getOutput();
     }
 
-    m_particleRenderGraphPass = m_renderGraph->addPass<renderGraph::ParticleRenderGraphPass>(
-        *sceneColorInput,
-        &m_gBufferRenderGraphPass->getDepthTextureHandler());
+    if (useParticles)
+    {
+        m_particleRenderGraphPass = m_renderGraph->addPass<renderGraph::ParticleRenderGraphPass>(
+            *sceneColorInput,
+            &m_gBufferRenderGraphPass->getDepthTextureHandler());
+        sceneColorInput = &m_particleRenderGraphPass->getHandlers();
+    }
 
     m_bloomRenderGraphPass = m_renderGraph->addPass<renderGraph::BloomRenderGraphPass>(
-        m_particleRenderGraphPass->getHandlers());
+        *sceneColorInput);
 
     m_tonemapRenderGraphPass = m_renderGraph->addPass<renderGraph::TonemapRenderGraphPass>(
-        m_particleRenderGraphPass->getHandlers());
+        *sceneColorInput);
 
     m_bloomCompositeRenderGraphPass = m_renderGraph->addPass<renderGraph::BloomCompositeRenderGraphPass>(
         m_tonemapRenderGraphPass->getHandlers(),
@@ -388,11 +456,16 @@ void GameRuntime::initRenderGraph()
     m_taaRenderGraphPass = m_renderGraph->addPass<renderGraph::TAARenderGraphPass>(
         m_smaaRenderGraphPass->getHandlers());
 
-    m_uiRenderGraphPass = m_renderGraph->addPass<renderGraph::UIRenderGraphPass>(
-        m_taaRenderGraphPass->getHandlers());
+    auto *finalSceneInput = &m_taaRenderGraphPass->getHandlers();
+    if (useUI)
+    {
+        m_uiRenderGraphPass = m_renderGraph->addPass<renderGraph::UIRenderGraphPass>(
+            *finalSceneInput);
+        finalSceneInput = &m_uiRenderGraphPass->getHandlers();
+    }
 
     m_presentRenderGraphPass = m_renderGraph->addPass<renderGraph::PresentRenderGraphPass>(
-        m_uiRenderGraphPass->getHandlers());
+        *finalSceneInput);
 
     bindSceneToPasses();
 
@@ -439,13 +512,7 @@ void GameRuntime::shutdown()
         PluginLoader::closeLibrary(*it);
     m_preloadedRuntimeLibraries.clear();
 
-    if (!m_extractionDirectory.empty())
-    {
-        std::error_code removeError;
-        std::filesystem::remove_all(m_extractionDirectory, removeError);
-        if (removeError)
-            VX_ENGINE_WARNING_STREAM("Failed to clean packet extraction directory '" << m_extractionDirectory << "': " << removeError.message() << '\n');
-    }
+    elix::engine::ElixBundleManager::getInstance().unmountAll();
 
     m_initialized = false;
 }
@@ -492,7 +559,7 @@ bool GameRuntime::resolveLaunchPaths(std::string *errorMessage)
         for (size_t index = 1u; index < m_args.size(); ++index)
         {
             const std::filesystem::path argumentPath(m_args[index]);
-            if (hasElixPacketExtension(argumentPath))
+            if (hasElixBundleExtension(argumentPath))
             {
                 m_packetPath = argumentPath;
                 break;
@@ -506,7 +573,7 @@ bool GameRuntime::resolveLaunchPaths(std::string *errorMessage)
     if (m_packetPath.empty())
     {
         if (errorMessage)
-            *errorMessage = "No .elixpacket found. Pass --packet <file> or place one packet next to executable.";
+            *errorMessage = "No .elixbundle found. Pass --packet <file> or place one bundle next to executable.";
         return false;
     }
 
@@ -549,14 +616,6 @@ bool GameRuntime::resolveLaunchPaths(std::string *errorMessage)
             *errorMessage = "Module option was provided but no module path value was found.";
         return false;
     }
-
-    std::error_code tempPathError;
-    std::filesystem::path tempDirectory = std::filesystem::temp_directory_path(tempPathError);
-    if (tempPathError || tempDirectory.empty())
-        tempDirectory = std::filesystem::current_path();
-
-    const uint64_t timestamp = static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
-    m_extractionDirectory = tempDirectory / ("velix_packet_runtime_" + std::to_string(timestamp));
 
     if (packetFromOption)
         VX_ENGINE_INFO_STREAM("Using packet from --packet: " << m_packetPath << '\n');
@@ -621,38 +680,19 @@ bool GameRuntime::loadProjectModule(std::string *errorMessage)
 
 bool GameRuntime::extractPacket(std::string *errorMessage)
 {
-    std::error_code createError;
-    std::filesystem::create_directories(m_extractionDirectory, createError);
-    if (createError)
+    auto &bundleManager = elix::engine::ElixBundleManager::getInstance();
+    bundleManager.mountBundle(m_packetPath, 0);
+
+    std::vector<uint8_t> manifestData;
+    if (!bundleManager.readFile("__manifest__", manifestData) || manifestData.empty())
     {
         if (errorMessage)
-            *errorMessage = "Failed to create extraction directory: " + m_extractionDirectory.string();
+            *errorMessage = "Bundle does not contain a __manifest__ entry (entry scene path missing).";
         return false;
     }
 
-    ElixPacketDeserializer deserializer;
-    std::string extractionError;
-    if (!deserializer.extractToDirectory(m_packetPath, m_extractionDirectory, &m_packetManifest, &extractionError))
-    {
-        if (errorMessage)
-            *errorMessage = extractionError;
-        return false;
-    }
-
-    if (m_packetManifest.entrySceneRelativePath.empty())
-    {
-        if (errorMessage)
-            *errorMessage = "Packet manifest does not contain entry scene path.";
-        return false;
-    }
-
-    m_entryScenePath = normalizeAbsolutePath(m_extractionDirectory / std::filesystem::path(m_packetManifest.entrySceneRelativePath));
-    if (!std::filesystem::exists(m_entryScenePath) || !std::filesystem::is_regular_file(m_entryScenePath))
-    {
-        if (errorMessage)
-            *errorMessage = "Entry scene was not found after extraction: " + m_entryScenePath.string();
-        return false;
-    }
+    const std::string entrySceneRel(manifestData.begin(), manifestData.end());
+    m_entryScenePath = m_packetPath.parent_path() / std::filesystem::path(entrySceneRel);
 
     return true;
 }
@@ -687,6 +727,10 @@ void GameRuntime::syncViewportExtent()
         m_rtShadowDenoiseRenderGraphPass->setExtent(extent);
     if (m_ssaoRenderGraphPass)
         m_ssaoRenderGraphPass->setExtent(extent);
+    if (m_rtaoRenderGraphPass)
+        m_rtaoRenderGraphPass->setExtent(extent);
+    if (m_rtaoDenoiseRenderGraphPass)
+        m_rtaoDenoiseRenderGraphPass->setExtent(extent);
     if (m_lightingRenderGraphPass)
         m_lightingRenderGraphPass->setExtent(extent);
     if (m_contactShadowRenderGraphPass)
@@ -832,7 +876,7 @@ std::filesystem::path GameRuntime::findPacketInDirectory(const std::filesystem::
             continue;
 
         const auto path = entry.path();
-        if (!hasElixPacketExtension(path))
+        if (!hasElixBundleExtension(path))
             continue;
 
         packetCandidates.push_back(path);

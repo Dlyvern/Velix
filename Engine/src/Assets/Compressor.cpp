@@ -6,6 +6,10 @@
 #include <zlib.h>
 #endif
 
+#if defined(ELIX_HAS_LZ4)
+#include <lz4.h>
+#endif
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 bool Compressor::compress(const std::vector<uint8_t> &input, std::vector<uint8_t> &output, Algorithm algorithm, int compressionLevel)
@@ -47,6 +51,26 @@ bool Compressor::compress(const std::vector<uint8_t> &input, std::vector<uint8_t
     }
 #endif
 
+#if defined(ELIX_HAS_LZ4)
+    if (algorithm == Algorithm::LZ4)
+    {
+        const int bound = LZ4_compressBound(static_cast<int>(input.size()));
+        output.resize(static_cast<size_t>(bound));
+        const int compressed = LZ4_compress_default(
+            reinterpret_cast<const char *>(input.data()),
+            reinterpret_cast<char *>(output.data()),
+            static_cast<int>(input.size()),
+            bound);
+        if (compressed <= 0)
+        {
+            output.clear();
+            return false;
+        }
+        output.resize(static_cast<size_t>(compressed));
+        return true;
+    }
+#endif
+
     output.clear();
     return false;
 }
@@ -84,6 +108,24 @@ bool Compressor::decompress(const std::vector<uint8_t> &input, size_t expectedSi
             return false;
         }
 
+        return true;
+    }
+#endif
+
+#if defined(ELIX_HAS_LZ4)
+    if (algorithm == Algorithm::LZ4)
+    {
+        output.resize(expectedSize);
+        const int decompressed = LZ4_decompress_safe(
+            reinterpret_cast<const char *>(input.data()),
+            reinterpret_cast<char *>(output.data()),
+            static_cast<int>(input.size()),
+            static_cast<int>(expectedSize));
+        if (decompressed < 0 || static_cast<size_t>(decompressed) != expectedSize)
+        {
+            output.clear();
+            return false;
+        }
         return true;
     }
 #endif

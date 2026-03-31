@@ -143,8 +143,8 @@ void main()
         payload.hit      = 0u;
 
         traceRayEXT(uTLAS,
-                    gl_RayFlagsOpaqueEXT | gl_RayFlagsCullBackFacingTrianglesEXT,
-                    0xFF, 0, 0, 0,
+                    gl_RayFlagsCullBackFacingTrianglesEXT,
+                    0x03, 0, 0, 0, // 0x01=opaque + 0x02=alpha-masked; any-hit handles alpha test
                     P_world + N_world * bias, 0.001,
                     reflDir, 1000.0, 0);
 

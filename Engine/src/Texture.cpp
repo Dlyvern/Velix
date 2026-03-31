@@ -578,6 +578,15 @@ void Texture::createDefaults()
     // 4×2 all-zero equirectangular → 4×4×6 black cubemap
     std::vector<float> blackEquirect(4 * 2 * 4, 0.0f);
     s_blackCubemap->createCubemapFromEquirectangular(blackEquirect.data(), 4, 2, 4);
+
+    // Default fallback textures can be sampled as soon as the first frame starts.
+    // Finish their uploads here so they never spend a frame visible to validation
+    // as VK_IMAGE_LAYOUT_UNDEFINED.
+    if (auto context = core::VulkanContext::getContext())
+    {
+        utilities::AsyncGpuUpload::batchFlush(context->getGraphicsQueue());
+        utilities::AsyncGpuUpload::flush(context->getDevice());
+    }
 }
 
 void Texture::destroyDefaults()
@@ -972,7 +981,8 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
 
         commandBuffer->end();
 
-        utilities::AsyncGpuUpload::enqueue(commandBuffer, {stagingBuffer});
+        if (!utilities::AsyncGpuUpload::submit(commandBuffer, queue, {stagingBuffer}))
+            throw std::runtime_error("Failed to submit texture upload");
 
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = m_image->vk();
@@ -1174,7 +1184,14 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
     vkCmdPipelineBarrier2(commandBuffer, &secondDependency);
     commandBuffer->end();
 
-    utilities::AsyncGpuUpload::enqueue(commandBuffer, std::move(stagingBuffers));
+    // Cubemaps are sampled immediately by skybox / reflection-probe passes after
+    // creation, so this upload must be submitted right away instead of waiting
+    // for the next frame's batched texture flush.
+    if (!utilities::AsyncGpuUpload::submit(commandBuffer, queue, std::move(stagingBuffers)))
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to submit cubemap upload\n");
+        return false;
+    }
 
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.image = m_image->vk();

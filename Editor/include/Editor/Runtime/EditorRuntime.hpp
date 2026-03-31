@@ -40,7 +40,10 @@
 #include "Engine/Render/GraphPasses/RTShadowDenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTShadowsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTAORenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTAODenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTReflectionDenoiseRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTIndirectDiffuseRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/RTGIDenoiseRenderGraphPass.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -139,7 +142,10 @@ private:
     engine::renderGraph::VolumetricFogCompositeRenderGraphPass *m_volumetricFogCompositeRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionsRenderGraphPass *m_rtReflectionsRenderGraphPass{nullptr};
     engine::renderGraph::RTAORenderGraphPass *m_rtaoRenderGraphPass{nullptr};
+    engine::renderGraph::RTAODenoiseRenderGraphPass *m_rtaoDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionDenoiseRenderGraphPass *m_rtReflectionDenoiseRenderGraphPass{nullptr};
+    engine::renderGraph::RTIndirectDiffuseRenderGraphPass *m_rtGIRenderGraphPass{nullptr};
+    engine::renderGraph::RTGIDenoiseRenderGraphPass       *m_rtGIDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_cinematicEffectsRenderGraphPass{nullptr};
     engine::renderGraph::MotionBlurRenderGraphPass       *m_motionBlurRenderGraphPass{nullptr};
     SelectionOverlayRenderGraphPass *m_selectionOverlayRenderGraphPass{nullptr};
@@ -172,7 +178,10 @@ private:
     engine::renderGraph::VolumetricFogCompositeRenderGraphPass *m_gameVolumetricFogCompositeRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionsRenderGraphPass *m_gameRTReflectionsRenderGraphPass{nullptr};
     engine::renderGraph::RTAORenderGraphPass *m_gameRtaoRenderGraphPass{nullptr};
+    engine::renderGraph::RTAODenoiseRenderGraphPass *m_gameRtaoDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::RTReflectionDenoiseRenderGraphPass *m_gameRtReflectionDenoiseRenderGraphPass{nullptr};
+    engine::renderGraph::RTIndirectDiffuseRenderGraphPass *m_gameRTGIRenderGraphPass{nullptr};
+    engine::renderGraph::RTGIDenoiseRenderGraphPass       *m_gameRTGIDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_gameCinematicEffectsRenderGraphPass{nullptr};
     engine::renderGraph::MotionBlurRenderGraphPass       *m_gameMotionBlurRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_gameUIRenderGraphPass{nullptr};
@@ -182,6 +191,7 @@ private:
     VkExtent2D m_lastGameRenderExtent{0u, 0u};
     size_t m_editorRenderGraphTopologyHash{0u};
     size_t m_gameViewportRenderGraphTopologyHash{0u};
+    const std::vector<engine::renderGraph::RGPResourceHandler> *m_gameViewportOutputHandlers{nullptr};
 
     void captureReflectionProbe(engine::Entity *entity);
 

@@ -161,12 +161,14 @@ void MotionBlurRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuf
         m_hasPrevFrame   = true;
     }
 
+    const bool motionBlurEnabled = s.enablePostProcessing && s.enableMotionBlur;
+
     MotionBlurPC pc{};
     pc.invViewProj  = glm::inverse(data.projection * data.view);
     pc.prevViewProj = m_prevProjection * m_prevView;
     pc.texelSize    = {1.0f / static_cast<float>(m_extent.width), 1.0f / static_cast<float>(m_extent.height)};
-    pc.intensity    = s.motionBlurIntensity;
-    pc.numSamplesF  = static_cast<float>(glm::clamp(s.motionBlurSamples, 2, 32));
+    pc.intensity    = motionBlurEnabled ? s.motionBlurIntensity : 0.0f;
+    pc.numSamplesF  = motionBlurEnabled ? static_cast<float>(glm::clamp(s.motionBlurSamples, 2, 32)) : 1.0f;
 
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
 
@@ -204,6 +206,9 @@ MotionBlurRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext 
 
 void MotionBlurRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent   = extent;
     m_viewport = {0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f};
     m_scissor  = {{0, 0}, extent};

@@ -21,6 +21,7 @@ void EngineShaderFamilies::initEngineShaderFamilies()
         uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         uboLayoutBinding.descriptorCount = 1;
         uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                                      VK_SHADER_STAGE_COMPUTE_BIT |
                                       VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
         uboLayoutBinding.pImmutableSamplers = nullptr;
 
@@ -37,6 +38,7 @@ void EngineShaderFamilies::initEngineShaderFamilies()
         lightSSBOLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         lightSSBOLayoutBinding.descriptorCount = 1;
         lightSSBOLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT |
+                                            VK_SHADER_STAGE_COMPUTE_BIT |
                                             VK_SHADER_STAGE_RAYGEN_BIT_KHR |
                                             VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
         lightSSBOLayoutBinding.pImmutableSamplers = nullptr;
@@ -53,6 +55,7 @@ void EngineShaderFamilies::initEngineShaderFamilies()
             accelerationStructureBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
             accelerationStructureBinding.descriptorCount = 1;
             accelerationStructureBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT |
+                                                      VK_SHADER_STAGE_COMPUTE_BIT |
                                                       VK_SHADER_STAGE_RAYGEN_BIT_KHR |
                                                       VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
             accelerationStructureBinding.pImmutableSamplers = nullptr;
@@ -152,38 +155,41 @@ void EngineShaderFamilies::initEngineShaderFamilies()
     meshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(device, layoutRefs, pushConstantsStatic);
 
     // ---- Bindless material descriptor set layout ----
-    // binding 0: sampler2D allTextures[MAX_BINDLESS_TEXTURES] — UPDATE_AFTER_BIND + PARTIALLY_BOUND
+    // binding 0: sampler2D allTextures[MAX_BINDLESS_TEXTURES] — PARTIALLY_BOUND
     // binding 1: readonly SSBO MaterialParams[]              — PARTIALLY_BOUND
     {
         VkDescriptorSetLayoutBinding texBinding{};
-        texBinding.binding         = 0;
-        texBinding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        texBinding.binding = 0;
+        texBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         texBinding.descriptorCount = EngineShaderFamilies::MAX_BINDLESS_TEXTURES;
-        texBinding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+        texBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT |
+                                VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
+                                VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
 
         VkDescriptorSetLayoutBinding ssboBinding{};
-        ssboBinding.binding         = 1;
-        ssboBinding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        ssboBinding.binding = 1;
+        ssboBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         ssboBinding.descriptorCount = 1;
-        ssboBinding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+        ssboBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT |
+                                 VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
+                                 VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
 
         VkDescriptorBindingFlags bindingFlags[2] = {
-            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
-            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
-        };
+            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
 
         VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{
             VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-        flagsInfo.bindingCount  = 2;
+        flagsInfo.bindingCount = 2;
         flagsInfo.pBindingFlags = bindingFlags;
 
         VkDescriptorSetLayoutBinding bindings[2] = {texBinding, ssboBinding};
 
         VkDescriptorSetLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        layoutCI.pNext        = &flagsInfo;
-        layoutCI.flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+        layoutCI.pNext = &flagsInfo;
+        layoutCI.flags = 0;
         layoutCI.bindingCount = 2;
-        layoutCI.pBindings    = bindings;
+        layoutCI.pBindings = bindings;
 
         vkCreateDescriptorSetLayout(device, &layoutCI, nullptr,
                                     &EngineShaderFamilies::bindlessMaterialSetLayout);
@@ -194,20 +200,19 @@ void EngineShaderFamilies::initEngineShaderFamilies()
         VkDescriptorSetLayout setLayouts[3] = {
             EngineShaderFamilies::cameraDescriptorSetLayout->vk(),
             EngineShaderFamilies::bindlessMaterialSetLayout,
-            EngineShaderFamilies::objectDescriptorSetLayout->vk()
-        };
+            EngineShaderFamilies::objectDescriptorSetLayout->vk()};
 
         // Match the GBufferPC push-constant: 4 uints + 1 float = 20 bytes.
         VkPushConstantRange pushRange{};
         pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        pushRange.offset     = 0;
-        pushRange.size       = 20;
+        pushRange.offset = 0;
+        pushRange.size = 20;
 
         VkPipelineLayoutCreateInfo pipelineLayoutCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        pipelineLayoutCI.setLayoutCount         = 3;
-        pipelineLayoutCI.pSetLayouts            = setLayouts;
+        pipelineLayoutCI.setLayoutCount = 3;
+        pipelineLayoutCI.pSetLayouts = setLayouts;
         pipelineLayoutCI.pushConstantRangeCount = 1;
-        pipelineLayoutCI.pPushConstantRanges    = &pushRange;
+        pipelineLayoutCI.pPushConstantRanges = &pushRange;
 
         vkCreatePipelineLayout(device, &pipelineLayoutCI, nullptr,
                                &EngineShaderFamilies::bindlessMeshPipelineLayout);

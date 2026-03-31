@@ -38,6 +38,7 @@ public:
                 const RenderGraphPassContext &renderContext) override;
 
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
+    bool canRecordInParallel() const override { return false; }
 
     void setExtent(VkExtent2D extent);
 

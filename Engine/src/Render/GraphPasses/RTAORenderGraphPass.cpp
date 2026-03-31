@@ -49,7 +49,8 @@ void RTAORenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     RGPTextureDescription outDesc{m_format, RGPTextureUsage::COLOR_ATTACHMENT};
     outDesc.setInitialLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     outDesc.setFinalLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    outDesc.setCustomExtentFunction([this] { return m_extent; });
+    outDesc.setCustomExtentFunction([this]
+                                    { return m_extent; });
 
     const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     for (uint32_t i = 0; i < imageCount; ++i)
@@ -68,22 +69,22 @@ void RTAORenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     auto device = core::VulkanContext::getContext()->getDevice();
 
     VkDescriptorSetLayoutBinding normalBinding{};
-    normalBinding.binding        = 0;
+    normalBinding.binding = 0;
     normalBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     normalBinding.descriptorCount = 1;
-    normalBinding.stageFlags     = VK_SHADER_STAGE_FRAGMENT_BIT;
+    normalBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutBinding depthBinding{};
-    depthBinding.binding        = 1;
+    depthBinding.binding = 1;
     depthBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     depthBinding.descriptorCount = 1;
-    depthBinding.stageFlags     = VK_SHADER_STAGE_FRAGMENT_BIT;
+    depthBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutBinding ssaoBinding{};
-    ssaoBinding.binding         = 2;
-    ssaoBinding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ssaoBinding.binding = 2;
+    ssaoBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     ssaoBinding.descriptorCount = 1;
-    ssaoBinding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    ssaoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(
         device, std::vector<VkDescriptorSetLayoutBinding>{normalBinding, depthBinding, ssaoBinding});
@@ -95,7 +96,7 @@ void RTAORenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
             *m_descriptorSetLayout},
         std::vector<VkPushConstantRange>{PushConstant<RTAOpc>::getRange(VK_SHADER_STAGE_FRAGMENT_BIT)});
 
-    m_sampler      = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
+    m_sampler = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
     m_depthSampler = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 }
 
@@ -109,15 +110,15 @@ void RTAORenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
     {
         m_outputTargets[i] = storage.getTexture(m_outputHandlers[i]);
         auto normalTex = storage.getTexture(m_normalHandlers[i]);
-        auto depthTex  = storage.getTexture(m_depthHandler);
-        auto ssaoTex   = storage.getTexture(m_ssaoHandlers[i]);
+        auto depthTex = storage.getTexture(m_depthHandler);
+        auto ssaoTex = storage.getTexture(m_ssaoHandlers[i]);
 
         if (!m_descriptorSetsInitialized)
         {
             m_descriptorSets[i] = DescriptorSetBuilder::begin()
-                                      .addImage(normalTex->vkImageView(), m_sampler,      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,        0)
-                                      .addImage(depthTex->vkImageView(),  m_depthSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 1)
-                                      .addImage(ssaoTex->vkImageView(),   m_sampler,      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,        2)
+                                      .addImage(normalTex->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                                      .addImage(depthTex->vkImageView(), m_depthSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 1)
+                                      .addImage(ssaoTex->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
                                       .build(core::VulkanContext::getContext()->getDevice(),
                                              core::VulkanContext::getContext()->getPersistentDescriptorPool(),
                                              m_descriptorSetLayout);
@@ -125,9 +126,9 @@ void RTAORenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         else
         {
             DescriptorSetBuilder::begin()
-                .addImage(normalTex->vkImageView(), m_sampler,      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,        0)
-                .addImage(depthTex->vkImageView(),  m_depthSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 1)
-                .addImage(ssaoTex->vkImageView(),   m_sampler,      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,        2)
+                .addImage(normalTex->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
+                .addImage(depthTex->vkImageView(), m_depthSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 1)
+                .addImage(ssaoTex->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
                 .update(core::VulkanContext::getContext()->getDevice(), m_descriptorSets[i]);
         }
     }
@@ -144,14 +145,14 @@ void RTAORenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     vkCmdSetScissor(commandBuffer->vk(), 0, 1, &m_scissor);
 
     GraphicsPipelineKey key{};
-    key.shader        = ShaderId::RTAO;
-    key.cull          = CullMode::None;
-    key.depthTest     = false;
-    key.depthWrite    = false;
-    key.depthCompare  = VK_COMPARE_OP_LESS;
-    key.polygonMode   = VK_POLYGON_MODE_FILL;
-    key.topology      = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    key.colorFormats  = {m_format};
+    key.shader = ShaderId::RTAO;
+    key.cull = CullMode::None;
+    key.depthTest = false;
+    key.depthWrite = false;
+    key.depthCompare = VK_COMPARE_OP_LESS;
+    key.polygonMode = VK_POLYGON_MODE_FILL;
+    key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    key.colorFormats = {m_format};
     key.pipelineLayout = m_pipelineLayout;
 
     auto pipeline = GraphicsPipelineManager::getOrCreate(key);
@@ -164,9 +165,9 @@ void RTAORenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     const auto &s = RenderQualitySettings::getInstance();
     auto ctx = core::VulkanContext::getContext();
     RTAOpc pc{};
-    pc.aoRadius  = std::clamp(s.rtaoRadius,  0.1f, 10.0f);
+    pc.aoRadius = std::clamp(s.rtaoRadius, 0.1f, 10.0f);
     pc.aoSamples = static_cast<float>(std::clamp(s.rtaoSamples, 1, 16));
-    pc.enabled   = (s.enableRayTracing && s.enableRTAO && ctx && ctx->hasRayQuerySupport()) ? 1.0f : 0.0f;
+    pc.enabled = (s.enableRayTracing && s.enableRTAO && ctx && ctx->hasRayQuerySupport()) ? 1.0f : 0.0f;
 
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(pc), &pc);
@@ -182,14 +183,14 @@ RTAORenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &rende
     exec.renderArea.extent = m_extent;
 
     VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    color.imageView   = m_outputTargets[renderContext.currentImageIndex]->vkImageView();
+    color.imageView = m_outputTargets[renderContext.currentImageIndex]->vkImageView();
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color.loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue  = {.color = {1.0f, 0.0f, 0.0f, 0.0f}};
+    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color.clearValue = {.color = {1.0f, 0.0f, 0.0f, 0.0f}};
 
     exec.colorsRenderingItems = {color};
-    exec.useDepth    = false;
+    exec.useDepth = false;
     exec.colorFormats = {m_format};
     exec.depthFormat = VK_FORMAT_UNDEFINED;
     exec.targets[m_outputHandlers[renderContext.currentImageIndex]] =
@@ -200,16 +201,20 @@ RTAORenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &rende
 
 void RTAORenderGraphPass::setExtent(VkExtent2D extent)
 {
-    m_extent   = extent;
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
+    m_extent = extent;
     m_viewport = {0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f};
-    m_scissor  = {{0, 0}, extent};
+    m_scissor = {{0, 0}, extent};
     requestRecompilation();
 }
 
 void RTAORenderGraphPass::freeResources()
 {
     m_outputTargets.clear();
-    for (auto &s : m_descriptorSets) s = VK_NULL_HANDLE;
+    for (auto &s : m_descriptorSets)
+        s = VK_NULL_HANDLE;
     m_descriptorSetsInitialized = false;
     outputs.ao.set(MultiHandle{});
 }

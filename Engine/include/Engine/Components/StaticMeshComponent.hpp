@@ -3,6 +3,8 @@
 
 #include "Core/Macros.hpp"
 
+#include "Engine/Assets/AssetHandle.hpp"
+#include "Engine/Assets/Asset.hpp"
 #include "Engine/Components/ECS.hpp"
 #include "Engine/Mesh.hpp"
 #include "Engine/Material.hpp"
@@ -12,7 +14,12 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class StaticMeshComponent : public ECS
 {
 public:
+    // Legacy constructor: meshes already loaded (editor drag-drop, primitives, etc.)
     explicit StaticMeshComponent(const std::vector<CPUMesh> &meshes);
+
+    // Streaming constructor: store path only, no disk I/O.
+    // AssetManager::requestLoad() resolves the handle asynchronously.
+    explicit StaticMeshComponent(const std::string &assetPath);
 
     const std::vector<CPUMesh> &getMeshes() const;
     CPUMesh &getMesh(int index);
@@ -81,11 +88,27 @@ public:
     void setAssetPath(const std::string &path) { m_assetPath = path; }
     const std::string &getAssetPath() const { return m_assetPath; }
 
+    // ---- On-demand streaming ----
+
+    // Returns the handle used for async loading.
+    AssetHandle<ModelAsset>       &getModelHandle()       { return m_modelHandle; }
+    const AssetHandle<ModelAsset> &getModelHandle() const { return m_modelHandle; }
+
+    // True if either the handle is Ready OR meshes were set via legacy constructor.
+    bool isReady() const;
+
+    // Called by PerFrameDataWorker when handle transitions Ready → meshes populated.
+    void onModelLoaded();
+
+    // Called on unload — clears CPU mesh data so it can be GC'd.
+    void clearMeshes() { m_meshes.clear(); m_perMeshMaterialOverrides.clear(); }
+
 private:
     std::vector<CPUMesh> m_meshes;
     std::vector<Material::SharedPtr> m_perMeshMaterialOverrides;
     std::vector<std::string> m_perMeshMaterialOverridePaths;
     std::string m_assetPath;
+    AssetHandle<ModelAsset> m_modelHandle;
 };
 
 ELIX_NESTED_NAMESPACE_END

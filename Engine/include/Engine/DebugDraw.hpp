@@ -74,6 +74,7 @@ public:
     static void collectVertices(std::vector<Vertex> &out);
 
     static void flush(float deltaTime);
+    static bool hasShapes();
 
 private:
     struct Shape

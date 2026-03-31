@@ -1,6 +1,7 @@
 #include "Engine/Assets/AssetsLoader.hpp"
 
 #include "Engine/Assets/AssetsSerializer.hpp"
+#include "Engine/Assets/ElixBundle.hpp"
 
 #include "Core/Logger.hpp"
 
@@ -1067,8 +1068,25 @@ std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
 
     AssetsSerializer serializer;
 
+    // Check mounted bundles first (runtime game mode).
     if (isElixAssetFile(sourcePath))
     {
+        auto &bundleManager = elix::engine::ElixBundleManager::getInstance();
+        if (bundleManager.contains(sourcePath.string()))
+        {
+            std::vector<uint8_t> bundleBytes;
+            if (bundleManager.readFile(sourcePath.string(), bundleBytes))
+            {
+                auto model = serializer.readModel(bundleBytes);
+                if (model.has_value())
+                {
+                    sanitizeModelMaterialData(model.value());
+                    sanitizeAnimationClipNames(model->animations, sourcePath.stem().string());
+                    return model;
+                }
+            }
+        }
+
         auto model = serializer.readModel(sourcePath.string());
         if (model.has_value())
         {
@@ -1125,6 +1143,19 @@ std::optional<TextureAsset> AssetsLoader::loadTexture(const std::string &path)
 
     if (isElixAssetFile(sourcePath))
     {
+        // Check mounted bundles first (runtime game mode).
+        auto &bundleManager = elix::engine::ElixBundleManager::getInstance();
+        if (bundleManager.contains(sourcePath.string()))
+        {
+            std::vector<uint8_t> bundleBytes;
+            if (bundleManager.readFile(sourcePath.string(), bundleBytes))
+            {
+                auto texture = serializer.readTexture(bundleBytes);
+                if (texture.has_value())
+                    return texture;
+            }
+        }
+
         auto texture = serializer.readTexture(sourcePath.string());
         if (texture.has_value())
             return texture;

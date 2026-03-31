@@ -464,6 +464,8 @@ namespace
     {
         std::vector<std::string> texturePaths;
         std::unordered_set<std::string> uniquePaths;
+        std::error_code directoryError;
+        const bool canScanDirectory = !projectRoot.empty() && std::filesystem::is_directory(projectRoot, directoryError) && !directoryError;
 
         auto addTexturePath = [&](const std::filesystem::path &path)
         {
@@ -486,8 +488,11 @@ namespace
         }
 
         std::error_code scanError;
-        for (std::filesystem::recursive_directory_iterator iterator(projectRoot, scanError);
-             !scanError && iterator != std::filesystem::recursive_directory_iterator();
+        for (std::filesystem::recursive_directory_iterator iterator(
+                 projectRoot,
+                 std::filesystem::directory_options::skip_permission_denied,
+                 scanError);
+             canScanDirectory && !scanError && iterator != std::filesystem::recursive_directory_iterator();
              iterator.increment(scanError))
         {
             std::error_code fileError;
@@ -776,7 +781,7 @@ void AssetDetailsView::draw(Editor &editor)
     }
 
     auto project = editor.m_currentProject.lock();
-    const std::filesystem::path projectRoot = project ? std::filesystem::path(project->fullPath) : std::filesystem::path{};
+    const std::filesystem::path projectRoot = project ? resolveProjectRootPath(*project) : std::filesystem::path{};
     const std::filesystem::path assetPath = editor.m_selectedAssetPath;
     const bool isDirectory = std::filesystem::is_directory(assetPath);
     const std::string extensionLower = toLowerCopy(assetPath.extension().string());
@@ -1260,7 +1265,7 @@ void AssetDetailsView::draw(Editor &editor)
     auto runApplyMaterialsOnly = [&]()
     {
         auto project = editor.m_currentProject.lock();
-        const std::filesystem::path projectRoot = project ? std::filesystem::path(project->fullPath) : std::filesystem::path{};
+        const std::filesystem::path projectRoot = project ? resolveProjectRootPath(*project) : std::filesystem::path{};
 
         std::filesystem::path materialsDirectory = std::filesystem::path(editor.m_modelMaterialsExportDirectory);
         if (materialsDirectory.empty())

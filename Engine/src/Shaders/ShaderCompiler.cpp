@@ -66,6 +66,8 @@ std::optional<shaderc_shader_kind> ShaderCompiler::shaderKindFromPath(const std:
         return shaderc_miss_shader;
     if (extension == ".rchit")
         return shaderc_closesthit_shader;
+    if (extension == ".rahit")
+        return shaderc_anyhit_shader;
 
     return std::nullopt;
 }

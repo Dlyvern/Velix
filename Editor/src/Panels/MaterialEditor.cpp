@@ -313,6 +313,8 @@ namespace
     {
         std::vector<std::string> texturePaths;
         std::unordered_set<std::string> uniquePaths;
+        std::error_code directoryError;
+        const bool canScanDirectory = !projectRoot.empty() && std::filesystem::is_directory(projectRoot, directoryError) && !directoryError;
 
         auto addTexturePath = [&](const std::filesystem::path &path)
         {
@@ -335,8 +337,11 @@ namespace
         }
 
         std::error_code scanError;
-        for (std::filesystem::recursive_directory_iterator iterator(projectRoot, scanError);
-             !scanError && iterator != std::filesystem::recursive_directory_iterator();
+        for (std::filesystem::recursive_directory_iterator iterator(
+                 projectRoot,
+                 std::filesystem::directory_options::skip_permission_denied,
+                 scanError);
+             canScanDirectory && !scanError && iterator != std::filesystem::recursive_directory_iterator();
              iterator.increment(scanError))
         {
             std::error_code fileError;
@@ -715,7 +720,7 @@ void MaterialEditor::openMaterialEditor(const std::filesystem::path &path)
     std::filesystem::path normalizedPath = path;
 
     if (m_project)
-        normalizedPath = resolveMaterialPathAgainstProjectRoot(path.string(), std::filesystem::path(m_project->fullPath));
+        normalizedPath = resolveMaterialPathAgainstProjectRoot(path.string(), resolveProjectRootPath(*m_project));
 
     if (m_currentOpenedMaterialEditor.path == normalizedPath)
     {
@@ -740,7 +745,7 @@ void MaterialEditor::closeMaterialEditor(const std::filesystem::path &path)
 {
     std::filesystem::path normalizedPath = path;
     if (m_project)
-        normalizedPath = resolveMaterialPathAgainstProjectRoot(path.string(), std::filesystem::path(m_project->fullPath));
+        normalizedPath = resolveMaterialPathAgainstProjectRoot(path.string(), resolveProjectRootPath(*m_project));
     else
         normalizedPath = path.lexically_normal();
 
@@ -809,7 +814,7 @@ void MaterialEditor::draw()
     if (!m_project || m_currentOpenedMaterialEditor.path.empty())
         return;
 
-    const std::filesystem::path projectRoot = std::filesystem::path(m_project->fullPath);
+    const std::filesystem::path projectRoot = resolveProjectRootPath(*m_project);
 
     auto &matEditor = m_currentOpenedMaterialEditor;
     const std::string matPath = matEditor.path.string();
@@ -2433,7 +2438,7 @@ void MaterialEditor::draw()
         ImGui::Separator();
 
         auto project = m_project;
-        const std::filesystem::path projectRoot = project ? std::filesystem::path(project->fullPath) : std::filesystem::path{};
+        const std::filesystem::path projectRoot = project ? resolveProjectRootPath(*project) : std::filesystem::path{};
         const std::string normalizedMatPath = resolveMaterialPathAgainstProjectRoot(matEditor.path.string(), projectRoot);
 
         if (ImGui::Button("Save"))

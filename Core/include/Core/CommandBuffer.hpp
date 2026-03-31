@@ -17,6 +17,14 @@ class CommandBuffer
     DECLARE_VK_SMART_PTRS(CommandBuffer, VkCommandBuffer)
     ELIX_DECLARE_VK_LIFECYCLE()
 public:
+    struct SemaphoreSubmitDesc
+    {
+        VkSemaphore semaphore{VK_NULL_HANDLE};
+        VkPipelineStageFlags2 stageMask{VK_PIPELINE_STAGE_2_NONE};
+        uint64_t value{0u};
+        uint32_t deviceIndex{0u};
+    };
+
     CommandBuffer(CommandPool &commandPool, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
     ~CommandBuffer();
 
@@ -26,7 +34,12 @@ public:
     bool end();
     void reset(VkCommandBufferResetFlags flags = 0);
     bool submit(VkQueue queue, const std::vector<VkSemaphore>& waitSemaphores = {}, const std::vector<VkPipelineStageFlags>& waitStages = {},
-    const std::vector<VkSemaphore>& signalSemaphores = {}, VkFence fence = VK_NULL_HANDLE);
+                const std::vector<VkSemaphore>& signalSemaphores = {}, VkFence fence = VK_NULL_HANDLE);
+    bool submit2(VkQueue queue,
+                 const std::vector<SemaphoreSubmitDesc> &waitSemaphores = {},
+                 const std::vector<SemaphoreSubmitDesc> &signalSemaphores = {},
+                 VkFence fence = VK_NULL_HANDLE,
+                 uint32_t deviceMask = 0u);
 private:
     CommandPool *m_commandPool{nullptr};
 };

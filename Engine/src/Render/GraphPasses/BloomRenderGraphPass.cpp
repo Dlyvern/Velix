@@ -169,6 +169,9 @@ std::vector<IRenderGraphPass::RenderPassExecution> BloomRenderGraphPass::getRend
 
 void BloomRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent      = extent;
     m_bloomExtent = {std::max(1u, extent.width / 2), std::max(1u, extent.height / 2)};
     m_viewport    = {0.0f, 0.0f, (float)m_bloomExtent.width, (float)m_bloomExtent.height, 0.0f, 1.0f};

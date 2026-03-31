@@ -949,11 +949,10 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                         assetPath = resolveScenePath(componentJson.value("asset_path", std::string{}));
                         if (!assetPath.empty())
                         {
-                            auto modelAsset = AssetsLoader::loadModel(assetPath);
-                            if (modelAsset.has_value())
-                                meshes = modelAsset->meshes;
-                            else
-                                VX_ENGINE_WARNING_STREAM("Failed to load model for static_mesh: " << assetPath << '\n');
+                            // Streaming path: create the component with a path-only handle.
+                            // AssetManager will load the model data asynchronously.
+                            auto *sm = gameObject->addComponent<StaticMeshComponent>(assetPath);
+                            restoreMaterialOverrides(sm, componentJson.value("material_overrides", nlohmann::json::array()));
                         }
                     }
 
@@ -988,22 +987,10 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                     const std::string assetPath = resolveScenePath(componentJson.value("asset_path", std::string{}));
                     if (!assetPath.empty())
                     {
-                        auto modelAsset = AssetsLoader::loadModel(assetPath);
-                        if (modelAsset.has_value() && modelAsset->skeleton.has_value())
-                        {
-                            auto *skm = gameObject->addComponent<SkeletalMeshComponent>(
-                                modelAsset->meshes, modelAsset->skeleton.value());
-                            skm->setAssetPath(assetPath);
-                            restoreMaterialOverrides(skm, componentJson.value("material_overrides", nlohmann::json::array()));
-
-                            if (!modelAsset->animations.empty())
-                            {
-                                auto *anim = gameObject->addComponent<AnimatorComponent>();
-                                anim->setAnimations(modelAsset->animations, &skm->getSkeleton());
-                            }
-                        }
-                        else
-                            VX_ENGINE_WARNING_STREAM("Failed to load skeletal model: " << assetPath << '\n');
+                        // Streaming path: handle resolved asynchronously; AnimatorComponent
+                        // will be populated in PerFrameDataWorker once onModelLoaded() fires.
+                        auto *skm = gameObject->addComponent<SkeletalMeshComponent>(assetPath);
+                        restoreMaterialOverrides(skm, componentJson.value("material_overrides", nlohmann::json::array()));
                     }
                 }
                 else if (type == "animator")

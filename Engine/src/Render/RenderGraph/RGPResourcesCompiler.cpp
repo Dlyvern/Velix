@@ -30,6 +30,7 @@ namespace
 
         case elix::engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT_STORAGE:
             return VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                   VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                    VK_IMAGE_USAGE_STORAGE_BIT |
                    VK_IMAGE_USAGE_SAMPLED_BIT;
 
@@ -203,7 +204,7 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::compile(RGPResourcesBui
                 const auto &image = swapChain->getImages().at(imageIndex);
                 auto wrapImage = core::Image::createShared(image);
 
-                auto renderTarget = std::make_shared<RenderTarget>(device, swapChain->getImageFormat(),
+                auto renderTarget = std::make_shared<RenderTarget>(device, swapChain->getExtent(), swapChain->getImageFormat(),
                                                                    utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat()), wrapImage);
 
                 storage.addSwapChainTexture(id, std::move(renderTarget));
@@ -308,7 +309,7 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::onSwapChainResized(RGPR
             swapChainRenderTarget->destroyVkImageView();
             swapChainRenderTarget->destroyVkImage();
 
-            swapChainRenderTarget->resetVkImage(wrapImage);
+            swapChainRenderTarget->resetVkImage(wrapImage, swapChain->getExtent());
             swapChainRenderTarget->createVkImageView();
 
             if (textureDescription.getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription.getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)

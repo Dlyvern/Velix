@@ -1,9 +1,9 @@
-#include "Engine/RayTracing/AccelerationStructure.hpp"
+#include "Core/RTX/AccelerationStructure.hpp"
 
 #include "Core/VulkanContext.hpp"
 
-ELIX_NESTED_NAMESPACE_BEGIN(engine)
-ELIX_CUSTOM_NAMESPACE_BEGIN(rayTracing)
+ELIX_NESTED_NAMESPACE_BEGIN(core)
+ELIX_CUSTOM_NAMESPACE_BEGIN(rtx)
 
 AccelerationStructure::SharedPtr AccelerationStructure::create(VkAccelerationStructureTypeKHR type, VkDeviceSize size)
 {
@@ -20,6 +20,7 @@ bool AccelerationStructure::createInternal(VkAccelerationStructureTypeKHR type, 
     if (!context || !context->hasAccelerationStructureSupport() || size == 0u)
         return false;
 
+    m_device = context->getDevice();
     m_type = type;
     m_size = size;
 
@@ -38,7 +39,7 @@ bool AccelerationStructure::createInternal(VkAccelerationStructureTypeKHR type, 
     createInfo.size = size;
     createInfo.type = type;
 
-    if (vkCreateAccelerationStructureKHR(context->getDevice(), &createInfo, nullptr, &m_handle) != VK_SUCCESS)
+    if (vkCreateAccelerationStructureKHR(m_device, &createInfo, nullptr, &m_handle) != VK_SUCCESS)
     {
         m_buffer.reset();
         m_handle = VK_NULL_HANDLE;
@@ -51,8 +52,7 @@ bool AccelerationStructure::createInternal(VkAccelerationStructureTypeKHR type, 
 
 void AccelerationStructure::refreshDeviceAddress()
 {
-    auto context = core::VulkanContext::getContext();
-    if (!context || m_handle == VK_NULL_HANDLE)
+    if (m_device == VK_NULL_HANDLE || m_handle == VK_NULL_HANDLE)
     {
         m_deviceAddress = 0u;
         return;
@@ -61,22 +61,19 @@ void AccelerationStructure::refreshDeviceAddress()
     VkAccelerationStructureDeviceAddressInfoKHR addressInfo{
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
     addressInfo.accelerationStructure = m_handle;
-    m_deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(context->getDevice(), &addressInfo);
+    m_deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(m_device, &addressInfo);
 }
 
 void AccelerationStructure::destroy()
 {
-    if (m_handle != VK_NULL_HANDLE)
-    {
-        auto context = core::VulkanContext::getContext();
-        if (context)
-            vkDestroyAccelerationStructureKHR(context->getDevice(), m_handle, nullptr);
-        m_handle = VK_NULL_HANDLE;
-    }
+    if (m_handle != VK_NULL_HANDLE && m_device != VK_NULL_HANDLE)
+        vkDestroyAccelerationStructureKHR(m_device, m_handle, nullptr);
 
+    m_handle = VK_NULL_HANDLE;
     m_buffer.reset();
     m_deviceAddress = 0u;
     m_size = 0u;
+    m_device = VK_NULL_HANDLE;
 }
 
 AccelerationStructure::~AccelerationStructure()

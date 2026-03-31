@@ -316,6 +316,9 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
 
 void GBufferRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent = extent;
     m_viewport = VkViewport{0.0f, 0.0f, static_cast<float>(m_extent.width), static_cast<float>(m_extent.height), 0.0f, 1.0f};
     m_scissor = VkRect2D{VkOffset2D{0, 0}, m_extent};

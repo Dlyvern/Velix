@@ -19,7 +19,8 @@ LightingRenderGraphPass::LightingRenderGraphPass(RGPResourceHandler &shadowTextu
                                                  std::vector<RGPResourceHandler> &materialTextureHandlers,
                                                  std::vector<RGPResourceHandler> &emissiveTextureHandlers,
                                                  std::vector<RGPResourceHandler> *rtShadowTextureHandlers,
-                                                 std::vector<RGPResourceHandler> *aoTextureHandlers)
+                                                 std::vector<RGPResourceHandler> *aoTextureHandlers,
+                                                 std::vector<RGPResourceHandler> *giTextureHandlers)
     : m_albedoTextureHandlers(albedoTextureHandlers),
       m_normalTextureHandlers(normalTextureHandlers),
       m_materialTextureHandlers(materialTextureHandlers),
@@ -29,7 +30,8 @@ LightingRenderGraphPass::LightingRenderGraphPass(RGPResourceHandler &shadowTextu
       m_shadowTextureHandler(shadowTextureHandler),
       m_cubeTextureHandler(cubeTextureHandler),
       m_arrayTextureHandler(arrayTextureHandler),
-      m_aoTextureHandlers(aoTextureHandlers)
+      m_aoTextureHandlers(aoTextureHandlers),
+      m_giTextureHandlers(giTextureHandlers)
 {
     m_clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
 
@@ -92,7 +94,9 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
         float rtShadowPenumbraSize;     // virtual light radius → penumbra width
         glm::vec4 probeWorldPos_radius; // xyz=probe world pos, w=radius (0=inactive)
         float probeIntensity;
-        float _pad[3];
+        float giEnabled;                // 1.0 when RT GI irradiance buffer is bound
+        float giStrength;               // indirect diffuse intensity multiplier
+        float _pad2;
     };
 
     static_assert(sizeof(LightingPC) == 48, "LightingPC push constant must stay 48 bytes");
@@ -107,24 +111,10 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     pc.rtShadowPenumbraSize = rtShadowsActive ? std::clamp(settings.rtShadowPenumbraSize, 0.0f, 2.0f) : 0.0f;
     pc.probeWorldPos_radius = glm::vec4(m_probeWorldPos, m_probeRadius);
     pc.probeIntensity = m_probeIntensity;
+    pc.giEnabled  = (m_giTextureHandlers && !m_giTextureHandlers->empty()) ? 1.0f : 0.0f;
+    pc.giStrength = std::clamp(RenderQualitySettings::getInstance().giStrength, 0.0f, 4.0f);
     vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout,
                        VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-
-    // If probe texture changed, update the descriptor set for the current image index
-    if (m_probeDescriptorDirty && m_probeImageView && m_probeSampler)
-    {
-        const uint32_t count = static_cast<uint32_t>(m_descriptorSets.size());
-        for (uint32_t idx = 0; idx < count; ++idx)
-        {
-            if (m_descriptorSets[idx] != VK_NULL_HANDLE)
-            {
-                DescriptorSetBuilder::begin()
-                    .addImage(m_probeImageView, m_probeSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 11)
-                    .update(core::VulkanContext::getContext()->getDevice(), m_descriptorSets[idx]);
-            }
-        }
-        m_probeDescriptorDirty = false;
-    }
 
     const uint32_t imageIndex = renderContext.currentImageIndex;
     VkDescriptorSet sets[2] = {
@@ -163,6 +153,9 @@ std::vector<IRenderGraphPass::RenderPassExecution> LightingRenderGraphPass::getR
 
 void LightingRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent = extent;
     m_viewport = VkViewport{0.0f, 0.0f, static_cast<float>(m_extent.width), static_cast<float>(m_extent.height), 0.0f, 1.0f};
     m_scissor = VkRect2D{VkOffset2D{0, 0}, m_extent};
@@ -172,17 +165,22 @@ void LightingRenderGraphPass::setExtent(VkExtent2D extent)
 void LightingRenderGraphPass::setProbeData(VkImageView view, VkSampler sampler,
                                            const glm::vec3 &worldPos, float radius, float intensity)
 {
-    const bool textureChanged = (view != m_probeImageView) || (sampler != m_probeSampler);
-
     auto *blackCube = Texture::getDefaultBlackCubemap().get();
-    m_probeImageView = view ? view : (blackCube ? blackCube->vkImageView() : VK_NULL_HANDLE);
-    m_probeSampler = sampler ? sampler : (blackCube ? blackCube->vkSampler() : VK_NULL_HANDLE);
+    const VkImageView resolvedView = view ? view : (blackCube ? blackCube->vkImageView() : VK_NULL_HANDLE);
+    const VkSampler resolvedSampler = sampler ? sampler : (blackCube ? blackCube->vkSampler() : VK_NULL_HANDLE);
+    const bool textureChanged = (resolvedView != m_probeImageView) || (resolvedSampler != m_probeSampler);
+
+    m_probeImageView = resolvedView;
+    m_probeSampler = resolvedSampler;
     m_probeWorldPos = worldPos;
     m_probeRadius = radius;
     m_probeIntensity = intensity;
 
     if (textureChanged)
+    {
         m_probeDescriptorDirty = true;
+        requestRecompilation();
+    }
 }
 
 void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
@@ -239,6 +237,21 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
             aoSampler = m_defaultWhiteTexture->vkSampler();
         }
 
+        // GI irradiance texture: use GI output when available, otherwise white texture.
+        VkImageView giImageView = VK_NULL_HANDLE;
+        VkSampler   giSampler   = m_defaultSampler;
+        if (m_giTextureHandlers && i < static_cast<uint32_t>(m_giTextureHandlers->size()))
+        {
+            const RenderTarget *giTarget = storage.getTexture((*m_giTextureHandlers)[i]);
+            if (giTarget)
+                giImageView = giTarget->vkImageView();
+        }
+        if (giImageView == VK_NULL_HANDLE && m_defaultWhiteTexture)
+        {
+            giImageView = m_defaultWhiteTexture->vkImageView();
+            giSampler   = m_defaultWhiteTexture->vkSampler();
+        }
+
         if (!m_descriptorSetsInitialized)
         {
             m_descriptorSets[i] = DescriptorSetBuilder::begin()
@@ -253,6 +266,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                                       .addImage(aoImageView, aoSampler, aoLayout, 9)
                                       .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
                                       .addImage(m_probeImageView, m_probeSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 11)
+                                      .addImage(giImageView, giSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 12)
                                       .build(device, pool, m_descriptorSetLayout);
         }
         else
@@ -269,6 +283,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                 .addImage(aoImageView, aoSampler, aoLayout, 9)
                 .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
                 .addImage(m_probeImageView, m_probeSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 11)
+                .addImage(giImageView, giSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 12)
                 .update(device, m_descriptorSets[i]);
         }
     }
@@ -305,6 +320,9 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
         if (m_rtShadowTextureHandlers && imageIndex < static_cast<int>(m_rtShadowTextureHandlers->size()))
             builder.read((*m_rtShadowTextureHandlers)[imageIndex], RGPTextureUsage::SAMPLED);
+
+        if (m_giTextureHandlers && imageIndex < static_cast<int>(m_giTextureHandlers->size()))
+            builder.read((*m_giTextureHandlers)[imageIndex], RGPTextureUsage::SAMPLED);
     }
     outputs.color.set(m_colorTextureHandler);
 
@@ -392,10 +410,17 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
     probeEnvBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     probeEnvBinding.pImmutableSamplers = nullptr;
 
+    VkDescriptorSetLayoutBinding giIrradianceBinding{};
+    giIrradianceBinding.binding = 12;
+    giIrradianceBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    giIrradianceBinding.descriptorCount = 1;
+    giIrradianceBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    giIrradianceBinding.pImmutableSamplers = nullptr;
+
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{bindingNormal,
                                                                                                                       bindingAlbedo, bindingMaterial, bindingEmissive, bindingDepth,
                                                                                                                       lightMapBinding, spotMapBinding, pointMapBinding, aoBinding, rtShadowBinding,
-                                                                                                                      probeEnvBinding});
+                                                                                                                      probeEnvBinding, giIrradianceBinding});
 
     VkPushConstantRange pcRange{};
     pcRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;

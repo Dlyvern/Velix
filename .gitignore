@@ -2,6 +2,7 @@ cmake-build-debug
 .idea
 .cache
 build
+release_build
 external/fbx_sdk/lib/linux/Debug/libfbxsdk.a
 external/fbx_sdk/lib/macos/Debug/libfbxsdk.a
 imgui.ini

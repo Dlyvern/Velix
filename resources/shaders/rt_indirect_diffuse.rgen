@@ -1,0 +1,155 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+const float PI = 3.14159265359;
+
+layout(set = 0, binding = 0) uniform CameraUBO
+{
+    mat4 view;
+    mat4 projection;
+    mat4 invView;
+    mat4 invProjection;
+} camera;
+
+layout(set = 0, binding = 3) uniform accelerationStructureEXT uTLAS;
+
+layout(set = 1, binding = 0) uniform sampler2D uGBufferNormal;
+layout(set = 1, binding = 1) uniform sampler2D uGBufferAlbedo;
+layout(set = 1, binding = 2) uniform sampler2D uDepth;
+layout(set = 1, binding = 3, rgba16f) uniform image2D uGIOutput;
+
+layout(push_constant) uniform GIPC
+{
+    int   giSamples;
+    float sunHeight;
+    float frameOffset;   // fract(frameCounter * small_value) for temporal noise
+    float pad;
+} pc;
+
+struct GIPayload
+{
+    vec3  radiance;
+    uint  hit;
+};
+
+layout(location = 0) rayPayloadEXT GIPayload payload;
+
+void buildOrthonormalBasis(vec3 n, out vec3 t, out vec3 b)
+{
+    if (n.z < -0.9999) { t = vec3(0,-1,0); b = vec3(-1,0,0); return; }
+    float a = 1.0 / (1.0 + n.z);
+    float c = -n.x * n.y * a;
+    t = vec3(1.0 - n.x*n.x*a, c, -n.x);
+    b = vec3(c, 1.0 - n.y*n.y*a, -n.y);
+}
+
+float radicalInverse_vdC(uint bits)
+{
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10;
+}
+
+vec2 hammersley(uint i, uint N)
+{
+    return vec2(float(i) / float(N), radicalInverse_vdC(i));
+}
+
+float hash13(vec3 p)
+{
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+// Cosine-weighted hemisphere sample — PDF = cos(theta)/PI
+// The cos factor cancels with the estimator denominator, so
+// E[L_indirect] = albedo * (1/N) * sum(L_incoming(direction_i))
+vec3 cosineHemisphereSample(vec3 N, float u1, float u2)
+{
+    float r     = sqrt(u1);
+    float theta = 2.0 * PI * u2;
+    vec3 T, B;
+    buildOrthonormalBasis(N, T, B);
+    return normalize(T * (r * cos(theta)) + B * (r * sin(theta)) + N * sqrt(max(0.0, 1.0 - u1)));
+}
+
+vec3 getSkyColor(vec3 dir)
+{
+    float sunH  = pc.sunHeight;
+    float h     = pow(clamp(dir.y * 0.5 + 0.5, 0.0, 1.0), 0.38);
+
+    float dayFactor    = smoothstep(0.08, 0.28, sunH);
+    float goldenFactor = 1.0 - smoothstep(-0.04, 0.22, abs(sunH - 0.07));
+    float duskFactor   = 1.0 - smoothstep(-0.18, 0.02, abs(sunH + 0.06));
+
+    vec3 zenith  = mix(mix(vec3(0.004,0.006,0.020), vec3(0.08,0.04,0.14), duskFactor),
+                       mix(vec3(0.20,0.12,0.27), vec3(0.10,0.32,0.85), dayFactor), goldenFactor);
+    vec3 horizon = mix(mix(vec3(0.010,0.012,0.030), vec3(0.92,0.24,0.06), duskFactor),
+                       mix(vec3(1.00,0.44,0.12), vec3(0.65,0.82,1.00), dayFactor), goldenFactor);
+
+    return mix(horizon, zenith, h);
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    vec2  uv    = (vec2(pixel) + 0.5) / vec2(gl_LaunchSizeEXT.xy);
+
+    float depth = texture(uDepth, uv).r;
+    if (depth >= 1.0)
+    {
+        imageStore(uGIOutput, pixel, vec4(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    // Reconstruct world-space position from depth
+    vec4 viewPos = camera.invProjection * vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec3 P_world = (camera.invView * vec4(viewPos.xyz / max(viewPos.w, 0.000001), 1.0)).xyz;
+
+    // World-space normal
+    vec3 N_view  = normalize(texture(uGBufferNormal, uv).rgb * 2.0 - 1.0);
+    vec3 N_world = normalize((camera.invView * vec4(N_view, 0.0)).xyz);
+
+    // Source pixel albedo for Lambertian color bleeding
+    vec3 albedo = texture(uGBufferAlbedo, uv).rgb;
+
+    int   nSamples = max(pc.giSamples, 1);
+    float jitter   = hash13(vec3(float(pixel.x), float(pixel.y), pc.frameOffset));
+
+    vec3 accum = vec3(0.0);
+    for (int i = 0; i < nSamples; ++i)
+    {
+        vec2 xi = hammersley(uint(i), uint(nSamples));
+        // Temporal jitter for noise dithering across frames
+        xi = fract(xi + vec2(jitter, hash13(vec3(float(i), float(pixel.y), pc.frameOffset))));
+
+        vec3 dir = cosineHemisphereSample(N_world, xi.x, xi.y);
+
+        payload.radiance = vec3(0.0);
+        payload.hit      = 0u;
+
+        traceRayEXT(uTLAS,
+                    gl_RayFlagsOpaqueEXT | gl_RayFlagsCullBackFacingTrianglesEXT,
+                    0x01, // opaque instances only
+                    0, 0, 0,
+                    P_world + N_world * 0.005,
+                    0.001,
+                    dir,
+                    500.0,
+                    0);
+
+        // Miss: ray reaches the sky — accumulate sky radiance.
+        // Hit: evaluate Lambertian direct lighting at the secondary surface.
+        accum += (payload.hit == 0u) ? getSkyColor(dir) : payload.radiance;
+    }
+
+    // Cosine-weighted sampling: E[L_indirect] = albedo * (1/N) * sum(L_sky_visible)
+    // (cos factor in BRDF cancels with cosine PDF of sampling)
+    vec3 indirectDiffuse = albedo * accum / float(nSamples);
+
+    imageStore(uGIOutput, pixel, vec4(indirectDiffuse, 1.0));
+}

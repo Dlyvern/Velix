@@ -52,6 +52,7 @@ public:
     bool hasRayQuerySupport() const;
     bool hasRayTracingPipelineSupport() const;
     bool hasRayTracingDeviceFeaturesEnabled() const;
+    bool hasTimelineSemaphoreSupport() const;
     const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &getRayTracingPipelineProperties() const;
 
     void cleanup();
@@ -155,6 +156,7 @@ private:
     RayTracingSupport m_rayTracingSupport{};
     bool m_bufferDeviceAddressSupported{false};
     bool m_depthClampSupported{false};
+    bool m_timelineSemaphoreSupported{false};
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rayTracingPipelineProperties{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
     VkPhysicalDeviceAccelerationStructurePropertiesKHR m_accelerationStructureProperties{

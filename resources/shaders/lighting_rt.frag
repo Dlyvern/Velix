@@ -55,6 +55,7 @@ layout(set = 1, binding = 7) uniform sampler2DArray spotShadowMaps;
 layout(set = 1, binding = 8) uniform samplerCubeArray cubeShadowMaps;
 layout(set = 1, binding = 9) uniform sampler2D uSSAO;
 layout(set = 1, binding = 10) uniform sampler2DArray uRTShadows;
+layout(set = 1, binding = 12) uniform sampler2D     uGIIrradiance;
 
 layout(push_constant) uniform LightingPC
 {
@@ -62,6 +63,11 @@ layout(push_constant) uniform LightingPC
     float shadowMode;           // 0.0 = shadow maps, 1.0 = ray query inline (unused), 2.0 = precomputed RT shadow array
     float rtShadowSamples;      // number of rays per light (1 = hard, 4-16 = soft)
     float rtShadowPenumbraSize; // virtual light radius — larger = wider penumbra
+    vec4  _probeData;           // unused in ray query shader, kept for layout compatibility
+    float _probeIntensity;      // unused
+    float giEnabled;            // 1.0 when RT GI irradiance buffer is bound
+    float giStrength;           // indirect diffuse intensity multiplier
+    float _pad2;
 } pc;
 
 // ---------------------------------------------------------------------------
@@ -330,13 +336,53 @@ float calculatePointLightShadow(int shadowIndex, vec3 worldPos, vec3 normalWorld
     return shadow / 8.0;
 }
 
-vec3 computeSpecular(vec3 N, vec3 V, vec3 L, vec3 specularColor, float roughness)
+float D_GGX(float NdotH, float a2)
 {
+    float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * d * d);
+}
+
+float G_SchlickGGX(float NdotX, float k)
+{
+    return NdotX / (NdotX * (1.0 - k) + k);
+}
+
+float G_Smith(float NdotV, float NdotL, float roughness)
+{
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return G_SchlickGGX(max(NdotV, 0.001), k) * G_SchlickGGX(max(NdotL, 0.001), k);
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0)
+{
+    return F0 + (1.0 - F0) * pow(1.0 - clamp(cosTheta, 0.0, 1.0), 5.0);
+}
+
+vec3 evaluateBRDF(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughness)
+{
+    float NdotL = max(dot(N, L), 0.0);
+    if (NdotL <= 0.0)
+        return vec3(0.0);
+
     vec3 H = normalize(V + L);
-    float shininess = mix(128.0, 8.0, clamp(roughness, 0.0, 1.0));
-    float specularStrength = pow(max(dot(N, H), 0.0), shininess);
-    specularStrength *= mix(1.0, 0.15, clamp(roughness, 0.0, 1.0));
-    return specularColor * specularStrength;
+    float NdotV = max(dot(N, V), 0.001);
+    float NdotH = max(dot(N, H), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+
+    float a = roughness * roughness;
+    float a2 = a * a;
+
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F = fresnelSchlick(HdotV, F0);
+    float D = D_GGX(NdotH, a2);
+    float G = G_Smith(NdotV, NdotL, roughness);
+
+    vec3 kD = (1.0 - F) * (1.0 - metallic);
+    vec3 diffuse = kD * albedo / PI;
+    vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
+
+    return (diffuse + specular) * NdotL;
 }
 
 void main()
@@ -363,8 +409,6 @@ void main()
 
     vec3 P_view = reconstructViewPosition(vUV, depth);
     vec3 V = normalize(-P_view);
-    vec3 specularColor = mix(vec3(0.04), albedo, metallic);
-
     vec3 P_world = (camera.invView * vec4(P_view, 1.0)).xyz;
     vec3 N_world = normalize((camera.invView * vec4(N_view, 0.0)).xyz);
 
@@ -471,16 +515,20 @@ void main()
         if (NdotL <= 0.0)
             continue;
 
-        vec3 diffuseColor = mix(albedo, vec3(0.0), metallic);
-        vec3 diffuse = (diffuseColor / PI) * NdotL;
-        vec3 specular = computeSpecular(N_view, V, L, specularColor, roughness) * NdotL;
-
-        lighting += (diffuse + specular) * radiance * (1.0 - shadow);
+        lighting += evaluateBRDF(N_view, V, L, albedo, metallic, roughness) * radiance * (1.0 - shadow);
     }
 
     float ambientFactor = hasDirectionalLight ? 0.03 : 0.0;
     vec3 ambient = albedo * ambientFactor * ao;
     ambient *= (1.0 - clamp(pc.shadowAmbientStrength, 0.0, 1.0) * directionalShadowMax);
+
+    // RT Global Illumination: replace flat ambient with sky-occlusion-based indirect diffuse.
+    if (pc.giEnabled > 0.5)
+    {
+        vec2 vUV = gl_FragCoord.xy / vec2(textureSize(uGIIrradiance, 0));
+        vec3 giIrradiance = texture(uGIIrradiance, vUV).rgb;
+        ambient = giIrradiance * pc.giStrength * ao;
+    }
 
     vec3 color = ambient + lighting + emissive;
     outColor = vec4(color, alpha);

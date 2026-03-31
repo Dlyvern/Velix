@@ -31,6 +31,9 @@ ParticleRenderGraphPass::ParticleRenderGraphPass(std::vector<RGPResourceHandler>
 
 void ParticleRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent = extent;
     m_viewport = {0.f, 0.f,
                   static_cast<float>(extent.width),

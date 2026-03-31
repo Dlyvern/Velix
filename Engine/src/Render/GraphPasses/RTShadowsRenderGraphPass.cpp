@@ -7,29 +7,10 @@
 #include "Engine/Shaders/ShaderFamily.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <stdexcept>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
-
-namespace
-{
-    VkDeviceSize alignUp(VkDeviceSize value, VkDeviceSize alignment)
-    {
-        if (alignment == 0)
-            return value;
-
-        return (value + alignment - 1) & ~(alignment - 1);
-    }
-
-    VkDeviceAddress getBufferDeviceAddress(const core::Buffer &buffer)
-    {
-        VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
-        addressInfo.buffer = buffer.vk();
-        return vkGetBufferDeviceAddress(core::VulkanContext::getContext()->getDevice(), &addressInfo);
-    }
-}
 
 RTShadowsRenderGraphPass::RTShadowsRenderGraphPass(std::vector<RGPResourceHandler> &normalHandlers,
                                                    RGPResourceHandler &depthHandler)
@@ -46,8 +27,10 @@ bool RTShadowsRenderGraphPass::canUsePipelinePath() const
     auto context = core::VulkanContext::getContext();
     return context &&
            context->hasRayTracingPipelineSupport() &&
-           m_rayTracingPipeline != VK_NULL_HANDLE &&
-           m_shaderBindingTable != nullptr;
+           m_rayTracingPipeline &&
+           m_rayTracingPipeline->isValid() &&
+           m_shaderBindingTable &&
+           m_shaderBindingTable->isValid();
 }
 
 bool RTShadowsRenderGraphPass::shouldUsePipelinePath() const
@@ -237,10 +220,17 @@ void RTShadowsRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuff
 
     if (shouldUsePipelinePath())
     {
-        vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rayTracingPipeline);
+        vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rayTracingPipeline->vk());
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 2, descriptorSets, 0, nullptr);
         vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout, VK_SHADER_STAGE_RAYGEN_BIT_KHR, 0, sizeof(pushConstants), &pushConstants);
-        vkCmdTraceRaysKHR(commandBuffer->vk(), &m_raygenRegion, &m_missRegion, &m_hitRegion, &m_callableRegion, m_extent.width, m_extent.height, 1);
+        vkCmdTraceRaysKHR(commandBuffer->vk(),
+                          &m_shaderBindingTable->raygenRegion(),
+                          &m_shaderBindingTable->missRegion(),
+                          &m_shaderBindingTable->hitRegion(),
+                          &m_shaderBindingTable->callableRegion(),
+                          m_extent.width,
+                          m_extent.height,
+                          1);
     }
     else if (shouldUseRayQueryPath())
     {
@@ -267,6 +257,9 @@ std::vector<IRenderGraphPass::RenderPassExecution> RTShadowsRenderGraphPass::get
 
 void RTShadowsRenderGraphPass::setExtent(VkExtent2D extent)
 {
+    if (m_extent.width == extent.width && m_extent.height == extent.height)
+        return;
+
     m_extent = extent;
     requestRecompilation();
 }
@@ -333,85 +326,28 @@ void RTShadowsRenderGraphPass::createRayTracingPipeline()
     pipelineCreateInfo.maxPipelineRayRecursionDepth = 1;
     pipelineCreateInfo.layout = m_pipelineLayout;
 
-    if (vkCreateRayTracingPipelinesKHR(context->getDevice(), VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &m_rayTracingPipeline) != VK_SUCCESS)
+    m_rayTracingPipeline = core::rtx::RayTracingPipeline::create(
+        std::vector<VkPipelineShaderStageCreateInfo>{shaderStages.begin(), shaderStages.end()},
+        std::vector<VkRayTracingShaderGroupCreateInfoKHR>{shaderGroups.begin(), shaderGroups.end()},
+        m_pipelineLayout->vk(),
+        1u);
+
+    if (!m_rayTracingPipeline || !m_rayTracingPipeline->isValid())
         throw std::runtime_error("Failed to create RT shadows pipeline");
 
-    createShaderBindingTable(static_cast<uint32_t>(shaderGroups.size()));
+    createShaderBindingTable();
 }
 
-void RTShadowsRenderGraphPass::createShaderBindingTable(uint32_t groupCount)
+void RTShadowsRenderGraphPass::createShaderBindingTable()
 {
-    auto context = core::VulkanContext::getContext();
-    const auto &rtProperties = context->getRayTracingPipelineProperties();
-
-    const uint32_t handleSize = rtProperties.shaderGroupHandleSize;
-    const uint32_t handleAlignment = rtProperties.shaderGroupHandleAlignment;
-    const uint32_t baseAlignment = rtProperties.shaderGroupBaseAlignment;
-    const VkDeviceSize handleSizeAligned = alignUp(handleSize, handleAlignment);
-
-    m_raygenRegion = {};
-    m_missRegion = {};
-    m_hitRegion = {};
-    m_callableRegion = {};
-
-    m_raygenRegion.stride = alignUp(handleSizeAligned, baseAlignment);
-    m_raygenRegion.size = m_raygenRegion.stride;
-
-    m_missRegion.stride = handleSizeAligned;
-    m_missRegion.size = alignUp(handleSizeAligned, baseAlignment);
-
-    m_hitRegion.stride = handleSizeAligned;
-    m_hitRegion.size = alignUp(handleSizeAligned, baseAlignment);
-
-    const VkDeviceSize sbtSize = m_raygenRegion.size + m_missRegion.size + m_hitRegion.size;
-    m_shaderBindingTable = core::Buffer::createShared(
-        sbtSize,
-        VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        core::memory::MemoryUsage::CPU_TO_GPU);
-
-    std::vector<uint8_t> shaderHandleStorage(static_cast<size_t>(groupCount) * handleSize);
-    if (vkGetRayTracingShaderGroupHandlesKHR(context->getDevice(),
-                                             m_rayTracingPipeline,
-                                             0,
-                                             groupCount,
-                                             shaderHandleStorage.size(),
-                                             shaderHandleStorage.data()) != VK_SUCCESS)
-    {
-        throw std::runtime_error("Failed to get RT shadows shader group handles");
-    }
-
-    void *mappedData = nullptr;
-    m_shaderBindingTable->map(mappedData);
-
-    auto *dst = static_cast<uint8_t *>(mappedData);
-    const VkDeviceSize missOffset = m_raygenRegion.size;
-    const VkDeviceSize hitOffset = missOffset + m_missRegion.size;
-
-    std::memcpy(dst, shaderHandleStorage.data(), handleSize);
-    std::memcpy(dst + missOffset, shaderHandleStorage.data() + handleSize, handleSize);
-    std::memcpy(dst + hitOffset, shaderHandleStorage.data() + handleSize * 2u, handleSize);
-
-    m_shaderBindingTable->unmap();
-
-    const VkDeviceAddress baseAddress = getBufferDeviceAddress(*m_shaderBindingTable);
-    m_raygenRegion.deviceAddress = baseAddress;
-    m_missRegion.deviceAddress = baseAddress + missOffset;
-    m_hitRegion.deviceAddress = baseAddress + hitOffset;
+    m_shaderBindingTable = core::rtx::ShaderBindingTable::create(*m_rayTracingPipeline, {0u}, {1u}, {2u});
+    if (!m_shaderBindingTable || !m_shaderBindingTable->isValid())
+        throw std::runtime_error("Failed to create RT shadows shader binding table");
 }
 
 void RTShadowsRenderGraphPass::destroyRayTracingPipeline()
 {
-    auto context = core::VulkanContext::getContext();
-    if (context && m_rayTracingPipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(context->getDevice(), m_rayTracingPipeline, nullptr);
-        m_rayTracingPipeline = VK_NULL_HANDLE;
-    }
-
-    m_callableRegion = {};
-    m_hitRegion = {};
-    m_missRegion = {};
-    m_raygenRegion = {};
+    m_rayTracingPipeline.reset();
     m_shaderBindingTable.reset();
 
     m_closestHitShader.destroyVk();
