@@ -90,6 +90,17 @@ for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysXFoundation_64.lib" 2^
     goto :BUILD_OUTPUT_FOUND
 )
 
+for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysXFoundation_static_64.lib" 2^>nul') do (
+    set "PHYSX_BUILD_OUTPUT=%%~dpF"
+    goto :BUILD_OUTPUT_FOUND
+)
+
+rem Fallback: find any _static_64.lib produced under bin\
+for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\*_static_64.lib" 2^>nul') do (
+    set "PHYSX_BUILD_OUTPUT=%%~dpF"
+    goto :BUILD_OUTPUT_FOUND
+)
+
 :BUILD_OUTPUT_FOUND
 if defined PHYSX_BUILD_OUTPUT (
     for %%D in ("%PHYSX_BUILD_OUTPUT%\.") do set "PHYSX_BUILD_OUTPUT=%%~fD"

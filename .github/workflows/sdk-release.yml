@@ -27,7 +27,10 @@ jobs:
             libvulkan-dev \
             libx11-dev libxext-dev libsm-dev libice-dev \
             liblz4-dev \
-            libgl1-mesa-dev
+            libgl1-mesa-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libcurl4-openssl-dev
 
       - name: Configure
         run: |
