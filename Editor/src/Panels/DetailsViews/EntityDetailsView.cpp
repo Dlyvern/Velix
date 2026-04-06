@@ -3,6 +3,7 @@
 #include "Editor/Editor.hpp"
 
 #include "Engine/Assets/AssetsLoader.hpp"
+#include "Engine/PluginSystem/ComponentRegistry.hpp"
 
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/AudioComponent.hpp"
@@ -348,6 +349,153 @@ namespace
 
         return false;
     }
+
+    // Helper: add a component by type to an entity, with no-op lambda for single-line use.
+    // Using engine:: prefix everywhere in lambdas avoids GCC template-argument-list
+    // parse ambiguity that occurs with `using namespace` + `<Type>` inside lambda bodies.
+    void registerBuiltinComponents()
+    {
+        auto &reg = elix::engine::ComponentRegistry::instance();
+
+        // ── Common ───────────────────────────────────────────────────────────
+        reg.registerComponent("Camera", "Common",
+            [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &)
+            { e->addComponent<elix::engine::CameraComponent>(); });
+
+        reg.registerComponent("Light", "Common",
+            [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &)
+            { e->addComponent<elix::engine::LightComponent>(elix::engine::LightComponent::LightType::POINT); });
+
+        reg.registerComponent("Audio Source", "Common",
+            [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &)
+            { e->addComponent<elix::engine::AudioComponent>(); });
+
+        reg.registerComponent("Animator", "Common",
+            [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &ctx)
+            {
+                if (e->getComponent<elix::engine::AnimatorComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Animator already exists on this entity");
+                    ctx.closePopup = false;
+                    return;
+                }
+                e->addComponent<elix::engine::AnimatorComponent>();
+            });
+
+        reg.registerComponent("Reflection Probe", "Common",
+            [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &ctx)
+            {
+                if (e->getComponent<elix::engine::ReflectionProbeComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Reflection Probe already exists on this entity");
+                    ctx.closePopup = false;
+                    return;
+                }
+                e->addComponent<elix::engine::ReflectionProbeComponent>();
+            });
+
+        reg.registerComponent("Particle System", "Common",
+            [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &)
+            {
+                namespace ps = elix::engine;
+                auto *psComp = e->addComponent<ps::ParticleSystemComponent>();
+                auto newSys = std::make_shared<ps::ParticleSystem>();
+                newSys->name = "Particle System";
+                auto *emitter = newSys->addEmitter("Emitter 0");
+                emitter->addModule<ps::SpawnModule>();
+                emitter->addModule<ps::LifetimeModule>();
+                emitter->addModule<ps::InitialVelocityModule>();
+                emitter->addModule<ps::SizeOverLifetimeModule>();
+                emitter->addModule<ps::ForceModule>();
+                emitter->addModule<ps::RendererModule>();
+                emitter->addModule<ps::ColorOverLifetimeModule>();
+                psComp->setParticleSystem(newSys);
+            });
+
+        reg.registerComponent("Decal", "Common",
+            [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &ctx)
+            {
+                if (e->getComponent<elix::engine::DecalComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Decal already exists on this entity");
+                    ctx.closePopup = false;
+                    return;
+                }
+                e->addComponent<elix::engine::DecalComponent>();
+            });
+
+        // ── Physics ──────────────────────────────────────────────────────────
+        reg.registerComponent("RigidBody", "Physics",
+            [](elix::engine::Entity *e, elix::engine::Scene *s, elix::engine::ComponentAddContext &)
+            {
+                physx::PxTransform transform = makePxTransformFromEntity(e);
+                auto rigid = s->getPhysicsScene().createDynamic(transform);
+                auto *rigidComponent = e->addComponent<elix::engine::RigidBodyComponent>(rigid);
+
+                if (auto *col = e->getComponent<elix::engine::CollisionComponent>())
+                {
+                    if (col->getActor())
+                    {
+                        s->getPhysicsScene().removeActor(*col->getActor(), true, true);
+                        col->removeActor();
+                    }
+                    rigidComponent->getRigidActor()->attachShape(*col->getShape());
+                    if (auto *dyn = rigidComponent->getRigidActor()->is<physx::PxRigidDynamic>())
+                        physx::PxRigidBodyExt::updateMassAndInertia(*dyn, 10.0f);
+                }
+            });
+
+        reg.registerComponent("Character Movement", "Physics",
+            [](elix::engine::Entity *e, elix::engine::Scene *s, elix::engine::ComponentAddContext &ctx)
+            {
+                if (e->getComponent<elix::engine::CharacterMovementComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Character movement already exists");
+                    ctx.closePopup = false;
+                    return;
+                }
+                if (e->getComponent<elix::engine::CollisionComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Remove Collision component before adding Character Movement");
+                    ctx.closePopup = false;
+                    return;
+                }
+                auto *transform = e->getComponent<elix::engine::Transform3DComponent>();
+                const glm::vec3 safeScale = transform
+                    ? glm::max(glm::abs(transform->getScale()), glm::vec3(0.1f))
+                    : glm::vec3(1.0f);
+                const float radius = std::max(0.1f, std::max(safeScale.x, safeScale.z) * 0.25f);
+                const float height = std::max(0.5f, safeScale.y);
+                e->addComponent<elix::engine::CharacterMovementComponent>(s, radius, height);
+                if (ctx.showSuccess) ctx.showSuccess("Character movement added");
+            });
+
+        reg.registerComponent("Box Collision", "Physics",
+            [](elix::engine::Entity *e, elix::engine::Scene *s, elix::engine::ComponentAddContext &ctx)
+            {
+                if (createCollisionComponent(s, e, elix::engine::CollisionComponent::ShapeType::BOX))
+                {
+                    if (ctx.showSuccess) ctx.showSuccess("Box collision added");
+                }
+                else
+                {
+                    if (ctx.showError) ctx.showError("Failed to add box collision");
+                }
+            });
+
+        reg.registerComponent("Capsule Collision", "Physics",
+            [](elix::engine::Entity *e, elix::engine::Scene *s, elix::engine::ComponentAddContext &ctx)
+            {
+                if (createCollisionComponent(s, e, elix::engine::CollisionComponent::ShapeType::CAPSULE))
+                {
+                    if (ctx.showSuccess) ctx.showSuccess("Capsule collision added");
+                }
+                else
+                {
+                    if (ctx.showError) ctx.showError("Failed to add capsule collision");
+                }
+            });
+    }
 }
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
@@ -360,6 +508,14 @@ bool EntityDetailsView::canDraw(const Editor &editor) const
 
 void EntityDetailsView::draw(Editor &editor)
 {
+    // Register built-in components once on first draw.
+    static bool s_componentsRegistered = []
+    {
+        registerBuiltinComponents();
+        return true;
+    }();
+    (void)s_componentsRegistered;
+
     using EditorMode = Editor::EditorMode;
 
     auto *&m_selectedEntity = editor.m_selectedEntity;
@@ -603,146 +759,34 @@ void EntityDetailsView::draw(Editor &editor)
             ImGui::PopID();
         }
 
-        ImGui::Separator();
-
-        ImGui::Text("Common");
-
-        if (ImGui::Button("Camera"))
+        // ── Engine components from registry (grouped by category) ────────────
         {
-            m_selectedEntity->addComponent<engine::CameraComponent>();
-            ImGui::CloseCurrentPopup();
-        }
+            engine::ComponentAddContext ctx;
+            ctx.showSuccess = [&m_notificationManager](const std::string &msg) { m_notificationManager.showSuccess(msg); };
+            ctx.showWarning = [&m_notificationManager](const std::string &msg) { m_notificationManager.showWarning(msg); };
+            ctx.showError   = [&m_notificationManager](const std::string &msg) { m_notificationManager.showError(msg); };
 
-        if (ImGui::Button("RigidBody"))
-        {
-            physx::PxTransform transform = makePxTransformFromEntity(m_selectedEntity);
-            auto rigid = m_scene->getPhysicsScene().createDynamic(transform);
-            auto rigidComponent = m_selectedEntity->addComponent<engine::RigidBodyComponent>(rigid);
+            const auto &entries = engine::ComponentRegistry::instance().getEntries();
+            std::string lastCategory;
 
-            if (auto collisionComponent = m_selectedEntity->getComponent<engine::CollisionComponent>())
+            for (const auto &entry : entries)
             {
-                if (collisionComponent->getActor())
+                if (entry.category != lastCategory)
                 {
-                    m_scene->getPhysicsScene().removeActor(*collisionComponent->getActor(), true, true);
-                    collisionComponent->removeActor();
+                    ImGui::Separator();
+                    ImGui::Text("%s", entry.category.c_str());
+                    lastCategory = entry.category;
                 }
 
-                rigidComponent->getRigidActor()->attachShape(*collisionComponent->getShape());
-
-                if (auto *dynamicBody = rigidComponent->getRigidActor()->is<physx::PxRigidDynamic>())
-                    physx::PxRigidBodyExt::updateMassAndInertia(*dynamicBody, 10.0f);
-            }
-        }
-
-        if (ImGui::Button("Character Movement"))
-        {
-            if (m_selectedEntity->getComponent<engine::CharacterMovementComponent>())
-            {
-                m_notificationManager.showWarning("Character movement already exists");
-            }
-            else if (m_selectedEntity->getComponent<engine::CollisionComponent>())
-            {
-                m_notificationManager.showWarning("Remove Collision component before adding Character Movement");
-            }
-            else
-            {
-                auto *transform = m_selectedEntity->getComponent<engine::Transform3DComponent>();
-                const glm::vec3 safeScale = transform
-                                                ? glm::max(glm::abs(transform->getScale()), glm::vec3(0.1f))
-                                                : glm::vec3(1.0f);
-                const float radius = std::max(0.1f, std::max(safeScale.x, safeScale.z) * 0.25f);
-                const float height = std::max(0.5f, safeScale.y);
-                m_selectedEntity->addComponent<engine::CharacterMovementComponent>(m_scene.get(), radius, height);
-                m_notificationManager.showSuccess("Character movement added");
-            }
-
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (ImGui::Button("Box Collision"))
-        {
-            if (createCollisionComponent(m_scene.get(), m_selectedEntity, engine::CollisionComponent::ShapeType::BOX))
-                m_notificationManager.showSuccess("Box collision added");
-            else
-                m_notificationManager.showError("Failed to add box collision");
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (ImGui::Button("Capsule Collision"))
-        {
-            if (createCollisionComponent(m_scene.get(), m_selectedEntity, engine::CollisionComponent::ShapeType::CAPSULE))
-                m_notificationManager.showSuccess("Capsule collision added");
-            else
-                m_notificationManager.showError("Failed to add capsule collision");
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (ImGui::Button("Audio Source"))
-        {
-            m_selectedEntity->addComponent<engine::AudioComponent>();
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (ImGui::Button("Animator"))
-        {
-            if (!m_selectedEntity->getComponent<engine::AnimatorComponent>())
-            {
-                m_selectedEntity->addComponent<engine::AnimatorComponent>();
-                ImGui::CloseCurrentPopup();
-            }
-            else
-            {
-                m_notificationManager.showWarning("Animator already exists on this entity");
-            }
-        }
-
-        if (ImGui::Button("Light"))
-        {
-            m_selectedEntity->addComponent<engine::LightComponent>(engine::LightComponent::LightType::POINT);
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (ImGui::Button("Reflection Probe"))
-        {
-            if (!m_selectedEntity->getComponent<engine::ReflectionProbeComponent>())
-            {
-                m_selectedEntity->addComponent<engine::ReflectionProbeComponent>();
-                ImGui::CloseCurrentPopup();
-            }
-            else
-            {
-                m_notificationManager.showWarning("Reflection Probe already exists on this entity");
-            }
-        }
-
-        if (ImGui::Button("Particle System"))
-        {
-            auto *psComp = m_selectedEntity->addComponent<engine::ParticleSystemComponent>();
-            auto newSys = std::make_shared<engine::ParticleSystem>();
-            newSys->name = "Particle System";
-            auto *emitter = newSys->addEmitter("Emitter 0");
-            emitter->addModule<engine::SpawnModule>();
-            emitter->addModule<engine::LifetimeModule>();
-            emitter->addModule<engine::InitialVelocityModule>();
-            emitter->addModule<engine::SizeOverLifetimeModule>();
-            emitter->addModule<engine::ForceModule>();
-            emitter->addModule<engine::RendererModule>();
-            emitter->addModule<engine::ColorOverLifetimeModule>();
-            psComp->setParticleSystem(newSys);
-            ImGui::CloseCurrentPopup();
-        }
-
-
-        if (ImGui::Button("Decal"))
-        {
-            if (!m_selectedEntity->getComponent<engine::DecalComponent>())
-            {
-                m_selectedEntity->addComponent<engine::DecalComponent>();
-                ImGui::CloseCurrentPopup();
-            }
-            else
-            {
-                m_notificationManager.showWarning("Decal already exists on this entity");
+                ImGui::PushID(entry.displayName.c_str());
+                if (ImGui::Button(entry.displayName.c_str()))
+                {
+                    ctx.closePopup = true;
+                    entry.addFn(m_selectedEntity, m_scene.get(), ctx);
+                    if (ctx.closePopup)
+                        ImGui::CloseCurrentPopup();
+                }
+                ImGui::PopID();
             }
         }
 
@@ -1301,7 +1345,11 @@ void EntityDetailsView::draw(Editor &editor)
 
                     // Runtime state info
                     const std::string curState = animatorComponent->getCurrentStateName();
+                    const std::string statePath = animatorComponent->getCurrentStatePath();
+                    const std::string machinePath = animatorComponent->getActiveMachinePath();
                     ImGui::Text("State: %s", curState.empty() ? "(none)" : curState.c_str());
+                    ImGui::TextDisabled("State Path: %s", statePath.empty() ? "(none)" : statePath.c_str());
+                    ImGui::TextDisabled("Machine Path: %s", machinePath.empty() ? "(none)" : machinePath.c_str());
                     if (animatorComponent->isInTransition())
                         ImGui::TextDisabled("  (transitioning %.0f%%)", animatorComponent->getCurrentStateNormalizedTime() * 100.0f);
 

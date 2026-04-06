@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Required so all static libs can be linked into VelixEngine.so
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     
@@ -37,6 +40,11 @@ add_subdirectory(Editor)
 add_subdirectory(VelixSDK)
 
 add_subdirectory(Tools)
+
+option(VELIX_BUILD_ENGINE_PLUGINS "Build engine plugins from source (used by plugin CI)" OFF)
+if(VELIX_BUILD_ENGINE_PLUGINS AND EXISTS "${CMAKE_SOURCE_DIR}/resources/plugins/EnginePlugins/CMakeLists.txt")
+    add_subdirectory(resources/plugins/EnginePlugins)
+endif()
 
 add_executable(${PROJECT_NAME} main.cpp)
 
@@ -245,6 +253,10 @@ endif()
 
 set(CPACK_PACKAGE_NAME "VelixEngine")
 set(CPACK_PACKAGE_VERSION "0.0.0")
+install(FILES cmake/VelixConfig.cmake
+    DESTINATION lib/cmake/Velix
+)
+
 set(CPACK_PACKAGE_VENDOR "Dlyvern")
 set(CPACK_PACKAGE_DESCRIPTION "Velix Game Engine")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/Dlyvern/Velix")

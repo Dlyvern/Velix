@@ -112,6 +112,204 @@ namespace
         return readVector<uint8_t>(stream, outBytes, 1ull << 31);
     }
 
+    constexpr uint32_t kAnimationTreeGraphMagic = 0x46524754u; // "TGRF"
+
+    bool writeAnimationTransitionCondition(std::ostream &stream, const elix::engine::AnimationTransitionCondition &condition)
+    {
+        return writePOD(stream, static_cast<uint8_t>(condition.type)) &&
+               writeString(stream, condition.parameterName) &&
+               writePOD(stream, condition.floatThreshold) &&
+               writePOD(stream, static_cast<int32_t>(condition.intValue));
+    }
+
+    bool readAnimationTransitionCondition(std::istream &stream, elix::engine::AnimationTransitionCondition &outCondition)
+    {
+        uint8_t typeValue = 0u;
+        int32_t intValue = 0;
+        if (!readPOD(stream, typeValue) ||
+            !readString(stream, outCondition.parameterName) ||
+            !readPOD(stream, outCondition.floatThreshold) ||
+            !readPOD(stream, intValue))
+            return false;
+
+        outCondition.type = static_cast<elix::engine::AnimationTransitionCondition::Type>(typeValue);
+        outCondition.intValue = static_cast<int>(intValue);
+        return true;
+    }
+
+    bool writeAnimationGraphTransition(std::ostream &stream, const elix::engine::AnimationGraphTransition &transition)
+    {
+        if (!writePOD(stream, static_cast<int32_t>(transition.fromNodeId)) ||
+            !writePOD(stream, static_cast<int32_t>(transition.toNodeId)) ||
+            !writePOD(stream, transition.blendDuration) ||
+            !writePOD(stream, static_cast<uint8_t>(transition.hasExitTime ? 1u : 0u)) ||
+            !writePOD(stream, transition.exitTime))
+            return false;
+
+        const uint32_t conditionCount = static_cast<uint32_t>(transition.conditions.size());
+        if (!writePOD(stream, conditionCount))
+            return false;
+
+        for (const auto &condition : transition.conditions)
+        {
+            if (!writeAnimationTransitionCondition(stream, condition))
+                return false;
+        }
+
+        return true;
+    }
+
+    bool readAnimationGraphTransition(std::istream &stream, elix::engine::AnimationGraphTransition &outTransition)
+    {
+        int32_t fromNodeId = 0;
+        int32_t toNodeId = 0;
+        uint8_t hasExitTime = 0u;
+        if (!readPOD(stream, fromNodeId) ||
+            !readPOD(stream, toNodeId) ||
+            !readPOD(stream, outTransition.blendDuration) ||
+            !readPOD(stream, hasExitTime) ||
+            !readPOD(stream, outTransition.exitTime))
+            return false;
+
+        outTransition.fromNodeId = static_cast<int>(fromNodeId);
+        outTransition.toNodeId = static_cast<int>(toNodeId);
+        outTransition.hasExitTime = hasExitTime != 0u;
+
+        uint32_t conditionCount = 0u;
+        if (!readPOD(stream, conditionCount) || conditionCount > 256u)
+            return false;
+
+        outTransition.conditions.resize(conditionCount);
+        for (auto &condition : outTransition.conditions)
+        {
+            if (!readAnimationTransitionCondition(stream, condition))
+                return false;
+        }
+
+        return true;
+    }
+
+    bool writeAnimationTreeNode(std::ostream &stream, const elix::engine::AnimationTreeNode &node)
+    {
+        if (!writePOD(stream, static_cast<int32_t>(node.id)) ||
+            !writePOD(stream, static_cast<uint8_t>(node.type)) ||
+            !writePOD(stream, static_cast<int32_t>(node.parentMachineNodeId)) ||
+            !writeString(stream, node.name) ||
+            !writePOD(stream, node.editorPosition.x) ||
+            !writePOD(stream, node.editorPosition.y) ||
+            !writePOD(stream, static_cast<int32_t>(node.entryNodeId)))
+            return false;
+
+        const uint32_t childCount = static_cast<uint32_t>(node.childNodeIds.size());
+        if (!writePOD(stream, childCount))
+            return false;
+        for (int childNodeId : node.childNodeIds)
+        {
+            if (!writePOD(stream, static_cast<int32_t>(childNodeId)))
+                return false;
+        }
+
+        const uint32_t transitionCount = static_cast<uint32_t>(node.transitions.size());
+        if (!writePOD(stream, transitionCount))
+            return false;
+        for (const auto &transition : node.transitions)
+        {
+            if (!writeAnimationGraphTransition(stream, transition))
+                return false;
+        }
+
+        if (!writeString(stream, node.animationAssetPath) ||
+            !writePOD(stream, static_cast<int32_t>(node.clipIndex)) ||
+            !writePOD(stream, static_cast<uint8_t>(node.loop ? 1u : 0u)) ||
+            !writePOD(stream, node.speed) ||
+            !writeString(stream, node.blendParameterName))
+            return false;
+
+        const uint32_t sampleCount = static_cast<uint32_t>(node.blendSamples.size());
+        if (!writePOD(stream, sampleCount))
+            return false;
+        for (const auto &sample : node.blendSamples)
+        {
+            if (!writeString(stream, sample.animationAssetPath) ||
+                !writePOD(stream, static_cast<int32_t>(sample.clipIndex)) ||
+                !writePOD(stream, sample.position))
+                return false;
+        }
+
+        return true;
+    }
+
+    bool readAnimationTreeNode(std::istream &stream, elix::engine::AnimationTreeNode &outNode)
+    {
+        int32_t nodeId = -1;
+        int32_t parentMachineNodeId = -1;
+        int32_t entryNodeId = -1;
+        int32_t clipIndex = 0;
+        uint8_t typeValue = 0u;
+        uint8_t loopValue = 0u;
+        if (!readPOD(stream, nodeId) ||
+            !readPOD(stream, typeValue) ||
+            !readPOD(stream, parentMachineNodeId) ||
+            !readString(stream, outNode.name) ||
+            !readPOD(stream, outNode.editorPosition.x) ||
+            !readPOD(stream, outNode.editorPosition.y) ||
+            !readPOD(stream, entryNodeId))
+            return false;
+
+        outNode.id = static_cast<int>(nodeId);
+        outNode.type = static_cast<elix::engine::AnimationTreeNode::Type>(typeValue);
+        outNode.parentMachineNodeId = static_cast<int>(parentMachineNodeId);
+        outNode.entryNodeId = static_cast<int>(entryNodeId);
+
+        uint32_t childCount = 0u;
+        if (!readPOD(stream, childCount) || childCount > 4096u)
+            return false;
+        outNode.childNodeIds.resize(childCount);
+        for (auto &childNodeId : outNode.childNodeIds)
+        {
+            int32_t value = -1;
+            if (!readPOD(stream, value))
+                return false;
+            childNodeId = static_cast<int>(value);
+        }
+
+        uint32_t transitionCount = 0u;
+        if (!readPOD(stream, transitionCount) || transitionCount > 65536u)
+            return false;
+        outNode.transitions.resize(transitionCount);
+        for (auto &transition : outNode.transitions)
+        {
+            if (!readAnimationGraphTransition(stream, transition))
+                return false;
+        }
+
+        if (!readString(stream, outNode.animationAssetPath) ||
+            !readPOD(stream, clipIndex) ||
+            !readPOD(stream, loopValue) ||
+            !readPOD(stream, outNode.speed) ||
+            !readString(stream, outNode.blendParameterName))
+            return false;
+
+        outNode.clipIndex = static_cast<int>(clipIndex);
+        outNode.loop = loopValue != 0u;
+
+        uint32_t sampleCount = 0u;
+        if (!readPOD(stream, sampleCount) || sampleCount > 4096u)
+            return false;
+        outNode.blendSamples.resize(sampleCount);
+        for (auto &sample : outNode.blendSamples)
+        {
+            int32_t sampleClipIndex = 0;
+            if (!readString(stream, sample.animationAssetPath) ||
+                !readPOD(stream, sampleClipIndex) ||
+                !readPOD(stream, sample.position))
+                return false;
+            sample.clipIndex = static_cast<int>(sampleClipIndex);
+        }
+
+        return true;
+    }
+
     bool writeHeader(std::ostream &stream, elix::engine::Asset::AssetType type, uint64_t payloadSize, uint8_t reserved0 = 0u, uint8_t reserved1 = 0u, uint8_t reserved2 = 0u)
     {
         elix::engine::Asset::BinaryHeader header{};
@@ -1073,19 +1271,22 @@ std::optional<AnimationAsset> AssetsSerializer::readAnimationAsset(const std::st
 
 bool AssetsSerializer::writeAnimationTree(const AnimationTree &tree, const std::string &outputPath) const
 {
+    AnimationTree serializedTree = tree;
+    serializedTree.ensureGraph();
+
     std::ostringstream payloadStream(std::ios::binary);
 
-    if (!writeString(payloadStream, tree.name) ||
-        !writeString(payloadStream, tree.assetPath))
+    if (!writeString(payloadStream, serializedTree.name) ||
+        !writeString(payloadStream, serializedTree.assetPath))
         return false;
 
-    if (!writePOD(payloadStream, static_cast<int32_t>(tree.entryStateIndex)))
+    if (!writePOD(payloadStream, static_cast<int32_t>(serializedTree.entryStateIndex)))
         return false;
 
-    const uint32_t paramCount = static_cast<uint32_t>(tree.parameters.size());
+    const uint32_t paramCount = static_cast<uint32_t>(serializedTree.parameters.size());
     if (!writePOD(payloadStream, paramCount))
         return false;
-    for (const auto &param : tree.parameters)
+    for (const auto &param : serializedTree.parameters)
     {
         if (!writeString(payloadStream, param.name))
             return false;
@@ -1099,10 +1300,10 @@ bool AssetsSerializer::writeAnimationTree(const AnimationTree &tree, const std::
             return false;
     }
 
-    const uint32_t stateCount = static_cast<uint32_t>(tree.states.size());
+    const uint32_t stateCount = static_cast<uint32_t>(serializedTree.states.size());
     if (!writePOD(payloadStream, stateCount))
         return false;
-    for (const auto &state : tree.states)
+    for (const auto &state : serializedTree.states)
     {
         if (!writeString(payloadStream, state.name) ||
             !writeString(payloadStream, state.animationAssetPath))
@@ -1115,10 +1316,10 @@ bool AssetsSerializer::writeAnimationTree(const AnimationTree &tree, const std::
             return false;
     }
 
-    const uint32_t transitionCount = static_cast<uint32_t>(tree.transitions.size());
+    const uint32_t transitionCount = static_cast<uint32_t>(serializedTree.transitions.size());
     if (!writePOD(payloadStream, transitionCount))
         return false;
-    for (const auto &transition : tree.transitions)
+    for (const auto &transition : serializedTree.transitions)
     {
         if (!writePOD(payloadStream, static_cast<int32_t>(transition.fromStateIndex)) ||
             !writePOD(payloadStream, static_cast<int32_t>(transition.toStateIndex)) ||
@@ -1132,23 +1333,32 @@ bool AssetsSerializer::writeAnimationTree(const AnimationTree &tree, const std::
             return false;
         for (const auto &cond : transition.conditions)
         {
-            if (!writePOD(payloadStream, static_cast<uint8_t>(cond.type)))
-                return false;
-            if (!writeString(payloadStream, cond.parameterName))
-                return false;
-            if (!writePOD(payloadStream, cond.floatThreshold))
-                return false;
-            if (!writePOD(payloadStream, static_cast<int32_t>(cond.intValue)))
+            if (!writeAnimationTransitionCondition(payloadStream, cond))
                 return false;
         }
     }
 
-    const uint32_t posCount = static_cast<uint32_t>(tree.stateNodePositions.size());
+    const uint32_t posCount = static_cast<uint32_t>(serializedTree.stateNodePositions.size());
     if (!writePOD(payloadStream, posCount))
         return false;
-    for (const auto &pos : tree.stateNodePositions)
+    for (const auto &pos : serializedTree.stateNodePositions)
     {
         if (!writePOD(payloadStream, pos.x) || !writePOD(payloadStream, pos.y))
+            return false;
+    }
+
+    if (!writePOD(payloadStream, kAnimationTreeGraphMagic) ||
+        !writePOD(payloadStream, serializedTree.graphVersion) ||
+        !writePOD(payloadStream, static_cast<int32_t>(serializedTree.nextNodeId)) ||
+        !writePOD(payloadStream, static_cast<int32_t>(serializedTree.rootMachineNodeId)))
+        return false;
+
+    const uint32_t nodeCount = static_cast<uint32_t>(serializedTree.graphNodes.size());
+    if (!writePOD(payloadStream, nodeCount))
+        return false;
+    for (const auto &node : serializedTree.graphNodes)
+    {
+        if (!writeAnimationTreeNode(payloadStream, node))
             return false;
     }
 
@@ -1260,15 +1470,8 @@ std::optional<AnimationTree> AssetsSerializer::readAnimationTree(const std::stri
         transition.conditions.resize(conditionCount);
         for (auto &cond : transition.conditions)
         {
-            uint8_t typeVal = 0;
-            int32_t intVal = 0;
-            if (!readPOD(stream, typeVal) ||
-                !readString(stream, cond.parameterName) ||
-                !readPOD(stream, cond.floatThreshold) ||
-                !readPOD(stream, intVal))
+            if (!readAnimationTransitionCondition(stream, cond))
                 return std::nullopt;
-            cond.type = static_cast<AnimationTransitionCondition::Type>(typeVal);
-            cond.intValue = static_cast<int>(intVal);
         }
     }
 
@@ -1282,8 +1485,43 @@ std::optional<AnimationTree> AssetsSerializer::readAnimationTree(const std::stri
             return std::nullopt;
     }
 
+    if (stream.peek() != std::istream::traits_type::eof())
+    {
+        uint32_t graphMagic = 0u;
+        if (!readPOD(stream, graphMagic))
+            return std::nullopt;
+
+        if (graphMagic == kAnimationTreeGraphMagic)
+        {
+            int32_t nextNodeId = 1;
+            int32_t rootMachineNodeId = -1;
+            uint32_t nodeCount = 0u;
+            if (!readPOD(stream, tree.graphVersion) ||
+                !readPOD(stream, nextNodeId) ||
+                !readPOD(stream, rootMachineNodeId) ||
+                !readPOD(stream, nodeCount) ||
+                nodeCount > 65536u)
+                return std::nullopt;
+
+            tree.nextNodeId = static_cast<int>(nextNodeId);
+            tree.rootMachineNodeId = static_cast<int>(rootMachineNodeId);
+            tree.graphNodes.resize(nodeCount);
+            for (auto &node : tree.graphNodes)
+            {
+                if (!readAnimationTreeNode(stream, node))
+                    return std::nullopt;
+            }
+        }
+        else
+        {
+            return std::nullopt;
+        }
+    }
+
     if (tree.assetPath.empty())
         tree.assetPath = std::filesystem::path(path).lexically_normal().string();
+
+    tree.ensureGraph();
 
     return tree;
 }

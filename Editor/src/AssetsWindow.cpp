@@ -776,8 +776,19 @@ void AssetsWindow::drawSearchBar()
         m_importSelectedSourcePaths.clear();
         m_importBrowserCurrentDirectory.clear();
 
-        const std::string defaultSourcePath = m_currentDirectory.empty() ? std::filesystem::current_path().string() : m_currentDirectory.string();
-        std::strncpy(m_importSourceBuffer, defaultSourcePath.c_str(), sizeof(m_importSourceBuffer) - 1);
+        std::filesystem::path defaultSourcePath = engineConfig.getLastImportSourceDirectory();
+        std::error_code defaultSourceError;
+        const bool savedSourceValid = !defaultSourcePath.empty() &&
+                                      std::filesystem::exists(defaultSourcePath, defaultSourceError) &&
+                                      !defaultSourceError &&
+                                      std::filesystem::is_directory(defaultSourcePath, defaultSourceError) &&
+                                      !defaultSourceError;
+        if (!savedSourceValid)
+            defaultSourcePath = m_currentDirectory.empty() ? std::filesystem::current_path() : m_currentDirectory;
+
+        defaultSourcePath = defaultSourcePath.lexically_normal();
+        std::strncpy(m_importSourceBuffer, defaultSourcePath.string().c_str(), sizeof(m_importSourceBuffer) - 1);
+        m_importBrowserCurrentDirectory = defaultSourcePath;
 
         std::filesystem::path destinationPath;
         if (m_currentProject)
@@ -1666,6 +1677,11 @@ void AssetsWindow::drawAssetGrid()
                     }
                     else
                     {
+                        auto &engineConfig = engine::EngineConfig::instance();
+                        engineConfig.setLastImportSourceDirectory(sourceRootPath);
+                        if (!engineConfig.save())
+                            VX_EDITOR_WARNING_STREAM("Failed to persist last import folder to engine config\n");
+
                         if (m_asyncImportThread.joinable())
                             m_asyncImportThread.join();
 

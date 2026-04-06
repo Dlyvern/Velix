@@ -178,31 +178,50 @@ namespace
         using engine::hashing::hashCombine;
 
         size_t seed = 0u;
-        hashCombine(seed, tree.entryStateIndex);
+        hashCombine(seed, tree.graphVersion);
+        hashCombine(seed, tree.nextNodeId);
+        hashCombine(seed, tree.rootMachineNodeId);
 
-        for (const auto &state : tree.states)
+        for (const auto &node : tree.graphNodes)
         {
-            hashCombine(seed, state.name);
-            hashCombine(seed, state.animationAssetPath);
-            hashCombine(seed, state.clipIndex);
-            hashCombine(seed, state.loop);
-            hashCombine(seed, state.speed);
-        }
+            hashCombine(seed, node.id);
+            hashCombine(seed, static_cast<uint32_t>(node.type));
+            hashCombine(seed, node.parentMachineNodeId);
+            hashCombine(seed, node.name);
+            hashCombine(seed, node.editorPosition.x);
+            hashCombine(seed, node.editorPosition.y);
+            hashCombine(seed, node.entryNodeId);
+            hashCombine(seed, node.animationAssetPath);
+            hashCombine(seed, node.clipIndex);
+            hashCombine(seed, node.loop);
+            hashCombine(seed, node.speed);
+            hashCombine(seed, node.blendParameterName);
 
-        for (const auto &transition : tree.transitions)
-        {
-            hashCombine(seed, transition.fromStateIndex);
-            hashCombine(seed, transition.toStateIndex);
-            hashCombine(seed, transition.blendDuration);
-            hashCombine(seed, transition.hasExitTime);
-            hashCombine(seed, transition.exitTime);
+            for (int childNodeId : node.childNodeIds)
+                hashCombine(seed, childNodeId);
 
-            for (const auto &condition : transition.conditions)
+            for (const auto &sample : node.blendSamples)
             {
-                hashCombine(seed, static_cast<uint32_t>(condition.type));
-                hashCombine(seed, condition.parameterName);
-                hashCombine(seed, condition.floatThreshold);
-                hashCombine(seed, condition.intValue);
+                hashCombine(seed, sample.animationAssetPath);
+                hashCombine(seed, sample.clipIndex);
+                hashCombine(seed, sample.position);
+            }
+
+            for (const auto &transition : node.transitions)
+            {
+                hashCombine(seed, transition.fromNodeId);
+                hashCombine(seed, transition.toNodeId);
+                hashCombine(seed, transition.blendDuration);
+                hashCombine(seed, transition.hasExitTime);
+                hashCombine(seed, transition.exitTime);
+
+                for (const auto &condition : transition.conditions)
+                {
+                    hashCombine(seed, static_cast<uint32_t>(condition.type));
+                    hashCombine(seed, condition.parameterName);
+                    hashCombine(seed, condition.floatThreshold);
+                    hashCombine(seed, condition.intValue);
+                }
             }
         }
 
@@ -215,6 +234,21 @@ namespace
             hashCombine(seed, parameter.intDefault);
         }
         return seed;
+    }
+
+    const char *animationTreeNodeTypeLabel(engine::AnimationTreeNode::Type type)
+    {
+        switch (type)
+        {
+        case engine::AnimationTreeNode::Type::StateMachine:
+            return "State Machine";
+        case engine::AnimationTreeNode::Type::ClipState:
+            return "Clip State";
+        case engine::AnimationTreeNode::Type::BlendSpace1D:
+            return "BlendSpace1D";
+        }
+
+        return "Unknown";
     }
 
     bool ensurePreviewMeshSourceLoaded(AnimationTreePanel::AnimPreviewContext &preview)
@@ -489,6 +523,9 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
         else
             ui.tree.name = path.stem().string();
 
+        ui.tree.ensureGraph();
+        ui.currentMachineNodeId = ui.tree.rootMachineNodeId;
+
         if (hasPreviewSource)
         {
             ui.preview.animator = animator;
@@ -528,14 +565,16 @@ void AnimationTreePanel::draw()
 {
     m_hasKeyboardFocus = false;
 
+    std::vector<std::filesystem::path> closedEditors;
     for (auto &editor : m_openEditors)
+    {
         drawSingleEditor(editor);
+        if (!editor.open)
+            closedEditors.push_back(editor.path);
+    }
 
-    m_openEditors.erase(
-        std::remove_if(m_openEditors.begin(), m_openEditors.end(),
-                       [](const OpenTreeEditor &e)
-                       { return !e.open; }),
-        m_openEditors.end());
+    for (const auto &path : closedEditors)
+        closeTree(path);
 }
 
 void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
@@ -549,6 +588,17 @@ void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
     AnimTreeUIState &ui = it->second;
 
     const std::string windowTitle = (ui.dirty ? "* " : "") + stem + " [Animation Tree]##" + key;
+
+    ui.tree.ensureGraph();
+    if (!ui.tree.findNode(ui.currentMachineNodeId))
+        ui.currentMachineNodeId = ui.tree.rootMachineNodeId;
+    if (!ui.tree.findNode(ui.selectedNodeId))
+        ui.selectedNodeId = -1;
+    if (!ui.tree.findNode(ui.selectedTransitionMachineNodeId))
+    {
+        ui.selectedTransitionIndex = -1;
+        ui.selectedTransitionMachineNodeId = -1;
+    }
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_FirstUseEver);
@@ -594,6 +644,38 @@ void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
 
     ImGui::BeginChild("##AnimTreeRight", ImVec2(0.0f, totalHeight), false);
     {
+        const std::vector<int> machinePath = ui.tree.buildNodePath(ui.currentMachineNodeId);
+        if (!machinePath.empty())
+        {
+            ImGui::TextDisabled("Graph");
+            ImGui::SameLine();
+            for (size_t pathIndex = 0; pathIndex < machinePath.size(); ++pathIndex)
+            {
+                const auto *machineNode = ui.tree.findNode(machinePath[pathIndex]);
+                if (!machineNode || !machineNode->isStateMachine())
+                    continue;
+
+                if (pathIndex > 0)
+                {
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(">");
+                    ImGui::SameLine();
+                }
+
+                if (ImGui::SmallButton(machineNode->name.c_str()))
+                {
+                    ui.currentMachineNodeId = machineNode->id;
+                    ui.selectedNodeId = -1;
+                    ui.selectedTransitionIndex = -1;
+                    ui.selectedTransitionMachineNodeId = -1;
+                }
+                if (pathIndex + 1 < machinePath.size())
+                    ImGui::SameLine();
+            }
+
+            ImGui::Separator();
+        }
+
         ImGui::BeginChild("##AnimTreeGraph", ImVec2(0.0f, graphHeight), true);
         drawNodeGraph(ui, editor.path);
         ImGui::EndChild();
@@ -709,6 +791,15 @@ void AnimationTreePanel::drawParametersPanel(AnimTreeUIState &ui)
 void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesystem::path &path)
 {
     const std::string key = path.lexically_normal().string();
+    ui.tree.ensureGraph();
+
+    engine::AnimationTreeNode *currentMachine = ui.tree.findNode(ui.currentMachineNodeId);
+    if (!currentMachine || !currentMachine->isStateMachine())
+    {
+        ImGui::TextDisabled("Select a state machine to edit.");
+        return;
+    }
+    const int currentMachineId = currentMachine->id;
 
     if (!ui.initialized)
     {
@@ -720,13 +811,10 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
         if (ui.nodeEditorContext)
         {
             ed::SetCurrentEditor(ui.nodeEditorContext);
-            ed::SetNodePosition(ed::NodeId(1), ImVec2(20.0f, 80.0f)); // Entry
-            for (int i = 0; i < static_cast<int>(ui.tree.states.size()); ++i)
+            for (const auto &node : ui.tree.graphNodes)
             {
-                const glm::vec2 pos = (i < static_cast<int>(ui.tree.stateNodePositions.size()))
-                                          ? ui.tree.stateNodePositions[static_cast<size_t>(i)]
-                                          : glm::vec2(280.0f + i * 220.0f, 80.0f);
-                ed::SetNodePosition(ed::NodeId(stateNodeId(i)), ImVec2(pos.x, pos.y));
+                ed::SetNodePosition(ed::NodeId(graphNodeId(node.id)),
+                                    ImVec2(node.editorPosition.x, node.editorPosition.y));
             }
             ed::SetCurrentEditor(nullptr);
         }
@@ -735,46 +823,70 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
     ed::SetCurrentEditor(ui.nodeEditorContext);
     ed::Begin(("AnimTree##" + key).c_str(), ImVec2(0.0f, 0.0f));
 
-    // Entry node
-    ed::BeginNode(ed::NodeId(1));
+    ed::SetNodePosition(ed::NodeId(entryNodeId(currentMachineId)), ImVec2(20.0f, 80.0f));
+    ed::SetNodePosition(ed::NodeId(anyNodeId(currentMachineId)), ImVec2(20.0f, 220.0f));
+
+    // Entry node for the current machine
+    ed::BeginNode(ed::NodeId(entryNodeId(currentMachineId)));
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.3f, 1.0f));
     ImGui::Text("Entry");
     ImGui::PopStyleColor();
-    ed::BeginPin(ed::PinId(2), ed::PinKind::Output);
+    ed::BeginPin(ed::PinId(entryOutPin(currentMachineId)), ed::PinKind::Output);
     ImGui::Text("Start >");
     ed::EndPin();
     ed::EndNode();
 
-    // State nodes
-    for (int i = 0; i < static_cast<int>(ui.tree.states.size()); ++i)
-    {
-        auto &state = ui.tree.states[static_cast<size_t>(i)];
-        const bool isEntry = (i == ui.tree.entryStateIndex);
+    // Any-state node for the current machine
+    ed::BeginNode(ed::NodeId(anyNodeId(currentMachineId)));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.2f, 1.0f));
+    ImGui::Text("Any");
+    ImGui::PopStyleColor();
+    ed::BeginPin(ed::PinId(anyOutPin(currentMachineId)), ed::PinKind::Output);
+    ImGui::Text("From >");
+    ed::EndPin();
+    ed::EndNode();
 
-        ed::BeginNode(ed::NodeId(stateNodeId(i)));
+    auto isChildOfCurrentMachine = [&currentMachine](int nodeId)
+    {
+        return std::find(currentMachine->childNodeIds.begin(),
+                         currentMachine->childNodeIds.end(),
+                         nodeId) != currentMachine->childNodeIds.end();
+    };
+
+    for (int childNodeId : currentMachine->childNodeIds)
+    {
+        engine::AnimationTreeNode *node = ui.tree.findNode(childNodeId);
+        if (!node)
+            continue;
+
+        const bool isEntry = currentMachine->entryNodeId == node->id;
+        ed::BeginNode(ed::NodeId(graphNodeId(node->id)));
 
         if (isEntry)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.2f, 1.0f));
-
-        ImGui::Text("%s", state.name.c_str());
-
+        ImGui::Text("%s", node->name.c_str());
         if (isEntry)
             ImGui::PopStyleColor();
 
-        // Clip drop zone — selectable so it registers hover for drag-drop
-        {
-            const std::string clipSelectId = "##clipdrop" + std::to_string(i);
-            const std::string clipText = state.animationAssetPath.empty()
-                                             ? "Drop .anim here"
-                                             : std::filesystem::path(state.animationAssetPath).stem().string();
+        ImGui::TextDisabled("%s", animationTreeNodeTypeLabel(node->type));
 
-            if (state.animationAssetPath.empty())
+        if (node->type == engine::AnimationTreeNode::Type::StateMachine)
+        {
+            ImGui::TextDisabled("%zu children", node->childNodeIds.size());
+            ImGui::TextDisabled("Double-click to enter");
+        }
+        else if (node->type == engine::AnimationTreeNode::Type::ClipState)
+        {
+            const std::string clipText = node->animationAssetPath.empty()
+                                             ? "Drop .anim here"
+                                             : std::filesystem::path(node->animationAssetPath).stem().string();
+            if (node->animationAssetPath.empty())
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.6f, 1.0f));
 
-            ImGui::Selectable((clipText + clipSelectId).c_str(), false,
-                              ImGuiSelectableFlags_None, ImVec2(140.0f, 0.0f));
+            ImGui::Selectable((clipText + "##clipdrop" + std::to_string(node->id)).c_str(), false,
+                              ImGuiSelectableFlags_None, ImVec2(160.0f, 0.0f));
 
-            if (state.animationAssetPath.empty())
+            if (node->animationAssetPath.empty())
                 ImGui::PopStyleColor();
 
             if (ImGui::BeginDragDropTarget())
@@ -785,70 +897,86 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
                                               static_cast<size_t>(payload->DataSize) - 1u);
                     if (dropped.find(".anim.elixasset") != std::string::npos)
                     {
-                        state.animationAssetPath = dropped;
+                        node->animationAssetPath = dropped;
                         ui.dirty = true;
                     }
                 }
                 ImGui::EndDragDropTarget();
             }
         }
+        else if (node->type == engine::AnimationTreeNode::Type::BlendSpace1D)
+        {
+            const std::string paramLabel = node->blendParameterName.empty()
+                                               ? "<float parameter>"
+                                               : node->blendParameterName;
+            ImGui::TextDisabled("Param: %s", paramLabel.c_str());
+            ImGui::TextDisabled("%zu samples", node->blendSamples.size());
+        }
 
-        // Pins: input on the left, output (drag from here) on the right
-        ed::BeginPin(ed::PinId(stateInPin(i)), ed::PinKind::Input);
+        ed::BeginPin(ed::PinId(graphNodeInPin(node->id)), ed::PinKind::Input);
         ImGui::Text("->");
         ed::EndPin();
         ImGui::SameLine();
-        ed::BeginPin(ed::PinId(stateOutPin(i)), ed::PinKind::Output);
+        ed::BeginPin(ed::PinId(graphNodeOutPin(node->id)), ed::PinKind::Output);
         ImGui::Text("o-");
         ed::EndPin();
 
         ed::EndNode();
-
-        // Context menu on right-click
-        if (ed::GetDoubleClickedNode() == ed::NodeId(stateNodeId(i)) ||
-            ImGui::IsItemHovered())
-        {
-            // handled via ed::ShowBackgroundContextMenu below
-        }
     }
 
-    // Entry -> entry state link must be drawn after state nodes so both pins
-    // are live in the current frame.
-    if (!ui.tree.states.empty() && ui.tree.entryStateIndex >= 0 &&
-        ui.tree.entryStateIndex < static_cast<int>(ui.tree.states.size()))
+    if (currentMachine->entryNodeId >= 0 && isChildOfCurrentMachine(currentMachine->entryNodeId))
     {
-        ed::Link(ed::LinkId(999),
-                 ed::PinId(2),
-                 ed::PinId(stateInPin(ui.tree.entryStateIndex)),
+        ed::Link(ed::LinkId(transitionLinkId(currentMachineId, -1)),
+                 ed::PinId(entryOutPin(currentMachineId)),
+                 ed::PinId(graphNodeInPin(currentMachine->entryNodeId)),
                  ImVec4(0.2f, 0.9f, 0.3f, 1.0f), 2.0f);
     }
 
-    // Transition links
-    for (int i = 0; i < static_cast<int>(ui.tree.transitions.size()); ++i)
+    for (int transitionIndex = 0; transitionIndex < static_cast<int>(currentMachine->transitions.size()); ++transitionIndex)
     {
-        const auto &t = ui.tree.transitions[static_cast<size_t>(i)];
-        const int fromOut = (t.fromStateIndex == -1) ? 2 : stateOutPin(t.fromStateIndex);
-        const int toIn = stateInPin(t.toStateIndex);
-        const bool selected = (ui.selectedTransitionIndex == i);
+        const auto &transition = currentMachine->transitions[static_cast<size_t>(transitionIndex)];
+        if (!isChildOfCurrentMachine(transition.toNodeId))
+            continue;
+        if (transition.fromNodeId != engine::AnimationTree::ANY_NODE_ID &&
+            !isChildOfCurrentMachine(transition.fromNodeId))
+            continue;
+
+        const int fromOut = (transition.fromNodeId == engine::AnimationTree::ANY_NODE_ID)
+                                ? anyOutPin(currentMachineId)
+                                : graphNodeOutPin(transition.fromNodeId);
+        const int toIn = graphNodeInPin(transition.toNodeId);
+        const bool selected = (ui.selectedTransitionMachineNodeId == currentMachineId &&
+                               ui.selectedTransitionIndex == transitionIndex);
         const ImVec4 color = selected ? ImVec4(1.0f, 0.7f, 0.1f, 1.0f) : ImVec4(0.7f, 0.7f, 0.9f, 1.0f);
-        ed::Link(ed::LinkId(transitionLinkId(i)), ed::PinId(fromOut), ed::PinId(toIn), color, selected ? 2.5f : 1.5f);
+        ed::Link(ed::LinkId(transitionLinkId(currentMachineId, transitionIndex)),
+                 ed::PinId(fromOut),
+                 ed::PinId(toIn),
+                 color,
+                 selected ? 2.5f : 1.5f);
     }
 
-    // Helpers defined outside so they can be used for both validation and creation
-    auto pinToStateOut = [&](ed::PinId pin) -> int
+    auto pinToOutputNode = [&](ed::PinId pin) -> int
     {
         const int raw = static_cast<int>(pin.Get());
-        if (raw == 2)
+        if (raw == entryOutPin(currentMachineId))
             return -2; // entry output pin
-        if (raw >= 300 && raw < 400)
-            return raw - 300; // state output pin
+        if (raw == anyOutPin(currentMachineId))
+            return -3; // any-state output pin
+        if (raw >= 4000000 && ((raw - 4000000) % 2) == 1)
+        {
+            const int nodeId = (raw - 4000001) / 2;
+            return isChildOfCurrentMachine(nodeId) ? nodeId : -1;
+        }
         return -1;
     };
-    auto pinToStateIn = [&](ed::PinId pin) -> int
+    auto pinToInputNode = [&](ed::PinId pin) -> int
     {
         const int raw = static_cast<int>(pin.Get());
-        if (raw >= 200 && raw < 300)
-            return raw - 200; // state input pin
+        if (raw >= 4000000 && ((raw - 4000000) % 2) == 0)
+        {
+            const int nodeId = (raw - 4000000) / 2;
+            return isChildOfCurrentMachine(nodeId) ? nodeId : -1;
+        }
         return -1;
     };
 
@@ -859,19 +987,18 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
         {
             if (startPinId && endPinId)
             {
-                int fromState = pinToStateOut(startPinId);
-                int toState = pinToStateIn(endPinId);
+                int fromNodeId = pinToOutputNode(startPinId);
+                int toNodeId = pinToInputNode(endPinId);
 
-                if (fromState == -1 || toState == -1)
+                if (fromNodeId == -1 || toNodeId == -1)
                 {
-                    fromState = pinToStateOut(endPinId);
-                    toState = pinToStateIn(startPinId);
+                    fromNodeId = pinToOutputNode(endPinId);
+                    toNodeId = pinToInputNode(startPinId);
                 }
 
-                const int stateCount = static_cast<int>(ui.tree.states.size());
-                const bool toValid = (toState >= 0 && toState < stateCount);
-                const bool fromValid = (fromState == -2) ||
-                                       (fromState >= 0 && fromState < stateCount && fromState != toState);
+                const bool toValid = isChildOfCurrentMachine(toNodeId);
+                const bool fromValid = (fromNodeId == -2 || fromNodeId == -3) ||
+                                       (isChildOfCurrentMachine(fromNodeId) && fromNodeId != toNodeId);
 
                 if (!toValid || !fromValid)
                 {
@@ -879,16 +1006,18 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
                 }
                 else if (ed::AcceptNewItem(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), 2.5f))
                 {
-                    if (fromState == -2)
+                    if (fromNodeId == -2)
                     {
-                        ui.tree.entryStateIndex = toState;
+                        currentMachine->entryNodeId = toNodeId;
                     }
                     else
                     {
-                        engine::AnimationTransition transition{};
-                        transition.fromStateIndex = fromState;
-                        transition.toStateIndex = toState;
-                        ui.tree.transitions.push_back(transition);
+                        engine::AnimationGraphTransition transition{};
+                        transition.fromNodeId = (fromNodeId == -3) ? engine::AnimationTree::ANY_NODE_ID : fromNodeId;
+                        transition.toNodeId = toNodeId;
+                        currentMachine->transitions.push_back(transition);
+                        ui.selectedTransitionMachineNodeId = currentMachineId;
+                        ui.selectedTransitionIndex = static_cast<int>(currentMachine->transitions.size()) - 1;
                     }
                     ui.dirty = true;
                 }
@@ -909,23 +1038,28 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
         {
             const int linkRaw = static_cast<int>(deletedLink.Get());
 
-            if (linkRaw == 999)
+            if (linkRaw == transitionLinkId(currentMachineId, -1))
             {
-                // Keep the synthetic entry link stable. Re-routing is handled by
-                // creating a new entry connection or via "Set as Entry".
                 ed::RejectDeletedItem();
             }
-            else if (linkRaw >= 1000)
+            else if (linkRaw >= transitionLinkId(currentMachineId, 0) &&
+                     linkRaw < transitionLinkId(currentMachineId, 0) + 10000)
             {
                 if (ed::AcceptDeletedItem())
                 {
-                    const int tIdx = linkRaw - 1000;
-                    if (tIdx >= 0 && tIdx < static_cast<int>(ui.tree.transitions.size()))
+                    const int transitionIndex = linkRaw - transitionLinkId(currentMachineId, 0);
+                    if (transitionIndex >= 0 &&
+                        transitionIndex < static_cast<int>(currentMachine->transitions.size()))
                     {
-                        ui.tree.transitions.erase(ui.tree.transitions.begin() + tIdx);
-                        if (ui.selectedTransitionIndex == tIdx)
+                        currentMachine->transitions.erase(currentMachine->transitions.begin() + transitionIndex);
+                        if (ui.selectedTransitionMachineNodeId == currentMachineId &&
+                            ui.selectedTransitionIndex == transitionIndex)
+                        {
                             ui.selectedTransitionIndex = -1;
-                        else if (ui.selectedTransitionIndex > tIdx)
+                            ui.selectedTransitionMachineNodeId = -1;
+                        }
+                        else if (ui.selectedTransitionMachineNodeId == currentMachineId &&
+                                 ui.selectedTransitionIndex > transitionIndex)
                             --ui.selectedTransitionIndex;
                         ui.dirty = true;
                     }
@@ -941,61 +1075,110 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
         while (ed::QueryDeletedNode(&deletedNode))
         {
             const int nodeRaw = static_cast<int>(deletedNode.Get());
-            if (nodeRaw >= 100)
+            if (nodeRaw >= 3000000)
             {
-                const int sIdx = nodeRaw - 100;
-                if (ed::AcceptDeletedItem() && sIdx >= 0 && sIdx < static_cast<int>(ui.tree.states.size()))
+                const int nodeId = nodeRaw - 3000000;
+                if (ed::AcceptDeletedItem() && isChildOfCurrentMachine(nodeId))
                 {
-                    // Remove transitions referencing this state
-                    ui.tree.transitions.erase(
-                        std::remove_if(ui.tree.transitions.begin(), ui.tree.transitions.end(),
-                                       [sIdx](const engine::AnimationTransition &t)
-                                       { return t.fromStateIndex == sIdx || t.toStateIndex == sIdx; }),
-                        ui.tree.transitions.end());
-
-                    // Adjust indices
-                    for (auto &t : ui.tree.transitions)
+                    std::vector<int> removedNodeIds;
+                    std::function<void(int)> collectDescendants = [&](int childId)
                     {
-                        if (t.fromStateIndex > sIdx)
-                            --t.fromStateIndex;
-                        if (t.toStateIndex > sIdx)
-                            --t.toStateIndex;
-                    }
-                    if (ui.tree.entryStateIndex > sIdx)
-                        --ui.tree.entryStateIndex;
-                    else if (ui.tree.entryStateIndex == sIdx)
-                        ui.tree.entryStateIndex = 0;
+                        removedNodeIds.push_back(childId);
+                        if (const auto *childNode = ui.tree.findNode(childId))
+                        {
+                            for (int nestedChildId : childNode->childNodeIds)
+                                collectDescendants(nestedChildId);
+                        }
+                    };
+                    collectDescendants(nodeId);
 
-                    ui.tree.states.erase(ui.tree.states.begin() + sIdx);
-                    if (ui.tree.stateNodePositions.size() > static_cast<size_t>(sIdx))
-                        ui.tree.stateNodePositions.erase(ui.tree.stateNodePositions.begin() + sIdx);
+                    auto isRemoved = [&removedNodeIds](int id)
+                    {
+                        return std::find(removedNodeIds.begin(), removedNodeIds.end(), id) != removedNodeIds.end();
+                    };
+
+                    currentMachine->transitions.erase(
+                        std::remove_if(currentMachine->transitions.begin(),
+                                       currentMachine->transitions.end(),
+                                       [&isRemoved](const engine::AnimationGraphTransition &transition)
+                                       {
+                                           return isRemoved(transition.toNodeId) ||
+                                                  (transition.fromNodeId != engine::AnimationTree::ANY_NODE_ID &&
+                                                   isRemoved(transition.fromNodeId));
+                                       }),
+                        currentMachine->transitions.end());
+
+                    currentMachine->childNodeIds.erase(
+                        std::remove_if(currentMachine->childNodeIds.begin(),
+                                       currentMachine->childNodeIds.end(),
+                                       [&isRemoved](int childId)
+                                       { return isRemoved(childId); }),
+                        currentMachine->childNodeIds.end());
+
+                    if (isRemoved(currentMachine->entryNodeId))
+                        currentMachine->entryNodeId =
+                            currentMachine->childNodeIds.empty() ? -1 : currentMachine->childNodeIds.front();
+
+                    ui.tree.graphNodes.erase(
+                        std::remove_if(ui.tree.graphNodes.begin(),
+                                       ui.tree.graphNodes.end(),
+                                       [&isRemoved](const engine::AnimationTreeNode &node)
+                                       { return isRemoved(node.id); }),
+                        ui.tree.graphNodes.end());
+
+                    if (isRemoved(ui.selectedNodeId))
+                        ui.selectedNodeId = -1;
+                    if (ui.selectedTransitionMachineNodeId == currentMachineId)
+                    {
+                        if (engine::AnimationTreeNode *machineAfterDelete = ui.tree.findNode(currentMachineId);
+                            !machineAfterDelete ||
+                            ui.selectedTransitionIndex >= static_cast<int>(machineAfterDelete->transitions.size()))
+                        {
+                            ui.selectedTransitionIndex = -1;
+                            ui.selectedTransitionMachineNodeId = -1;
+                        }
+                    }
 
                     ui.dirty = true;
-                    ui.selectedTransitionIndex = -1;
                 }
             }
         }
     }
     ed::EndDelete();
 
-    // ── Select transition on click ──
     if (ed::GetSelectedObjectCount() > 0)
     {
         ed::LinkId selectedLink;
         if (ed::GetSelectedLinks(&selectedLink, 1) == 1)
         {
             const int raw = static_cast<int>(selectedLink.Get());
-            if (raw >= 1000)
-                ui.selectedTransitionIndex = raw - 1000;
+            if (raw >= transitionLinkId(currentMachineId, 0) &&
+                raw < transitionLinkId(currentMachineId, 0) + 10000)
+            {
+                ui.selectedTransitionMachineNodeId = currentMachineId;
+                ui.selectedTransitionIndex = raw - transitionLinkId(currentMachineId, 0);
+                ui.selectedNodeId = -1;
+            }
         }
         else
         {
-            ui.selectedTransitionIndex = -1;
+            ed::NodeId selectedNode;
+            if (ed::GetSelectedNodes(&selectedNode, 1) == 1)
+            {
+                const int raw = static_cast<int>(selectedNode.Get());
+                if (raw >= 3000000)
+                {
+                    ui.selectedNodeId = raw - 3000000;
+                    ui.selectedTransitionIndex = -1;
+                    ui.selectedTransitionMachineNodeId = -1;
+                }
+            }
         }
     }
     else
     {
         ui.selectedTransitionIndex = -1;
+        ui.selectedTransitionMachineNodeId = -1;
     }
 
     if (ed::ShowBackgroundContextMenu())
@@ -1004,51 +1187,79 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
     ed::Suspend();
     if (ImGui::BeginPopup("AnimTreeBGMenu"))
     {
-        if (ImGui::MenuItem("Add State"))
+        if (ImGui::MenuItem("Add Node"))
         {
-            ui.addStatePopupOpen = true;
-            ui.newStateName[0] = '\0';
-            ui.newStateClipPath[0] = '\0';
+            ui.addNodePopupOpen = true;
+            ui.newNodeType = 1;
+            ui.newNodeName[0] = '\0';
+            ui.newNodeClipPath[0] = '\0';
         }
         ImGui::EndPopup();
     }
     ed::Resume();
 
     ed::Suspend();
-    if (ui.addStatePopupOpen)
-        ImGui::OpenPopup("AddStatePopup##animtree");
+    if (ui.addNodePopupOpen)
+        ImGui::OpenPopup("AddNodePopup##animtree");
 
-    if (ImGui::BeginPopupModal("AddStatePopup##animtree", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    if (ImGui::BeginPopupModal("AddNodePopup##animtree", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
-        ImGui::InputText("Name##statename", ui.newStateName, sizeof(ui.newStateName));
-        ImGui::InputText("Clip path##stateclip", ui.newStateClipPath, sizeof(ui.newStateClipPath));
-        ImGui::TextDisabled("(or drag .anim.elixasset after creating)");
+        ImGui::Combo("Type", &ui.newNodeType, "State Machine\0Clip State\0BlendSpace1D\0");
+        ImGui::InputText("Name", ui.newNodeName, sizeof(ui.newNodeName));
 
-        if (ImGui::BeginDragDropTarget())
+        if (ui.newNodeType == 1)
         {
-            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+            ImGui::InputText("Clip path", ui.newNodeClipPath, sizeof(ui.newNodeClipPath));
+            ImGui::TextDisabled("(or drag .anim.elixasset after creating)");
+
+            if (ImGui::BeginDragDropTarget())
             {
-                const std::string dropped(static_cast<const char *>(payload->Data), payload->DataSize - 1);
-                std::strncpy(ui.newStateClipPath, dropped.c_str(), sizeof(ui.newStateClipPath) - 1);
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                {
+                    const std::string dropped(static_cast<const char *>(payload->Data), payload->DataSize - 1);
+                    std::strncpy(ui.newNodeClipPath, dropped.c_str(), sizeof(ui.newNodeClipPath) - 1);
+                }
+                ImGui::EndDragDropTarget();
             }
-            ImGui::EndDragDropTarget();
         }
 
-        if (ImGui::Button("Add") && ui.newStateName[0] != '\0')
+        if (ImGui::Button("Add") && ui.newNodeName[0] != '\0')
         {
-            engine::AnimationTreeState state{};
-            state.name = ui.newStateName;
-            state.animationAssetPath = ui.newStateClipPath;
-            ui.tree.states.push_back(state);
-            ui.tree.stateNodePositions.push_back(glm::vec2(280.0f + static_cast<float>(ui.tree.states.size()) * 220.0f, 80.0f));
+            const auto nodeType = static_cast<engine::AnimationTreeNode::Type>(ui.newNodeType);
+            const glm::vec2 newPosition(300.0f + static_cast<float>(currentMachine->childNodeIds.size()) * 220.0f, 80.0f);
+            const int nodeId = ui.tree.addGraphNode(nodeType, ui.newNodeName, currentMachine->id, newPosition);
+            if (engine::AnimationTreeNode *node = ui.tree.findNode(nodeId))
+            {
+                if (nodeType == engine::AnimationTreeNode::Type::ClipState)
+                    node->animationAssetPath = ui.newNodeClipPath;
+                else if (nodeType == engine::AnimationTreeNode::Type::BlendSpace1D)
+                {
+                    for (const auto &parameter : ui.tree.parameters)
+                    {
+                        if (parameter.type == engine::AnimationTreeParameter::Type::Float)
+                        {
+                            node->blendParameterName = parameter.name;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (ui.nodeEditorContext)
+            {
+                ed::SetCurrentEditor(ui.nodeEditorContext);
+                ed::SetNodePosition(ed::NodeId(graphNodeId(nodeId)), ImVec2(newPosition.x, newPosition.y));
+                ed::SetCurrentEditor(nullptr);
+            }
+
+            ui.selectedNodeId = nodeId;
             ui.dirty = true;
-            ui.addStatePopupOpen = false;
+            ui.addNodePopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel"))
         {
-            ui.addStatePopupOpen = false;
+            ui.addNodePopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1059,72 +1270,110 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
     if (ed::ShowNodeContextMenu(&ctxNode))
     {
         const int nodeRaw = static_cast<int>(ctxNode.Get());
-        if (nodeRaw >= 100)
+        if (nodeRaw >= 3000000)
         {
-            const int sIdx = nodeRaw - 100;
-            if (sIdx >= 0 && sIdx < static_cast<int>(ui.tree.states.size()))
+            const int nodeId = nodeRaw - 3000000;
+            if (isChildOfCurrentMachine(nodeId))
             {
-                ImGui::OpenPopup(("StateCtxMenu##" + std::to_string(sIdx)).c_str());
+                ImGui::OpenPopup(("NodeCtxMenu##" + std::to_string(nodeId)).c_str());
             }
         }
     }
 
-    // State context menus
-    for (int i = 0; i < static_cast<int>(ui.tree.states.size()); ++i)
+    for (int childNodeId : currentMachine->childNodeIds)
     {
         ed::Suspend();
-        drawStateContextMenu(ui, i);
+        drawNodeContextMenu(ui, childNodeId);
         ed::Resume();
+    }
+
+    const int doubleClickedNodeRaw = static_cast<int>(ed::GetDoubleClickedNode().Get());
+    if (doubleClickedNodeRaw >= 3000000)
+    {
+        const int nodeId = doubleClickedNodeRaw - 3000000;
+        if (engine::AnimationTreeNode *node = ui.tree.findNode(nodeId);
+            node && node->type == engine::AnimationTreeNode::Type::StateMachine)
+        {
+            ui.currentMachineNodeId = node->id;
+            ui.selectedNodeId = -1;
+            ui.selectedTransitionIndex = -1;
+            ui.selectedTransitionMachineNodeId = -1;
+        }
+    }
+
+    for (int childNodeId : currentMachine->childNodeIds)
+    {
+        if (engine::AnimationTreeNode *node = ui.tree.findNode(childNodeId))
+        {
+            const ImVec2 nodePosition = ed::GetNodePosition(ed::NodeId(graphNodeId(node->id)));
+            const glm::vec2 updatedPosition(nodePosition.x, nodePosition.y);
+            if (node->editorPosition != updatedPosition)
+            {
+                node->editorPosition = updatedPosition;
+                ui.dirty = true;
+            }
+        }
     }
 
     ed::End();
     ed::SetCurrentEditor(nullptr);
 }
 
-void AnimationTreePanel::drawStateContextMenu(AnimTreeUIState &ui, int stateIndex)
+void AnimationTreePanel::drawNodeContextMenu(AnimTreeUIState &ui, int nodeId)
 {
-    const std::string popupId = "StateCtxMenu##" + std::to_string(stateIndex);
+    engine::AnimationTreeNode *node = ui.tree.findNode(nodeId);
+    if (!node)
+        return;
+
+    const std::string popupId = "NodeCtxMenu##" + std::to_string(nodeId);
     if (!ImGui::BeginPopup(popupId.c_str()))
         return;
 
-    auto &state = ui.tree.states[static_cast<size_t>(stateIndex)];
+    engine::AnimationTreeNode *parentMachine = ui.tree.findNode(node->parentMachineNodeId);
 
-    if (ImGui::MenuItem("Set as Entry"))
+    if (parentMachine && parentMachine->isStateMachine() && ImGui::MenuItem("Set as Entry"))
     {
-        ui.tree.entryStateIndex = stateIndex;
+        parentMachine->entryNodeId = nodeId;
         ui.dirty = true;
+    }
+
+    if (node->type == engine::AnimationTreeNode::Type::StateMachine && ImGui::MenuItem("Enter Sub-State Machine"))
+    {
+        ui.currentMachineNodeId = node->id;
+        ui.selectedNodeId = -1;
+        ui.selectedTransitionIndex = -1;
+        ui.selectedTransitionMachineNodeId = -1;
     }
 
     if (ImGui::MenuItem("Rename"))
     {
         ui.renamePopupOpen = true;
-        ui.renameStateIndex = stateIndex;
-        std::strncpy(ui.renameBuffer, state.name.c_str(), sizeof(ui.renameBuffer) - 1);
+        ui.renameNodeId = nodeId;
+        std::strncpy(ui.renameBuffer, node->name.c_str(), sizeof(ui.renameBuffer) - 1);
     }
 
     ImGui::Separator();
     if (ImGui::MenuItem("Delete"))
     {
-        // Deletion handled via ed::QueryDeletedNode in drawNodeGraph
-        ed::DeleteNode(ed::NodeId(stateNodeId(stateIndex)));
+        ed::DeleteNode(ed::NodeId(graphNodeId(nodeId)));
     }
 
     ImGui::EndPopup();
 
-    // Rename popup
-    if (ui.renamePopupOpen && ui.renameStateIndex == stateIndex)
+    if (ui.renamePopupOpen && ui.renameNodeId == nodeId)
     {
-        ImGui::OpenPopup(("RenameState##" + std::to_string(stateIndex)).c_str());
+        ImGui::OpenPopup(("RenameNode##" + std::to_string(nodeId)).c_str());
         ui.renamePopupOpen = false;
     }
 
-    if (ImGui::BeginPopupModal(("RenameState##" + std::to_string(stateIndex)).c_str(),
+    if (ImGui::BeginPopupModal(("RenameNode##" + std::to_string(nodeId)).c_str(),
                                nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         ImGui::InputText("Name", ui.renameBuffer, sizeof(ui.renameBuffer));
         if (ImGui::Button("OK") && ui.renameBuffer[0] != '\0')
         {
-            ui.tree.states[static_cast<size_t>(stateIndex)].name = ui.renameBuffer;
+            if (engine::AnimationTreeNode *renameNode = ui.tree.findNode(nodeId))
+                renameNode->name = ui.renameBuffer;
             ui.dirty = true;
             ImGui::CloseCurrentPopup();
         }
@@ -1137,241 +1386,493 @@ void AnimationTreePanel::drawStateContextMenu(AnimTreeUIState &ui, int stateInde
 
 void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
 {
-    const int tIdx = ui.selectedTransitionIndex;
+    ui.tree.ensureGraph();
 
-    if (tIdx < 0 || tIdx >= static_cast<int>(ui.tree.transitions.size()))
+    if (engine::AnimationTreeNode *machineNode = ui.tree.findNode(ui.selectedTransitionMachineNodeId);
+        machineNode && machineNode->isStateMachine() &&
+        ui.selectedTransitionIndex >= 0 &&
+        ui.selectedTransitionIndex < static_cast<int>(machineNode->transitions.size()))
     {
-        ImGui::TextDisabled("Click a transition link to inspect it.");
-        return;
-    }
+        auto &transition = machineNode->transitions[static_cast<size_t>(ui.selectedTransitionIndex)];
 
-    auto &t = ui.tree.transitions[static_cast<size_t>(tIdx)];
-
-    const std::string fromName = (t.fromStateIndex == -1) ? "Any"
-                                 : (t.fromStateIndex < static_cast<int>(ui.tree.states.size()))
-                                     ? ui.tree.states[static_cast<size_t>(t.fromStateIndex)].name
-                                     : "?";
-    const std::string toName = (t.toStateIndex >= 0 && t.toStateIndex < static_cast<int>(ui.tree.states.size()))
-                                   ? ui.tree.states[static_cast<size_t>(t.toStateIndex)].name
-                                   : "?";
-
-    ImGui::Text("Transition: %s  ->  %s", fromName.c_str(), toName.c_str());
-    ImGui::Separator();
-
-    if (ImGui::DragFloat("Blend Duration (s)", &t.blendDuration, 0.01f, 0.0f, 5.0f, "%.2f"))
-        ui.dirty = true;
-    if (ImGui::Checkbox("Has Exit Time", &t.hasExitTime))
-        ui.dirty = true;
-    if (t.hasExitTime)
-    {
-        if (ImGui::SliderFloat("Exit Time", &t.exitTime, 0.0f, 1.0f))
-            ui.dirty = true;
-    }
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Conditions:");
-
-    if (ui.tree.parameters.empty())
-        ImGui::TextDisabled("Add parameters like speed or isRunning to drive transitions.");
-
-    int removeCondIdx = -1;
-    for (int ci = 0; ci < static_cast<int>(t.conditions.size()); ++ci)
-    {
-        auto &cond = t.conditions[static_cast<size_t>(ci)];
-        ImGui::PushID(ci);
-
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("If");
-        ImGui::SameLine();
-
-        const char *curParamName = cond.parameterName.empty() ? "<select>" : cond.parameterName.c_str();
-        const engine::AnimationTreeParameter *selectedParam = findAnimationTreeParameter(ui.tree, cond.parameterName);
-        engine::AnimationTreeParameter::Type parameterType = engine::AnimationTreeParameter::Type::Float;
-        bool hasSelectedParameter = (selectedParam != nullptr);
-
-        if (selectedParam)
+        auto childNameForId = [&ui, machineNode](int nodeId) -> std::string
         {
-            parameterType = selectedParam->type;
-        }
-        else
+            if (nodeId == engine::AnimationTree::ANY_NODE_ID)
+                return "Any";
+            if (std::find(machineNode->childNodeIds.begin(), machineNode->childNodeIds.end(), nodeId) ==
+                machineNode->childNodeIds.end())
+                return "?";
+            if (const auto *node = ui.tree.findNode(nodeId))
+                return node->name;
+            return "?";
+        };
+
+        const std::string fromName = childNameForId(transition.fromNodeId);
+        const std::string toName = childNameForId(transition.toNodeId);
+
+        ImGui::Text("Transition: %s  ->  %s", fromName.c_str(), toName.c_str());
+        ImGui::Separator();
+
+        if (ImGui::BeginCombo("From", fromName.c_str()))
         {
-            switch (cond.type)
+            if (ImGui::Selectable("Any", transition.fromNodeId == engine::AnimationTree::ANY_NODE_ID))
             {
-            case engine::AnimationTransitionCondition::Type::BoolTrue:
-            case engine::AnimationTransitionCondition::Type::BoolFalse:
-                parameterType = engine::AnimationTreeParameter::Type::Bool;
-                break;
-            case engine::AnimationTransitionCondition::Type::IntEqual:
-            case engine::AnimationTransitionCondition::Type::IntGreater:
-            case engine::AnimationTransitionCondition::Type::IntLess:
-                parameterType = engine::AnimationTreeParameter::Type::Int;
-                break;
-            case engine::AnimationTransitionCondition::Type::Trigger:
-                parameterType = engine::AnimationTreeParameter::Type::Trigger;
-                break;
-            case engine::AnimationTransitionCondition::Type::FloatGreater:
-            case engine::AnimationTransitionCondition::Type::FloatLess:
-            default:
-                parameterType = engine::AnimationTreeParameter::Type::Float;
-                break;
+                transition.fromNodeId = engine::AnimationTree::ANY_NODE_ID;
+                ui.dirty = true;
             }
+
+            for (int childNodeId : machineNode->childNodeIds)
+            {
+                const auto *childNode = ui.tree.findNode(childNodeId);
+                if (!childNode)
+                    continue;
+
+                ImGui::BeginDisabled(childNodeId == transition.toNodeId);
+                if (ImGui::Selectable(childNode->name.c_str(), transition.fromNodeId == childNodeId))
+                {
+                    transition.fromNodeId = childNodeId;
+                    ui.dirty = true;
+                }
+                ImGui::EndDisabled();
+            }
+
+            ImGui::EndCombo();
         }
 
-        const ImGuiStyle &style = ImGui::GetStyle();
-        const bool hasNumericThreshold = parameterType == engine::AnimationTreeParameter::Type::Float ||
-                                         parameterType == engine::AnimationTreeParameter::Type::Int;
-        const float controlsWidth = ImGui::GetContentRegionAvail().x;
-        const float removeWidth = ImGui::CalcTextSize("Remove").x + style.FramePadding.x * 2.0f;
-        const float opWidth = (parameterType == engine::AnimationTreeParameter::Type::Bool) ? 95.0f
-                              : (parameterType == engine::AnimationTreeParameter::Type::Trigger) ? 70.0f
-                                                                                                   : 60.0f;
-        const float valueWidth = hasNumericThreshold ? glm::clamp(controlsWidth * 0.16f, 80.0f, 130.0f) : 0.0f;
-        const float spacingWidth = style.ItemSpacing.x * (hasNumericThreshold ? 3.0f : 2.0f);
-        const float paramWidth = glm::max(140.0f, controlsWidth - removeWidth - opWidth - valueWidth - spacingWidth);
-
-        ImGui::SetNextItemWidth(paramWidth);
-
-        if (ImGui::BeginCombo("##parameter", curParamName))
+        if (ImGui::BeginCombo("To", toName.c_str()))
         {
-            for (const auto &param : ui.tree.parameters)
+            for (int childNodeId : machineNode->childNodeIds)
             {
-                bool sel = (param.name == cond.parameterName);
-                if (ImGui::Selectable(param.name.c_str(), sel))
+                const auto *childNode = ui.tree.findNode(childNodeId);
+                if (!childNode)
+                    continue;
+
+                ImGui::BeginDisabled(childNodeId == transition.fromNodeId);
+                if (ImGui::Selectable(childNode->name.c_str(), transition.toNodeId == childNodeId))
                 {
-                    cond.parameterName = param.name;
-                    switch (param.type)
+                    transition.toNodeId = childNodeId;
+                    ui.dirty = true;
+                }
+                ImGui::EndDisabled();
+            }
+
+            ImGui::EndCombo();
+        }
+
+        if (ImGui::DragFloat("Blend Duration (s)", &transition.blendDuration, 0.01f, 0.0f, 5.0f, "%.2f"))
+            ui.dirty = true;
+        if (ImGui::Checkbox("Has Exit Time", &transition.hasExitTime))
+            ui.dirty = true;
+        if (transition.hasExitTime)
+        {
+            if (ImGui::SliderFloat("Exit Time", &transition.exitTime, 0.0f, 1.0f))
+                ui.dirty = true;
+        }
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Conditions:");
+
+        if (ui.tree.parameters.empty())
+            ImGui::TextDisabled("Add parameters like speed or use On Over for one-shot states.");
+
+        int removeCondIdx = -1;
+        for (int ci = 0; ci < static_cast<int>(transition.conditions.size()); ++ci)
+        {
+            auto &cond = transition.conditions[static_cast<size_t>(ci)];
+            ImGui::PushID(ci);
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("If");
+            ImGui::SameLine();
+
+            const bool isStateFinishedCondition = cond.type == engine::AnimationTransitionCondition::Type::StateFinished;
+            const char *curParamName = isStateFinishedCondition
+                                           ? "On Over"
+                                           : (cond.parameterName.empty() ? "<select>" : cond.parameterName.c_str());
+            const engine::AnimationTreeParameter *selectedParam = findAnimationTreeParameter(ui.tree, cond.parameterName);
+            engine::AnimationTreeParameter::Type parameterType = engine::AnimationTreeParameter::Type::Float;
+            bool hasSelectedParameter = (selectedParam != nullptr);
+
+            if (!isStateFinishedCondition && selectedParam)
+            {
+                parameterType = selectedParam->type;
+            }
+            else if (!isStateFinishedCondition)
+            {
+                switch (cond.type)
+                {
+                case engine::AnimationTransitionCondition::Type::BoolTrue:
+                case engine::AnimationTransitionCondition::Type::BoolFalse:
+                    parameterType = engine::AnimationTreeParameter::Type::Bool;
+                    break;
+                case engine::AnimationTransitionCondition::Type::IntEqual:
+                case engine::AnimationTransitionCondition::Type::IntGreater:
+                case engine::AnimationTransitionCondition::Type::IntLess:
+                    parameterType = engine::AnimationTreeParameter::Type::Int;
+                    break;
+                case engine::AnimationTransitionCondition::Type::Trigger:
+                    parameterType = engine::AnimationTreeParameter::Type::Trigger;
+                    break;
+                case engine::AnimationTransitionCondition::Type::FloatGreater:
+                case engine::AnimationTransitionCondition::Type::FloatLess:
+                case engine::AnimationTransitionCondition::Type::FloatEqual:
+                case engine::AnimationTransitionCondition::Type::StateFinished:
+                default:
+                    parameterType = engine::AnimationTreeParameter::Type::Float;
+                    break;
+                }
+            }
+
+            const ImGuiStyle &style = ImGui::GetStyle();
+            const bool hasNumericThreshold = !isStateFinishedCondition &&
+                                             (parameterType == engine::AnimationTreeParameter::Type::Float ||
+                                              parameterType == engine::AnimationTreeParameter::Type::Int);
+            const float controlsWidth = ImGui::GetContentRegionAvail().x;
+            const float removeWidth = ImGui::CalcTextSize("Remove").x + style.FramePadding.x * 2.0f;
+            const float opWidth = isStateFinishedCondition ? 90.0f
+                                  : (parameterType == engine::AnimationTreeParameter::Type::Bool) ? 95.0f
+                                  : (parameterType == engine::AnimationTreeParameter::Type::Trigger) ? 70.0f
+                                                                                                       : 60.0f;
+            const float valueWidth = hasNumericThreshold ? glm::clamp(controlsWidth * 0.16f, 80.0f, 130.0f) : 0.0f;
+            const float spacingWidth = style.ItemSpacing.x * (hasNumericThreshold ? 3.0f : 2.0f);
+            const float paramWidth = glm::max(140.0f, controlsWidth - removeWidth - opWidth - valueWidth - spacingWidth);
+
+            ImGui::SetNextItemWidth(paramWidth);
+
+            if (ImGui::BeginCombo("##parameter", curParamName))
+            {
+                if (ImGui::Selectable("On Over", isStateFinishedCondition))
+                {
+                    cond.type = engine::AnimationTransitionCondition::Type::StateFinished;
+                    cond.parameterName.clear();
+                    ui.dirty = true;
+                }
+
+                for (const auto &param : ui.tree.parameters)
+                {
+                    bool sel = (param.name == cond.parameterName);
+                    if (ImGui::Selectable(param.name.c_str(), sel))
                     {
-                    case engine::AnimationTreeParameter::Type::Float:
+                        cond.parameterName = param.name;
+                        switch (param.type)
+                        {
+                        case engine::AnimationTreeParameter::Type::Float:
+                            cond.type = engine::AnimationTransitionCondition::Type::FloatGreater;
+                            break;
+                        case engine::AnimationTreeParameter::Type::Bool:
+                            cond.type = engine::AnimationTransitionCondition::Type::BoolTrue;
+                            break;
+                        case engine::AnimationTreeParameter::Type::Int:
+                            cond.type = engine::AnimationTransitionCondition::Type::IntEqual;
+                            break;
+                        case engine::AnimationTreeParameter::Type::Trigger:
+                            cond.type = engine::AnimationTransitionCondition::Type::Trigger;
+                            break;
+                        }
+                        ui.dirty = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(opWidth);
+
+            switch (parameterType)
+            {
+            case engine::AnimationTreeParameter::Type::Float:
+            {
+                if (isStateFinishedCondition)
+                {
+                    ImGui::TextDisabled("is over");
+                    break;
+                }
+
+                int opIdx = 0;
+                if (cond.type == engine::AnimationTransitionCondition::Type::FloatLess)
+                    opIdx = 1;
+                else if (cond.type == engine::AnimationTransitionCondition::Type::FloatEqual)
+                    opIdx = 2;
+
+                if (ImGui::Combo("##op", &opIdx, ">\0<\0==\0"))
+                {
+                    switch (opIdx)
+                    {
+                    case 1:
+                        cond.type = engine::AnimationTransitionCondition::Type::FloatLess;
+                        break;
+                    case 2:
+                        cond.type = engine::AnimationTransitionCondition::Type::FloatEqual;
+                        break;
+                    case 0:
+                    default:
                         cond.type = engine::AnimationTransitionCondition::Type::FloatGreater;
-                        break;
-                    case engine::AnimationTreeParameter::Type::Bool:
-                        cond.type = engine::AnimationTransitionCondition::Type::BoolTrue;
-                        break;
-                    case engine::AnimationTreeParameter::Type::Int:
-                        cond.type = engine::AnimationTransitionCondition::Type::IntEqual;
-                        break;
-                    case engine::AnimationTreeParameter::Type::Trigger:
-                        cond.type = engine::AnimationTransitionCondition::Type::Trigger;
                         break;
                     }
                     ui.dirty = true;
                 }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(valueWidth);
+                if (ImGui::DragFloat("##fthresh", &cond.floatThreshold, 0.01f, 0.0f, 0.0f, "%.2f"))
+                    ui.dirty = true;
+                break;
             }
-            ImGui::EndCombo();
-        }
-
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(opWidth);
-
-        switch (parameterType)
-        {
-        case engine::AnimationTreeParameter::Type::Float:
-        {
-            int opIdx = (cond.type == engine::AnimationTransitionCondition::Type::FloatGreater) ? 0 : 1;
-            if (ImGui::Combo("##op", &opIdx, ">\0<\0"))
+            case engine::AnimationTreeParameter::Type::Bool:
             {
-                cond.type = (opIdx == 0) ? engine::AnimationTransitionCondition::Type::FloatGreater
-                                         : engine::AnimationTransitionCondition::Type::FloatLess;
-                ui.dirty = true;
-            }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(valueWidth);
-            if (ImGui::DragFloat("##fthresh", &cond.floatThreshold, 0.01f, 0.0f, 0.0f, "%.2f"))
-                ui.dirty = true;
-            break;
-        }
-        case engine::AnimationTreeParameter::Type::Bool:
-        {
-            int opIdx = (cond.type == engine::AnimationTransitionCondition::Type::BoolTrue) ? 0 : 1;
-            if (ImGui::Combo("##boolop", &opIdx, "is true\0is false\0"))
-            {
-                cond.type = (opIdx == 0) ? engine::AnimationTransitionCondition::Type::BoolTrue
-                                         : engine::AnimationTransitionCondition::Type::BoolFalse;
-                ui.dirty = true;
-            }
-            break;
-        }
-        case engine::AnimationTreeParameter::Type::Int:
-        {
-            int opIdx = 0;
-            if (cond.type == engine::AnimationTransitionCondition::Type::IntGreater)
-                opIdx = 1;
-            else if (cond.type == engine::AnimationTransitionCondition::Type::IntLess)
-                opIdx = 2;
-
-            if (ImGui::Combo("##intop", &opIdx, "==\0>\0<\0"))
-            {
-                switch (opIdx)
+                int opIdx = (cond.type == engine::AnimationTransitionCondition::Type::BoolTrue) ? 0 : 1;
+                if (ImGui::Combo("##boolop", &opIdx, "is true\0is false\0"))
                 {
-                case 1:
-                    cond.type = engine::AnimationTransitionCondition::Type::IntGreater;
+                    cond.type = (opIdx == 0) ? engine::AnimationTransitionCondition::Type::BoolTrue
+                                             : engine::AnimationTransitionCondition::Type::BoolFalse;
+                    ui.dirty = true;
+                }
+                break;
+            }
+            case engine::AnimationTreeParameter::Type::Int:
+            {
+                int opIdx = 0;
+                if (cond.type == engine::AnimationTransitionCondition::Type::IntGreater)
+                    opIdx = 1;
+                else if (cond.type == engine::AnimationTransitionCondition::Type::IntLess)
+                    opIdx = 2;
+
+                if (ImGui::Combo("##intop", &opIdx, "==\0>\0<\0"))
+                {
+                    switch (opIdx)
+                    {
+                    case 1:
+                        cond.type = engine::AnimationTransitionCondition::Type::IntGreater;
+                        break;
+                    case 2:
+                        cond.type = engine::AnimationTransitionCondition::Type::IntLess;
+                        break;
+                    case 0:
+                    default:
+                        cond.type = engine::AnimationTransitionCondition::Type::IntEqual;
+                        break;
+                    }
+                    ui.dirty = true;
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(valueWidth);
+                if (ImGui::InputInt("##ival", &cond.intValue))
+                    ui.dirty = true;
+                break;
+            }
+            case engine::AnimationTreeParameter::Type::Trigger:
+                ImGui::TextDisabled("fires");
+                break;
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Remove##cond"))
+                removeCondIdx = ci;
+
+            if (!hasSelectedParameter && !isStateFinishedCondition)
+                ImGui::TextDisabled("Select a parameter to finish this condition.");
+
+            if (ci + 1 < static_cast<int>(transition.conditions.size()))
+                ImGui::Separator();
+
+            ImGui::PopID();
+        }
+
+        if (removeCondIdx >= 0)
+        {
+            transition.conditions.erase(transition.conditions.begin() + removeCondIdx);
+            ui.dirty = true;
+        }
+
+        if (ImGui::Button("+ Add Condition"))
+        {
+            engine::AnimationTransitionCondition cond{};
+            if (!ui.tree.parameters.empty())
+            {
+                const auto &firstParam = ui.tree.parameters.front();
+                cond.parameterName = firstParam.name;
+                switch (firstParam.type)
+                {
+                case engine::AnimationTreeParameter::Type::Float:
+                    cond.type = engine::AnimationTransitionCondition::Type::FloatGreater;
                     break;
-                case 2:
-                    cond.type = engine::AnimationTransitionCondition::Type::IntLess;
+                case engine::AnimationTreeParameter::Type::Bool:
+                    cond.type = engine::AnimationTransitionCondition::Type::BoolTrue;
                     break;
-                case 0:
-                default:
+                case engine::AnimationTreeParameter::Type::Int:
                     cond.type = engine::AnimationTransitionCondition::Type::IntEqual;
                     break;
+                case engine::AnimationTreeParameter::Type::Trigger:
+                    cond.type = engine::AnimationTransitionCondition::Type::Trigger;
+                    break;
                 }
-                ui.dirty = true;
             }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(valueWidth);
-            if (ImGui::InputInt("##ival", &cond.intValue))
-                ui.dirty = true;
-            break;
-        }
-        case engine::AnimationTreeParameter::Type::Trigger:
-            ImGui::TextDisabled("fires");
-            break;
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button("Remove##cond"))
-            removeCondIdx = ci;
-
-        if (!hasSelectedParameter)
-            ImGui::TextDisabled("Select a parameter to finish this condition.");
-
-        if (ci + 1 < static_cast<int>(t.conditions.size()))
-            ImGui::Separator();
-
-        ImGui::PopID();
-    }
-
-    if (removeCondIdx >= 0)
-    {
-        t.conditions.erase(t.conditions.begin() + removeCondIdx);
-        ui.dirty = true;
-    }
-
-    if (ImGui::Button("+ Add Condition"))
-    {
-        engine::AnimationTransitionCondition cond{};
-        if (!ui.tree.parameters.empty())
-        {
-            const auto &firstParam = ui.tree.parameters.front();
-            cond.parameterName = firstParam.name;
-            switch (firstParam.type)
+            else
             {
-            case engine::AnimationTreeParameter::Type::Float:
-                cond.type = engine::AnimationTransitionCondition::Type::FloatGreater;
-                break;
-            case engine::AnimationTreeParameter::Type::Bool:
-                cond.type = engine::AnimationTransitionCondition::Type::BoolTrue;
-                break;
-            case engine::AnimationTreeParameter::Type::Int:
-                cond.type = engine::AnimationTransitionCondition::Type::IntEqual;
-                break;
-            case engine::AnimationTreeParameter::Type::Trigger:
-                cond.type = engine::AnimationTransitionCondition::Type::Trigger;
-                break;
+                cond.type = engine::AnimationTransitionCondition::Type::StateFinished;
             }
+            transition.conditions.push_back(cond);
+            ui.dirty = true;
         }
-        t.conditions.push_back(cond);
-        ui.dirty = true;
+
+        return;
     }
+
+    if (engine::AnimationTreeNode *selectedNode = ui.tree.findNode(ui.selectedNodeId))
+    {
+        ImGui::Text("Node: %s", selectedNode->name.c_str());
+        ImGui::TextDisabled("%s", animationTreeNodeTypeLabel(selectedNode->type));
+        ImGui::Separator();
+
+        if (selectedNode->type == engine::AnimationTreeNode::Type::StateMachine)
+        {
+            ImGui::Text("Children: %zu", selectedNode->childNodeIds.size());
+            ImGui::Text("Transitions: %zu", selectedNode->transitions.size());
+            if (ImGui::Button("Enter Sub-State Machine"))
+            {
+                ui.currentMachineNodeId = selectedNode->id;
+                ui.selectedNodeId = -1;
+                ui.selectedTransitionIndex = -1;
+                ui.selectedTransitionMachineNodeId = -1;
+            }
+
+            engine::AnimationTreeNode *entryChild = ui.tree.findNode(selectedNode->entryNodeId);
+            const char *currentEntryLabel = entryChild ? entryChild->name.c_str() : "(none)";
+            if (ImGui::BeginCombo("Entry Child", currentEntryLabel))
+            {
+                for (int childNodeId : selectedNode->childNodeIds)
+                {
+                    const auto *childNode = ui.tree.findNode(childNodeId);
+                    if (!childNode)
+                        continue;
+                    if (ImGui::Selectable(childNode->name.c_str(), selectedNode->entryNodeId == childNodeId))
+                    {
+                        selectedNode->entryNodeId = childNodeId;
+                        ui.dirty = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            return;
+        }
+
+        if (selectedNode->type == engine::AnimationTreeNode::Type::ClipState)
+        {
+            const std::string clipText = selectedNode->animationAssetPath.empty()
+                                             ? "Drop .anim here"
+                                             : std::filesystem::path(selectedNode->animationAssetPath).stem().string();
+            ImGui::Button(clipText.c_str(), ImVec2(-1.0f, 0.0f));
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                {
+                    const std::string dropped(static_cast<const char *>(payload->Data),
+                                              static_cast<size_t>(payload->DataSize) - 1u);
+                    if (dropped.find(".anim.elixasset") != std::string::npos)
+                    {
+                        selectedNode->animationAssetPath = dropped;
+                        ui.dirty = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            if (ImGui::SmallButton("Clear Clip"))
+            {
+                selectedNode->animationAssetPath.clear();
+                ui.dirty = true;
+            }
+            if (ImGui::InputInt("Clip Index", &selectedNode->clipIndex))
+                ui.dirty = true;
+            if (ImGui::Checkbox("Loop", &selectedNode->loop))
+                ui.dirty = true;
+            if (ImGui::DragFloat("Speed", &selectedNode->speed, 0.01f, 0.01f, 5.0f, "%.2f"))
+                ui.dirty = true;
+            return;
+        }
+
+        if (selectedNode->type == engine::AnimationTreeNode::Type::BlendSpace1D)
+        {
+            const char *currentParamLabel =
+                selectedNode->blendParameterName.empty() ? "<select float parameter>" : selectedNode->blendParameterName.c_str();
+            if (ImGui::BeginCombo("Blend Parameter", currentParamLabel))
+            {
+                for (const auto &parameter : ui.tree.parameters)
+                {
+                    if (parameter.type != engine::AnimationTreeParameter::Type::Float)
+                        continue;
+                    if (ImGui::Selectable(parameter.name.c_str(), selectedNode->blendParameterName == parameter.name))
+                    {
+                        selectedNode->blendParameterName = parameter.name;
+                        ui.dirty = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (ImGui::Checkbox("Loop", &selectedNode->loop))
+                ui.dirty = true;
+            if (ImGui::DragFloat("Speed", &selectedNode->speed, 0.01f, 0.01f, 5.0f, "%.2f"))
+                ui.dirty = true;
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Samples");
+
+            int removeSampleIndex = -1;
+            for (int sampleIndex = 0; sampleIndex < static_cast<int>(selectedNode->blendSamples.size()); ++sampleIndex)
+            {
+                auto &sample = selectedNode->blendSamples[static_cast<size_t>(sampleIndex)];
+                ImGui::PushID(sampleIndex);
+
+                if (ImGui::DragFloat("Position", &sample.position, 0.01f))
+                    ui.dirty = true;
+
+                const std::string clipLabel = sample.animationAssetPath.empty()
+                                                  ? "Drop .anim here"
+                                                  : std::filesystem::path(sample.animationAssetPath).stem().string();
+                ImGui::Button(clipLabel.c_str(), ImVec2(-90.0f, 0.0f));
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                    {
+                        const std::string dropped(static_cast<const char *>(payload->Data),
+                                                  static_cast<size_t>(payload->DataSize) - 1u);
+                        if (dropped.find(".anim.elixasset") != std::string::npos)
+                        {
+                            sample.animationAssetPath = dropped;
+                            ui.dirty = true;
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                if (ImGui::InputInt("Clip Index", &sample.clipIndex))
+                    ui.dirty = true;
+                if (ImGui::SmallButton("Remove Sample"))
+                    removeSampleIndex = sampleIndex;
+
+                if (sampleIndex + 1 < static_cast<int>(selectedNode->blendSamples.size()))
+                    ImGui::Separator();
+
+                ImGui::PopID();
+            }
+
+            if (removeSampleIndex >= 0)
+            {
+                selectedNode->blendSamples.erase(selectedNode->blendSamples.begin() + removeSampleIndex);
+                ui.dirty = true;
+            }
+
+            if (ImGui::Button("+ Add Sample"))
+            {
+                selectedNode->blendSamples.push_back(engine::AnimationBlendSpace1DSample{});
+                ui.dirty = true;
+            }
+
+            return;
+        }
+    }
+
+    ImGui::TextDisabled("Select a node or transition to inspect it.");
 }
 
 void AnimationTreePanel::update(float deltaTime)
@@ -1673,7 +2174,11 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
 
     // State info
     const std::string stateName = preview.previewAnimator.getCurrentStateName();
+    const std::string statePath = preview.previewAnimator.getCurrentStatePath();
+    const std::string machinePath = preview.previewAnimator.getActiveMachinePath();
     ImGui::Text("State: %s", stateName.empty() ? "(none)" : stateName.c_str());
+    ImGui::TextDisabled("State Path: %s", statePath.empty() ? "(none)" : statePath.c_str());
+    ImGui::TextDisabled("Machine Path: %s", machinePath.empty() ? "(none)" : machinePath.c_str());
     if (preview.previewAnimator.isInTransition())
         ImGui::TextDisabled("Transitioning %.0f%%", preview.previewAnimator.getCurrentStateNormalizedTime() * 100.0f);
     ImGui::TextDisabled("RMB orbit, MMB pan, wheel zoom");

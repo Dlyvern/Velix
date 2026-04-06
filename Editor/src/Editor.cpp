@@ -1633,7 +1633,6 @@ void Editor::setScene(engine::Scene::SharedPtr scene)
 {
     m_scene = std::move(scene);
     m_hierarchyPanel.setScene(m_scene.get());
-    m_terrainTools.setScene(m_scene);
     resetSceneAutosaveTimer();
     setSelectedEntity(nullptr);
     m_hasPendingObjectPick = false;
@@ -2583,6 +2582,14 @@ void Editor::drawCustomTitleBar()
 
         if (ImGui::Button("Export Project..."))
             m_openExportProjectDialog = true;
+
+        ImGui::Separator();
+
+        if (ImGui::Button("Plugins..."))
+        {
+            m_showPluginsWindow = true;
+            ImGui::CloseCurrentPopup();
+        }
 
         ImGui::Separator();
 
@@ -5015,8 +5022,16 @@ void Editor::drawBottomPanel()
 
     ImGui::SameLine();
 
-    if (ImGui::Button("Terrain Tools"))
-        m_showTerrainTools = !m_showTerrainTools;
+    // Plugin toolbar buttons.
+    for (auto *ep : editor::EditorPluginRegistry::instance().getPlugins())
+    {
+        if (const char *label = ep->getToolbarButtonLabel())
+        {
+            ImGui::SameLine();
+            if (ImGui::Button(label))
+                ep->toggleToolbarWindow();
+        }
+    }
 
     ImGui::SameLine();
 
@@ -5353,12 +5368,29 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     drawBottomPanel();
     drawRightSidebar();
     drawUITools();
-    drawTerrainTools();
     drawEditorCameraSettings();
     drawRenderSettings();
     drawEnvironmentSettings();
     drawBenchmark();
     drawDevTools();
+
+    if (m_showPluginsWindow)
+        m_pluginsWindow.draw(&m_showPluginsWindow);
+
+    // Dispatch per-frame callback to all registered editor plugins.
+    {
+        sdk::EditorContext ctx;
+        ctx.scene            = m_scene.get();
+        ctx.projectRootPath  = m_cachedProjectRootPath.empty() ? nullptr : &m_cachedProjectRootPath;
+        ctx.selectedEntity   = m_selectedEntity;
+        ctx.editorCamera     = m_editorCamera.get();
+        ctx.deltaTime        = ImGui::GetIO().DeltaTime;
+        // Forward brush stroke data collected in drawViewport() this frame.
+        ctx.brushStrokeActive = m_pendingBrushInput.active;
+        ctx.brushStrokeStart  = m_pendingBrushInput.strokeStart;
+        ctx.brushNdcPosition  = m_pendingBrushInput.ndcPosition;
+        editor::EditorPluginRegistry::instance().dispatchFrame(ctx);
+    }
 
     m_notificationManager.render();
 }
@@ -5375,6 +5407,11 @@ void Editor::updateAnimationPreview(float deltaTime)
     {
         auto *animatorComponent = entity->getComponent<engine::AnimatorComponent>();
         if (!animatorComponent)
+            continue;
+
+        // Keep edit-mode preview for direct clip playback, but don't advance
+        // scene animation trees until the editor enters Play mode.
+        if (animatorComponent->hasTree())
             continue;
 
         animatorComponent->update(deltaTime);
@@ -7997,13 +8034,6 @@ void Editor::drawUITools()
     ImGui::End();
 }
 
-void Editor::drawTerrainTools()
-{
-    if (!m_showTerrainTools)
-        return;
-
-    m_terrainTools.draw(&m_showTerrainTools, &m_notificationManager);
-}
 
 void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 {
@@ -8250,42 +8280,44 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
     const bool viewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     ImGuiIO &io = ImGui::GetIO();
 
+    // Brush stroke protocol: collect input for plugins that set wantsBrushInput.
+    // We check whether any plugin wanted brush input last frame (already set in ctx.wantsBrushInput
+    // by the plugin during the previous dispatchFrame). To avoid a one-frame delay we check the
+    // registry directly — any plugin currently alive that returns wantsBrushInput = true will have
+    // set the flag on the previous context. We use a simple heuristic: collect whenever any
+    // IEditorPlugin is registered and the conditions match; the plugin decides whether to consume.
     bool terrainBrushConsumed = false;
-    const bool canUseTerrainBrush = hovered &&
-                                    imageHovered &&
-                                    m_showTerrainTools &&
-                                    !m_isViewportMouseCaptured &&
-                                    !ImGuizmo::IsOver() &&
-                                    !m_isColliderHandleHovered &&
-                                    !m_isColliderHandleActive &&
-                                    m_uiPlacementTool == UIPlacementTool::None &&
-                                    m_currentMode == EditorMode::EDIT &&
-                                    static_cast<bool>(m_editorCamera);
+    const bool anyPluginWantsBrush = !editor::EditorPluginRegistry::instance().getPlugins().empty();
+    const bool canUseBrush = anyPluginWantsBrush &&
+                             hovered &&
+                             imageHovered &&
+                             !m_isViewportMouseCaptured &&
+                             !ImGuizmo::IsOver() &&
+                             !m_isColliderHandleHovered &&
+                             !m_isColliderHandleActive &&
+                             m_uiPlacementTool == UIPlacementTool::None &&
+                             m_currentMode == EditorMode::EDIT &&
+                             static_cast<bool>(m_editorCamera);
 
-    if (canUseTerrainBrush)
+    m_pendingBrushInput = {};
+
+    if (canUseBrush)
     {
-        const ImVec2 mouse = ImGui::GetMousePos();
-        const bool mouseInsideImage = mouse.x >= imageMin.x && mouse.x < imageMax.x &&
+        const ImVec2 mouse          = ImGui::GetMousePos();
+        const bool   mouseInImage   = mouse.x >= imageMin.x && mouse.x < imageMax.x &&
                                       mouse.y >= imageMin.y && mouse.y < imageMax.y;
 
-        if (mouseInsideImage && ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        if (mouseInImage && ImGui::IsMouseDown(ImGuiMouseButton_Left))
         {
-            const glm::vec2 ndcPosition = viewportPixelToNdc(mouse, imageMin, imageMax);
-            terrainBrushConsumed = m_terrainTools.applyBrushStrokeFromNdc(
-                ndcPosition,
-                m_editorCamera.get(),
-                m_selectedEntity,
-                io.DeltaTime,
-                ImGui::IsMouseClicked(ImGuiMouseButton_Left));
+            m_pendingBrushInput.active      = true;
+            m_pendingBrushInput.strokeStart = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+            m_pendingBrushInput.ndcPosition = viewportPixelToNdc(mouse, imageMin, imageMax);
+            terrainBrushConsumed            = true;
 
             if (terrainBrushConsumed)
                 m_hasPendingObjectPick = false;
         }
-        else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            m_terrainTools.cancelBrushStroke();
     }
-    else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
-        m_terrainTools.cancelBrushStroke();
 
     if (viewportFocused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
         saveCurrentScene(true, false);

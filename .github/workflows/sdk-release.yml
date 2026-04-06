@@ -1,0 +1,72 @@
+name: Build & Release SDK
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build SDK (Linux)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Velix + submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            cmake make \
+            libvulkan-dev \
+            libx11-dev libxext-dev libsm-dev libice-dev \
+            liblz4-dev \
+            libgl1-mesa-dev
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: make -C build -j$(nproc)
+
+      - name: Install SDK to dist/
+        run: |
+          cmake --install build --prefix ${{ github.workspace }}/dist/VelixSDK
+
+      - name: Copy runtime .so files needed by plugins
+        run: |
+          cp build/Core/libVelixCore.so    dist/VelixSDK/lib/
+          cp build/Engine/libVelixEngine.so dist/VelixSDK/lib/
+          cp build/VelixSDK/libVelixSDK.so  dist/VelixSDK/lib/
+
+      - name: Package SDK zip
+        run: |
+          cd dist
+          zip -r VelixSDK-linux-${{ github.ref_name }}.zip VelixSDK/
+          echo "SDK_ZIP=${{ github.workspace }}/dist/VelixSDK-linux-${{ github.ref_name }}.zip" >> $GITHUB_ENV
+
+      - name: Create GitHub Release and upload SDK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/VelixSDK-linux-${{ github.ref_name }}.zip
+          name: Velix ${{ github.ref_name }}
+          body: |
+            ## Velix SDK ${{ github.ref_name }}
+
+            ### Linux SDK
+            Download `VelixSDK-linux-${{ github.ref_name }}.zip` to build plugins or games without the full engine source.
+
+            ```cmake
+            # In your plugin CMakeLists.txt:
+            find_package(Velix REQUIRED)
+            target_link_libraries(MyPlugin PRIVATE Velix::SDK)
+            ```

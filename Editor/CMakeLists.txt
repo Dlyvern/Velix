@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.7)
 project(VelixEditor)
 
 set(CMAKE_CXX_STANDARD 20)
+
+find_package(CURL REQUIRED)
 set(INCLUDE_DIR include)
 set(SRC_DIR src)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -25,5 +27,6 @@ target_link_libraries(${PROJECT_NAME}
         imgui_text_edit
         VelixCore
         VelixEngine
-        volk
+        VelixSDK
+        CURL::libcurl
 )

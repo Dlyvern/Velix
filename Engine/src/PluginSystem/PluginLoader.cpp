@@ -30,17 +30,11 @@ void *PluginLoader::getFunction(const std::string &functionName, LibraryHandle l
 {
 #ifdef _WIN32
     FARPROC function = GetProcAddress(library, functionName.c_str());
-
-    if (!function)
-        VX_ENGINE_ERROR_STREAM("Failed to get function" << std::endl);
-
     return reinterpret_cast<void *>(function);
 #else
+    // Clear any prior error, then look up the symbol.
+    dlerror();
     void *function = dlsym(library, functionName.c_str());
-
-    if (!function)
-        VX_ENGINE_ERROR_STREAM("Failed to get function " << dlerror() << std::endl);
-
     return function;
 #endif
 }

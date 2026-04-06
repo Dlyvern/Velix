@@ -45,7 +45,8 @@
 #include <backends/imgui_impl_vulkan.h>
 
 #include "Editor/AssetsPreviewSystem.hpp"
-#include "Editor/Terrain/TerrainTools.hpp"
+#include "Editor/PluginSystem/EditorPluginRegistry.hpp"
+#include "Editor/Panels/PluginsWindow.hpp"
 
 #include <filesystem>
 
@@ -69,6 +70,10 @@ public:
 
     void initStyle(bool imguiBackendRecreated = false);
 
+    // Refresh the Plugins window data from the PluginManager.
+    // Call this once after all plugins have been loaded.
+    void refreshPluginsWindow() { m_pluginsWindow.refresh(); }
+
     engine::Camera::SharedPtr getCurrentCamera();
 
     //! Maybe we can do something better here
@@ -91,7 +96,7 @@ public:
         m_currentScenePath.clear();
         invalidateModelDetailsCache();
         m_assetsPreviewSystem.setProject(project.get());
-        m_terrainTools.setProjectRootPath(project ? resolveProjectRootPath(*project) : std::filesystem::path{});
+        m_cachedProjectRootPath = project ? resolveProjectRootPath(*project) : std::filesystem::path{};
         if (m_materialEditor)
             m_materialEditor->setProject(project.get());
 
@@ -337,8 +342,18 @@ private:
     std::vector<std::string> m_devToolsShaderErrors;
     NotificationManager m_notificationManager;
 
+    // Pending brush input collected in drawViewport() and forwarded to the EditorContext.
+    struct PendingBrushInput
+    {
+        bool      active{false};
+        bool      strokeStart{false};
+        glm::vec2 ndcPosition{0.0f, 0.0f};
+    };
+    PendingBrushInput m_pendingBrushInput{};
+
     AssetsPreviewSystem m_assetsPreviewSystem;
-    TerrainTools m_terrainTools;
+    PluginsWindow m_pluginsWindow;
+    bool m_showPluginsWindow{false};
 
     void drawDocument();
     std::filesystem::path resolveCurrentScenePath() const;
@@ -426,7 +441,6 @@ private:
     bool m_showAssetsWindow{false};
     bool m_showTerminal{false};
     bool m_showUITools{false};
-    bool m_showTerrainTools{false};
     bool m_showRenderSettings{false};
     bool m_showEnvironmentSettings{false};
     bool m_showEditorCameraSettings{false};
@@ -441,6 +455,7 @@ private:
 
     engine::ProjectConfig m_projectConfig;
     std::weak_ptr<Project> m_currentProject;
+    std::filesystem::path m_cachedProjectRootPath; // cached for EditorContext (see setProject)
     engine::ScriptsRegister *m_projectScriptsRegister{nullptr};
     std::string m_loadedGameModulePath;
 
@@ -485,7 +500,6 @@ private:
     void drawBenchmark();
     void drawDevTools();
     void drawUITools();
-    void drawTerrainTools();
     bool hasVisibleRightSidebarPanels() const;
     void persistRightSidebarSettings() const;
     void setRightSidebarPanelVisible(RightSidebarPanelId panelId, bool visible);

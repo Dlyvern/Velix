@@ -1,4 +1,6 @@
 #include "Engine/Components/SkeletalMeshComponent.hpp"
+#include "Engine/Components/AnimatorComponent.hpp"
+#include "Engine/Entity.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -56,6 +58,17 @@ void SkeletalMeshComponent::onModelLoaded()
     }
     m_perMeshMaterialOverrides.resize(m_meshes.size(), nullptr);
     m_perMeshMaterialOverridePaths.resize(m_meshes.size());
+
+    // Skeleton loaded asynchronously — notify the AnimatorComponent on the same
+    // entity so it can bind the skeleton to its tree clips.
+    if (asset.skeleton.has_value())
+    {
+        if (auto *owner = getOwner<Entity>())
+        {
+            if (auto *animator = owner->getComponent<AnimatorComponent>())
+                animator->bindSkeleton(&m_skeleton);
+        }
+    }
 }
 
 ELIX_NESTED_NAMESPACE_END

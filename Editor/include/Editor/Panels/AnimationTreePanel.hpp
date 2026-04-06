@@ -82,14 +82,15 @@ public:
     ~AnimationTreePanel();
 
 private:
-    // ---- Node ID helpers ----
-    // Entry node: NodeId=1, output pin: PinId=2
-    // State nodes: NodeId = 100+idx, input pin = 200+idx, output pin = 300+idx
-    // Transition links: LinkId = 1000+idx
-    static int stateNodeId(int idx)   { return 100 + idx; }
-    static int stateInPin(int idx)    { return 200 + idx; }
-    static int stateOutPin(int idx)   { return 300 + idx; }
-    static int transitionLinkId(int idx) { return 1000 + idx; }
+    // ---- Node Editor ID helpers ----
+    static int entryNodeId(int machineNodeId)      { return 1000000 + machineNodeId * 10 + 1; }
+    static int entryOutPin(int machineNodeId)      { return 1000000 + machineNodeId * 10 + 2; }
+    static int anyNodeId(int machineNodeId)        { return 2000000 + machineNodeId * 10 + 1; }
+    static int anyOutPin(int machineNodeId)        { return 2000000 + machineNodeId * 10 + 2; }
+    static int graphNodeId(int nodeId)             { return 3000000 + nodeId; }
+    static int graphNodeInPin(int nodeId)          { return 4000000 + nodeId * 2; }
+    static int graphNodeOutPin(int nodeId)         { return 4000000 + nodeId * 2 + 1; }
+    static int transitionLinkId(int machineNodeId, int transitionIndex) { return 5000000 + machineNodeId * 10000 + transitionIndex; }
 
     struct AnimTreeUIState
     {
@@ -99,16 +100,20 @@ private:
         bool dirty{false};
 
         // Selection
+        int currentMachineNodeId{-1};
+        int selectedNodeId{-1};
         int selectedTransitionIndex{-1};
+        int selectedTransitionMachineNodeId{-1};
 
-        // "Add State" popup
-        bool addStatePopupOpen{false};
-        char newStateName[128]{};
-        char newStateClipPath[512]{};
+        // "Add Node" popup
+        bool addNodePopupOpen{false};
+        int  newNodeType{1}; // 0=Machine,1=Clip,2=BlendSpace1D
+        char newNodeName[128]{};
+        char newNodeClipPath[512]{};
 
-        // "Rename State" popup
+        // "Rename Node" popup
         bool renamePopupOpen{false};
-        int  renameStateIndex{-1};
+        int  renameNodeId{-1};
         char renameBuffer[128]{};
 
         // "Add Parameter" popup
@@ -131,7 +136,7 @@ private:
     void drawNodeGraph(AnimTreeUIState &ui, const std::filesystem::path &path);
     void drawParametersPanel(AnimTreeUIState &ui);
     void drawTransitionInspector(AnimTreeUIState &ui);
-    void drawStateContextMenu(AnimTreeUIState &ui, int stateIndex);
+    void drawNodeContextMenu(AnimTreeUIState &ui, int nodeId);
     void drawPreviewPane(AnimTreeUIState &ui);
     void resetPreviewCamera(AnimPreviewContext &ctx);
     void refreshLivePreviewDescriptor();

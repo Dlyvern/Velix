@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -58,6 +59,9 @@ public:
     float getRightSidebarSplitRatio() const;
     void setRightSidebarSplitRatio(float ratio);
 
+    const std::filesystem::path &getLastImportSourceDirectory() const;
+    void setLastImportSourceDirectory(const std::filesystem::path &path);
+
     bool getDetailedRenderProfilingEnabled() const;
     void setDetailedRenderProfilingEnabled(bool enabled);
 
@@ -85,6 +89,13 @@ public:
     float getSSRRoughnessCutoff() const;
     void setSSRRoughnessCutoff(float cutoff);
 
+    // ── Plugin enable/disable state ─────────────────────────────────────────
+    // pluginStem = filename without extension (e.g. "TerrainPlugin").
+    // Returns true by default for unknown plugins (new plugins start enabled).
+    bool isPluginEnabled(const std::string &pluginStem) const;
+    void setPluginEnabled(const std::string &pluginStem, bool enabled);
+    const std::unordered_map<std::string, bool> &getPluginEnabledStates() const;
+
     std::optional<IdeInfo> findPreferredVSCodeIde() const;
     bool hasVSCodeIde() const;
 
@@ -109,6 +120,7 @@ private:
     bool m_showHierarchyPanel{true};
     bool m_showDetailsPanel{true};
     float m_rightSidebarSplitRatio{0.5f};
+    std::filesystem::path m_lastImportSourceDirectory;
     bool m_detailedRenderProfilingEnabled{true};
     bool m_sceneAutosaveEnabled{true};
     float m_sceneAutosaveIntervalMinutes{5.0f};
@@ -119,6 +131,7 @@ private:
     int m_ssrSteps{48};
     float m_ssrRoughnessCutoff{0.4f};
     std::vector<IdeInfo> m_detectedIdes;
+    std::unordered_map<std::string, bool> m_pluginEnabledStates;
 };
 
 ELIX_NESTED_NAMESPACE_END

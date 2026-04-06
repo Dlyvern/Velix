@@ -64,3 +64,6 @@
 [submodule "external/Effekseer"]
 	path = external/Effekseer
 	url = https://github.com/effekseer/Effekseer
+[submodule "resources/plugins/EnginePlugins"]
+	path = resources/plugins/EnginePlugins
+	url = git@github.com:Dlyvern/EnginePlugins.git

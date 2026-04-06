@@ -9,6 +9,56 @@
 
 namespace
 {
+    constexpr float kFloatConditionEqualityEpsilon = 0.001f;
+
+    float getAnimationDurationSeconds(const elix::engine::Animation *anim)
+    {
+        if (!anim || anim->ticksPerSecond <= 0.0 || anim->duration <= 0.0)
+            return 0.0f;
+
+        return static_cast<float>(anim->duration / anim->ticksPerSecond);
+    }
+
+    float getStateNormalizedTime(float elapsedSeconds, const elix::engine::Animation *anim, bool loop)
+    {
+        const float durationSec = getAnimationDurationSeconds(anim);
+        if (durationSec <= 0.0f)
+            return 0.0f;
+
+        if (loop)
+        {
+            const float wrapped = std::fmod(elapsedSeconds, durationSec);
+            return (wrapped >= 0.0f ? wrapped : wrapped + durationSec) / durationSec;
+        }
+
+        return glm::clamp(elapsedSeconds / durationSec, 0.0f, 1.0f);
+    }
+
+    bool isStateFinished(float elapsedSeconds, const elix::engine::Animation *anim, bool loop)
+    {
+        if (loop)
+            return false;
+
+        const float durationSec = getAnimationDurationSeconds(anim);
+        return durationSec > 0.0f && elapsedSeconds >= durationSec;
+    }
+
+    float resolveStatePlaybackTicks(float elapsedSeconds, const elix::engine::Animation *anim, bool loop)
+    {
+        if (!anim || anim->duration <= 0.0)
+            return elapsedSeconds;
+
+        const float ticks = elapsedSeconds * static_cast<float>(anim->ticksPerSecond);
+        const float durationTicks = static_cast<float>(anim->duration);
+        if (loop)
+        {
+            const float wrapped = std::fmod(ticks, durationTicks);
+            return wrapped >= 0.0f ? wrapped : wrapped + durationTicks;
+        }
+
+        return glm::clamp(ticks, 0.0f, durationTicks);
+    }
+
     glm::vec3 interpolateVec3(const glm::vec3 &start, const glm::vec3 &end, float t)
     {
         return start + t * (end - start);
@@ -165,30 +215,29 @@ void AnimatorComponent::update(float deltaTime)
 {
     if (m_tree.has_value())
     {
-        if (m_currentStateIndex == -1 && !m_tree->states.empty())
-        {
-            m_currentStateIndex = m_tree->entryStateIndex;
-            m_currentStateTimeSec = 0.0f;
-            initTreeParams();
-        }
+        ensureTreeActivePath();
 
-        if (m_currentStateIndex < 0 || m_currentStateIndex >= static_cast<int>(m_tree->states.size()))
+        const AnimationTreeNode *currentLeaf = getCurrentLeafNode();
+        if (!currentLeaf)
             return;
 
-        const auto &curState = m_tree->states[static_cast<size_t>(m_currentStateIndex)];
-        m_currentStateTimeSec += deltaTime * curState.speed;
+        m_currentStateTimeSec += deltaTime * std::max(currentLeaf->speed, 0.0f);
 
-        if (m_nextStateIndex >= 0)
+        if (m_nextStateNodeId >= 0)
         {
+            if (const AnimationTreeNode *nextLeaf = getNextLeafNode())
+                m_nextStateTimeSec += deltaTime * std::max(nextLeaf->speed, 0.0f);
+
             m_transitionElapsed += deltaTime;
             m_blendAlpha = (m_blendDuration > 0.0f) ? std::min(m_transitionElapsed / m_blendDuration, 1.0f) : 1.0f;
-            m_nextStateTimeSec += deltaTime;
 
             if (m_blendAlpha >= 1.0f)
             {
-                m_currentStateIndex = m_nextStateIndex;
+                m_currentStatePath = m_nextStatePath;
+                m_currentStateNodeId = m_nextStateNodeId;
                 m_currentStateTimeSec = m_nextStateTimeSec;
-                m_nextStateIndex = -1;
+                m_nextStatePath.clear();
+                m_nextStateNodeId = -1;
                 m_blendAlpha = 0.0f;
                 m_transitionElapsed = 0.0f;
                 m_nextStateTimeSec = 0.0f;
@@ -272,6 +321,18 @@ void AnimatorComponent::refreshAnimationBindings()
     {
         animation.skeletonForAnimation = m_boundSkeleton;
         animation.gameObject = owner;
+    }
+
+    // Also bind tree clips so tree-mode animations work when the skeleton
+    // arrives after loadTree() (async streaming).
+    for (auto &[assetPath, clips] : m_treeClipAssets)
+    {
+        (void)assetPath;
+        for (auto &clip : clips)
+        {
+            clip.skeletonForAnimation = m_boundSkeleton;
+            clip.gameObject = owner;
+        }
     }
 }
 
@@ -422,6 +483,11 @@ void AnimatorComponent::calculateBoneTransform(Skeleton::BoneInfo *boneInfo, con
 
 bool AnimatorComponent::isAnimationPlaying() const
 {
+    if (m_tree.has_value())
+    {
+        return getCurrentLeafNode() != nullptr || getNextLeafNode() != nullptr;
+    }
+
     return m_currentAnimation != nullptr;
 }
 
@@ -435,51 +501,26 @@ void AnimatorComponent::loadTree(const std::string &assetPath)
 
 void AnimatorComponent::setTree(const AnimationTree &tree)
 {
-    m_tree = tree;
-    m_currentStateIndex = -1;
-    m_nextStateIndex = -1;
-    m_blendAlpha = 0.0f;
-    m_transitionElapsed = 0.0f;
-    m_currentStateTimeSec = 0.0f;
-    m_nextStateTimeSec = 0.0f;
-
-    const size_t stateCount = m_tree->states.size();
-    m_treeStateClips.resize(stateCount);
-    m_stateAnims.assign(stateCount, nullptr);
-
-    for (size_t i = 0; i < stateCount; ++i)
-    {
-        const auto &state = m_tree->states[i];
-        if (state.animationAssetPath.empty())
-            continue;
-
-        auto animAsset = engine::AssetsLoader::loadAnimationAsset(state.animationAssetPath);
-        if (!animAsset.has_value() || animAsset->animations.empty())
-            continue;
-
-        m_treeStateClips[i] = std::move(animAsset->animations);
-
-        const int clipIdx = std::clamp(state.clipIndex, 0, static_cast<int>(m_treeStateClips[i].size()) - 1);
-        m_stateAnims[i] = &m_treeStateClips[i][static_cast<size_t>(clipIdx)];
-
-        if (m_boundSkeleton)
-            m_treeStateClips[i][static_cast<size_t>(clipIdx)].skeletonForAnimation = m_boundSkeleton;
-    }
-
+    AnimationTree runtimeTree = tree;
+    runtimeTree.ensureGraph();
+    m_tree = std::move(runtimeTree);
+    m_currentAnimation = nullptr;
+    m_currentTime = 0.0f;
+    resetTreeRuntime();
+    cacheTreeAnimations();
     initTreeParams();
+    ensureTreeActivePath();
 }
 
 void AnimatorComponent::clearTree()
 {
     m_tree.reset();
-    m_treeStateClips.clear();
-    m_stateAnims.clear();
+    m_treeClipAssets.clear();
     m_floats.clear();
     m_bools.clear();
     m_ints.clear();
     m_triggers.clear();
-    m_currentStateIndex = -1;
-    m_nextStateIndex = -1;
+    resetTreeRuntime();
 }
 
 bool AnimatorComponent::hasTree() const { return m_tree.has_value(); }
@@ -514,24 +555,82 @@ int AnimatorComponent::getInt(const std::string &name) const
 
 std::string AnimatorComponent::getCurrentStateName() const
 {
-    if (!m_tree.has_value() || m_currentStateIndex < 0 ||
-        m_currentStateIndex >= static_cast<int>(m_tree->states.size()))
+    const AnimationTreeNode *node = getCurrentLeafNode();
+    if (!node)
         return {};
-    return m_tree->states[static_cast<size_t>(m_currentStateIndex)].name;
+    return node->name;
+}
+
+std::string AnimatorComponent::getCurrentStatePath() const
+{
+    if (!m_tree.has_value() || m_currentStateNodeId < 0)
+        return {};
+
+    return m_tree->formatNodePath(m_currentStateNodeId, false);
+}
+
+std::string AnimatorComponent::getActiveMachinePath() const
+{
+    if (!m_tree.has_value() || m_currentStateNodeId < 0)
+        return {};
+
+    return m_tree->formatNodePath(m_currentStateNodeId, true);
 }
 
 float AnimatorComponent::getCurrentStateNormalizedTime() const
 {
-    if (!m_tree.has_value() || m_currentStateIndex < 0)
-        return 0.0f;
-    const Animation *anim = getStateAnimation(m_currentStateIndex);
-    if (!anim || anim->ticksPerSecond <= 0.0 || anim->duration <= 0.0)
-        return 0.0f;
-    const float durationSec = static_cast<float>(anim->duration / anim->ticksPerSecond);
-    return durationSec > 0.0f ? std::fmod(m_currentStateTimeSec, durationSec) / durationSec : 0.0f;
+    return getNodeNormalizedTime(getCurrentLeafNode(), m_currentStateTimeSec);
 }
 
-bool AnimatorComponent::isInTransition() const { return m_nextStateIndex >= 0; }
+bool AnimatorComponent::isInTransition() const { return m_nextStateNodeId >= 0; }
+
+void AnimatorComponent::resetTreeRuntime()
+{
+    m_currentStateNodeId = -1;
+    m_nextStateNodeId = -1;
+    m_currentStatePath.clear();
+    m_nextStatePath.clear();
+    m_currentStateTimeSec = 0.0f;
+    m_nextStateTimeSec = 0.0f;
+    m_blendAlpha = 0.0f;
+    m_blendDuration = 0.3f;
+    m_transitionElapsed = 0.0f;
+}
+
+void AnimatorComponent::cacheTreeAnimations()
+{
+    m_treeClipAssets.clear();
+
+    if (!m_tree.has_value())
+        return;
+
+    for (const auto &node : m_tree->graphNodes)
+    {
+        auto loadClipAsset = [this](const std::string &assetPath)
+        {
+            if (assetPath.empty() || m_treeClipAssets.find(assetPath) != m_treeClipAssets.end())
+                return;
+
+            auto animAsset = engine::AssetsLoader::loadAnimationAsset(assetPath);
+            if (!animAsset.has_value() || animAsset->animations.empty())
+                return;
+
+            m_treeClipAssets.emplace(assetPath, std::move(animAsset->animations));
+        };
+
+        if (node.type == AnimationTreeNode::Type::ClipState)
+        {
+            loadClipAsset(node.animationAssetPath);
+        }
+        else if (node.type == AnimationTreeNode::Type::BlendSpace1D)
+        {
+            for (const auto &sample : node.blendSamples)
+                loadClipAsset(sample.animationAssetPath);
+        }
+    }
+
+    refreshAnimationBindings();
+}
 
 void AnimatorComponent::initTreeParams()
 {
@@ -562,9 +661,28 @@ void AnimatorComponent::initTreeParams()
     }
 }
 
-bool AnimatorComponent::checkConditions(const AnimationTransition &t) const
+void AnimatorComponent::ensureTreeActivePath()
 {
-    for (const auto &cond : t.conditions)
+    if (!m_tree.has_value())
+        return;
+
+    if (getCurrentLeafNode() != nullptr)
+        return;
+
+    std::vector<int> resolvedPath;
+    if (!resolveMachineEntryPath(m_tree->rootMachineNodeId, resolvedPath) || resolvedPath.empty())
+        return;
+
+    m_currentStatePath = std::move(resolvedPath);
+    m_currentStateNodeId = m_currentStatePath.back();
+    m_currentStateTimeSec = 0.0f;
+}
+
+bool AnimatorComponent::checkConditions(const std::vector<AnimationTransitionCondition> &conditions,
+                                        const AnimationTreeNode *leafNode,
+                                        float leafElapsedSeconds) const
+{
+    for (const auto &cond : conditions)
     {
         switch (cond.type)
         {
@@ -579,6 +697,13 @@ bool AnimatorComponent::checkConditions(const AnimationTransition &t) const
         {
             const auto it = m_floats.find(cond.parameterName);
             if (it == m_floats.end() || !(it->second < cond.floatThreshold))
+                return false;
+            break;
+        }
+        case AnimationTransitionCondition::Type::FloatEqual:
+        {
+            const auto it = m_floats.find(cond.parameterName);
+            if (it == m_floats.end() || std::abs(it->second - cond.floatThreshold) > kFloatConditionEqualityEpsilon)
                 return false;
             break;
         }
@@ -623,16 +748,37 @@ bool AnimatorComponent::checkConditions(const AnimationTransition &t) const
                 return false;
             break;
         }
+        case AnimationTransitionCondition::Type::StateFinished:
+        {
+            if (!isNodeFinished(leafNode, leafElapsedSeconds))
+                return false;
+            break;
+        }
         }
     }
     return true;
 }
 
-void AnimatorComponent::startTransition(int targetIndex, float blendDuration)
+void AnimatorComponent::startTransition(const std::vector<int> &targetPath, float blendDuration)
 {
-    if (m_nextStateIndex >= 0)
+    if (m_nextStateNodeId >= 0 || targetPath.empty())
         return;
-    m_nextStateIndex = targetIndex;
+
+    if (blendDuration <= 0.0f)
+    {
+        m_currentStatePath = targetPath;
+        m_currentStateNodeId = targetPath.back();
+        m_currentStateTimeSec = 0.0f;
+        m_nextStatePath.clear();
+        m_nextStateNodeId = -1;
+        m_nextStateTimeSec = 0.0f;
+        m_blendAlpha = 0.0f;
+        m_transitionElapsed = 0.0f;
+        return;
+    }
+
+    m_nextStatePath = targetPath;
+    m_nextStateNodeId = targetPath.back();
     m_blendDuration = blendDuration;
     m_blendAlpha = 0.0f;
     m_transitionElapsed = 0.0f;
@@ -641,23 +787,47 @@ void AnimatorComponent::startTransition(int targetIndex, float blendDuration)
 
 void AnimatorComponent::evaluateTransitions()
 {
-    if (!m_tree.has_value() || m_nextStateIndex >= 0)
+    if (!m_tree.has_value() || m_nextStateNodeId >= 0 || m_currentStatePath.size() < 2u)
         return;
 
-    for (const auto &transition : m_tree->transitions)
+    const AnimationTreeNode *currentLeaf = getCurrentLeafNode();
+    if (!currentLeaf)
+        return;
+
+    const float currentNormalizedTime = getNodeNormalizedTime(currentLeaf, m_currentStateTimeSec);
+
+    for (int pathIndex = static_cast<int>(m_currentStatePath.size()) - 2; pathIndex >= 0; --pathIndex)
     {
-        const bool fromCurrent = (transition.fromStateIndex == m_currentStateIndex);
-        const bool fromAny = (transition.fromStateIndex == -1);
-        if (!fromCurrent && !fromAny)
+        const int machineNodeId = m_currentStatePath[static_cast<size_t>(pathIndex)];
+        const AnimationTreeNode *machineNode = m_tree->findNode(machineNodeId);
+        if (!machineNode || !machineNode->isStateMachine())
             continue;
-        if (transition.toStateIndex == m_currentStateIndex)
-            continue;
-        if (transition.hasExitTime && getCurrentStateNormalizedTime() < transition.exitTime)
-            continue;
-        if (!checkConditions(transition))
-            continue;
-        startTransition(transition.toStateIndex, transition.blendDuration);
-        break;
+
+        const int activeChildNodeId = m_currentStatePath[static_cast<size_t>(pathIndex + 1)];
+        for (const auto &transition : machineNode->transitions)
+        {
+            const bool fromCurrent = transition.fromNodeId == activeChildNodeId;
+            const bool fromAny = transition.fromNodeId == AnimationTree::ANY_NODE_ID;
+            if (!fromCurrent && !fromAny)
+                continue;
+            if (transition.toNodeId == activeChildNodeId)
+                continue;
+            if (std::find(machineNode->childNodeIds.begin(),
+                          machineNode->childNodeIds.end(),
+                          transition.toNodeId) == machineNode->childNodeIds.end())
+                continue;
+            if (transition.hasExitTime && currentNormalizedTime < transition.exitTime)
+                continue;
+            if (!checkConditions(transition.conditions, currentLeaf, m_currentStateTimeSec))
+                continue;
+
+            std::vector<int> targetPath = buildTargetPath(machineNodeId, transition.toNodeId);
+            if (targetPath.empty() || targetPath == m_currentStatePath)
+                continue;
+
+            startTransition(targetPath, transition.blendDuration);
+            return;
+        }
     }
 }
 
@@ -668,113 +838,326 @@ float AnimatorComponent::secondsToTicks(const Animation *anim, float seconds) co
     return seconds * static_cast<float>(anim->ticksPerSecond);
 }
 
-const Animation *AnimatorComponent::getStateAnimation(int stateIndex) const
+const Animation *AnimatorComponent::getAnimationClip(const std::string &assetPath, int clipIndex) const
 {
-    if (stateIndex < 0 || stateIndex >= static_cast<int>(m_stateAnims.size()))
+    if (assetPath.empty())
         return nullptr;
-    return m_stateAnims[static_cast<size_t>(stateIndex)];
+
+    const auto it = m_treeClipAssets.find(assetPath);
+    if (it == m_treeClipAssets.end() || it->second.empty())
+        return nullptr;
+
+    const int resolvedIndex = std::clamp(clipIndex, 0, static_cast<int>(it->second.size()) - 1);
+    return &it->second[static_cast<size_t>(resolvedIndex)];
+}
+
+const AnimationTreeNode *AnimatorComponent::getCurrentLeafNode() const
+{
+    if (!m_tree.has_value() || m_currentStateNodeId < 0)
+        return nullptr;
+
+    const AnimationTreeNode *node = m_tree->findNode(m_currentStateNodeId);
+    return (node && node->isLeaf()) ? node : nullptr;
+}
+
+const AnimationTreeNode *AnimatorComponent::getNextLeafNode() const
+{
+    if (!m_tree.has_value() || m_nextStateNodeId < 0)
+        return nullptr;
+
+    const AnimationTreeNode *node = m_tree->findNode(m_nextStateNodeId);
+    return (node && node->isLeaf()) ? node : nullptr;
+}
+
+bool AnimatorComponent::resolveMachineEntryPath(int machineNodeId, std::vector<int> &outPath) const
+{
+    outPath.clear();
+    return resolveNodePath(machineNodeId, outPath);
+}
+
+bool AnimatorComponent::resolveNodePath(int nodeId, std::vector<int> &outPath) const
+{
+    if (!m_tree.has_value())
+        return false;
+
+    const AnimationTreeNode *node = m_tree->findNode(nodeId);
+    if (!node)
+        return false;
+
+    outPath.push_back(node->id);
+    if (!node->isStateMachine())
+        return true;
+
+    int entryNodeId = node->entryNodeId;
+    if (entryNodeId < 0 && !node->childNodeIds.empty())
+        entryNodeId = node->childNodeIds.front();
+    if (entryNodeId < 0)
+        return false;
+
+    return resolveNodePath(entryNodeId, outPath);
+}
+
+std::vector<int> AnimatorComponent::buildTargetPath(int machineNodeId, int targetNodeId) const
+{
+    std::vector<int> targetPath;
+    const auto machineIt = std::find(m_currentStatePath.begin(), m_currentStatePath.end(), machineNodeId);
+    if (machineIt == m_currentStatePath.end())
+        return targetPath;
+
+    targetPath.insert(targetPath.end(), m_currentStatePath.begin(), std::next(machineIt));
+    std::vector<int> resolvedSuffix;
+    if (!resolveNodePath(targetNodeId, resolvedSuffix))
+        return {};
+
+    targetPath.insert(targetPath.end(), resolvedSuffix.begin(), resolvedSuffix.end());
+    return targetPath;
+}
+
+float AnimatorComponent::getNodeDurationSeconds(const AnimationTreeNode *node) const
+{
+    if (!node)
+        return 0.0f;
+
+    if (node->type == AnimationTreeNode::Type::ClipState)
+        return getAnimationDurationSeconds(getAnimationClip(node->animationAssetPath, node->clipIndex));
+
+    if (node->type == AnimationTreeNode::Type::BlendSpace1D)
+    {
+        float maxDuration = 0.0f;
+        for (const auto &sample : node->blendSamples)
+            maxDuration = std::max(maxDuration,
+                                   getAnimationDurationSeconds(getAnimationClip(sample.animationAssetPath,
+                                                                                sample.clipIndex)));
+        return maxDuration;
+    }
+
+    return 0.0f;
+}
+
+float AnimatorComponent::getNodeNormalizedTime(const AnimationTreeNode *node, float elapsedSeconds) const
+{
+    if (!node)
+        return 0.0f;
+
+    const float durationSeconds = getNodeDurationSeconds(node);
+    if (durationSeconds <= 0.0f)
+        return 0.0f;
+
+    if (node->loop)
+    {
+        const float wrapped = std::fmod(elapsedSeconds, durationSeconds);
+        return (wrapped >= 0.0f ? wrapped : wrapped + durationSeconds) / durationSeconds;
+    }
+
+    return glm::clamp(elapsedSeconds / durationSeconds, 0.0f, 1.0f);
+}
+
+bool AnimatorComponent::isNodeFinished(const AnimationTreeNode *node, float elapsedSeconds) const
+{
+    if (!node || node->loop)
+        return false;
+
+    const float durationSeconds = getNodeDurationSeconds(node);
+    return durationSeconds > 0.0f && elapsedSeconds >= durationSeconds;
+}
+
+void AnimatorComponent::buildPoseSource(const AnimationTreeNode *node, float elapsedSeconds, TreePoseSource &outPose) const
+{
+    outPose = {};
+    if (!node)
+        return;
+
+    if (node->type == AnimationTreeNode::Type::ClipState)
+    {
+        outPose.primary = getAnimationClip(node->animationAssetPath, node->clipIndex);
+        if (outPose.primary)
+            outPose.primaryTicks = resolveStatePlaybackTicks(elapsedSeconds, outPose.primary, node->loop);
+        return;
+    }
+
+    if (node->type != AnimationTreeNode::Type::BlendSpace1D || node->blendSamples.empty())
+        return;
+
+    std::vector<const AnimationBlendSpace1DSample *> sortedSamples;
+    sortedSamples.reserve(node->blendSamples.size());
+    for (const auto &sample : node->blendSamples)
+    {
+        if (getAnimationClip(sample.animationAssetPath, sample.clipIndex))
+            sortedSamples.push_back(&sample);
+    }
+
+    if (sortedSamples.empty())
+        return;
+
+    std::sort(sortedSamples.begin(), sortedSamples.end(),
+              [](const AnimationBlendSpace1DSample *lhs, const AnimationBlendSpace1DSample *rhs)
+              { return lhs->position < rhs->position; });
+
+    const float blendValue = getFloat(node->blendParameterName);
+    const AnimationBlendSpace1DSample *left = sortedSamples.front();
+    const AnimationBlendSpace1DSample *right = sortedSamples.front();
+
+    if (blendValue <= sortedSamples.front()->position)
+    {
+        left = right = sortedSamples.front();
+    }
+    else if (blendValue >= sortedSamples.back()->position)
+    {
+        left = right = sortedSamples.back();
+    }
+    else
+    {
+        for (size_t sampleIndex = 1; sampleIndex < sortedSamples.size(); ++sampleIndex)
+        {
+            if (blendValue <= sortedSamples[sampleIndex]->position)
+            {
+                left = sortedSamples[sampleIndex - 1];
+                right = sortedSamples[sampleIndex];
+                break;
+            }
+        }
+    }
+
+    outPose.primary = getAnimationClip(left->animationAssetPath, left->clipIndex);
+    if (outPose.primary)
+        outPose.primaryTicks = resolveStatePlaybackTicks(elapsedSeconds, outPose.primary, node->loop);
+
+    outPose.secondary = getAnimationClip(right->animationAssetPath, right->clipIndex);
+    if (outPose.secondary)
+        outPose.secondaryTicks = resolveStatePlaybackTicks(elapsedSeconds, outPose.secondary, node->loop);
+
+    if (left != right)
+    {
+        const float denominator = right->position - left->position;
+        outPose.sampleBlend = (std::abs(denominator) <= std::numeric_limits<float>::epsilon())
+                                  ? 0.0f
+                                  : glm::clamp((blendValue - left->position) / denominator, 0.0f, 1.0f);
+    }
 }
 
 void AnimatorComponent::applyBlendedBoneTransform(Skeleton::BoneInfo *bone, const glm::mat4 &parentTransform,
-                                                  const Animation *animA, const float ticksA,
-                                                  const Animation *animB, const float ticksB,
+                                                  const TreePoseSource &poseA,
+                                                  const TreePoseSource *poseB,
                                                   const float blend)
 {
     if (!bone)
         return;
 
-    glm::vec3 posA(bone->localBindTransform[3]);
-    glm::quat rotA = glm::quat_cast(glm::mat3(bone->localBindTransform));
-    glm::vec3 scaA(1.0f);
-
-    if (animA)
+    auto samplePoseSource = [bone](const TreePoseSource &source,
+                                   glm::vec3 &outPos,
+                                   glm::quat &outRot,
+                                   glm::vec3 &outScale)
     {
-        if (const auto *track = animA->getAnimationTrack(bone->name); track && !track->keyFrames.empty())
+        auto sampleClip = [bone](const Animation *animation,
+                                 float ticks,
+                                 glm::vec3 &ioPos,
+                                 glm::quat &ioRot,
+                                 glm::vec3 &ioScale)
         {
-            auto [s, e] = findKeyframes(track->keyFrames, ticksA);
-            if (s && e)
+            if (!animation)
+                return;
+
+            if (const auto *track = animation->getAnimationTrack(bone->name); track && !track->keyFrames.empty())
             {
-                float dt = e->timeStamp - s->timeStamp;
-                float t = (dt == 0.0f) ? 0.0f : glm::clamp((ticksA - s->timeStamp) / dt, 0.0f, 1.0f);
-                posA = interpolateVec3(s->position, e->position, t);
-                rotA = glm::normalize(interpolateQuat(s->rotation, e->rotation, t));
-                scaA = interpolateVec3(s->scale, e->scale, t);
+                auto [startFrame, endFrame] = findKeyframes(track->keyFrames, ticks);
+                if (startFrame && endFrame)
+                {
+                    const float delta = endFrame->timeStamp - startFrame->timeStamp;
+                    const float alpha = (delta == 0.0f) ? 0.0f : glm::clamp((ticks - startFrame->timeStamp) / delta, 0.0f, 1.0f);
+                    ioPos = interpolateVec3(startFrame->position, endFrame->position, alpha);
+                    ioRot = glm::normalize(interpolateQuat(startFrame->rotation, endFrame->rotation, alpha));
+                    ioScale = interpolateVec3(startFrame->scale, endFrame->scale, alpha);
+                }
             }
-        }
-    }
+        };
 
-    glm::vec3 posB = posA, scaB = scaA;
-    glm::quat rotB = rotA;
+        glm::vec3 primaryPos(bone->localBindTransform[3]);
+        glm::quat primaryRot = glm::quat_cast(glm::mat3(bone->localBindTransform));
+        glm::vec3 primaryScale(1.0f);
+        sampleClip(source.primary, source.primaryTicks, primaryPos, primaryRot, primaryScale);
 
-    if (animB)
-    {
-        if (const auto *track = animB->getAnimationTrack(bone->name); track && !track->keyFrames.empty())
+        if (!source.secondary)
         {
-            auto [s, e] = findKeyframes(track->keyFrames, ticksB);
-            if (s && e)
-            {
-                float dt = e->timeStamp - s->timeStamp;
-                float t = (dt == 0.0f) ? 0.0f : glm::clamp((ticksB - s->timeStamp) / dt, 0.0f, 1.0f);
-                posB = interpolateVec3(s->position, e->position, t);
-                rotB = glm::normalize(interpolateQuat(s->rotation, e->rotation, t));
-                scaB = interpolateVec3(s->scale, e->scale, t);
-            }
+            outPos = primaryPos;
+            outRot = primaryRot;
+            outScale = primaryScale;
+            return;
         }
-    }
 
-    const glm::vec3 pos = interpolateVec3(posA, posB, blend);
-    const glm::quat rot = glm::normalize(interpolateQuat(rotA, rotB, blend));
-    const glm::vec3 sca = interpolateVec3(scaA, scaB, blend);
+        glm::vec3 secondaryPos(bone->localBindTransform[3]);
+        glm::quat secondaryRot = glm::quat_cast(glm::mat3(bone->localBindTransform));
+        glm::vec3 secondaryScale(1.0f);
+        sampleClip(source.secondary, source.secondaryTicks, secondaryPos, secondaryRot, secondaryScale);
+
+        outPos = interpolateVec3(primaryPos, secondaryPos, source.sampleBlend);
+        outRot = glm::normalize(interpolateQuat(primaryRot, secondaryRot, source.sampleBlend));
+        outScale = interpolateVec3(primaryScale, secondaryScale, source.sampleBlend);
+    };
+
+    glm::vec3 currentPos{};
+    glm::quat currentRot{};
+    glm::vec3 currentScale{};
+    samplePoseSource(poseA, currentPos, currentRot, currentScale);
+
+    const TreePoseSource &targetPose = poseB ? *poseB : poseA;
+    glm::vec3 nextPos{};
+    glm::quat nextRot{};
+    glm::vec3 nextScale{};
+    samplePoseSource(targetPose, nextPos, nextRot, nextScale);
+
+    const float transitionBlend = poseB ? blend : 0.0f;
+    const glm::vec3 pos = interpolateVec3(currentPos, nextPos, transitionBlend);
+    const glm::quat rot = glm::normalize(interpolateQuat(currentRot, nextRot, transitionBlend));
+    const glm::vec3 sca = interpolateVec3(currentScale, nextScale, transitionBlend);
 
     const glm::mat4 local = glm::translate(glm::mat4(1.0f), pos) * glm::toMat4(rot) * glm::scale(glm::mat4(1.0f), sca);
     const glm::mat4 global = parentTransform * local;
     bone->finalTransformation = global;
 
-    Skeleton *skel = m_boundSkeleton
-                         ? m_boundSkeleton
-                         : (animA ? animA->skeletonForAnimation : nullptr);
+    Skeleton *skel = m_boundSkeleton;
     if (!skel)
-        skel = animB ? animB->skeletonForAnimation : nullptr;
+        skel = poseA.primary ? poseA.primary->skeletonForAnimation : nullptr;
+    if (!skel)
+        skel = poseA.secondary ? poseA.secondary->skeletonForAnimation : nullptr;
+    if (!skel && poseB)
+        skel = poseB->primary ? poseB->primary->skeletonForAnimation : nullptr;
+    if (!skel && poseB)
+        skel = poseB->secondary ? poseB->secondary->skeletonForAnimation : nullptr;
     if (!skel)
         return;
 
     for (const int childId : bone->children)
     {
         if (auto *child = skel->getBone(childId))
-            applyBlendedBoneTransform(child, global, animA, ticksA, animB, ticksB, blend);
+            applyBlendedBoneTransform(child, global, poseA, poseB, blend);
     }
 }
 
 void AnimatorComponent::applyTreePose()
 {
-    const Animation *animA = getStateAnimation(m_currentStateIndex);
-    const Animation *animB = (m_nextStateIndex >= 0) ? getStateAnimation(m_nextStateIndex) : nullptr;
-
-    if (m_boundSkeleton)
-    {
-        if (animA && !animA->skeletonForAnimation)
-            const_cast<Animation *>(animA)->skeletonForAnimation = m_boundSkeleton;
-        if (animB && !animB->skeletonForAnimation)
-            const_cast<Animation *>(animB)->skeletonForAnimation = m_boundSkeleton;
-    }
-
-    Skeleton *skel = m_boundSkeleton
-                         ? m_boundSkeleton
-                         : (animA ? animA->skeletonForAnimation : nullptr);
-    if (!skel && animB)
-        skel = animB->skeletonForAnimation;
-    if (!skel)
+    const AnimationTreeNode *currentLeaf = getCurrentLeafNode();
+    if (!currentLeaf)
         return;
 
-    auto wrapTicks = [](float ticks, const Animation *anim) -> float
-    {
-        if (!anim || anim->duration <= 0.0)
-            return ticks;
-        return std::fmod(ticks, static_cast<float>(anim->duration));
-    };
+    TreePoseSource currentPose{};
+    buildPoseSource(currentLeaf, m_currentStateTimeSec, currentPose);
 
-    const float wrappedA = wrapTicks(secondsToTicks(animA, m_currentStateTimeSec), animA);
-    const float wrappedB = wrapTicks(secondsToTicks(animB, m_nextStateTimeSec), animB);
+    const AnimationTreeNode *nextLeaf = getNextLeafNode();
+    TreePoseSource nextPose{};
+    if (nextLeaf)
+        buildPoseSource(nextLeaf, m_nextStateTimeSec, nextPose);
+
+    Skeleton *skel = m_boundSkeleton;
+    if (!skel)
+        skel = currentPose.primary ? currentPose.primary->skeletonForAnimation : nullptr;
+    if (!skel)
+        skel = currentPose.secondary ? currentPose.secondary->skeletonForAnimation : nullptr;
+    if (!skel && nextLeaf)
+        skel = nextPose.primary ? nextPose.primary->skeletonForAnimation : nullptr;
+    if (!skel && nextLeaf)
+        skel = nextPose.secondary ? nextPose.secondary->skeletonForAnimation : nullptr;
+    if (!skel)
+        return;
 
     const glm::mat4 identity(1.0f);
     for (size_t i = 0; i < skel->getBonesCount(); ++i)
@@ -782,7 +1165,7 @@ void AnimatorComponent::applyTreePose()
         auto *root = skel->getBone(static_cast<int>(i));
         if (!root || root->parentId != -1)
             continue;
-        applyBlendedBoneTransform(root, identity, animA, wrappedA, animB, wrappedB, m_blendAlpha);
+        applyBlendedBoneTransform(root, identity, currentPose, nextLeaf ? &nextPose : nullptr, m_blendAlpha);
     }
 }
 

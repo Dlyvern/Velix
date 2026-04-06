@@ -11,7 +11,7 @@ file(GLOB_RECURSE PROJECT_SOURCES CONFIGURE_DEPENDS ${SRC_DIR}/*.cpp)
 
 find_package(Vulkan REQUIRED)
 
-add_library(${PROJECT_NAME} STATIC
+add_library(${PROJECT_NAME} SHARED
         ${PROJECT_SOURCES}
         ${PROJECT_HEADERS}
 )
@@ -20,6 +20,9 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<CONFIG:Debug>:DEBUG_BUILD>
     $<$<CONFIG:Release>:RELEASE_BUILD>
 )
+
+# Export volk function-pointer globals so VelixEngine.so and plugins can resolve them.
+target_compile_definitions(volk PUBLIC VOLK_DEFAULT_VISIBILITY)
 
 # set_target_properties(${PROJECT_NAME} PROPERTIES
 #     IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/bin/libVelixCore.a"
@@ -31,13 +34,22 @@ target_include_directories(${PROJECT_NAME} PUBLIC
         ${Vulkan_INCLUDE_DIRS}
 )
 
-target_link_libraries(${PROJECT_NAME} PUBLIC
+target_link_libraries(${PROJECT_NAME}
+    PUBLIC
         glfw
-        volk
+        volk_headers   # propagate volk include dirs, but not the static lib
         stb
         glm::glm
         VulkanMemoryAllocator
+    PRIVATE
+        volk           # keep the actual function-pointer globals inside VelixCore.so only
 )
+
+install(TARGETS ${PROJECT_NAME}
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+install(DIRECTORY ${INCLUDE_DIR}/ DESTINATION include)
 
 if (WIN32)
     target_compile_definitions(${PROJECT_NAME} PRIVATE VK_USE_PLATFORM_WIN32_KHR)

@@ -39,10 +39,8 @@ target_compile_definitions(${PROJECT_NAME}
 )
 
 install(TARGETS ${PROJECT_NAME}
-    EXPORT VelixSDKTargets
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
@@ -67,38 +65,3 @@ install(DIRECTORY
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
-export(EXPORT VelixSDKTargets
-    FILE ${CMAKE_BINARY_DIR}/VelixSDKTargets.cmake
-    NAMESPACE VelixSDK::
-)
-
-configure_package_config_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/VelixSDKConfig.cmake.in
-    ${CMAKE_BINARY_DIR}/VelixSDKConfig.cmake
-    INSTALL_DESTINATION .
-    INSTALL_PREFIX ${CMAKE_BINARY_DIR}
-)
-
-install(EXPORT VelixSDKTargets
-    FILE VelixSDKTargets.cmake
-    NAMESPACE VelixSDK::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/VelixSDK
-)
-
-configure_package_config_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/VelixSDKConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/VelixSDKConfig.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/VelixSDK
-)
-
-write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/VelixSDKConfigVersion.cmake
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
-)
-
-install(FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/VelixSDKConfig.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/VelixSDKConfigVersion.cmake
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/VelixSDK
-)

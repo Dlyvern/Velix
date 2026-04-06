@@ -1,6 +1,8 @@
 #include "Editor/Runtime/EditorRuntime.hpp"
 
 #include "Editor/Editor.hpp"
+#include "Editor/PluginSystem/EditorPluginRegistry.hpp"
+#include "VelixSDK/EditorPlugin.hpp"
 #include "Editor/ImGuiRenderGraphPass.hpp"
 #include "Editor/Project.hpp"
 #include "Editor/ProjectLoader.hpp"
@@ -322,8 +324,7 @@ namespace
 
     bool editorRenderGraphUsesAnimationTreePreview(const elix::editor::Editor *editor)
     {
-        (void)editor;
-        return true;
+        return editor && editor->hasActiveAnimationPreview();
     }
 
     size_t baseRenderGraphTopologyHash(const elix::engine::Scene *scene)
@@ -592,9 +593,32 @@ bool EditorRuntime::init()
         const std::filesystem::path execDir = engine::diagnostics::getExecutableDirectory();
         const std::filesystem::path projectDir = projectRoot;
         auto &pm = engine::PluginManager::instance();
-        pm.loadPluginsFromDirectory("resources/plugins");
-        pm.loadPluginsFromDirectory(execDir / "Plugins");
-        pm.loadPluginsFromDirectory(projectDir / "Plugins");
+        // Engine plugins: always loaded, cannot be disabled by the user.
+        pm.loadPluginsFromDirectory(execDir / "resources" / "plugins", engine::PluginManager::PluginCategory::Engine);
+        pm.loadPluginsFromDirectory(execDir / "Plugins", engine::PluginManager::PluginCategory::Engine);
+        // Custom plugins: per-project, user can enable/disable via EngineConfig.
+        pm.loadPluginsFromDirectory(projectDir / "Plugins", engine::PluginManager::PluginCategory::Custom);
+
+        // Register any loaded plugins that also implement IEditorPlugin.
+        auto &epr = editor::EditorPluginRegistry::instance();
+        epr.unregisterAll();
+        const auto &loadedPlugins = pm.getLoadedPlugins();
+        VX_EDITOR_INFO_STREAM("[EditorRuntime] Total loaded plugins: " << loadedPlugins.size() << '\n');
+        for (auto *plugin : loadedPlugins)
+        {
+            if (auto *ep = dynamic_cast<elix::sdk::IEditorPlugin *>(plugin))
+            {
+                VX_EDITOR_INFO_STREAM("[EditorRuntime] Registered IEditorPlugin: " << plugin->getName() << '\n');
+                epr.registerEditorPlugin(ep);
+            }
+            else
+            {
+                VX_EDITOR_INFO_STREAM("[EditorRuntime] Plugin '" << plugin->getName()
+                                      << "' is NOT an IEditorPlugin (dynamic_cast failed)\n");
+            }
+        }
+        VX_EDITOR_INFO_STREAM("[EditorRuntime] Editor plugins registered: "
+                              << epr.getPlugins().size() << '\n');
     }
 
     m_editorScene = std::make_shared<engine::Scene>();
@@ -627,6 +651,7 @@ bool EditorRuntime::init()
     m_shaderHotReloader = std::make_unique<engine::shaders::ShaderHotReloader>("./resources/shaders");
 
     m_editor = std::make_shared<Editor>();
+    m_editor->refreshPluginsWindow();
     m_editor->setDockingFullscreen(true);
     m_editor->setReloadShadersCallback([this](std::vector<std::string> *outErrors) -> size_t
                                        { return m_shaderHotReloader ? m_shaderHotReloader->recompileAll(outErrors) : 0; });
@@ -1167,9 +1192,8 @@ void EditorRuntime::initEditorRenderGraph()
         m_activeScene,
         *editorSceneInput);
     m_editorBillboardRenderGraphPass->setBillboardsVisible(engine::EngineConfig::instance().getShowEditorBillboards());
+    editorSceneInput = &m_editorBillboardRenderGraphPass->getHandlers();
 
-    // Sample the scene image directly in the editor viewport. The billboard pass
-    // remains alive for now, but it no longer sits on the viewport's critical path.
     m_imGuiRenderGraphPass = m_renderGraph->addPass<ImGuiRenderGraphPass>(
         m_editor,
         *editorSceneInput,

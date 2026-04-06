@@ -176,7 +176,7 @@ bool EngineConfig::save() const
     }
 
     nlohmann::json json;
-    json["version"] = 9;
+    json["version"] = 11;
     json["preferred_ide"] = m_preferredIdeId;
     json["show_asset_thumbnails"] = m_showAssetThumbnails;
     json["show_model_asset_previews"] = m_showModelAssetPreviews;
@@ -186,6 +186,9 @@ bool EngineConfig::save() const
     json["show_hierarchy_panel"] = m_showHierarchyPanel;
     json["show_details_panel"] = m_showDetailsPanel;
     json["right_sidebar_split_ratio"] = m_rightSidebarSplitRatio;
+    json["last_import_source_directory"] = m_lastImportSourceDirectory.empty()
+                                              ? std::string{}
+                                              : m_lastImportSourceDirectory.lexically_normal().string();
     json["detailed_render_profiling"] = m_detailedRenderProfilingEnabled;
     json["scene_autosave_enabled"] = m_sceneAutosaveEnabled;
     json["scene_autosave_interval_minutes"] = m_sceneAutosaveIntervalMinutes;
@@ -195,6 +198,11 @@ bool EngineConfig::save() const
     json["ssr_strength"] = m_ssrStrength;
     json["ssr_steps"] = m_ssrSteps;
     json["ssr_roughness_cutoff"] = m_ssrRoughnessCutoff;
+
+    nlohmann::json pluginStates = nlohmann::json::object();
+    for (const auto &[stem, enabled] : m_pluginEnabledStates)
+        pluginStates[stem] = enabled;
+    json["plugin_enabled_states"] = pluginStates;
 
     std::ofstream file(m_configFilePath);
     if (!file.is_open())
@@ -324,6 +332,16 @@ float EngineConfig::getRightSidebarSplitRatio() const
 void EngineConfig::setRightSidebarSplitRatio(float ratio)
 {
     m_rightSidebarSplitRatio = std::clamp(ratio, 0.1f, 0.9f);
+}
+
+const std::filesystem::path &EngineConfig::getLastImportSourceDirectory() const
+{
+    return m_lastImportSourceDirectory;
+}
+
+void EngineConfig::setLastImportSourceDirectory(const std::filesystem::path &path)
+{
+    m_lastImportSourceDirectory = path.empty() ? std::filesystem::path{} : path.lexically_normal();
 }
 
 bool EngineConfig::getDetailedRenderProfilingEnabled() const
@@ -511,6 +529,7 @@ void EngineConfig::applyDefaults()
     m_showHierarchyPanel = true;
     m_showDetailsPanel = true;
     m_rightSidebarSplitRatio = 0.5f;
+    m_lastImportSourceDirectory.clear();
     m_detailedRenderProfilingEnabled = true;
     m_sceneAutosaveEnabled = true;
     m_sceneAutosaveIntervalMinutes = 5.0f;
@@ -520,6 +539,7 @@ void EngineConfig::applyDefaults()
     m_ssrStrength = 1.0f;
     m_ssrSteps = 48;
     m_ssrRoughnessCutoff = 0.4f;
+    m_pluginEnabledStates.clear();
 }
 
 bool EngineConfig::loadFromDisk()
@@ -573,6 +593,9 @@ bool EngineConfig::loadFromDisk()
     if (json.contains("right_sidebar_split_ratio") && json["right_sidebar_split_ratio"].is_number())
         setRightSidebarSplitRatio(json["right_sidebar_split_ratio"].get<float>());
 
+    if (json.contains("last_import_source_directory") && json["last_import_source_directory"].is_string())
+        setLastImportSourceDirectory(json["last_import_source_directory"].get<std::string>());
+
     if (json.contains("detailed_render_profiling") && json["detailed_render_profiling"].is_boolean())
         m_detailedRenderProfilingEnabled = json["detailed_render_profiling"].get<bool>();
 
@@ -600,6 +623,15 @@ bool EngineConfig::loadFromDisk()
     if (json.contains("ssr_roughness_cutoff") && json["ssr_roughness_cutoff"].is_number())
         setSSRRoughnessCutoff(json["ssr_roughness_cutoff"].get<float>());
 
+    if (json.contains("plugin_enabled_states") && json["plugin_enabled_states"].is_object())
+    {
+        for (const auto &[key, value] : json["plugin_enabled_states"].items())
+        {
+            if (value.is_boolean())
+                m_pluginEnabledStates[key] = value.get<bool>();
+        }
+    }
+
     return true;
 }
 
@@ -608,6 +640,23 @@ bool EngineConfig::isKnownIdeId(const std::string &ideId) const
     const auto &definitions = getIdeDefinitions();
     return std::any_of(definitions.begin(), definitions.end(), [&](const IdeDefinition &definition)
                        { return definition.id == ideId; });
+}
+
+bool EngineConfig::isPluginEnabled(const std::string &pluginStem) const
+{
+    auto it = m_pluginEnabledStates.find(pluginStem);
+    // Unknown plugins default to enabled.
+    return it == m_pluginEnabledStates.end() ? true : it->second;
+}
+
+void EngineConfig::setPluginEnabled(const std::string &pluginStem, bool enabled)
+{
+    m_pluginEnabledStates[pluginStem] = enabled;
+}
+
+const std::unordered_map<std::string, bool> &EngineConfig::getPluginEnabledStates() const
+{
+    return m_pluginEnabledStates;
 }
 
 ELIX_NESTED_NAMESPACE_END

@@ -1,4 +1,5 @@
 #include "Engine/PluginSystem/PluginManager.hpp"
+#include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Core/Logger.hpp"
 
@@ -52,10 +53,26 @@ PluginManager &PluginManager::instance()
     return s_instance;
 }
 
-void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &pluginsDir)
+void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &pluginsDir,
+                                              PluginCategory category)
 {
-    if (pluginsDir.empty() || !std::filesystem::exists(pluginsDir) || !std::filesystem::is_directory(pluginsDir))
+    const std::string categoryStr = (category == PluginCategory::Engine) ? "Engine" : "Custom";
+
+    if (pluginsDir.empty())
+    {
+        VX_ENGINE_INFO_STREAM("[PluginManager] loadPluginsFromDirectory: empty path, skipping\n");
         return;
+    }
+
+    const std::filesystem::path absDir = std::filesystem::weakly_canonical(pluginsDir);
+    VX_ENGINE_INFO_STREAM("[PluginManager] Scanning " << categoryStr
+                          << " plugins in: " << absDir << '\n');
+
+    if (!std::filesystem::exists(absDir) || !std::filesystem::is_directory(absDir))
+    {
+        VX_ENGINE_INFO_STREAM("[PluginManager] Directory does not exist, skipping: " << absDir << '\n');
+        return;
+    }
 
     std::vector<std::filesystem::path> candidates;
     for (const auto &entry : std::filesystem::directory_iterator(pluginsDir))
@@ -84,16 +101,39 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
         candidates.push_back(path);
     }
 
+    VX_ENGINE_INFO_STREAM("[PluginManager] Found " << candidates.size()
+                          << " plugin candidate(s) in: " << absDir << '\n');
+
     std::sort(candidates.begin(), candidates.end());
+
+    const auto &config = EngineConfig::instance();
 
     for (const auto &path : candidates)
     {
         const std::string filename = path.filename().string();
+        const std::string stem = path.stem().string();
+
+        // Check whether the user has disabled this plugin (applies to all categories).
+        if (!config.isPluginEnabled(stem))
+        {
+            VX_ENGINE_INFO_STREAM("[PluginManager] Skipping disabled plugin: " << filename << '\n');
+            PluginInfo info;
+            info.filename = filename;
+            info.category = category;
+            info.loaded = false;
+            m_pluginInfos.push_back(std::move(info));
+            continue;
+        }
 
         LibraryHandle handle = PluginLoader::loadLibrary(path.string());
         if (!handle)
         {
             VX_ENGINE_WARNING_STREAM("[PluginManager] Failed to load plugin library: " << path << '\n');
+            PluginInfo info;
+            info.filename = filename;
+            info.category = category;
+            info.loaded = false;
+            m_pluginInfos.push_back(std::move(info));
             continue;
         }
 
@@ -118,6 +158,11 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
         auto createFn = PluginLoader::getFunction<CreateFn>("createPlugin", handle);
         auto destroyFn = PluginLoader::getFunction<DestroyFn>("destroyPlugin", handle);
 
+        if (!createFn)
+        {
+            VX_ENGINE_WARNING_STREAM("[PluginManager] No createPlugin symbol in: " << filename << '\n');
+        }
+
         IPlugin *plugin = nullptr;
         if (createFn)
         {
@@ -131,7 +176,14 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
             }
         }
 
-        m_plugins.push_back({filename, handle, plugin, destroyFn});
+        PluginInfo info;
+        info.pluginName = plugin ? plugin->getName() : stem;
+        info.filename   = filename;
+        info.category   = category;
+        info.loaded     = true;
+        m_pluginInfos.push_back(info);
+
+        m_plugins.push_back({filename, handle, plugin, destroyFn, category});
     }
 }
 
@@ -159,11 +211,17 @@ void PluginManager::unloadAll()
 
     m_plugins.clear();
     m_pluginPtrs.clear();
+    m_pluginInfos.clear();
 }
 
 const std::vector<IPlugin *> &PluginManager::getLoadedPlugins() const
 {
     return m_pluginPtrs;
+}
+
+const std::vector<PluginManager::PluginInfo> &PluginManager::getPluginInfos() const
+{
+    return m_pluginInfos;
 }
 
 ELIX_NESTED_NAMESPACE_END

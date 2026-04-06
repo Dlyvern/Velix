@@ -119,27 +119,52 @@ public:
     [[nodiscard]] int getInt(const std::string &name) const;
 
     [[nodiscard]] std::string getCurrentStateName() const;
+    [[nodiscard]] std::string getCurrentStatePath() const;
+    [[nodiscard]] std::string getActiveMachinePath() const;
     [[nodiscard]] float getCurrentStateNormalizedTime() const;
     [[nodiscard]] bool isInTransition() const;
 
 private:
+    struct TreePoseSource
+    {
+        const Animation *primary{nullptr};
+        const Animation *secondary{nullptr};
+        float primaryTicks{0.0f};
+        float secondaryTicks{0.0f};
+        float sampleBlend{0.0f};
+    };
+
     void applyCurrentAnimationPose();
     void refreshAnimationBindings();
 
     void calculateBoneTransform(Skeleton::BoneInfo *boneInfo, const glm::mat4 &parentTransform, Animation *animation, float currentTime);
     void calculateObjectTransform(Animation *animation, float currentTime);
 
+    void resetTreeRuntime();
+    void cacheTreeAnimations();
     void initTreeParams();
+    void ensureTreeActivePath();
     void evaluateTransitions();
-    bool checkConditions(const AnimationTransition &t) const;
-    void startTransition(int targetIndex, float blendDuration);
+    bool checkConditions(const std::vector<AnimationTransitionCondition> &conditions,
+                         const AnimationTreeNode *leafNode,
+                         float leafElapsedSeconds) const;
+    void startTransition(const std::vector<int> &targetPath, float blendDuration);
     void applyTreePose();
     void applyBlendedBoneTransform(Skeleton::BoneInfo *bone, const glm::mat4 &parentTransform,
-                                   const Animation *animA, float ticksA,
-                                   const Animation *animB, float ticksB,
+                                   const TreePoseSource &poseA,
+                                   const TreePoseSource *poseB,
                                    float blend);
     [[nodiscard]] float secondsToTicks(const Animation *anim, float seconds) const;
-    [[nodiscard]] const Animation *getStateAnimation(int stateIndex) const;
+    [[nodiscard]] const Animation *getAnimationClip(const std::string &assetPath, int clipIndex) const;
+    [[nodiscard]] const AnimationTreeNode *getCurrentLeafNode() const;
+    [[nodiscard]] const AnimationTreeNode *getNextLeafNode() const;
+    [[nodiscard]] bool resolveMachineEntryPath(int machineNodeId, std::vector<int> &outPath) const;
+    [[nodiscard]] bool resolveNodePath(int nodeId, std::vector<int> &outPath) const;
+    [[nodiscard]] std::vector<int> buildTargetPath(int machineNodeId, int targetNodeId) const;
+    [[nodiscard]] float getNodeDurationSeconds(const AnimationTreeNode *node) const;
+    [[nodiscard]] float getNodeNormalizedTime(const AnimationTreeNode *node, float elapsedSeconds) const;
+    [[nodiscard]] bool isNodeFinished(const AnimationTreeNode *node, float elapsedSeconds) const;
+    void buildPoseSource(const AnimationTreeNode *node, float elapsedSeconds, TreePoseSource &outPose) const;
 
     bool m_isAnimationPaused{false};
     bool m_isAnimationLooped{true};
@@ -161,17 +186,18 @@ private:
     std::unordered_map<std::string, int> m_ints;
     std::unordered_set<std::string> m_triggers;
 
-    int m_currentStateIndex{-1};
-    int m_nextStateIndex{-1};
+    int m_currentStateNodeId{-1};
+    int m_nextStateNodeId{-1};
+    std::vector<int> m_currentStatePath;
+    std::vector<int> m_nextStatePath;
     float m_currentStateTimeSec{0.0f};
     float m_nextStateTimeSec{0.0f};
     float m_blendAlpha{0.0f};
     float m_blendDuration{0.3f};
     float m_transitionElapsed{0.0f};
 
-    // Cached clips per state (owned by AnimatorComponent, indexed by state)
-    std::vector<std::vector<Animation>> m_treeStateClips;
-    std::vector<const Animation *> m_stateAnims;
+    // Cached clips referenced by the animation tree.
+    std::unordered_map<std::string, std::vector<Animation>> m_treeClipAssets;
 };
 
 ELIX_NESTED_NAMESPACE_END
