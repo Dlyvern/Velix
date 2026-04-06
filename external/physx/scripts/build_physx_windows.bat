@@ -66,14 +66,13 @@ if not exist "%PHYSX_SOLUTION%" (
 
 echo [VelixFlow] Building PhysX in %PHYSX_BUILD_TYPE% mode...
 msbuild "%PHYSX_SOLUTION%" /p:Configuration=%PHYSX_MSBUILD_CONFIGURATION% /maxcpucount /t:Build /v:n /nologo
-set MSBUILD_EXIT=%ERRORLEVEL%
-
-if %MSBUILD_EXIT% NEQ 0 (
-    echo [VelixFlow] Error: Failed to build PhysX (MSBuild exit code: %MSBUILD_EXIT%)
+if errorlevel 1 (
+    echo [VelixFlow] Error: MSBuild returned a non-zero exit code
     if exist "%PHYSX_PRESET_XML%" del /q "%PHYSX_PRESET_XML%"
     popd
     exit /b 1
 )
+echo [VelixFlow] MSBuild completed successfully
 
 rem The vc143 preset always outputs to bin\win.x86_64.vc143.mt\<type>\
 set "PHYSX_BUILD_OUTPUT=%PHYSX_ROOT%\bin\win.x86_64.vc143.mt\%PHYSX_BUILD_TYPE%"

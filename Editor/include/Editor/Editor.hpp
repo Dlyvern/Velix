@@ -309,6 +309,7 @@ private:
                                  engine::AnimatorComponent     *animator     = nullptr,
                                  engine::SkeletalMeshComponent *skeletalMesh = nullptr);
     void openTextDocument(const std::filesystem::path &path);
+    void handleAssetRenamed(const std::filesystem::path &oldPath, const std::filesystem::path &newPath);
     bool saveOpenDocument();
     bool compileOpenDocumentShader();
     void setDocumentLanguageFromPath(const std::filesystem::path &path);
@@ -449,6 +450,8 @@ private:
     bool m_showHierarchyPanel{true};
     bool m_showDetailsPanel{true};
     bool m_isGameViewportVisible{false};
+    bool m_workspaceTabsOpenLastFrame{false};
+    ImGuiID m_pendingCenterTabFocusId{0};
     float m_rightSidebarSplitRatio{0.5f};
 
     engine::Camera::SharedPtr m_editorCamera{nullptr};
@@ -501,15 +504,18 @@ private:
     void drawDevTools();
     void drawUITools();
     bool hasVisibleRightSidebarPanels() const;
+    bool shouldShowRightSidebar() const;
     void persistRightSidebarSettings() const;
     void setRightSidebarPanelVisible(RightSidebarPanelId panelId, bool visible);
     void setRightSidebarSplitRatio(float ratio);
     void showDockSpace();
     void syncAssetsAndTerminalDocking();
+    void drawCenterDockTabBarExtras();
     void drawCustomTitleBar();
     void drawAssets();
     void drawViewport(VkDescriptorSet viewportDescriptorSet);
     void drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGameCamera);
+    bool hasOpenWorkspaceTabs() const;
     actions::EditorCommandHistory m_commandHistory{};
     actions::EditorEntityClipboard m_entityClipboard{};
     engine::Scene::SharedPtr m_scene{nullptr};

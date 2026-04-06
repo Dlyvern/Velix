@@ -22,6 +22,7 @@ public:
 private:
     bool looksLikeWindowsAbsolutePath(const std::string &path) const;
     std::filesystem::path makeAbsoluteNormalized(const std::filesystem::path &path) const;
+    std::string resolveMaterialAssetPath(const std::string &materialPath) const;
     std::string resolveTexturePathForMaterial(const std::string &texturePath, const std::filesystem::path &materialAssetPath) const;
     Texture::SharedPtr loadTextureForMaterial(const std::string &texturePath, VkFormat format, const std::filesystem::path &materialAssetPath);
     std::string buildMaterialCacheKey(const CPUMaterial &materialCPU) const;

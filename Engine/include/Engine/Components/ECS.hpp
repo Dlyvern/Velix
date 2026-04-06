@@ -13,6 +13,11 @@ public:
     virtual void onDetach() {}
     virtual ~ECS() = default;
 
+    // Returns true if this component drives skeleton bone matrices directly
+    // (e.g. MotionMatchingComponent). Used by the renderer to choose
+    // getFinalMatrices() over getBindPoses() when no AnimatorComponent is active.
+    virtual bool isSkeletonDriver() const { return false; }
+
     void setOwner(void *owner)
     {
         m_owner = owner;

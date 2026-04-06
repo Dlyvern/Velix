@@ -124,6 +124,12 @@ public:
     [[nodiscard]] float getCurrentStateNormalizedTime() const;
     [[nodiscard]] bool isInTransition() const;
 
+    // Post-animation hooks — called after bone matrices are fully written each frame.
+    // IK solvers and other post-process components register here via onOwnerAttached().
+    using PostAnimHook = std::function<void(Skeleton &)>;
+    void addPostAnimHook(const void *ownerKey, PostAnimHook fn);
+    void removePostAnimHook(const void *ownerKey);
+
 private:
     struct TreePoseSource
     {
@@ -198,6 +204,11 @@ private:
 
     // Cached clips referenced by the animation tree.
     std::unordered_map<std::string, std::vector<Animation>> m_treeClipAssets;
+
+    struct PostAnimHookEntry { const void *key; PostAnimHook fn; };
+    std::vector<PostAnimHookEntry> m_postAnimHooks;
+
+    void firePostAnimHooks();
 };
 
 ELIX_NESTED_NAMESPACE_END

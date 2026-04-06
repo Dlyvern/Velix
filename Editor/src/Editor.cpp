@@ -7,6 +7,8 @@
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/AnimatorComponent.hpp"
+#include "Engine/Components/TerrainComponent.hpp"
+#include "Engine/Components/DecalComponent.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/Components/CameraComponent.hpp"
@@ -76,9 +78,48 @@ namespace
     constexpr float kTitleBarHeight = 42.0f;
     constexpr float kToolBarHeight = 34.0f;
     constexpr float kBottomBarHeight = 32.0f;
+    constexpr const char *kEditorViewportWindowName = "Editor###EditorViewport";
+    constexpr const char *kGameViewportWindowName = "Game Viewport###GameViewport";
+    constexpr const char *kWorkspaceTabSeparatorLabel = "|##CenterWorkspaceDivider";
 
     const char *sharedLibraryExtensionForPlatform(ExportPlatform platform);
     std::filesystem::path makeAbsoluteNormalized(const std::filesystem::path &path);
+
+    ImGuiWindowClass makePinnedViewportWindowClass()
+    {
+        ImGuiWindowClass windowClass;
+        windowClass.TabItemFlagsOverrideSet = ImGuiTabItemFlags_Leading | ImGuiTabItemFlags_NoReorder;
+        return windowClass;
+    }
+
+    ImGuiWindowClass makeWorkspaceEditorWindowClass()
+    {
+        ImGuiWindowClass windowClass;
+        windowClass.TabItemFlagsOverrideSet = ImGuiTabItemFlags_Trailing;
+        return windowClass;
+    }
+
+    bool usesWorkspaceEditorTabSection(const ImGuiWindow *window)
+    {
+        return window != nullptr &&
+               (window->WindowClass.TabItemFlagsOverrideSet & ImGuiTabItemFlags_Trailing) != 0;
+    }
+
+    ImGuiID resolveLiveCenterDockId(ImGuiID dockspaceId, ImGuiID fallbackDockId)
+    {
+        if (dockspaceId != 0)
+        {
+            if (ImGuiDockNode *dockspaceNode = ImGui::DockBuilderGetNode(dockspaceId))
+            {
+                if (dockspaceNode->CentralNode)
+                    return dockspaceNode->CentralNode->ID;
+                if (!dockspaceNode->IsSplitNode())
+                    return dockspaceNode->ID;
+            }
+        }
+
+        return fallbackDockId;
+    }
 
     std::string quoteShellTextArgument(const std::string &value)
     {
@@ -778,6 +819,8 @@ namespace
                << material.normalTexture << '\n'
                << material.ormTexture << '\n'
                << material.emissiveTexture << '\n'
+               << static_cast<uint32_t>(material.domain) << '\n'
+               << static_cast<uint32_t>(material.decalBlendMode) << '\n'
                << material.baseColorFactor.r << ',' << material.baseColorFactor.g << ',' << material.baseColorFactor.b << ',' << material.baseColorFactor.a << '\n'
                << material.emissiveFactor.r << ',' << material.emissiveFactor.g << ',' << material.emissiveFactor.b << '\n'
                << material.metallicFactor << '\n'
@@ -928,6 +971,53 @@ namespace
         }
 
         return parsedPath.lexically_normal().string();
+    }
+
+    std::string normalizeAssetReferenceForComparison(const std::string &assetPath,
+                                                     const std::filesystem::path &projectRoot)
+    {
+        if (assetPath.empty())
+            return {};
+
+        if (looksLikeWindowsAbsolutePath(assetPath))
+            return assetPath;
+
+        const std::filesystem::path parsedPath(assetPath);
+        if (parsedPath.is_absolute())
+            return makeAbsoluteNormalized(parsedPath).string();
+
+        if (!projectRoot.empty())
+            return makeAbsoluteNormalized(projectRoot / parsedPath).string();
+
+        return parsedPath.lexically_normal().string();
+    }
+
+    bool assetReferenceMatches(const std::string &storedPath,
+                               const std::filesystem::path &targetPath,
+                               const std::filesystem::path &projectRoot)
+    {
+        if (storedPath.empty() || targetPath.empty())
+            return false;
+
+        return normalizeAssetReferenceForComparison(storedPath, projectRoot) ==
+               makeAbsoluteNormalized(targetPath).string();
+    }
+
+    std::string rewriteAssetReferenceAfterRename(const std::string &storedPath,
+                                                 const std::filesystem::path &newPath,
+                                                 const std::filesystem::path &projectRoot)
+    {
+        if (storedPath.empty())
+            return storedPath;
+
+        if (looksLikeWindowsAbsolutePath(storedPath))
+            return newPath.lexically_normal().string();
+
+        const std::filesystem::path parsedPath(storedPath);
+        if (parsedPath.is_absolute())
+            return makeAbsoluteNormalized(newPath).string();
+
+        return toProjectRelativePathIfPossible(newPath, projectRoot);
     }
 
     void sanitizeMaterialCpuData(engine::CPUMaterial &material, bool forceDielectricWithoutOrm)
@@ -2202,6 +2292,8 @@ void Editor::initStyle(bool imguiBackendRecreated)
                                                        m_detailsContext = DetailsContext::Asset;
                                                    else if (m_selectedEntity)
                                                        m_detailsContext = DetailsContext::Entity; });
+    m_assetsWindow->setOnAssetRenamed([this](const std::filesystem::path &oldPath, const std::filesystem::path &newPath)
+                                      { handleAssetRenamed(oldPath, newPath); });
 
     m_assetsWindow->setOnAssetDeleted([this](const std::filesystem::path &deletedPath)
                                       {
@@ -2296,6 +2388,7 @@ void Editor::showDockSpace()
     ImGuiID dockspaceId = ImGui::GetID("MyDockSpace");
     m_dockSpaceId = dockspaceId;
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), dockspaceFlags);
+    m_centerDockId = resolveLiveCenterDockId(dockspaceId, m_centerDockId);
 
     const ImVec2 dockHostPos = ImGui::GetWindowPos();
     const ImVec2 dockHostSize = ImGui::GetWindowSize();
@@ -2328,7 +2421,7 @@ void Editor::showDockSpace()
         ImGuiID bottomStripDock = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Down, bottomBarFraction, nullptr, &dockMainId);
         ImGui::DockBuilderDockWindow("BottomPanel", bottomStripDock);
 
-        if (hasVisibleRightSidebarPanels())
+        if (shouldShowRightSidebar())
         {
             ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMainId, ImGuiDir_Right, 0.20f, nullptr, &dockMainId);
             ImGui::DockBuilderDockWindow("Right Sidebar", dockRight);
@@ -2339,10 +2432,11 @@ void Editor::showDockSpace()
         ImGui::DockBuilderDockWindow("Assets", assetsDock);
         ImGui::DockBuilderDockWindow("UI Tools", assetsDock);
 
-        ImGui::DockBuilderDockWindow("Viewport", dockMainId);
-        ImGui::DockBuilderDockWindow("Game Viewport", dockMainId);
+        ImGui::DockBuilderDockWindow(kEditorViewportWindowName, dockMainId);
+        ImGui::DockBuilderDockWindow(kGameViewportWindowName, dockMainId);
         m_centerDockId = dockMainId;
         ImGui::DockBuilderFinish(dockspaceId);
+        m_centerDockId = resolveLiveCenterDockId(dockspaceId, m_centerDockId);
 
         auto configureChromeNode = [](ImGuiID nodeId)
         {
@@ -2431,6 +2525,43 @@ void Editor::syncAssetsAndTerminalDocking()
     }
 
     ImGui::DockBuilderFinish(m_dockSpaceId);
+}
+
+void Editor::drawCenterDockTabBarExtras()
+{
+    const ImGuiID centerDockId = resolveLiveCenterDockId(m_dockSpaceId, m_centerDockId);
+    if (centerDockId == 0)
+        return;
+
+    ImGuiDockNode *node = ImGui::DockBuilderGetNode(centerDockId);
+    if (!node || !node->TabBar)
+        return;
+
+    bool hasWorkspaceTabs = false;
+    for (ImGuiWindow *window : node->Windows)
+    {
+        if (usesWorkspaceEditorTabSection(window))
+        {
+            hasWorkspaceTabs = true;
+            break;
+        }
+    }
+
+    if (!hasWorkspaceTabs || !ImGui::DockNodeBeginAmendTabBar(node))
+        return;
+
+    ImGui::BeginDisabled();
+    ImGui::TabItemButton(kWorkspaceTabSeparatorLabel, ImGuiTabItemFlags_NoTooltip);
+    ImGui::EndDisabled();
+
+    ImGui::DockNodeEndAmendTabBar();
+}
+
+bool Editor::hasOpenWorkspaceTabs() const
+{
+    return (m_materialEditor && m_materialEditor->hasOpenEditor()) ||
+           (m_animationTreePanel && m_animationTreePanel->hasOpenEditors()) ||
+           (m_showDocumentWindow && !m_openDocumentPath.empty());
 }
 
 void Editor::drawCustomTitleBar()
@@ -5052,6 +5183,11 @@ bool Editor::hasVisibleRightSidebarPanels() const
     return m_showHierarchyPanel || m_showDetailsPanel;
 }
 
+bool Editor::shouldShowRightSidebar() const
+{
+    return hasVisibleRightSidebarPanels() && !hasOpenWorkspaceTabs();
+}
+
 void Editor::persistRightSidebarSettings() const
 {
     auto &engineConfig = engine::EngineConfig::instance();
@@ -5345,6 +5481,11 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
         return;
     }
 
+    const bool workspaceTabsOpenAtFrameStart = hasOpenWorkspaceTabs();
+    if (workspaceTabsOpenAtFrameStart != m_workspaceTabsOpenLastFrame)
+        reinitDocking();
+    const ImGuiID pendingCenterTabFocusIdAtFrameStart = m_pendingCenterTabFocusId;
+
     m_assetsPreviewSystem.beginFrame();
 
     handleInput();
@@ -5363,10 +5504,12 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     drawAnimationTreePanels();
 
     drawDocument();
+    drawCenterDockTabBarExtras();
     drawAssets();
     m_terminalPanel.draw(&m_showTerminal);
     drawBottomPanel();
-    drawRightSidebar();
+    if (shouldShowRightSidebar())
+        drawRightSidebar();
     drawUITools();
     drawEditorCameraSettings();
     drawRenderSettings();
@@ -5391,6 +5534,15 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
         ctx.brushNdcPosition  = m_pendingBrushInput.ndcPosition;
         editor::EditorPluginRegistry::instance().dispatchFrame(ctx);
     }
+
+    const bool workspaceTabsOpenAfterDraw = hasOpenWorkspaceTabs();
+    if (workspaceTabsOpenAfterDraw != workspaceTabsOpenAtFrameStart)
+        reinitDocking();
+    m_workspaceTabsOpenLastFrame = workspaceTabsOpenAfterDraw;
+
+    if (pendingCenterTabFocusIdAtFrameStart != 0 &&
+        m_pendingCenterTabFocusId == pendingCenterTabFocusIdAtFrameStart)
+        m_pendingCenterTabFocusId = 0;
 
     m_notificationManager.render();
 }
@@ -5474,7 +5626,8 @@ void Editor::drawMaterialEditors()
     if (!m_materialEditor)
         return;
 
-    m_materialEditor->setCenterDockId(m_centerDockId);
+    m_materialEditor->setCenterDockId(resolveLiveCenterDockId(m_dockSpaceId, m_centerDockId));
+    m_materialEditor->setRequestedFocusWindowId(m_pendingCenterTabFocusId);
     m_materialEditor->draw();
 }
 
@@ -5483,7 +5636,8 @@ void Editor::drawAnimationTreePanels()
     if (!m_animationTreePanel)
         return;
 
-    m_animationTreePanel->setCenterDockId(m_centerDockId);
+    m_animationTreePanel->setCenterDockId(resolveLiveCenterDockId(m_dockSpaceId, m_centerDockId));
+    m_animationTreePanel->setRequestedFocusWindowId(m_pendingCenterTabFocusId);
     m_animationTreePanel->draw();
 }
 
@@ -5516,8 +5670,16 @@ void Editor::drawDocument()
 
     std::string windowName = m_openDocumentPath.filename().string() + "###Document";
 
+    const ImGuiWindowClass windowClass = makeWorkspaceEditorWindowClass();
+    ImGui::SetNextWindowClass(&windowClass);
+    if (m_pendingCenterTabFocusId != 0 && ImHashStr(windowName.c_str()) == m_pendingCenterTabFocusId)
+        ImGui::SetNextWindowFocus();
+
     if (m_centerDockId != 0)
-        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_FirstUseEver);
+    {
+        ImGui::DockBuilderDockWindow(windowName.c_str(), m_centerDockId);
+        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Always);
+    }
 
     bool keepOpen = m_showDocumentWindow;
     if (!ImGui::Begin(windowName.c_str(), &keepOpen))
@@ -5640,6 +5802,7 @@ void Editor::openTextDocument(const std::filesystem::path &path)
     m_textEditor.SetText(m_openDocumentSavedText);
     setDocumentLanguageFromPath(path);
     m_showDocumentWindow = true;
+    m_pendingCenterTabFocusId = ImHashStr((path.filename().string() + "###Document").c_str());
 
     VX_EDITOR_INFO_STREAM("Opened document: " << path);
     m_notificationManager.showInfo("Opened: " + path.filename().string());
@@ -6142,6 +6305,10 @@ void Editor::openAnimationTreeEditor(const std::filesystem::path &path,
                                      engine::AnimatorComponent *animator,
                                      engine::SkeletalMeshComponent *skeletalMesh)
 {
+    const std::string key = path.lexically_normal().string();
+    const std::string windowTitle = path.stem().string() + " [Animation Tree]###AnimTreeEditor:" + key;
+    m_pendingCenterTabFocusId = ImHashStr(windowTitle.c_str());
+
     if (m_animationTreePanel)
         m_animationTreePanel->openTree(path, animator, skeletalMesh);
 }
@@ -6151,7 +6318,158 @@ void Editor::openMaterialEditor(const std::filesystem::path &path)
     if (!m_materialEditor)
         return;
 
+    m_pendingCenterTabFocusId = ImHashStr((path.filename().string() + "###MaterialEditorMain").c_str());
     m_materialEditor->openMaterialEditor(path);
+}
+
+void Editor::handleAssetRenamed(const std::filesystem::path &oldPath, const std::filesystem::path &newPath)
+{
+    if (oldPath.empty() || newPath.empty())
+        return;
+
+    const std::filesystem::path normalizedOldPath = makeAbsoluteNormalized(oldPath);
+    const std::filesystem::path normalizedNewPath = makeAbsoluteNormalized(newPath);
+    if (normalizedOldPath == normalizedNewPath)
+        return;
+
+    if (!m_selectedAssetPath.empty() && makeAbsoluteNormalized(m_selectedAssetPath) == normalizedOldPath)
+        m_selectedAssetPath = normalizedNewPath;
+
+    if (!m_currentScenePath.empty() && makeAbsoluteNormalized(m_currentScenePath) == normalizedOldPath)
+        m_currentScenePath = normalizedNewPath;
+
+    if (!m_openDocumentPath.empty() && makeAbsoluteNormalized(m_openDocumentPath) == normalizedOldPath)
+        m_openDocumentPath = normalizedNewPath;
+
+    if (m_materialEditor)
+        m_materialEditor->renameOpenMaterialEditor(normalizedOldPath, normalizedNewPath);
+
+    if (m_animationTreePanel)
+        m_animationTreePanel->renameOpenTree(normalizedOldPath, normalizedNewPath);
+
+    const auto project = m_currentProject.lock();
+    const std::filesystem::path projectRoot = project ? resolveProjectRootPath(*project) : std::filesystem::path{};
+
+    auto rewriteStoredPath = [&](std::string &storedPath) -> bool
+    {
+        if (!assetReferenceMatches(storedPath, normalizedOldPath, projectRoot))
+            return false;
+
+        storedPath = rewriteAssetReferenceAfterRename(storedPath, normalizedNewPath, projectRoot);
+        return true;
+    };
+
+    size_t updatedReferenceCount = 0u;
+
+    if (m_scene)
+    {
+        for (const auto &entity : m_scene->getEntities())
+        {
+            if (!entity)
+                continue;
+
+            if (auto *staticMeshComponent = entity->getComponent<engine::StaticMeshComponent>())
+            {
+                std::string assetPath = staticMeshComponent->getAssetPath();
+                if (rewriteStoredPath(assetPath))
+                {
+                    staticMeshComponent->setAssetPath(assetPath);
+                    ++updatedReferenceCount;
+                }
+
+                for (size_t slot = 0; slot < staticMeshComponent->getMaterialSlotCount(); ++slot)
+                {
+                    std::string overridePath = staticMeshComponent->getMaterialOverridePath(slot);
+                    if (!rewriteStoredPath(overridePath))
+                        continue;
+
+                    staticMeshComponent->setMaterialOverride(slot, nullptr);
+                    staticMeshComponent->setMaterialOverridePath(slot, overridePath);
+                    ++updatedReferenceCount;
+                }
+            }
+
+            if (auto *skeletalMeshComponent = entity->getComponent<engine::SkeletalMeshComponent>())
+            {
+                std::string assetPath = skeletalMeshComponent->getAssetPath();
+                if (rewriteStoredPath(assetPath))
+                {
+                    skeletalMeshComponent->setAssetPath(assetPath);
+                    ++updatedReferenceCount;
+                }
+
+                for (size_t slot = 0; slot < skeletalMeshComponent->getMaterialSlotCount(); ++slot)
+                {
+                    std::string overridePath = skeletalMeshComponent->getMaterialOverridePath(slot);
+                    if (!rewriteStoredPath(overridePath))
+                        continue;
+
+                    skeletalMeshComponent->setMaterialOverride(slot, nullptr);
+                    skeletalMeshComponent->setMaterialOverridePath(slot, overridePath);
+                    ++updatedReferenceCount;
+                }
+            }
+
+            if (auto *terrainComponent = entity->getComponent<engine::TerrainComponent>())
+            {
+                std::string terrainAssetPath = terrainComponent->getTerrainAssetPath();
+                if (rewriteStoredPath(terrainAssetPath))
+                {
+                    terrainComponent->setTerrainAssetPath(terrainAssetPath);
+                    ++updatedReferenceCount;
+                }
+
+                std::string materialOverridePath = terrainComponent->getMaterialOverridePath();
+                if (rewriteStoredPath(materialOverridePath))
+                {
+                    terrainComponent->setMaterialOverridePath(materialOverridePath);
+                    ++updatedReferenceCount;
+                }
+            }
+
+            if (auto *decalComponent = entity->getComponent<engine::DecalComponent>())
+            {
+                if (rewriteStoredPath(decalComponent->materialPath))
+                {
+                    decalComponent->material.reset();
+                    ++updatedReferenceCount;
+                }
+            }
+
+            if (auto *animatorComponent = entity->getComponent<engine::AnimatorComponent>())
+            {
+                std::vector<std::string> animationAssetPaths = animatorComponent->getExternalAnimationAssetPaths();
+                bool animationPathsChanged = false;
+                for (auto &assetPath : animationAssetPaths)
+                    animationPathsChanged |= rewriteStoredPath(assetPath);
+
+                if (animationPathsChanged)
+                {
+                    animatorComponent->setExternalAnimationAssetPaths(animationAssetPaths);
+                    ++updatedReferenceCount;
+                }
+
+                if (const auto *tree = animatorComponent->getTree())
+                {
+                    std::string treeAssetPath = tree->assetPath;
+                    if (rewriteStoredPath(treeAssetPath))
+                    {
+                        animatorComponent->loadTree(treeAssetPath);
+                        ++updatedReferenceCount;
+                    }
+                }
+            }
+        }
+    }
+
+    if (updatedReferenceCount > 0u)
+    {
+        invalidateModelDetailsCache();
+        VX_EDITOR_INFO_STREAM("Updated " << updatedReferenceCount
+                                         << " in-memory asset reference(s) after rename: "
+                                         << normalizedOldPath.string() << " -> "
+                                         << normalizedNewPath.string() << '\n');
+    }
 }
 
 engine::Texture::SharedPtr Editor::ensureProjectTextureLoaded(const std::string &texturePath, TextureUsage usage)
@@ -6416,6 +6734,8 @@ bool Editor::reloadMaterialFromDisk(const std::filesystem::path &path)
     record.gpu->setUVScale(cpuMaterial.uvScale);
     record.gpu->setUVOffset(cpuMaterial.uvOffset);
     record.gpu->setUVRotation(cpuMaterial.uvRotation);
+    record.gpu->setDomain(cpuMaterial.domain);
+    record.gpu->setDecalBlendMode(cpuMaterial.decalBlendMode);
     applyCustomShaderPath(record.gpu);
 
     record.texture = ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color);
@@ -6496,6 +6816,8 @@ engine::Material::SharedPtr Editor::ensureMaterialLoaded(const std::string &mate
         record.gpu->setUVScale(cpuMaterial.uvScale);
         record.gpu->setUVOffset(cpuMaterial.uvOffset);
         record.gpu->setUVRotation(cpuMaterial.uvRotation);
+        record.gpu->setDomain(cpuMaterial.domain);
+        record.gpu->setDecalBlendMode(cpuMaterial.decalBlendMode);
         applyCustomShaderPath(record.gpu);
 
         record.texture = ensureProjectTextureLoaded(cpuMaterial.albedoTexture, TextureUsage::Color);
@@ -8070,9 +8392,13 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
     }
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    const ImGuiWindowClass windowClass = makePinnedViewportWindowClass();
+    ImGui::SetNextWindowClass(&windowClass);
+    if (m_pendingCenterTabFocusId != 0 && ImHashStr(kEditorViewportWindowName) == m_pendingCenterTabFocusId)
+        ImGui::SetNextWindowFocus();
     if (m_centerDockId != 0)
         ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Appearing);
-    ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::Begin(kEditorViewportWindowName, nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
     ImGui::Image(viewportDescriptorSet, ImVec2(viewportPanelSize.x, viewportPanelSize.y));
@@ -8430,9 +8756,13 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 void Editor::drawGameViewport(VkDescriptorSet viewportDescriptorSet, bool hasGameCamera)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    const ImGuiWindowClass windowClass = makePinnedViewportWindowClass();
+    ImGui::SetNextWindowClass(&windowClass);
+    if (m_pendingCenterTabFocusId != 0 && ImHashStr(kGameViewportWindowName) == m_pendingCenterTabFocusId)
+        ImGui::SetNextWindowFocus();
     if (m_centerDockId != 0)
         ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Appearing);
-    const bool gameViewportWindowVisible = ImGui::Begin("Game Viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    const bool gameViewportWindowVisible = ImGui::Begin(kGameViewportWindowName, nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     m_isGameViewportVisible = gameViewportWindowVisible && !ImGui::IsWindowCollapsed();
 
     const ImVec2 viewportPanelSize = gameViewportWindowVisible ? ImGui::GetContentRegionAvail() : ImVec2(0.0f, 0.0f);

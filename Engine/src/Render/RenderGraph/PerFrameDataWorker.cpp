@@ -1017,10 +1017,20 @@ void PerFrameDataWorker::updateDrawItemBones(DrawItem &drawItem, Entity::SharedP
     if (auto skeletalComponent = entity->getComponent<SkeletalMeshComponent>())
     {
         auto &skeleton = skeletalComponent->getSkeleton();
-        if (auto animator = entity->getComponent<AnimatorComponent>(); animator && animator->isAnimationPlaying())
-            drawItem.finalBones = skeleton.getFinalMatrices();
-        else
-            drawItem.finalBones = skeleton.getBindPoses();
+        auto *animator = entity->getComponent<AnimatorComponent>();
+        bool hasActiveDriver = (animator && animator->isAnimationPlaying());
+        if (!hasActiveDriver)
+        {
+            for (auto &[type, comp] : entity->getSingleComponents())
+            {
+                if (comp->isSkeletonDriver())
+                {
+                    hasActiveDriver = true;
+                    break;
+                }
+            }
+        }
+        drawItem.finalBones = hasActiveDriver ? skeleton.getFinalMatrices() : skeleton.getBindPoses();
     }
     else
     {

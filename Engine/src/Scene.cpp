@@ -14,6 +14,7 @@
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Components/ReflectionProbeComponent.hpp"
+#include "Engine/Components/DecalComponent.hpp"
 #include "Core/VulkanContext.hpp"
 
 #include "Engine/Particles/Modules/SpawnModule.hpp"
@@ -28,6 +29,7 @@
 #include "Engine/Particles/Modules/TurbulenceModule.hpp"
 
 #include "Engine/Assets/AssetsLoader.hpp"
+#include "Engine/Render/SceneMaterialResolver.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
 
 #include "Engine/Mesh.hpp"
@@ -738,7 +740,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
             if (!ovJson.contains("slot") || !ovJson.contains("path"))
                 continue;
             const size_t slot = ovJson["slot"].get<size_t>();
-            if (slot >= meshComp->getMaterialSlotCount())
+            const size_t slotCount = meshComp->getMaterialSlotCount();
+            if (slotCount > 0 && slot >= slotCount)
                 continue;
             const std::string matPath = resolveScenePath(ovJson["path"].get<std::string>());
             if (!matPath.empty())
@@ -765,6 +768,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
             bool paused;
         };
         std::vector<AnimatorState> pendingAnimatorStates;
+        SceneMaterialResolver decalMaterialResolver;
+        decalMaterialResolver.beginFrame(std::numeric_limits<int>::max());
 
         auto collectResolvedAnimationAssetPaths = [&](const nlohmann::json &componentJson)
         {
@@ -1453,6 +1458,31 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                         psComp->vfxAssetPath = resolveScenePath(componentJson.value("vfx_asset_path", std::string{}));
                     psComp->setParticleSystem(ps);
                 }
+                else if (type == "decal")
+                {
+                    auto *decal = gameObject->addComponent<DecalComponent>();
+                    if (!decal)
+                        continue;
+
+                    if (componentJson.contains("size") &&
+                        componentJson["size"].is_array() &&
+                        componentJson["size"].size() == 3)
+                    {
+                        const auto &size = componentJson["size"];
+                        decal->size = glm::max(glm::abs(glm::vec3{size[0], size[1], size[2]}), glm::vec3(0.01f));
+                    }
+
+                    decal->opacity = std::clamp(componentJson.value("opacity", decal->opacity), 0.0f, 1.0f);
+                    decal->sortOrder = componentJson.value("sort_order", decal->sortOrder);
+                    decal->materialPath = resolveScenePath(componentJson.value("material_path", std::string{}));
+
+                    if (!decal->materialPath.empty())
+                    {
+                        decal->material = decalMaterialResolver.resolveMaterialOverrideFromPath(decal->materialPath);
+                        if (!decal->material)
+                            VX_ENGINE_WARNING_STREAM("Failed to load decal material: " << decal->materialPath << '\n');
+                    }
+                }
                 else if (type == "reflection_probe")
                 {
                     auto *probe = gameObject->addComponent<ReflectionProbeComponent>();
@@ -2055,6 +2085,17 @@ void Scene::saveSceneToFile(const std::string &filePath)
             componentsJson.push_back(j);
         }
 
+        if (const auto *decal = object->getComponent<DecalComponent>())
+        {
+            nlohmann::json j;
+            j["type"] = "decal";
+            j["material_path"] = toRelativePath(decal->materialPath);
+            j["size"] = {decal->size.x, decal->size.y, decal->size.z};
+            j["opacity"] = decal->opacity;
+            j["sort_order"] = decal->sortOrder;
+            componentsJson.push_back(std::move(j));
+        }
+
         objectJson["components"] = componentsJson;
 
         json["game_objects"].push_back(objectJson);
@@ -2644,6 +2685,17 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
             componentsJson.push_back(std::move(componentJson));
         }
 
+        if (const auto *decal = object.getComponent<DecalComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "decal";
+            componentJson["material_path"] = normalizeSerializedPath(decal->materialPath);
+            componentJson["size"] = {decal->size.x, decal->size.y, decal->size.z};
+            componentJson["opacity"] = decal->opacity;
+            componentJson["sort_order"] = decal->sortOrder;
+            componentsJson.push_back(std::move(componentJson));
+        }
+
         if (const auto *probe = object.getComponent<ReflectionProbeComponent>())
         {
             nlohmann::json j;
@@ -2723,7 +2775,8 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                 continue;
 
             const size_t slot = overrideJson["slot"].get<size_t>();
-            if (slot >= meshComponent->getMaterialSlotCount())
+            const size_t slotCount = meshComponent->getMaterialSlotCount();
+            if (slotCount > 0 && slot >= slotCount)
                 continue;
 
             const std::string materialPath = resolveSerializedPath(overrideJson["path"].get<std::string>());
@@ -2788,6 +2841,8 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
         bool paused{false};
     };
     std::vector<AnimatorState> pendingAnimatorStates;
+    SceneMaterialResolver decalMaterialResolver;
+    decalMaterialResolver.beginFrame(std::numeric_limits<int>::max());
 
     auto collectResolvedAnimationAssetPaths = [&](const nlohmann::json &componentJson)
     {
@@ -3429,6 +3484,31 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                 auto *particleSystemComponent = entity->addComponent<ParticleSystemComponent>();
                 particleSystemComponent->playOnStart = componentJson.value("play_on_start", true);
                 particleSystemComponent->setParticleSystem(particleSystem);
+            }
+            else if (type == "decal")
+            {
+                auto *decal = entity->addComponent<DecalComponent>();
+                if (!decal)
+                    continue;
+
+                if (componentJson.contains("size") &&
+                    componentJson["size"].is_array() &&
+                    componentJson["size"].size() == 3)
+                {
+                    const auto &size = componentJson["size"];
+                    decal->size = glm::max(glm::abs(glm::vec3{size[0], size[1], size[2]}), glm::vec3(0.01f));
+                }
+
+                decal->opacity = std::clamp(componentJson.value("opacity", decal->opacity), 0.0f, 1.0f);
+                decal->sortOrder = componentJson.value("sort_order", decal->sortOrder);
+                decal->materialPath = resolveSerializedPath(componentJson.value("material_path", std::string{}));
+
+                if (!decal->materialPath.empty())
+                {
+                    decal->material = decalMaterialResolver.resolveMaterialOverrideFromPath(decal->materialPath);
+                    if (!decal->material)
+                        VX_ENGINE_WARNING_STREAM("Failed to load decal material while restoring entity hierarchy: " << decal->materialPath << '\n');
+                }
             }
             else if (type == "reflection_probe")
             {

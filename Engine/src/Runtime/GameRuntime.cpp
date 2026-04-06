@@ -375,6 +375,7 @@ void GameRuntime::initRenderGraph()
     m_ssaoRenderGraphPass = nullptr;
     m_rtaoRenderGraphPass = nullptr;
     m_rtaoDenoiseRenderGraphPass = nullptr;
+    m_decalRenderGraphPass = nullptr;
     m_lightingRenderGraphPass = nullptr;
     m_contactShadowRenderGraphPass = nullptr;
     m_ssrRenderGraphPass = nullptr;
@@ -437,6 +438,14 @@ void GameRuntime::initRenderGraph()
             m_gBufferRenderGraphPass->getNormalTextureHandlers(),
             m_gBufferRenderGraphPass->getDepthTextureHandler());
     }
+
+    m_decalRenderGraphPass = m_renderGraph->addPass<renderGraph::DecalRenderGraphPass>(
+        m_gBufferRenderGraphPass->getAlbedoTextureHandlers(),
+        m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+        m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+        m_gBufferRenderGraphPass->getEmissiveTextureHandlers(),
+        m_gBufferRenderGraphPass->getDepthTextureHandler());
+    m_decalRenderGraphPass->setScene(m_scene.get());
 
     auto *rtShadowHandlers = m_rtShadowDenoiseRenderGraphPass ? &m_rtShadowDenoiseRenderGraphPass->getOutput() : nullptr;
     auto *aoHandlers = m_rtaoDenoiseRenderGraphPass ? &m_rtaoDenoiseRenderGraphPass->getOutput()
@@ -783,6 +792,8 @@ bool GameRuntime::extractPacket(std::string *errorMessage)
 
 void GameRuntime::bindSceneToPasses()
 {
+    if (m_decalRenderGraphPass)
+        m_decalRenderGraphPass->setScene(m_scene.get());
     if (m_particleRenderGraphPass)
         m_particleRenderGraphPass->setScene(m_scene.get());
 }

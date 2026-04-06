@@ -7,6 +7,7 @@
 #include "Engine/Vertex.hpp"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_node_editor.h"
 #include <backends/imgui_impl_vulkan.h>
 
@@ -93,6 +94,8 @@ namespace
         material->setUVRotation(materialCPU.uvRotation);
         material->setFlags(materialCPU.flags);
         material->setIor(materialCPU.ior);
+        material->setDomain(materialCPU.domain);
+        material->setDecalBlendMode(materialCPU.decalBlendMode);
         return material;
     }
 
@@ -561,6 +564,35 @@ void AnimationTreePanel::closeTree(const std::filesystem::path &path)
     }
 }
 
+void AnimationTreePanel::renameOpenTree(const std::filesystem::path &oldPath, const std::filesystem::path &newPath)
+{
+    if (oldPath.empty() || newPath.empty())
+        return;
+
+    const std::filesystem::path normalizedOldPath = oldPath.lexically_normal();
+    const std::filesystem::path normalizedNewPath = newPath.lexically_normal();
+
+    for (auto &editor : m_openEditors)
+    {
+        if (editor.path == normalizedOldPath)
+            editor.path = normalizedNewPath;
+    }
+
+    const std::string oldKey = normalizedOldPath.string();
+    const std::string newKey = normalizedNewPath.string();
+    if (oldKey == newKey)
+        return;
+
+    auto stateIt = m_uiStates.find(oldKey);
+    if (stateIt == m_uiStates.end())
+        return;
+
+    auto stateNode = m_uiStates.extract(stateIt);
+    stateNode.key() = newKey;
+    stateNode.mapped().tree.assetPath = newKey;
+    m_uiStates.insert(std::move(stateNode));
+}
+
 void AnimationTreePanel::draw()
 {
     m_hasKeyboardFocus = false;
@@ -577,6 +609,12 @@ void AnimationTreePanel::draw()
         closeTree(path);
 }
 
+bool AnimationTreePanel::hasOpenEditors() const
+{
+    return std::any_of(m_openEditors.begin(), m_openEditors.end(), [](const OpenTreeEditor &editor)
+                       { return editor.open; });
+}
+
 void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
 {
     const std::string key = editor.path.lexically_normal().string();
@@ -587,7 +625,7 @@ void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
         return;
     AnimTreeUIState &ui = it->second;
 
-    const std::string windowTitle = (ui.dirty ? "* " : "") + stem + " [Animation Tree]##" + key;
+    const std::string windowTitle = (ui.dirty ? "* " : "") + stem + " [Animation Tree]###AnimTreeEditor:" + key;
 
     ui.tree.ensureGraph();
     if (!ui.tree.findNode(ui.currentMachineNodeId))
@@ -601,7 +639,16 @@ void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
     }
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-    ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_FirstUseEver);
+    ImGuiWindowClass windowClass;
+    windowClass.TabItemFlagsOverrideSet = ImGuiTabItemFlags_Trailing;
+    ImGui::SetNextWindowClass(&windowClass);
+    if (m_requestedFocusWindowId != 0 && ImHashStr(windowTitle.c_str()) == m_requestedFocusWindowId)
+        ImGui::SetNextWindowFocus();
+    if (m_centerDockId != 0)
+    {
+        ImGui::DockBuilderDockWindow(windowTitle.c_str(), m_centerDockId);
+        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Always);
+    }
     if (!ImGui::Begin(windowTitle.c_str(), &editor.open, flags))
     {
         m_hasKeyboardFocus = m_hasKeyboardFocus ||

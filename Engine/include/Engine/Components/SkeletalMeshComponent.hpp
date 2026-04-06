@@ -10,6 +10,8 @@
 #include "Engine/Skeleton.hpp"
 #include "Engine/Material.hpp"
 
+#include <algorithm>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class SkeletalMeshComponent : public ECS
@@ -25,14 +27,14 @@ public:
 
     void setMaterialOverride(size_t slot, Material::SharedPtr mat)
     {
-        if (slot >= m_meshes.size())
+        if (!m_meshes.empty() && slot >= m_meshes.size())
             return;
 
-        if (slot >= m_perMeshMaterialOverrides.size())
-        {
-            m_perMeshMaterialOverrides.resize(m_meshes.size(), nullptr);
-            m_perMeshMaterialOverridePaths.resize(m_meshes.size());
-        }
+        const size_t requiredSize = std::max({m_meshes.size(), m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size(), slot + 1});
+        if (m_perMeshMaterialOverrides.size() < requiredSize)
+            m_perMeshMaterialOverrides.resize(requiredSize, nullptr);
+        if (m_perMeshMaterialOverridePaths.size() < requiredSize)
+            m_perMeshMaterialOverridePaths.resize(requiredSize);
 
         m_perMeshMaterialOverrides[slot] = mat;
     }
@@ -46,13 +48,15 @@ public:
 
     void clearMaterialOverride(size_t slot)
     {
-        if (slot >= m_meshes.size())
+        const size_t currentSize = std::max({m_meshes.size(), m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size()});
+        if (slot >= currentSize)
             return;
 
-        if (slot >= m_perMeshMaterialOverrides.size())
-            m_perMeshMaterialOverrides.resize(m_meshes.size(), nullptr);
-        if (slot >= m_perMeshMaterialOverridePaths.size())
-            m_perMeshMaterialOverridePaths.resize(m_meshes.size());
+        const size_t requiredSize = std::max(currentSize, slot + 1);
+        if (m_perMeshMaterialOverrides.size() < requiredSize)
+            m_perMeshMaterialOverrides.resize(requiredSize, nullptr);
+        if (m_perMeshMaterialOverridePaths.size() < requiredSize)
+            m_perMeshMaterialOverridePaths.resize(requiredSize);
 
         m_perMeshMaterialOverrides[slot] = nullptr;
         m_perMeshMaterialOverridePaths[slot].clear();
@@ -60,14 +64,14 @@ public:
 
     void setMaterialOverridePath(size_t slot, const std::string &path)
     {
-        if (slot >= m_meshes.size())
+        if (!m_meshes.empty() && slot >= m_meshes.size())
             return;
 
-        if (slot >= m_perMeshMaterialOverridePaths.size())
-        {
-            m_perMeshMaterialOverrides.resize(m_meshes.size(), nullptr);
-            m_perMeshMaterialOverridePaths.resize(m_meshes.size());
-        }
+        const size_t requiredSize = std::max({m_meshes.size(), m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size(), slot + 1});
+        if (m_perMeshMaterialOverrides.size() < requiredSize)
+            m_perMeshMaterialOverrides.resize(requiredSize, nullptr);
+        if (m_perMeshMaterialOverridePaths.size() < requiredSize)
+            m_perMeshMaterialOverridePaths.resize(requiredSize);
 
         m_perMeshMaterialOverridePaths[slot] = path;
     }
@@ -82,7 +86,13 @@ public:
         return m_perMeshMaterialOverridePaths[slot];
     }
 
-    size_t getMaterialSlotCount() const { return m_meshes.size(); }
+    size_t getMaterialSlotCount() const
+    {
+        if (!m_meshes.empty())
+            return m_meshes.size();
+
+        return std::max(m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size());
+    }
 
     const Skeleton &getSkeleton() const;
     Skeleton &getSkeleton();

@@ -8,6 +8,7 @@
 #include "Engine/Assets/AssetsLoader.hpp"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_node_editor.h"
 #include "glm/gtc/type_ptr.hpp"
 
@@ -372,6 +373,8 @@ namespace
     const char *colorTargetSlots[] = {"albedo", "emissive"};
     const char *colorTargetDisplay[] = {"Base Color", "Emissive"};
     const char *blendModeLabels[] = {"Replace", "Multiply", "Add"};
+    const char *materialDomainLabels[] = {"Surface", "Deferred Decal"};
+    const char *decalBlendModeLabels[] = {"Color + Normal", "Color Only", "Normal Only", "Emissive Only"};
 
     bool isColorTargetSlot(const std::string &targetSlot)
     {
@@ -417,6 +420,54 @@ namespace
         }
 
         return 0;
+    }
+
+    int findMaterialDomainIndex(engine::MaterialDomain domain)
+    {
+        switch (domain)
+        {
+        case engine::MaterialDomain::DeferredDecal:
+            return 1;
+        case engine::MaterialDomain::Surface:
+        default:
+            return 0;
+        }
+    }
+
+    int findDecalBlendModeIndex(engine::DecalBlendMode blendMode)
+    {
+        switch (blendMode)
+        {
+        case engine::DecalBlendMode::ColorOnly:
+            return 1;
+        case engine::DecalBlendMode::NormalOnly:
+            return 2;
+        case engine::DecalBlendMode::Emissive:
+            return 3;
+        case engine::DecalBlendMode::ColorNormal:
+        default:
+            return 0;
+        }
+    }
+
+    engine::MaterialDomain materialDomainFromIndex(int index)
+    {
+        return index == 1 ? engine::MaterialDomain::DeferredDecal : engine::MaterialDomain::Surface;
+    }
+
+    engine::DecalBlendMode decalBlendModeFromIndex(int index)
+    {
+        switch (index)
+        {
+        case 1:
+            return engine::DecalBlendMode::ColorOnly;
+        case 2:
+            return engine::DecalBlendMode::NormalOnly;
+        case 3:
+            return engine::DecalBlendMode::Emissive;
+        default:
+            return engine::DecalBlendMode::ColorNormal;
+        }
     }
 
     engine::CPUMaterial::NoiseNodeParams::BlendMode noiseBlendModeFromIndex(int index)
@@ -755,6 +806,47 @@ void MaterialEditor::closeMaterialEditor(const std::filesystem::path &path)
     closeCurrentMaterialEditor();
 }
 
+void MaterialEditor::renameOpenMaterialEditor(const std::filesystem::path &oldPath, const std::filesystem::path &newPath)
+{
+    if (oldPath.empty() || newPath.empty())
+        return;
+
+    std::filesystem::path normalizedOldPath = oldPath;
+    std::filesystem::path normalizedNewPath = newPath;
+    if (m_project)
+    {
+        const std::filesystem::path projectRoot = resolveProjectRootPath(*m_project);
+        normalizedOldPath = resolveMaterialPathAgainstProjectRoot(oldPath.string(), projectRoot);
+        normalizedNewPath = resolveMaterialPathAgainstProjectRoot(newPath.string(), projectRoot);
+    }
+    else
+    {
+        normalizedOldPath = oldPath.lexically_normal();
+        normalizedNewPath = newPath.lexically_normal();
+    }
+
+    if (m_currentOpenedMaterialEditor.path == normalizedOldPath)
+        m_currentOpenedMaterialEditor.path = normalizedNewPath;
+
+    const std::string oldKey = normalizedOldPath.lexically_normal().string();
+    const std::string newKey = normalizedNewPath.lexically_normal().string();
+    if (oldKey == newKey)
+        return;
+
+    auto stateIt = m_materialEditorUiState.find(oldKey);
+    if (stateIt == m_materialEditorUiState.end())
+        return;
+
+    auto stateNode = m_materialEditorUiState.extract(stateIt);
+    stateNode.key() = newKey;
+    m_materialEditorUiState.insert(std::move(stateNode));
+}
+
+bool MaterialEditor::hasOpenEditor() const
+{
+    return m_currentOpenedMaterialEditor.open && !m_currentOpenedMaterialEditor.path.empty();
+}
+
 void MaterialEditor::setSaveMaterialToDiskFunction(const std::function<bool(const std::filesystem::path &path, const engine::CPUMaterial &cpuMaterial)> &function)
 {
     m_saveMaterialToDisk = function;
@@ -825,9 +917,17 @@ void MaterialEditor::draw()
         title += "*";
 
     std::string windowName = title + "###MaterialEditorMain";
+    ImGuiWindowClass windowClass;
+    windowClass.TabItemFlagsOverrideSet = ImGuiTabItemFlags_Trailing;
+    ImGui::SetNextWindowClass(&windowClass);
+    if (m_requestedFocusWindowId != 0 && ImHashStr(windowName.c_str()) == m_requestedFocusWindowId)
+        ImGui::SetNextWindowFocus();
 
     if (m_centerDockId != 0)
-        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_FirstUseEver);
+    {
+        ImGui::DockBuilderDockWindow(windowName.c_str(), m_centerDockId);
+        ImGui::SetNextWindowDockID(m_centerDockId, ImGuiCond_Always);
+    }
 
     bool keepOpen = matEditor.open;
     bool closeRequested = false;
@@ -1310,6 +1410,8 @@ void MaterialEditor::draw()
 
                 enum class DeferredEnumPopupKind
                 {
+                    MaterialDomain,
+                    DecalBlend,
                     ColorTarget,
                     ColorBlend,
                     NoiseType,
@@ -1325,7 +1427,7 @@ void MaterialEditor::draw()
                 };
 
                 std::vector<DeferredEnumPopup> deferredEnumPopups;
-                deferredEnumPopups.reserve(ui.dynamicColorNodes.size() * 2 + ui.dynamicNoiseNodes.size() * 3);
+                deferredEnumPopups.reserve(2 + ui.dynamicColorNodes.size() * 2 + ui.dynamicNoiseNodes.size() * 3);
                 std::string deferredEnumPopupToOpen;
 
                 auto drawDeferredEnumSelector = [&](const char *label,
@@ -1432,6 +1534,17 @@ void MaterialEditor::draw()
                     gpuMat->setAlphaCutoff(alphaCutoff);
                     cpuMat.alphaCutoff = alphaCutoff;
                     matEditor.dirty = true;
+                }
+
+                int materialDomainIndex = findMaterialDomainIndex(cpuMat.domain);
+                drawDeferredEnumSelector("Domain", materialDomainLabels[materialDomainIndex], DeferredEnumPopupKind::MaterialDomain, ui.mappingNodeId, 150.0f);
+
+                if (cpuMat.domain == engine::MaterialDomain::DeferredDecal)
+                {
+                    int decalBlendModeIndex = findDecalBlendModeIndex(cpuMat.decalBlendMode);
+                    drawDeferredEnumSelector("Decal Blend", decalBlendModeLabels[decalBlendModeIndex], DeferredEnumPopupKind::DecalBlend, ui.mappingNodeId, 150.0f);
+
+                    ImGui::TextDisabled("Deferred decals project along the entity's local -Z axis.");
                 }
 
                 uint32_t materialFlags = p.flags;
@@ -2134,6 +2247,36 @@ void MaterialEditor::draw()
 
                     switch (popup.kind)
                     {
+                    case DeferredEnumPopupKind::MaterialDomain:
+                    {
+                        const int currentIndex = findMaterialDomainIndex(cpuMat.domain);
+                        for (int optionIndex = 0; optionIndex < IM_ARRAYSIZE(materialDomainLabels); ++optionIndex)
+                        {
+                            if (!ImGui::Selectable(materialDomainLabels[optionIndex], currentIndex == optionIndex))
+                                continue;
+
+                            cpuMat.domain = materialDomainFromIndex(optionIndex);
+                            gpuMat->setDomain(cpuMat.domain);
+                            matEditor.dirty = true;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        break;
+                    }
+                    case DeferredEnumPopupKind::DecalBlend:
+                    {
+                        const int currentIndex = findDecalBlendModeIndex(cpuMat.decalBlendMode);
+                        for (int optionIndex = 0; optionIndex < IM_ARRAYSIZE(decalBlendModeLabels); ++optionIndex)
+                        {
+                            if (!ImGui::Selectable(decalBlendModeLabels[optionIndex], currentIndex == optionIndex))
+                                continue;
+
+                            cpuMat.decalBlendMode = decalBlendModeFromIndex(optionIndex);
+                            gpuMat->setDecalBlendMode(cpuMat.decalBlendMode);
+                            matEditor.dirty = true;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        break;
+                    }
                     case DeferredEnumPopupKind::ColorTarget:
                     {
                         if (auto *node = findColorNodeById(popup.nodeId))

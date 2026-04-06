@@ -66,10 +66,12 @@ public:
                   engine::AnimatorComponent     *animator     = nullptr,
                   engine::SkeletalMeshComponent *skeletalMesh = nullptr);
     void closeTree(const std::filesystem::path &path);
+    void renameOpenTree(const std::filesystem::path &oldPath, const std::filesystem::path &newPath);
 
     void setProject(Project *project) { m_project = project; }
     void setNotificationManager(NotificationManager *nm) { m_notificationManager = nm; }
     void setCenterDockId(ImGuiID dockId) { m_centerDockId = dockId; }
+    void setRequestedFocusWindowId(ImGuiID windowId) { m_requestedFocusWindowId = windowId; }
     void setSaveTreeFunction(std::function<bool(const std::filesystem::path &, const engine::AnimationTree &)> fn)
     {
         m_saveTreeFunction = std::move(fn);
@@ -77,6 +79,7 @@ public:
     void setPreviewPass(AnimationTreePreviewPass *pass);
     void setPreviewDescriptorSet(VkDescriptorSet ds);
     bool hasActivePreview() const;
+    [[nodiscard]] bool hasOpenEditors() const;
     [[nodiscard]] bool consumesDeleteShortcut() const { return m_hasKeyboardFocus; }
 
     ~AnimationTreePanel();
@@ -151,6 +154,7 @@ private:
     Project *m_project{nullptr};
     NotificationManager *m_notificationManager{nullptr};
     ImGuiID m_centerDockId{0};
+    ImGuiID m_requestedFocusWindowId{0};
     std::function<bool(const std::filesystem::path &, const engine::AnimationTree &)> m_saveTreeFunction;
 
     AnimationTreePreviewPass *m_previewPass{nullptr};

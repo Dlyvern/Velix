@@ -1933,6 +1933,9 @@ bool AssetsWindow::renameAsset(const std::filesystem::path &path, const std::str
         m_currentDirectory = newPath / std::filesystem::path(suffix);
     }
 
+    if (m_onAssetRenamedFunction)
+        m_onAssetRenamedFunction(path, newPath);
+
     return true;
 }
 

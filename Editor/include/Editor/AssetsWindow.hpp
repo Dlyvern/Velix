@@ -52,6 +52,11 @@ public:
         m_onAssetDeletedFunction = function;
     }
 
+    void setOnAssetRenamed(const std::function<void(const std::filesystem::path &, const std::filesystem::path &)> &function)
+    {
+        m_onAssetRenamedFunction = function;
+    }
+
     void setOnSceneOpenRequest(const std::function<void(const std::filesystem::path &)> &function)
     {
         m_onSceneOpenRequestFunction = function;
@@ -72,6 +77,7 @@ private:
     std::function<void(const std::filesystem::path &)> m_onTextAssetOpenRequestFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onAssetSelectionChangedFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onAssetDeletedFunction{nullptr};
+    std::function<void(const std::filesystem::path &, const std::filesystem::path &)> m_onAssetRenamedFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onSceneOpenRequestFunction{nullptr};
     std::function<void(const std::filesystem::path &)> m_onAnimationTreeOpenRequestFunction{nullptr};
 

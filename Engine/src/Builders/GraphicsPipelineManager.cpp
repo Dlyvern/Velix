@@ -99,8 +99,8 @@ void GraphicsPipelineManager::loadShaderModules()
     glassShader = std::make_shared<core::Shader>("./resources/shaders/glass_mesh.vert.spv", "./resources/shaders/glass.frag.spv");
     rtReflectionsShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/rt_reflections.frag.spv");
     rtaoShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/rt_ao.frag.spv");
-    depthPrepassStaticShader  = std::make_shared<core::Shader>("./resources/shaders/gbuffer_static.vert.spv",  "./resources/shaders/empty.frag.spv");
-    depthPrepassSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_skinned.vert.spv", "./resources/shaders/empty.frag.spv");
+    depthPrepassStaticShader  = std::make_shared<core::Shader>("./resources/shaders/depth_prepass_static.vert.spv",  "./resources/shaders/empty.frag.spv");
+    depthPrepassSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/depth_prepass_skinned.vert.spv", "./resources/shaders/empty.frag.spv");
     taaShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/taa.frag.spv");
     animPreviewShader = std::make_shared<core::Shader>("./resources/shaders/anim_preview.vert.spv",
                                                         "./resources/shaders/shader_simple_textured_mesh.frag.spv");

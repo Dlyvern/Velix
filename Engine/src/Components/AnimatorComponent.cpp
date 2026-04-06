@@ -117,6 +117,26 @@ void AnimatorComponent::onOwnerAttached()
     refreshAnimationBindings();
 }
 
+void AnimatorComponent::addPostAnimHook(const void *ownerKey, PostAnimHook fn)
+{
+    m_postAnimHooks.push_back({ownerKey, std::move(fn)});
+}
+
+void AnimatorComponent::removePostAnimHook(const void *ownerKey)
+{
+    m_postAnimHooks.erase(
+        std::remove_if(m_postAnimHooks.begin(), m_postAnimHooks.end(),
+                       [ownerKey](const PostAnimHookEntry &e) { return e.key == ownerKey; }),
+        m_postAnimHooks.end());
+}
+
+void AnimatorComponent::firePostAnimHooks()
+{
+    if (m_boundSkeleton && !m_postAnimHooks.empty())
+        for (auto &h : m_postAnimHooks)
+            h.fn(*m_boundSkeleton);
+}
+
 void AnimatorComponent::setAnimations(const std::vector<Animation> &animations, Skeleton *skeletonForAnimations)
 {
     m_animations = animations;
@@ -247,6 +267,7 @@ void AnimatorComponent::update(float deltaTime)
         evaluateTransitions();
         m_triggers.clear();
         applyTreePose();
+        firePostAnimHooks();
         return;
     }
 
@@ -261,6 +282,7 @@ void AnimatorComponent::update(float deltaTime)
     {
         m_currentTime = 0.0f;
         applyCurrentAnimationPose();
+        firePostAnimHooks();
         return;
     }
 
@@ -280,6 +302,7 @@ void AnimatorComponent::update(float deltaTime)
     }
 
     applyCurrentAnimationPose();
+    firePostAnimHooks();
 }
 
 void AnimatorComponent::applyCurrentAnimationPose()

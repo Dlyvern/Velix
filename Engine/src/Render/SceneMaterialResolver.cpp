@@ -7,6 +7,8 @@
 
 #include <fstream>
 #include <sstream>
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <cmath>
 
@@ -14,6 +16,13 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 namespace
 {
+    std::string toLowerCopy(std::string text)
+    {
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char character)
+                       { return static_cast<char>(std::tolower(character)); });
+        return text;
+    }
+
     std::size_t hashFloat(float value)
     {
         if (!std::isfinite(value))
@@ -42,9 +51,9 @@ Material::SharedPtr SceneMaterialResolver::resolveMaterialOverrideFromPath(const
     if (materialPath.empty())
         return nullptr;
 
-    std::string normalizedMaterialPath = materialPath;
-    if (!looksLikeWindowsAbsolutePath(materialPath))
-        normalizedMaterialPath = makeAbsoluteNormalized(std::filesystem::path(materialPath)).string();
+    const std::string normalizedMaterialPath = resolveMaterialAssetPath(materialPath);
+    if (normalizedMaterialPath.empty())
+        return nullptr;
 
     if (auto cachedMaterialIt = m_materialsByAssetPath.find(normalizedMaterialPath); cachedMaterialIt != m_materialsByAssetPath.end())
         return cachedMaterialIt->second;
@@ -146,6 +155,61 @@ std::filesystem::path SceneMaterialResolver::makeAbsoluteNormalized(const std::f
     return absolutePath.lexically_normal();
 }
 
+std::string SceneMaterialResolver::resolveMaterialAssetPath(const std::string &materialPath) const
+{
+    if (materialPath.empty())
+        return {};
+
+    if (looksLikeWindowsAbsolutePath(materialPath))
+        return materialPath;
+
+    const std::filesystem::path parsedPath(materialPath);
+    if (parsedPath.is_absolute())
+        return makeAbsoluteNormalized(parsedPath).string();
+
+    auto tryExistingPath = [this](const std::filesystem::path &candidatePath) -> std::optional<std::string>
+    {
+        if (candidatePath.empty())
+            return std::nullopt;
+
+        const std::filesystem::path normalizedCandidate = makeAbsoluteNormalized(candidatePath);
+        std::error_code errorCode;
+        if (std::filesystem::exists(normalizedCandidate, errorCode) && !errorCode)
+            return normalizedCandidate.string();
+
+        return std::nullopt;
+    };
+
+    if (auto resolvedPath = tryExistingPath(parsedPath); resolvedPath.has_value())
+        return resolvedPath.value();
+
+    const std::filesystem::path projectRoot = AssetsLoader::getTextureAssetImportRootDirectory();
+    if (!projectRoot.empty())
+    {
+        if (auto resolvedPath = tryExistingPath(projectRoot / parsedPath); resolvedPath.has_value())
+            return resolvedPath.value();
+
+        const std::string projectRootName = toLowerCopy(projectRoot.filename().string());
+        auto segmentIterator = parsedPath.begin();
+        if (!projectRootName.empty() &&
+            segmentIterator != parsedPath.end() &&
+            toLowerCopy(segmentIterator->string()) == projectRootName)
+        {
+            std::filesystem::path projectRelativePath;
+            ++segmentIterator;
+            for (; segmentIterator != parsedPath.end(); ++segmentIterator)
+                projectRelativePath /= *segmentIterator;
+
+            if (auto resolvedPath = tryExistingPath(projectRoot / projectRelativePath); resolvedPath.has_value())
+                return resolvedPath.value();
+        }
+
+        return makeAbsoluteNormalized(projectRoot / parsedPath).string();
+    }
+
+    return makeAbsoluteNormalized(parsedPath).string();
+}
+
 std::string SceneMaterialResolver::resolveTexturePathForMaterial(const std::string &texturePath,
                                                                  const std::filesystem::path &materialAssetPath) const
 {
@@ -183,6 +247,16 @@ std::string SceneMaterialResolver::resolveTexturePathForMaterial(const std::stri
 
             probeDirectory = parentDirectory;
         }
+    }
+
+    const std::filesystem::path projectRoot = AssetsLoader::getTextureAssetImportRootDirectory();
+    if (!projectRoot.empty())
+    {
+        const std::filesystem::path projectRelativePath = makeAbsoluteNormalized(projectRoot / parsedPath);
+        if (fileExists(projectRelativePath))
+            return projectRelativePath.string();
+
+        return projectRelativePath.string();
     }
 
     return makeAbsoluteNormalized(parsedPath).string();
@@ -236,6 +310,8 @@ std::string SceneMaterialResolver::buildMaterialCacheKey(const CPUMaterial &mate
     hashing::hashCombine(seed, materialCPU.normalTexture);
     hashing::hashCombine(seed, materialCPU.ormTexture);
     hashing::hashCombine(seed, materialCPU.emissiveTexture);
+    hashing::hashCombine(seed, static_cast<uint8_t>(materialCPU.domain));
+    hashing::hashCombine(seed, static_cast<uint8_t>(materialCPU.decalBlendMode));
     hashing::hashCombine(seed, materialCPU.flags);
     hashing::hashCombine(seed, hashFloat(materialCPU.baseColorFactor.x));
     hashing::hashCombine(seed, hashFloat(materialCPU.baseColorFactor.y));
@@ -421,6 +497,8 @@ Material::SharedPtr SceneMaterialResolver::createMaterialFromCpuData(const CPUMa
     material->setUVOffset(materialCPU.uvOffset);
     material->setUVRotation(materialCPU.uvRotation);
     material->setIor(materialCPU.ior);
+    material->setDomain(materialCPU.domain);
+    material->setDecalBlendMode(materialCPU.decalBlendMode);
 
     if (const std::string customFragPath = ensureCustomMaterialShaderPath(materialCPU); !customFragPath.empty())
         material->setCustomFragPath(customFragPath);

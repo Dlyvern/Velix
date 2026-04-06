@@ -9,6 +9,7 @@
 #include "Engine/Time.hpp"
 #include "VelixSDK/World.hpp"
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -124,6 +125,22 @@ public:
     {
         engine::scripting::clearDontDestroyOnLoad(getOuter());
     }
+
+    // --- Entity helpers ---
+
+    void setEnabled(bool enabled);
+    bool isEnabled() const;
+
+    // --- Mesh material helpers ---
+
+    bool setMeshMaterialOverridePath(std::size_t slot, const std::string &materialPath);
+    bool clearMeshMaterialOverride(std::size_t slot);
+    std::size_t getMeshMaterialSlotCount() const;
+
+    // --- Light helpers ---
+
+    bool setLightCastsShadows(bool castsShadows);
+    bool getLightCastsShadows() const;
 
     // --- Transform helpers (operate on this entity) ---
 

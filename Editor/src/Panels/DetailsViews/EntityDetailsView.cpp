@@ -1752,17 +1752,18 @@ void EntityDetailsView::draw(Editor &editor)
                 ImGui::PushID("DecalComp");
 
                 const bool hasMaterial = decalComponent->material != nullptr;
-                // const std::string matLabel = hasMaterial
-                //                                  ? (decalComponent->material->getName().empty()
-                //                                         ? "<Unnamed>"
-                //                                         : decalComponent->material->getName())
-                //                                  : "<None>";
-
-                const std::string matLabel{"<NONE>"};
+                const bool hasMaterialBinding = hasMaterial || !decalComponent->materialPath.empty();
+                const std::string matLabel =
+                    !decalComponent->materialPath.empty()
+                        ? std::filesystem::path(decalComponent->materialPath).filename().string()
+                        : (hasMaterial ? std::string("<Loaded Material>") : std::string("<NONE>"));
 
                 ImGui::TextUnformatted("Material:");
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", matLabel.c_str());
+
+                if (hasMaterial && decalComponent->material->getDomain() != engine::MaterialDomain::DeferredDecal)
+                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "Material domain must be Deferred Decal to render.");
 
                 ImGui::Button("Drop .elixmat here##DecalMatDrop");
                 if (ImGui::BeginDragDropTarget())
@@ -1779,7 +1780,11 @@ void EntityDetailsView::draw(Editor &editor)
                             if (mat)
                             {
                                 decalComponent->material = mat;
-                                m_notificationManager.showSuccess("Decal material assigned");
+                                decalComponent->materialPath = droppedPath;
+                                if (mat->getDomain() == engine::MaterialDomain::DeferredDecal)
+                                    m_notificationManager.showSuccess("Decal material assigned");
+                                else
+                                    m_notificationManager.showWarning("Material assigned, but Domain must be Deferred Decal to render");
                             }
                             else
                             {
@@ -1790,12 +1795,15 @@ void EntityDetailsView::draw(Editor &editor)
                     ImGui::EndDragDropTarget();
                 }
 
-                if (hasMaterial && ImGui::Button("Clear Material##DecalClear"))
+                if (hasMaterialBinding && ImGui::Button("Clear Material##DecalClear"))
+                {
                     decalComponent->material = nullptr;
+                    decalComponent->materialPath.clear();
+                }
 
                 ImGui::Separator();
 
-                ImGui::DragFloat3("Size##DecalSize", &decalComponent->size.x, 0.05f, 0.01f, 500.0f, "%.2f");
+                ImGui::DragFloat3("Half Extents##DecalSize", &decalComponent->size.x, 0.05f, 0.01f, 500.0f, "%.2f");
                 ImGui::SliderFloat("Opacity##DecalOpacity", &decalComponent->opacity, 0.0f, 1.0f, "%.2f");
                 ImGui::DragInt("Sort Order##DecalSort", &decalComponent->sortOrder, 1.0f, -100, 100);
 

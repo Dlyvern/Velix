@@ -13,6 +13,7 @@
 #include "Engine/Render/GraphPasses/GBufferRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/LightingRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ContactShadowRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/DecalRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ParticleRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/PresentRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTAORenderGraphPass.hpp"
@@ -98,6 +99,7 @@ private:
     renderGraph::SSAORenderGraphPass *m_ssaoRenderGraphPass{nullptr};
     renderGraph::RTAORenderGraphPass *m_rtaoRenderGraphPass{nullptr};
     renderGraph::RTAODenoiseRenderGraphPass *m_rtaoDenoiseRenderGraphPass{nullptr};
+    renderGraph::DecalRenderGraphPass *m_decalRenderGraphPass{nullptr};
     renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
     renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
     renderGraph::SSRRenderGraphPass *m_ssrRenderGraphPass{nullptr};

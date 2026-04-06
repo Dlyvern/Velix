@@ -690,6 +690,8 @@ private:
         previewMaterial->setUVScale(material.uvScale);
         previewMaterial->setUVOffset(material.uvOffset);
         previewMaterial->setUVRotation(material.uvRotation);
+        previewMaterial->setDomain(material.domain);
+        previewMaterial->setDecalBlendMode(material.decalBlendMode);
 
         return previewMaterial;
     }
@@ -712,6 +714,16 @@ private:
 
         if (m_failedTexturePaths.find(normalizedTexturePath) != m_failedTexturePaths.end())
             return nullptr;
+
+        const std::filesystem::path normalizedPath(normalizedTexturePath);
+        const std::string extension = toLowerCopy(normalizedPath.extension().string());
+        std::error_code existsError;
+        const bool fileExists = std::filesystem::exists(normalizedPath, existsError) && !existsError;
+        if (!fileExists && extension != ".elixasset")
+        {
+            m_failedTexturePaths.insert(normalizedTexturePath);
+            return nullptr;
+        }
 
         if (m_project)
         {

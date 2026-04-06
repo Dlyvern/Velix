@@ -38,10 +38,13 @@ public:
     void draw();
     void openMaterialEditor(const std::filesystem::path &path);
     void closeMaterialEditor(const std::filesystem::path &path);
+    void renameOpenMaterialEditor(const std::filesystem::path &oldPath, const std::filesystem::path &newPath);
+    [[nodiscard]] bool hasOpenEditor() const;
 
     void setProject(Project *project);
     void setNotificationManager(NotificationManager *notificationManager);
     void setCenterDockId(ImGuiID dockId);
+    void setRequestedFocusWindowId(ImGuiID windowId) { m_requestedFocusWindowId = windowId; }
     void setAssetsPreviewSystem(AssetsPreviewSystem *assetsPreviewSystem);
     void setSaveMaterialToDiskFunction(const std::function<bool(const std::filesystem::path &path, const engine::CPUMaterial &cpuMaterial)> &function);
     void setReloadMaterialFromDiskFunction(const std::function<bool(const std::filesystem::path &path)> &function);
@@ -157,6 +160,7 @@ private:
     NotificationManager *m_notificationManager{nullptr};
     AssetsPreviewSystem *m_assetsPreviewSystem{nullptr};
     ImGuiID m_centerDockId{0};
+    ImGuiID m_requestedFocusWindowId{0};
     std::unordered_map<std::string, MaterialEditorUIState> m_materialEditorUiState;
     OpenMaterialEditor m_currentOpenedMaterialEditor;
 };

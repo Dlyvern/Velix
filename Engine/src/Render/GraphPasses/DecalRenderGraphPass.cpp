@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -256,6 +257,8 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
 
         auto *transform = entity->getComponent<Transform3DComponent>();
         glm::mat4 worldMatrix = transform ? transform->getMatrix() : glm::mat4(1.0f);
+        const glm::vec3 halfExtents = glm::max(glm::abs(decal->size), glm::vec3(0.01f));
+        worldMatrix *= glm::scale(glm::mat4(1.0f), halfExtents * 2.0f);
         decals.push_back({decal, worldMatrix, decal->sortOrder});
     }
 
@@ -379,7 +382,10 @@ std::vector<IRenderGraphPass::RenderPassExecution> DecalRenderGraphPass::getRend
     exec.targets[m_albedoHandlers[imgIdx]] = m_albedoTargets[imgIdx];
     exec.targets[m_materialHandlers[imgIdx]] = m_materialTargets[imgIdx];
     exec.targets[m_emissiveHandlers[imgIdx]] = m_emissiveTargets[imgIdx];
-    exec.targets[m_depthHandler] = m_depthTarget;
+    // Depth is sampled by the decal shader but never attached for this pass.
+    // Listing it as an execution target makes the render graph transition it
+    // back to DEPTH_STENCIL_ATTACHMENT_OPTIMAL, which conflicts with the
+    // descriptor set expecting DEPTH_STENCIL_READ_ONLY_OPTIMAL.
 
     return {exec};
 }

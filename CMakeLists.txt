@@ -70,6 +70,9 @@ if(EXISTS ${RESOURCE_DIR})
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/sync_resources.sh"
                 "${CMAKE_BINARY_DIR}/sync_resources.sh"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/build_plugins.sh"
+                "${CMAKE_BINARY_DIR}/build_plugins.sh"
         COMMENT "Copying resources to build directory"
     )
     message(STATUS "Resources will be copied to: ${OUTPUT_RESOURCE_DIR}")
