@@ -75,6 +75,13 @@ if %MSBUILD_EXIT% NEQ 0 (
     exit /b 1
 )
 
+rem Direct path — matches the vc143 preset output seen in CI logs.
+set "PHYSX_DIRECT_PATH=%PHYSX_ROOT%\bin\win.x86_64.vc143.mt\%PHYSX_BUILD_TYPE%"
+if exist "%PHYSX_DIRECT_PATH%\" (
+    set "PHYSX_BUILD_OUTPUT=%PHYSX_DIRECT_PATH%"
+    goto :BUILD_OUTPUT_FOUND
+)
+
 for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysX_64.lib" 2^>nul') do (
     set "PHYSX_BUILD_OUTPUT=%%~dpF"
     goto :BUILD_OUTPUT_FOUND
