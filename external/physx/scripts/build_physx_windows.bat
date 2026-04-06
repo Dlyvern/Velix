@@ -75,48 +75,14 @@ if %MSBUILD_EXIT% NEQ 0 (
     exit /b 1
 )
 
-rem Direct path — matches the vc143 preset output seen in CI logs.
-set "PHYSX_DIRECT_PATH=%PHYSX_ROOT%\bin\win.x86_64.vc143.mt\%PHYSX_BUILD_TYPE%"
-if exist "%PHYSX_DIRECT_PATH%\" (
-    set "PHYSX_BUILD_OUTPUT=%PHYSX_DIRECT_PATH%"
-    goto :BUILD_OUTPUT_FOUND
-)
+rem The vc143 preset always outputs to bin\win.x86_64.vc143.mt\<type>\
+set "PHYSX_BUILD_OUTPUT=%PHYSX_ROOT%\bin\win.x86_64.vc143.mt\%PHYSX_BUILD_TYPE%"
+echo [VelixFlow] Expecting PhysX output at %PHYSX_BUILD_OUTPUT%
 
-for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysX_64.lib" 2^>nul') do (
-    set "PHYSX_BUILD_OUTPUT=%%~dpF"
-    goto :BUILD_OUTPUT_FOUND
-)
-
-for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysX_static_64.lib" 2^>nul') do (
-    set "PHYSX_BUILD_OUTPUT=%%~dpF"
-    goto :BUILD_OUTPUT_FOUND
-)
-
-for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysXFoundation_64.lib" 2^>nul') do (
-    set "PHYSX_BUILD_OUTPUT=%%~dpF"
-    goto :BUILD_OUTPUT_FOUND
-)
-
-for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\PhysXFoundation_static_64.lib" 2^>nul') do (
-    set "PHYSX_BUILD_OUTPUT=%%~dpF"
-    goto :BUILD_OUTPUT_FOUND
-)
-
-rem Fallback: find any _static_64.lib produced under bin\
-for /f "delims=" %%F in ('dir /b /s "%PHYSX_ROOT%\bin\*_static_64.lib" 2^>nul') do (
-    set "PHYSX_BUILD_OUTPUT=%%~dpF"
-    goto :BUILD_OUTPUT_FOUND
-)
-
-:BUILD_OUTPUT_FOUND
-if defined PHYSX_BUILD_OUTPUT (
-    for %%D in ("%PHYSX_BUILD_OUTPUT%\.") do set "PHYSX_BUILD_OUTPUT=%%~fD"
-)
-
-if not defined PHYSX_BUILD_OUTPUT (
-    echo [VelixFlow] Error: PhysX build output directory was not found under "%PHYSX_ROOT%\bin"
+if not exist "%PHYSX_BUILD_OUTPUT%\" (
+    echo [VelixFlow] Error: PhysX build output directory not found at "%PHYSX_BUILD_OUTPUT%"
+    echo [VelixFlow] Contents of bin\:
     dir /b "%PHYSX_ROOT%\bin" 2>nul
-    dir /b /s "%PHYSX_ROOT%\bin\*.lib" 2>nul
     if exist "%PHYSX_PRESET_XML%" del /q "%PHYSX_PRESET_XML%"
     popd
     exit /b 1
