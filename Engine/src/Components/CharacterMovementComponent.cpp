@@ -37,7 +37,8 @@ void CharacterMovementComponent::update(float deltaTime)
     const glm::vec3 transformPosition = m_transformComponent->getWorldPosition();
     if (m_hasLastTransformPosition && glm::distance2(transformPosition, m_lastTransformPosition) > 1e-6f)
     {
-        m_controller->setPosition(physx::PxExtendedVec3(transformPosition.x, transformPosition.y, transformPosition.z));
+        const glm::vec3 controllerWorldPosition = getControllerWorldPositionForTransform(transformPosition);
+        m_controller->setPosition(physx::PxExtendedVec3(controllerWorldPosition.x, controllerWorldPosition.y, controllerWorldPosition.z));
     }
 
     syncTransformFromController();
@@ -72,7 +73,8 @@ void CharacterMovementComponent::teleport(const glm::vec3 &worldPosition)
     if (!ensureController())
         return;
 
-    m_controller->setPosition(physx::PxExtendedVec3(worldPosition.x, worldPosition.y, worldPosition.z));
+    const glm::vec3 controllerWorldPosition = getControllerWorldPositionForTransform(worldPosition);
+    m_controller->setPosition(physx::PxExtendedVec3(controllerWorldPosition.x, controllerWorldPosition.y, controllerWorldPosition.z));
     syncTransformFromController();
 }
 
@@ -106,6 +108,7 @@ bool CharacterMovementComponent::setCapsule(float radius, float height)
     if (!m_controller)
         return false;
 
+    syncControllerUserData();
     applyControllerParameters();
     syncTransformFromController();
     return true;
@@ -119,6 +122,26 @@ float CharacterMovementComponent::getCapsuleRadius() const
 float CharacterMovementComponent::getCapsuleHeight() const
 {
     return m_capsuleHeight;
+}
+
+void CharacterMovementComponent::setCapsuleCenterOffsetY(float offsetY)
+{
+    if (m_capsuleCenterOffsetY == offsetY)
+        return;
+
+    m_capsuleCenterOffsetY = offsetY;
+
+    if (!m_controller || !m_transformComponent)
+        return;
+
+    const glm::vec3 controllerWorldPosition = getControllerWorldPositionForTransform(m_transformComponent->getWorldPosition());
+    m_controller->setPosition(physx::PxExtendedVec3(controllerWorldPosition.x, controllerWorldPosition.y, controllerWorldPosition.z));
+    syncTransformFromController();
+}
+
+float CharacterMovementComponent::getCapsuleCenterOffsetY() const
+{
+    return m_capsuleCenterOffsetY;
 }
 
 void CharacterMovementComponent::setStepOffset(float stepOffset)
@@ -136,8 +159,17 @@ float CharacterMovementComponent::getStepOffset() const
 void CharacterMovementComponent::setContactOffset(float contactOffset)
 {
     m_contactOffset = std::max(contactOffset, 0.001f);
-    if (m_controller)
-        m_controller->setContactOffset(m_contactOffset);
+    if (!m_controller)
+        return;
+
+    m_controller->setContactOffset(m_contactOffset);
+
+    if (!m_transformComponent)
+        return;
+
+    const glm::vec3 controllerWorldPosition = getControllerWorldPositionForTransform(m_transformComponent->getWorldPosition());
+    m_controller->setPosition(physx::PxExtendedVec3(controllerWorldPosition.x, controllerWorldPosition.y, controllerWorldPosition.z));
+    syncTransformFromController();
 }
 
 float CharacterMovementComponent::getContactOffset() const
@@ -192,7 +224,7 @@ bool CharacterMovementComponent::ensureController()
     if (!m_scene || !m_transformComponent)
         return false;
 
-    const glm::vec3 worldPosition = m_transformComponent->getWorldPosition();
+    const glm::vec3 worldPosition = getControllerWorldPositionForTransform(m_transformComponent->getWorldPosition());
     m_controller = m_scene->getPhysicsScene().createController(
         physx::PxVec3(worldPosition.x, worldPosition.y, worldPosition.z),
         m_capsuleRadius,
@@ -201,6 +233,7 @@ bool CharacterMovementComponent::ensureController()
     if (!m_controller)
         return false;
 
+    syncControllerUserData();
     applyControllerParameters();
     syncTransformFromController();
     return true;
@@ -221,10 +254,7 @@ void CharacterMovementComponent::syncTransformFromController()
         return;
 
     const physx::PxExtendedVec3 controllerPosition = m_controller->getPosition();
-    const glm::vec3 worldPosition(
-        static_cast<float>(controllerPosition.x),
-        static_cast<float>(controllerPosition.y),
-        static_cast<float>(controllerPosition.z));
+    const glm::vec3 worldPosition = getTransformWorldPositionForController(controllerPosition);
 
     m_transformComponent->setWorldPosition(worldPosition);
     m_lastTransformPosition = worldPosition;
@@ -240,6 +270,35 @@ void CharacterMovementComponent::applyControllerParameters()
     m_controller->setContactOffset(std::max(m_contactOffset, 0.001f));
     const float slopeCosine = std::cos(glm::radians(std::clamp(m_slopeLimitDegrees, 0.0f, 89.0f)));
     m_controller->setSlopeLimit(slopeCosine);
+}
+
+void CharacterMovementComponent::syncControllerUserData()
+{
+    if (!m_controller)
+        return;
+
+    auto *owner = getOwner<Entity>();
+    if (!owner)
+        return;
+
+    if (auto *actor = m_controller->getActor())
+        actor->userData = owner;
+}
+
+glm::vec3 CharacterMovementComponent::getControllerWorldPositionForTransform(const glm::vec3 &transformWorldPosition) const
+{
+    // PhysX capsule controller foot position includes contact offset. We compensate here
+    // so the editable capsule bottom in the editor matches the runtime grounding point.
+    return transformWorldPosition + glm::vec3(0.0f, m_capsuleCenterOffsetY + m_contactOffset, 0.0f);
+}
+
+glm::vec3 CharacterMovementComponent::getTransformWorldPositionForController(const physx::PxExtendedVec3 &controllerPosition) const
+{
+    return glm::vec3(
+               static_cast<float>(controllerPosition.x),
+               static_cast<float>(controllerPosition.y),
+               static_cast<float>(controllerPosition.z)) -
+           glm::vec3(0.0f, m_capsuleCenterOffsetY + m_contactOffset, 0.0f);
 }
 
 ELIX_NESTED_NAMESPACE_END

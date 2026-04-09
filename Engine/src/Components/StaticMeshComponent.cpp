@@ -185,9 +185,40 @@ const std::vector<CPUMesh> &StaticMeshComponent::getMeshes() const
     return m_meshes;
 }
 
+
 CPUMesh &StaticMeshComponent::getMesh(int index)
 {
     return m_meshes[index];
+}
+
+void StaticMeshComponent::clearMaterialOverride(size_t slot)
+{
+    const size_t currentSize = std::max({m_meshes.size(), m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size()});
+    if (slot >= currentSize)
+        return;
+
+    const size_t requiredSize = std::max(currentSize, slot + 1);
+    if (m_perMeshMaterialOverrides.size() < requiredSize)
+        m_perMeshMaterialOverrides.resize(requiredSize, nullptr);
+    if (m_perMeshMaterialOverridePaths.size() < requiredSize)
+        m_perMeshMaterialOverridePaths.resize(requiredSize);
+
+    m_perMeshMaterialOverrides[slot] = nullptr;
+    m_perMeshMaterialOverridePaths[slot].clear();
+}
+
+void StaticMeshComponent::setMaterialOverridePath(size_t slot, const std::string &path)
+{
+    if (!m_meshes.empty() && slot >= m_meshes.size())
+        return;
+
+    const size_t requiredSize = std::max({m_meshes.size(), m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size(), slot + 1});
+    if (m_perMeshMaterialOverrides.size() < requiredSize)
+        m_perMeshMaterialOverrides.resize(requiredSize, nullptr);
+    if (m_perMeshMaterialOverridePaths.size() < requiredSize)
+        m_perMeshMaterialOverridePaths.resize(requiredSize);
+
+    m_perMeshMaterialOverridePaths[slot] = path;
 }
 
 bool StaticMeshComponent::isReady() const
@@ -196,6 +227,11 @@ bool StaticMeshComponent::isReady() const
     if (!m_meshes.empty())
         return true;
     return m_modelHandle.ready();
+}
+
+void StaticMeshComponent::applyMaterialOverrideCpuDataToMeshes()
+{
+    applyMaterialOverrideCpuData(m_meshes, m_perMeshMaterialOverridePaths);
 }
 
 void StaticMeshComponent::onModelLoaded()
@@ -226,7 +262,7 @@ void StaticMeshComponent::onModelLoaded()
 
     // Keep CPU mesh materials aligned with saved overrides so any fallback path
     // still resolves the authored material asset instead of stale importer paths.
-    applyMaterialOverrideCpuData(m_meshes, m_perMeshMaterialOverridePaths);
+    applyMaterialOverrideCpuDataToMeshes();
 }
 
 ELIX_NESTED_NAMESPACE_END

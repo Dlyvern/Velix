@@ -94,6 +94,8 @@ public:
 
     void setAnimationSpeed(float speed);
     [[nodiscard]] float getAnimationSpeed() const;
+    void setIgnoreRootBoneY(bool ignore);
+    [[nodiscard]] bool getIgnoreRootBoneY() const;
 
     void setCurrentTime(float currentTime);
     [[nodiscard]] float getCurrentTime() const;
@@ -142,6 +144,8 @@ private:
 
     void applyCurrentAnimationPose();
     void refreshAnimationBindings();
+    void applyImmediatePoseIfAvailable();
+    [[nodiscard]] bool shouldLockRootBoneY(const Skeleton::BoneInfo *bone, const Skeleton *skeleton) const;
 
     void calculateBoneTransform(Skeleton::BoneInfo *boneInfo, const glm::mat4 &parentTransform, Animation *animation, float currentTime);
     void calculateObjectTransform(Animation *animation, float currentTime);
@@ -178,6 +182,7 @@ private:
 
     float m_animationSpeed{1.0f};
     float m_currentTime{0.0f};
+    bool m_ignoreRootBoneY{false};
 
     Skeleton *m_boundSkeleton{nullptr};
     std::vector<Animation> m_animations;

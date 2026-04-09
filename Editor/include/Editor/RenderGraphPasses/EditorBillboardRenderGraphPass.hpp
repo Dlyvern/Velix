@@ -30,6 +30,7 @@ public:
     void record(core::CommandBuffer::SharedPtr commandBuffer,
                 const engine::RenderGraphPassPerFrameData &data,
                 const engine::RenderGraphPassContext &renderContext) override;
+    void freeResources() override;
 
     std::vector<RenderPassExecution> getRenderPassExecutions(
         const engine::RenderGraphPassContext &renderContext) const override;

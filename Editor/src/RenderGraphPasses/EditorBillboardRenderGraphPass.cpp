@@ -485,6 +485,15 @@ void EditorBillboardRenderGraphPass::compile(engine::renderGraph::RGPResourcesSt
         m_passthroughSetsBuilt = true;
 }
 
+void EditorBillboardRenderGraphPass::freeResources()
+{
+    m_outputRenderTargets.clear();
+    for (auto &descriptorSet : m_passthroughDescriptorSets)
+        descriptorSet = VK_NULL_HANDLE;
+    m_passthroughDescriptorSets.clear();
+    m_passthroughSetsBuilt = false;
+}
+
 void EditorBillboardRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
                                             const engine::RenderGraphPassPerFrameData &data,
                                             const engine::RenderGraphPassContext &renderContext)

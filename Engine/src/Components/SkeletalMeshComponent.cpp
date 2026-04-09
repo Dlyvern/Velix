@@ -194,6 +194,36 @@ CPUMesh &SkeletalMeshComponent::getMesh(int index)
     return m_meshes[index];
 }
 
+void SkeletalMeshComponent::clearMaterialOverride(size_t slot)
+{
+    const size_t currentSize = std::max({m_meshes.size(), m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size()});
+    if (slot >= currentSize)
+        return;
+
+    const size_t requiredSize = std::max(currentSize, slot + 1);
+    if (m_perMeshMaterialOverrides.size() < requiredSize)
+        m_perMeshMaterialOverrides.resize(requiredSize, nullptr);
+    if (m_perMeshMaterialOverridePaths.size() < requiredSize)
+        m_perMeshMaterialOverridePaths.resize(requiredSize);
+
+    m_perMeshMaterialOverrides[slot] = nullptr;
+    m_perMeshMaterialOverridePaths[slot].clear();
+}
+
+void SkeletalMeshComponent::setMaterialOverridePath(size_t slot, const std::string &path)
+{
+    if (!m_meshes.empty() && slot >= m_meshes.size())
+        return;
+
+    const size_t requiredSize = std::max({m_meshes.size(), m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size(), slot + 1});
+    if (m_perMeshMaterialOverrides.size() < requiredSize)
+        m_perMeshMaterialOverrides.resize(requiredSize, nullptr);
+    if (m_perMeshMaterialOverridePaths.size() < requiredSize)
+        m_perMeshMaterialOverridePaths.resize(requiredSize);
+
+    m_perMeshMaterialOverridePaths[slot] = path;
+}
+
 const Skeleton &SkeletalMeshComponent::getSkeleton() const
 {
     return m_skeleton;
@@ -209,6 +239,11 @@ bool SkeletalMeshComponent::isReady() const
     if (!m_meshes.empty())
         return true;
     return m_modelHandle.ready();
+}
+
+void SkeletalMeshComponent::applyMaterialOverrideCpuDataToMeshes()
+{
+    applyMaterialOverrideCpuData(m_meshes, m_perMeshMaterialOverridePaths);
 }
 
 void SkeletalMeshComponent::onModelLoaded()
@@ -244,7 +279,7 @@ void SkeletalMeshComponent::onModelLoaded()
 
     // Keep CPU mesh materials aligned with saved overrides so any fallback path
     // still resolves the authored material asset instead of stale importer paths.
-    applyMaterialOverrideCpuData(m_meshes, m_perMeshMaterialOverridePaths);
+    applyMaterialOverrideCpuDataToMeshes();
 
     // Skeleton loaded asynchronously — notify the AnimatorComponent on the same
     // entity so it can bind the skeleton to its tree clips.

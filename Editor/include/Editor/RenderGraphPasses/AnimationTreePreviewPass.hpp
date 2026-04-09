@@ -26,7 +26,7 @@ struct AnimPreviewDrawData
 class AnimationTreePreviewPass : public engine::renderGraph::IRenderGraphPass
 {
 public:
-    static constexpr uint32_t PREVIEW_SIZE = 512;
+    static constexpr uint32_t PREVIEW_SIZE = 384;
 
     AnimationTreePreviewPass();
 

@@ -40,6 +40,7 @@ private:
     static inline core::Shader::SharedPtr toneMapShader{nullptr};
     static inline core::Shader::SharedPtr selectionOverlayShader{nullptr};
     static inline core::Shader::SharedPtr presentShader{nullptr};
+    static inline core::Shader::SharedPtr objectIdResolveShader{nullptr};
 
     static inline core::Shader::SharedPtr gBufferStaticShader{nullptr};
     static inline core::Shader::SharedPtr gBufferSkinnedShader{nullptr};
@@ -75,6 +76,7 @@ private:
     static inline core::Shader::SharedPtr debugLinesShader{nullptr};
     static inline core::Shader::SharedPtr motionBlurShader{nullptr};
     static inline core::Shader::SharedPtr decalShader{nullptr};
+    static inline core::Shader::SharedPtr sprite2dShader{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END

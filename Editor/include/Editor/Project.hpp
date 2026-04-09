@@ -108,6 +108,8 @@ struct Project
 public:
     ProjectCache cache;
     engine::LibraryHandle projectLibrary{nullptr};
+    std::filesystem::path loadedProjectLibraryPath;
+    bool loadedProjectLibraryIsTemporaryCopy{false};
     std::string resourcesDir;
     std::string entryScene;
     std::string scenesDir;
@@ -126,6 +128,36 @@ public:
     };
     ExportPlatformSettings linuxExport;
     ExportPlatformSettings windowsExport;
+
+    void rememberLoadedProjectLibrary(engine::LibraryHandle library,
+                                      const std::filesystem::path &libraryPath = {},
+                                      bool isTemporaryCopy = false)
+    {
+        projectLibrary = library;
+        loadedProjectLibraryPath = libraryPath;
+        loadedProjectLibraryIsTemporaryCopy = isTemporaryCopy;
+    }
+
+    void unloadProjectLibrary()
+    {
+        if (projectLibrary)
+            engine::PluginLoader::closeLibrary(projectLibrary);
+
+        projectLibrary = nullptr;
+
+        if (loadedProjectLibraryIsTemporaryCopy && !loadedProjectLibraryPath.empty())
+        {
+            std::error_code errorCode;
+            std::filesystem::remove(loadedProjectLibraryPath, errorCode);
+
+            const std::filesystem::path parentDirectory = loadedProjectLibraryPath.parent_path();
+            if (!parentDirectory.empty())
+                std::filesystem::remove(parentDirectory, errorCode);
+        }
+
+        loadedProjectLibraryPath.clear();
+        loadedProjectLibraryIsTemporaryCopy = false;
+    }
 
     void clearCache()
     {

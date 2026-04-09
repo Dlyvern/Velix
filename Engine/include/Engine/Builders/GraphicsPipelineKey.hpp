@@ -49,10 +49,12 @@ enum class ShaderId : uint8_t
     VolumetricFogTemporal,
     VolumetricFogComposite,
     ProbeCapture,
+    ObjectIdResolve,
     DebugBlit,
     DebugLines,
     MotionBlur,
     Decal,
+    Sprite2D,
     None
 };
 

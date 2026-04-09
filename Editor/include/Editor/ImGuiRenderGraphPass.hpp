@@ -29,12 +29,13 @@ public:
                 const engine::RenderGraphPassContext &renderContext) override;
     bool canRecordInParallel() const override { return false; }
     std::vector<RenderPassExecution> getRenderPassExecutions(const engine::RenderGraphPassContext &renderContext) const override;
+    void freeResources() override;
     static void shutdownPersistentImGuiBackend();
 
     void setViewportImages(const std::vector<VkImageView> &imageViews);
     void setGameViewportImages(const std::vector<VkImageView> &imageViews, bool hasGameCamera, uint32_t renderedImageIndex);
 
-    void cleanup();
+    void cleanup() override;
 
 private:
     void initImGui();

@@ -18,13 +18,19 @@ ScriptComponent::ScriptComponent(const std::string &scriptName, Script *script) 
     }
 }
 
+bool ScriptComponent::isBroken() const
+{
+    return m_script == nullptr && !m_scriptName.empty();
+}
+
 void ScriptComponent::onAttach()
 {
     ECS::onAttach();
 
     if (!m_script)
     {
-        VX_ENGINE_ERROR_STREAM("ScriptComponent::onAttach: script pointer is null\n");
+        if (!isBroken())
+            VX_ENGINE_ERROR_STREAM("ScriptComponent::onAttach: script pointer is null\n");
         return;
     }
 
@@ -60,10 +66,7 @@ void ScriptComponent::update(float deltaTime)
         return;
 
     if (!m_script)
-    {
-        VX_ENGINE_ERROR_STREAM("ScriptComponent::update: script pointer is null\n");
         return;
-    }
 
     m_script->onUpdate(deltaTime);
 }
@@ -76,6 +79,11 @@ const std::string &ScriptComponent::getScriptName() const
 Script *ScriptComponent::getScript() const
 {
     return m_script;
+}
+
+bool ScriptComponent::isAttached() const
+{
+    return m_isAttached;
 }
 
 void ScriptComponent::setSerializedVariables(const Script::ExposedVariablesMap &variables)
@@ -97,6 +105,50 @@ void ScriptComponent::syncSerializedVariablesFromScript()
         return;
 
     m_serializedVariables = m_script->getSerializableVariables();
+}
+
+void ScriptComponent::releaseScriptInstance()
+{
+    if (!m_script)
+    {
+        m_isAttached = false;
+        return;
+    }
+
+    if (m_isAttached)
+        onDetach();
+    else
+        syncSerializedVariablesFromScript();
+
+    m_script->setOwnerEntity(nullptr);
+
+    delete m_script;
+    m_script = nullptr;
+    m_isAttached = false;
+}
+
+void ScriptComponent::setScriptInstance(Script *script, bool attachAfterBinding)
+{
+    if (m_script == script)
+    {
+        if (attachAfterBinding && m_script && !m_isAttached)
+            onAttach();
+        return;
+    }
+
+    releaseScriptInstance();
+    m_script = script;
+
+    if (!m_script)
+        return;
+
+    m_script->finalizeVariableRegistrationContext();
+    m_script->setOwnerEntity(getOwner<Entity>());
+    m_script->applySerializedVariables(m_serializedVariables);
+    syncSerializedVariablesFromScript();
+
+    if (attachAfterBinding)
+        onAttach();
 }
 
 void ScriptComponent::onOwnerAttached()

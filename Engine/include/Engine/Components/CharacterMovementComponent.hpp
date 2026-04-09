@@ -29,6 +29,8 @@ public:
     bool setCapsule(float radius, float height);
     float getCapsuleRadius() const;
     float getCapsuleHeight() const;
+    void setCapsuleCenterOffsetY(float offsetY);
+    float getCapsuleCenterOffsetY() const;
 
     void setStepOffset(float stepOffset);
     float getStepOffset() const;
@@ -51,6 +53,9 @@ private:
     void releaseController();
     void syncTransformFromController();
     void applyControllerParameters();
+    void syncControllerUserData();
+    glm::vec3 getControllerWorldPositionForTransform(const glm::vec3 &transformWorldPosition) const;
+    glm::vec3 getTransformWorldPositionForController(const physx::PxExtendedVec3 &controllerPosition) const;
 
     Scene *m_scene{nullptr};
     Transform3DComponent *m_transformComponent{nullptr};
@@ -58,6 +63,7 @@ private:
 
     float m_capsuleRadius{0.35f};
     float m_capsuleHeight{1.0f};
+    float m_capsuleCenterOffsetY{0.0f};
     float m_stepOffset{0.3f};
     float m_contactOffset{0.05f};
     float m_slopeLimitDegrees{45.0f};

@@ -21,12 +21,14 @@
 #include "Engine/Render/GraphPasses/TAARenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/PreviewAssetsRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/AnimationTreePreviewPass.hpp"
+#include "Editor/RenderGraphPasses/ObjectIdResolveRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/SelectionOverlayRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/DebugOverlayRenderGraphPass.hpp"
 #include "Editor/RenderGraphPasses/EditorBillboardRenderGraphPass.hpp"
 #include "Editor/ImGuiRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/UIRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ParticleRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/Sprite2DRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ContactShadowRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/CinematicEffectsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/DepthPrepassRenderGraphPass.hpp"
@@ -152,12 +154,14 @@ private:
     engine::renderGraph::RTTemporalAccumulationRenderGraphPass     *m_rtReflectionTemporalRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_cinematicEffectsRenderGraphPass{nullptr};
     engine::renderGraph::MotionBlurRenderGraphPass       *m_motionBlurRenderGraphPass{nullptr};
+    ObjectIdResolveRenderGraphPass *m_objectIdResolveRenderGraphPass{nullptr};
     SelectionOverlayRenderGraphPass *m_selectionOverlayRenderGraphPass{nullptr};
     DebugOverlayRenderGraphPass     *m_debugOverlayRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_uiRenderGraphPass{nullptr};
     EditorBillboardRenderGraphPass *m_editorBillboardRenderGraphPass{nullptr};
     ImGuiRenderGraphPass *m_imGuiRenderGraphPass{nullptr};
     engine::renderGraph::ParticleRenderGraphPass *m_particleRenderGraphPass{nullptr};
+    engine::renderGraph::Sprite2DRenderGraphPass *m_sprite2DRenderGraphPass{nullptr};
     engine::renderGraph::DecalRenderGraphPass *m_decalRenderGraphPass{nullptr};
 
     engine::renderGraph::DepthPrepassRenderGraphPass *m_gameDepthPrepassRenderGraphPass{nullptr};
@@ -169,6 +173,7 @@ private:
     engine::renderGraph::LightingRenderGraphPass *m_gameLightingRenderGraphPass{nullptr};
     engine::renderGraph::SkyLightRenderGraphPass *m_gameSkyLightRenderGraphPass{nullptr};
     engine::renderGraph::ParticleRenderGraphPass *m_gameParticleRenderGraphPass{nullptr};
+    engine::renderGraph::Sprite2DRenderGraphPass *m_gameSprite2DRenderGraphPass{nullptr};
     engine::renderGraph::BloomRenderGraphPass *m_gameBloomRenderGraphPass{nullptr};
     engine::renderGraph::AutoExposureRenderGraphPass *m_gameAutoExposureRenderGraphPass{nullptr};
     engine::renderGraph::TonemapRenderGraphPass *m_gameTonemapRenderGraphPass{nullptr};
@@ -191,6 +196,7 @@ private:
     engine::renderGraph::RTGIDenoiseRenderGraphPass       *m_gameRTGIDenoiseRenderGraphPass{nullptr};
     engine::renderGraph::CinematicEffectsRenderGraphPass *m_gameCinematicEffectsRenderGraphPass{nullptr};
     engine::renderGraph::MotionBlurRenderGraphPass       *m_gameMotionBlurRenderGraphPass{nullptr};
+    DebugOverlayRenderGraphPass                          *m_gameDebugOverlayRenderGraphPass{nullptr};
     engine::renderGraph::UIRenderGraphPass *m_gameUIRenderGraphPass{nullptr};
     engine::renderGraph::DecalRenderGraphPass *m_gameDecalRenderGraphPass{nullptr};
 

@@ -9,6 +9,7 @@
 #include "Engine/Components/AudioComponent.hpp"
 #include "Engine/Components/ReflectionProbeComponent.hpp"
 #include "Engine/Components/DecalComponent.hpp"
+#include "Engine/Components/SpriteComponent.hpp"
 #include "Engine/Components/CameraComponent.hpp"
 #include "Core/VulkanContext.hpp"
 #include "Engine/Components/CharacterMovementComponent.hpp"
@@ -32,6 +33,7 @@
 #include "Engine/Particles/Modules/TurbulenceModule.hpp"
 #include "Engine/Primitives.hpp"
 
+#include "nlohmann/json.hpp"
 #include <imgui.h>
 #include <glm/common.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -41,11 +43,23 @@
 #include <cctype>
 #include <cstring>
 #include <filesystem>
+#include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace
 {
+    struct ComponentClipboardEntry
+    {
+        bool hasData{false};
+        std::string typeKey;
+        std::string label;
+        nlohmann::json payload;
+    };
+
+    ComponentClipboardEntry g_componentClipboard;
+
     bool drawVec3Control(const char *id, glm::vec3 &v, float resetValue = 0.0f, float speed = 0.01f)
     {
         bool changed = false;
@@ -254,6 +268,573 @@ namespace
         entity->removeComponent<elix::engine::RigidBodyComponent>();
     }
 
+    bool hasOtherDirectionalLight(const elix::engine::Scene *scene, const elix::engine::Entity *excludeEntity);
+
+    const char *scriptVariableTypeToString(elix::engine::Script::ExposedVariableType type)
+    {
+        using ExposedVariableType = elix::engine::Script::ExposedVariableType;
+        switch (type)
+        {
+        case ExposedVariableType::Bool:
+            return "bool";
+        case ExposedVariableType::Int:
+            return "int";
+        case ExposedVariableType::Float:
+            return "float";
+        case ExposedVariableType::String:
+            return "string";
+        case ExposedVariableType::Vec2:
+            return "vec2";
+        case ExposedVariableType::Vec3:
+            return "vec3";
+        case ExposedVariableType::Vec4:
+            return "vec4";
+        case ExposedVariableType::Entity:
+            return "entity";
+        default:
+            return "float";
+        }
+    }
+
+    bool scriptVariableTypeFromString(const std::string &type, elix::engine::Script::ExposedVariableType &outType)
+    {
+        using ExposedVariableType = elix::engine::Script::ExposedVariableType;
+        if (type == "bool")
+        {
+            outType = ExposedVariableType::Bool;
+            return true;
+        }
+        if (type == "int")
+        {
+            outType = ExposedVariableType::Int;
+            return true;
+        }
+        if (type == "float")
+        {
+            outType = ExposedVariableType::Float;
+            return true;
+        }
+        if (type == "string")
+        {
+            outType = ExposedVariableType::String;
+            return true;
+        }
+        if (type == "vec2")
+        {
+            outType = ExposedVariableType::Vec2;
+            return true;
+        }
+        if (type == "vec3")
+        {
+            outType = ExposedVariableType::Vec3;
+            return true;
+        }
+        if (type == "vec4")
+        {
+            outType = ExposedVariableType::Vec4;
+            return true;
+        }
+        if (type == "entity")
+        {
+            outType = ExposedVariableType::Entity;
+            return true;
+        }
+        return false;
+    }
+
+    bool scriptVariableFromJson(const nlohmann::json &jsonValue, elix::engine::Script::ExposedVariable &outVariable)
+    {
+        if (!jsonValue.is_object())
+            return false;
+
+        const std::string typeString = jsonValue.value("type", std::string{});
+        if (typeString.empty() || !jsonValue.contains("value"))
+            return false;
+
+        elix::engine::Script::ExposedVariableType type{};
+        if (!scriptVariableTypeFromString(typeString, type))
+            return false;
+
+        outVariable.type = type;
+        const auto &valueJson = jsonValue["value"];
+
+        using ExposedVariableType = elix::engine::Script::ExposedVariableType;
+        switch (type)
+        {
+        case ExposedVariableType::Bool:
+            if (!valueJson.is_boolean())
+                return false;
+            outVariable.value = valueJson.get<bool>();
+            return true;
+        case ExposedVariableType::Int:
+            if (!valueJson.is_number_integer())
+                return false;
+            outVariable.value = valueJson.get<int32_t>();
+            return true;
+        case ExposedVariableType::Float:
+            if (!valueJson.is_number())
+                return false;
+            outVariable.value = valueJson.get<float>();
+            return true;
+        case ExposedVariableType::String:
+            if (!valueJson.is_string())
+                return false;
+            outVariable.value = valueJson.get<std::string>();
+            return true;
+        case ExposedVariableType::Vec2:
+            if (!valueJson.is_array() || valueJson.size() != 2)
+                return false;
+            outVariable.value = glm::vec2(valueJson[0].get<float>(), valueJson[1].get<float>());
+            return true;
+        case ExposedVariableType::Vec3:
+            if (!valueJson.is_array() || valueJson.size() != 3)
+                return false;
+            outVariable.value = glm::vec3(valueJson[0].get<float>(), valueJson[1].get<float>(), valueJson[2].get<float>());
+            return true;
+        case ExposedVariableType::Vec4:
+            if (!valueJson.is_array() || valueJson.size() != 4)
+                return false;
+            outVariable.value = glm::vec4(valueJson[0].get<float>(), valueJson[1].get<float>(), valueJson[2].get<float>(), valueJson[3].get<float>());
+            return true;
+        case ExposedVariableType::Entity:
+            if (valueJson.is_null())
+            {
+                outVariable.value = elix::engine::Script::EntityRef{};
+                return true;
+            }
+
+            if (valueJson.is_number_unsigned())
+            {
+                outVariable.value = elix::engine::Script::EntityRef(valueJson.get<uint32_t>());
+                return true;
+            }
+
+            if (valueJson.is_number_integer())
+            {
+                const int64_t signedId = valueJson.get<int64_t>();
+                if (signedId < 0 || signedId > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))
+                    return false;
+
+                outVariable.value = elix::engine::Script::EntityRef(static_cast<uint32_t>(signedId));
+                return true;
+            }
+
+            return false;
+        default:
+            return false;
+        }
+    }
+
+    nlohmann::json scriptVariableToJson(const elix::engine::Script::ExposedVariable &variable)
+    {
+        nlohmann::json jsonValue;
+        jsonValue["type"] = scriptVariableTypeToString(variable.type);
+
+        std::visit(
+            [&](const auto &value)
+            {
+                using T = std::decay_t<decltype(value)>;
+                if constexpr (std::is_same_v<T, glm::vec2>)
+                    jsonValue["value"] = {value.x, value.y};
+                else if constexpr (std::is_same_v<T, glm::vec3>)
+                    jsonValue["value"] = {value.x, value.y, value.z};
+                else if constexpr (std::is_same_v<T, glm::vec4>)
+                    jsonValue["value"] = {value.x, value.y, value.z, value.w};
+                else if constexpr (std::is_same_v<T, elix::engine::Script::EntityRef>)
+                    jsonValue["value"] = value.isValid() ? nlohmann::json(value.id) : nlohmann::json(nullptr);
+                else
+                    jsonValue["value"] = value;
+            },
+            variable.value);
+
+        return jsonValue;
+    }
+
+    std::string componentClipboardTypeKey(elix::engine::ECS *component)
+    {
+        if (!component)
+            return {};
+
+        if (auto *scriptComponent = dynamic_cast<elix::engine::ScriptComponent *>(component))
+            return "script:" + scriptComponent->getScriptName();
+        if (dynamic_cast<elix::engine::Transform3DComponent *>(component))
+            return "transform3d";
+        if (dynamic_cast<elix::engine::CameraComponent *>(component))
+            return "camera";
+        if (dynamic_cast<elix::engine::CharacterMovementComponent *>(component))
+            return "character_movement";
+        if (dynamic_cast<elix::engine::CollisionComponent *>(component))
+            return "collision";
+        if (dynamic_cast<elix::engine::LightComponent *>(component))
+            return "light";
+        return {};
+    }
+
+    std::optional<nlohmann::json> serializeComponentForClipboard(elix::engine::Entity *entity,
+                                                                 elix::engine::ECS *component)
+    {
+        if (!entity || !component)
+            return std::nullopt;
+
+        if (auto *transform = dynamic_cast<elix::engine::Transform3DComponent *>(component))
+        {
+            const glm::vec3 position = transform->getPosition();
+            const glm::vec3 scale = transform->getScale();
+            const glm::vec3 rotation = transform->getEulerDegrees();
+            return nlohmann::json{
+                {"position", {position.x, position.y, position.z}},
+                {"scale", {scale.x, scale.y, scale.z}},
+                {"rotation", {rotation.x, rotation.y, rotation.z}}};
+        }
+
+        if (auto *cameraComponent = dynamic_cast<elix::engine::CameraComponent *>(component))
+        {
+            auto camera = cameraComponent->getCamera();
+            if (!camera)
+                return std::nullopt;
+
+            const glm::vec3 offset = cameraComponent->getPositionOffset();
+            return nlohmann::json{
+                {"yaw", camera->getYaw()},
+                {"pitch", camera->getPitch()},
+                {"fov", camera->getFOV()},
+                {"aspect", camera->getAspect()},
+                {"position_offset", {offset.x, offset.y, offset.z}}};
+        }
+
+        if (auto *movement = dynamic_cast<elix::engine::CharacterMovementComponent *>(component))
+        {
+            return nlohmann::json{
+                {"radius", movement->getCapsuleRadius()},
+                {"height", movement->getCapsuleHeight()},
+                {"center_offset_y", movement->getCapsuleCenterOffsetY()},
+                {"step_offset", movement->getStepOffset()},
+                {"contact_offset", movement->getContactOffset()},
+                {"slope_limit_degrees", movement->getSlopeLimitDegrees()}};
+        }
+
+        if (auto *collision = dynamic_cast<elix::engine::CollisionComponent *>(component))
+        {
+            nlohmann::json payload;
+            payload["shape_type"] = collision->getShapeType() == elix::engine::CollisionComponent::ShapeType::CAPSULE
+                                        ? "capsule"
+                                        : "box";
+            payload["is_trigger"] = collision->isTrigger();
+            if (collision->getShapeType() == elix::engine::CollisionComponent::ShapeType::CAPSULE)
+            {
+                payload["radius"] = collision->getCapsuleRadius();
+                payload["half_height"] = collision->getCapsuleHalfHeight();
+            }
+            else
+            {
+                const glm::vec3 halfExtents = collision->getBoxHalfExtents();
+                payload["half_extents"] = {halfExtents.x, halfExtents.y, halfExtents.z};
+            }
+            return payload;
+        }
+
+        if (auto *lightComponent = dynamic_cast<elix::engine::LightComponent *>(component))
+        {
+            auto light = lightComponent->getLight();
+            if (!light)
+                return std::nullopt;
+
+            nlohmann::json payload;
+            switch (lightComponent->getLightType())
+            {
+            case elix::engine::LightComponent::LightType::DIRECTIONAL:
+                payload["light_type"] = "directional";
+                if (auto *directionalLight = dynamic_cast<elix::engine::DirectionalLight *>(light.get()))
+                    payload["sky_light_enabled"] = directionalLight->skyLightEnabled;
+                break;
+            case elix::engine::LightComponent::LightType::SPOT:
+                payload["light_type"] = "spot";
+                if (auto *spotLight = dynamic_cast<elix::engine::SpotLight *>(light.get()))
+                {
+                    payload["inner_angle"] = spotLight->innerAngle;
+                    payload["outer_angle"] = spotLight->outerAngle;
+                    payload["range"] = spotLight->range;
+                }
+                break;
+            case elix::engine::LightComponent::LightType::POINT:
+                payload["light_type"] = "point";
+                if (auto *pointLight = dynamic_cast<elix::engine::PointLight *>(light.get()))
+                {
+                    payload["radius"] = pointLight->radius;
+                    payload["falloff"] = pointLight->falloff;
+                }
+                break;
+            default:
+                return std::nullopt;
+            }
+
+            payload["color"] = {light->color.x, light->color.y, light->color.z};
+            payload["strength"] = light->strength;
+            payload["casts_shadows"] = light->castsShadows;
+            return payload;
+        }
+
+        if (auto *scriptComponent = dynamic_cast<elix::engine::ScriptComponent *>(component))
+        {
+            if (scriptComponent->getScriptName().empty())
+                return std::nullopt;
+
+            scriptComponent->syncSerializedVariablesFromScript();
+            nlohmann::json variablesJson = nlohmann::json::object();
+            for (const auto &[variableName, variable] : scriptComponent->getSerializedVariables())
+                variablesJson[variableName] = scriptVariableToJson(variable);
+
+            return nlohmann::json{
+                {"script_name", scriptComponent->getScriptName()},
+                {"variables", std::move(variablesJson)}};
+        }
+
+        return std::nullopt;
+    }
+
+    bool applyComponentClipboardPayload(elix::engine::Scene *scene,
+                                        elix::engine::Entity *entity,
+                                        elix::engine::ECS *component,
+                                        const nlohmann::json &payload,
+                                        std::string &outError)
+    {
+        outError.clear();
+
+        if (!entity || !component)
+        {
+            outError = "Invalid component target";
+            return false;
+        }
+
+        if (auto *transform = dynamic_cast<elix::engine::Transform3DComponent *>(component))
+        {
+            if (payload.contains("position") && payload["position"].is_array() && payload["position"].size() == 3)
+                transform->setPosition(glm::vec3(payload["position"][0], payload["position"][1], payload["position"][2]));
+            if (payload.contains("scale") && payload["scale"].is_array() && payload["scale"].size() == 3)
+                transform->setScale(glm::vec3(payload["scale"][0], payload["scale"][1], payload["scale"][2]));
+            if (payload.contains("rotation") && payload["rotation"].is_array() && payload["rotation"].size() == 3)
+                transform->setEulerDegrees(glm::vec3(payload["rotation"][0], payload["rotation"][1], payload["rotation"][2]));
+            return true;
+        }
+
+        if (auto *cameraComponent = dynamic_cast<elix::engine::CameraComponent *>(component))
+        {
+            auto camera = cameraComponent->getCamera();
+            if (!camera)
+            {
+                outError = "Camera is missing";
+                return false;
+            }
+
+            camera->setYaw(payload.value("yaw", camera->getYaw()));
+            camera->setPitch(payload.value("pitch", camera->getPitch()));
+            camera->setFOV(payload.value("fov", camera->getFOV()));
+            camera->setAspect(payload.value("aspect", camera->getAspect()));
+
+            if (payload.contains("position_offset") && payload["position_offset"].is_array() && payload["position_offset"].size() == 3)
+                cameraComponent->setPositionOffset(glm::vec3(payload["position_offset"][0],
+                                                             payload["position_offset"][1],
+                                                             payload["position_offset"][2]));
+            return true;
+        }
+
+        if (auto *movement = dynamic_cast<elix::engine::CharacterMovementComponent *>(component))
+        {
+            movement->setCapsule(std::max(payload.value("radius", movement->getCapsuleRadius()), 0.05f),
+                                 std::max(payload.value("height", movement->getCapsuleHeight()), 0.1f));
+            movement->setCapsuleCenterOffsetY(payload.value("center_offset_y", movement->getCapsuleCenterOffsetY()));
+            movement->setStepOffset(payload.value("step_offset", movement->getStepOffset()));
+            movement->setContactOffset(payload.value("contact_offset", movement->getContactOffset()));
+            movement->setSlopeLimitDegrees(payload.value("slope_limit_degrees", movement->getSlopeLimitDegrees()));
+            return true;
+        }
+
+        if (auto *collision = dynamic_cast<elix::engine::CollisionComponent *>(component))
+        {
+            const std::string shapeType = payload.value("shape_type",
+                                                        collision->getShapeType() == elix::engine::CollisionComponent::ShapeType::CAPSULE
+                                                            ? std::string("capsule")
+                                                            : std::string("box"));
+            const bool targetCapsule = shapeType == "capsule";
+            const bool currentCapsule = collision->getShapeType() == elix::engine::CollisionComponent::ShapeType::CAPSULE;
+            if (targetCapsule != currentCapsule)
+            {
+                outError = "Shape type paste is only supported onto the same collision shape type";
+                return false;
+            }
+
+            if (currentCapsule)
+            {
+                collision->setCapsuleDimensions(std::max(payload.value("radius", collision->getCapsuleRadius()), 0.01f),
+                                                std::max(payload.value("half_height", collision->getCapsuleHalfHeight()), 0.0f));
+            }
+            else if (payload.contains("half_extents") && payload["half_extents"].is_array() && payload["half_extents"].size() == 3)
+            {
+                collision->setBoxHalfExtents(glm::vec3(payload["half_extents"][0],
+                                                       payload["half_extents"][1],
+                                                       payload["half_extents"][2]));
+            }
+
+            collision->setTrigger(payload.value("is_trigger", collision->isTrigger()));
+            return true;
+        }
+
+        if (auto *lightComponent = dynamic_cast<elix::engine::LightComponent *>(component))
+        {
+            const std::string lightTypeString = payload.value("light_type", std::string{});
+            elix::engine::LightComponent::LightType requestedType = lightComponent->getLightType();
+            if (lightTypeString == "directional")
+                requestedType = elix::engine::LightComponent::LightType::DIRECTIONAL;
+            else if (lightTypeString == "spot")
+                requestedType = elix::engine::LightComponent::LightType::SPOT;
+            else if (lightTypeString == "point")
+                requestedType = elix::engine::LightComponent::LightType::POINT;
+
+            if (requestedType == elix::engine::LightComponent::LightType::DIRECTIONAL &&
+                lightComponent->getLightType() != elix::engine::LightComponent::LightType::DIRECTIONAL &&
+                hasOtherDirectionalLight(scene, entity))
+            {
+                outError = "Only one directional light is allowed in a scene";
+                return false;
+            }
+
+            if (requestedType != lightComponent->getLightType())
+                lightComponent->changeLightType(requestedType);
+
+            auto light = lightComponent->getLight();
+            if (!light)
+            {
+                outError = "Light instance is missing";
+                return false;
+            }
+
+            if (payload.contains("color") && payload["color"].is_array() && payload["color"].size() == 3)
+                light->color = glm::vec3(payload["color"][0], payload["color"][1], payload["color"][2]);
+            light->strength = payload.value("strength", light->strength);
+            light->castsShadows = payload.value("casts_shadows", light->castsShadows);
+
+            if (lightComponent->getLightType() == elix::engine::LightComponent::LightType::DIRECTIONAL)
+            {
+                if (auto *directionalLight = dynamic_cast<elix::engine::DirectionalLight *>(light.get()))
+                    directionalLight->skyLightEnabled = payload.value("sky_light_enabled", directionalLight->skyLightEnabled);
+            }
+            else if (lightComponent->getLightType() == elix::engine::LightComponent::LightType::POINT)
+            {
+                if (auto *pointLight = dynamic_cast<elix::engine::PointLight *>(light.get()))
+                {
+                    pointLight->radius = payload.value("radius", pointLight->radius);
+                    pointLight->falloff = payload.value("falloff", pointLight->falloff);
+                }
+            }
+            else if (lightComponent->getLightType() == elix::engine::LightComponent::LightType::SPOT)
+            {
+                if (auto *spotLight = dynamic_cast<elix::engine::SpotLight *>(light.get()))
+                {
+                    spotLight->innerAngle = payload.value("inner_angle", spotLight->innerAngle);
+                    spotLight->outerAngle = payload.value("outer_angle", spotLight->outerAngle);
+                    spotLight->range = payload.value("range", spotLight->range);
+                }
+            }
+
+            return true;
+        }
+
+        if (auto *scriptComponent = dynamic_cast<elix::engine::ScriptComponent *>(component))
+        {
+            if (payload.value("script_name", std::string{}) != scriptComponent->getScriptName())
+            {
+                outError = "Clipboard script does not match this script component";
+                return false;
+            }
+
+            elix::engine::Script::ExposedVariablesMap serializedVariables;
+            if (payload.contains("variables") && payload["variables"].is_object())
+            {
+                for (auto variableIt = payload["variables"].begin(); variableIt != payload["variables"].end(); ++variableIt)
+                {
+                    elix::engine::Script::ExposedVariable variable;
+                    if (!scriptVariableFromJson(variableIt.value(), variable))
+                        continue;
+                    serializedVariables[variableIt.key()] = std::move(variable);
+                }
+            }
+
+            scriptComponent->setSerializedVariables(serializedVariables);
+            return true;
+        }
+
+        outError = "Clipboard paste is not supported for this component yet";
+        return false;
+    }
+
+    void drawComponentClipboardToolbar(elix::editor::NotificationManager &notificationManager,
+                                       elix::engine::Scene *scene,
+                                       elix::engine::Entity *entity,
+                                       elix::engine::ECS *component,
+                                       const char *label)
+    {
+        if (!component)
+            return;
+
+        const std::string typeKey = componentClipboardTypeKey(component);
+        if (typeKey.empty())
+            return;
+
+        ImGui::PushID(component);
+
+        if (ImGui::SmallButton("Copy Settings"))
+        {
+            if (auto payload = serializeComponentForClipboard(entity, component); payload.has_value())
+            {
+                g_componentClipboard.hasData = true;
+                g_componentClipboard.typeKey = typeKey;
+                g_componentClipboard.label = label ? label : typeKey;
+                g_componentClipboard.payload = std::move(payload.value());
+
+                nlohmann::json clipboardJson{
+                    {"type_key", g_componentClipboard.typeKey},
+                    {"label", g_componentClipboard.label},
+                    {"payload", g_componentClipboard.payload}};
+                ImGui::SetClipboardText(clipboardJson.dump(2).c_str());
+                notificationManager.showSuccess("Copied component settings: " + g_componentClipboard.label);
+            }
+            else
+            {
+                notificationManager.showError("Failed to copy component settings");
+            }
+        }
+
+        ImGui::SameLine();
+
+        const bool canPaste = g_componentClipboard.hasData && g_componentClipboard.typeKey == typeKey;
+        if (!canPaste)
+            ImGui::BeginDisabled();
+
+        if (ImGui::SmallButton("Paste Settings"))
+        {
+            std::string error;
+            if (applyComponentClipboardPayload(scene, entity, component, g_componentClipboard.payload, error))
+                notificationManager.showSuccess("Pasted component settings: " + g_componentClipboard.label);
+            else
+                notificationManager.showError(error.empty() ? "Failed to paste component settings" : error);
+        }
+
+        if (!canPaste)
+            ImGui::EndDisabled();
+
+        if (g_componentClipboard.hasData)
+        {
+            ImGui::SameLine();
+            if (canPaste)
+                ImGui::TextDisabled("Clipboard ready");
+            else
+                ImGui::TextDisabled("Clipboard: %s", g_componentClipboard.label.c_str());
+        }
+
+        ImGui::Separator();
+        ImGui::PopID();
+    }
+
     bool createCollisionComponent(elix::engine::Scene *scene,
                                   elix::engine::Entity *entity,
                                   elix::engine::CollisionComponent::ShapeType shapeType)
@@ -422,6 +1003,18 @@ namespace
                     return;
                 }
                 e->addComponent<elix::engine::DecalComponent>();
+            });
+
+        reg.registerComponent("Sprite", "Common",
+            [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &ctx)
+            {
+                if (e->getComponent<elix::engine::SpriteComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Sprite already exists on this entity");
+                    ctx.closePopup = false;
+                    return;
+                }
+                e->addComponent<elix::engine::SpriteComponent>();
             });
 
         // ── Physics ──────────────────────────────────────────────────────────
@@ -801,6 +1394,7 @@ void EntityDetailsView::draw(Editor &editor)
         {
             if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
             {
+                drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, transformComponent, "Transform");
                 constexpr float kLabelW = 68.0f;
                 ImGui::Spacing();
 
@@ -838,6 +1432,7 @@ void EntityDetailsView::draw(Editor &editor)
         {
             if (ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
             {
+                drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, lightComponent, "Light");
                 auto lightType = lightComponent->getLightType();
                 auto light = lightComponent->getLight();
 
@@ -1059,6 +1654,28 @@ void EntityDetailsView::draw(Editor &editor)
         {
             if (ImGui::CollapsingHeader("Skeletal mesh", ImGuiTreeNodeFlags_DefaultOpen))
             {
+                bool showBones = editor.m_showSelectedSkeletalBones;
+                if (ImGui::Checkbox("Show Bones", &showBones))
+                {
+                    editor.m_showSelectedSkeletalBones = showBones;
+                    if (!showBones)
+                        editor.clearSelectedSkeletalBoneSelection();
+                }
+
+                ImGui::SameLine();
+                ImGui::TextDisabled("%zu bones", skeletalMeshComponent->getSkeleton().getBonesCount());
+
+                if (editor.m_showSelectedSkeletalBones)
+                {
+                    const std::string selectedBoneName = editor.getSelectedSkeletalBoneName();
+                    if (!selectedBoneName.empty())
+                        ImGui::Text("Selected Bone: %s", selectedBoneName.c_str());
+                    else
+                        ImGui::TextDisabled("Click a bone in the viewport to show its name.");
+                }
+
+                ImGui::Separator();
+
                 const auto &meshes = skeletalMeshComponent->getMeshes();
 
                 ImGui::PushID("SkeletalMeshAllSlotsMaterial");
@@ -1341,7 +1958,10 @@ void EntityDetailsView::draw(Editor &editor)
 
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Clear"))
+                    {
                         animatorComponent->clearTree();
+                        tree = animatorComponent->getTree(); // now null — prevents dangling access below
+                    }
 
                     // Runtime state info
                     const std::string curState = animatorComponent->getCurrentStateName();
@@ -1352,6 +1972,12 @@ void EntityDetailsView::draw(Editor &editor)
                     ImGui::TextDisabled("Machine Path: %s", machinePath.empty() ? "(none)" : machinePath.c_str());
                     if (animatorComponent->isInTransition())
                         ImGui::TextDisabled("  (transitioning %.0f%%)", animatorComponent->getCurrentStateNormalizedTime() * 100.0f);
+
+                    bool ignoreRootBoneY = animatorComponent->getIgnoreRootBoneY();
+                    if (ImGui::Checkbox("Ignore Root Bone Y", &ignoreRootBoneY))
+                        animatorComponent->setIgnoreRootBoneY(ignoreRootBoneY);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Locks the root bone vertical translation to the bind pose. Useful for controller-driven characters.");
 
                     // Parameter live controls
                     if (tree && !tree->parameters.empty())
@@ -1438,6 +2064,7 @@ void EntityDetailsView::draw(Editor &editor)
         {
             if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
             {
+                drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, cameraComponent, "Camera");
                 auto camera = cameraComponent->getCamera();
                 float yaw = camera->getYaw();
                 float pitch = camera->getPitch();
@@ -1482,13 +2109,26 @@ void EntityDetailsView::draw(Editor &editor)
         {
             if (ImGui::CollapsingHeader("Character Movement", ImGuiTreeNodeFlags_DefaultOpen))
             {
+                drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, characterMovement, "Character Movement");
                 float radius = characterMovement->getCapsuleRadius();
                 float height = characterMovement->getCapsuleHeight();
+                float centerOffsetY = characterMovement->getCapsuleCenterOffsetY();
                 bool capsuleChanged = false;
                 capsuleChanged |= ImGui::DragFloat("Capsule Radius", &radius, 0.01f, 0.05f, 1000.0f, "%.3f");
                 capsuleChanged |= ImGui::DragFloat("Capsule Height", &height, 0.01f, 0.1f, 1000.0f, "%.3f");
                 if (capsuleChanged)
                     characterMovement->setCapsule(radius, height);
+
+                if (ImGui::DragFloat("Capsule Center Offset Y", &centerOffsetY, 0.01f, -1000.0f, 1000.0f, "%.3f"))
+                    characterMovement->setCapsuleCenterOffsetY(centerOffsetY);
+
+                const float capsuleBottomLocalY = centerOffsetY - (height * 0.5f + radius);
+                ImGui::TextDisabled("Capsule Bottom (local Y): %.3f", capsuleBottomLocalY);
+                if (auto *transformComponent = m_selectedEntity->getComponent<engine::Transform3DComponent>())
+                {
+                    const float capsuleBottomWorldY = transformComponent->getWorldPosition().y + capsuleBottomLocalY;
+                    ImGui::TextDisabled("Capsule Bottom (world Y): %.3f", capsuleBottomWorldY);
+                }
 
                 float stepOffset = characterMovement->getStepOffset();
                 if (ImGui::DragFloat("Step Offset", &stepOffset, 0.01f, 0.0f, 1000.0f, "%.3f"))
@@ -1516,6 +2156,7 @@ void EntityDetailsView::draw(Editor &editor)
         {
             if (ImGui::CollapsingHeader("Collision", ImGuiTreeNodeFlags_DefaultOpen))
             {
+                drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, collisionComponent, "Collision");
                 const bool isBox = collisionComponent->getShapeType() == engine::CollisionComponent::ShapeType::BOX;
                 ImGui::Text("Type: %s", isBox ? "Box" : "Capsule");
 
@@ -1745,6 +2386,62 @@ void EntityDetailsView::draw(Editor &editor)
                 ImGui::PopID();
             }
         }
+        else if (auto *spriteComponent = dynamic_cast<engine::SpriteComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Sprite", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                ImGui::PushID("SpriteComp");
+
+                // Texture slot
+                const std::string texLabel = spriteComponent->texturePath.empty()
+                    ? std::string("<None>")
+                    : std::filesystem::path(spriteComponent->texturePath).filename().string();
+                ImGui::TextUnformatted("Texture:");
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", texLabel.c_str());
+
+                ImGui::Button("Drop .elixasset here##SpriteTex");
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+                    {
+                        std::string droppedPath((const char *)payload->Data, payload->DataSize - 1);
+                        spriteComponent->texturePath = droppedPath;
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                if (!spriteComponent->texturePath.empty() && ImGui::Button("Clear##SpriteClearTex"))
+                    spriteComponent->texturePath.clear();
+
+                ImGui::Separator();
+
+                ImGui::ColorEdit4("Color##SpriteColor", &spriteComponent->color.x);
+                ImGui::DragFloat2("Size##SpriteSize", &spriteComponent->size.x, 0.01f, 0.001f, 1000.f, "%.3f");
+                ImGui::DragFloat("Rotation##SpriteRot", &spriteComponent->rotation, 0.01f, -6.2832f, 6.2832f, "%.3f rad");
+                ImGui::DragInt("Sort Layer##SpriteSortLayer", &spriteComponent->sortLayer);
+
+                ImGui::Separator();
+
+                ImGui::TextUnformatted("UV Rect (u0, v0, u1, v1):");
+                ImGui::DragFloat4("##SpriteUVRect", &spriteComponent->uvRect.x, 0.005f, 0.f, 1.f, "%.3f");
+
+                ImGui::Checkbox("Flip X##SpriteFlipX", &spriteComponent->flipX);
+                ImGui::SameLine();
+                ImGui::Checkbox("Flip Y##SpriteFlipY", &spriteComponent->flipY);
+                ImGui::Checkbox("Visible##SpriteVisible", &spriteComponent->visible);
+
+                ImGui::Separator();
+
+                if (ImGui::Button("Remove Sprite"))
+                {
+                    m_selectedEntity->removeComponent<engine::SpriteComponent>();
+                    ImGui::PopID();
+                    return;
+                }
+
+                ImGui::PopID();
+            }
+        }
         else if (auto *decalComponent = dynamic_cast<engine::DecalComponent *>(component.get()))
         {
             if (ImGui::CollapsingHeader("Decal", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1835,10 +2532,21 @@ void EntityDetailsView::draw(Editor &editor)
 
             if (ImGui::TreeNodeEx(displayName.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
             {
+                drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, scriptComponent, displayName.c_str());
                 auto *scriptInstance = scriptComponent->getScript();
                 if (!scriptInstance)
                 {
-                    ImGui::TextDisabled("Script instance is null");
+                    if (scriptComponent->isBroken())
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+                        ImGui::TextWrapped("Plugin not loaded — script data preserved.");
+                        ImGui::PopStyleColor();
+                        ImGui::TextDisabled("Load the plugin and reload the scene to restore.");
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Script instance is null");
+                    }
                 }
                 else
                 {

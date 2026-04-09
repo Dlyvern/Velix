@@ -90,12 +90,30 @@ Skeleton::BoneInfo *Skeleton::getBone(const std::string &boneName)
     return &m_bonesInfo[id];
 }
 
+const Skeleton::BoneInfo *Skeleton::getBone(const std::string &boneName) const
+{
+    const int id = getBoneId(boneName);
+
+    if (id == -1)
+        return nullptr;
+
+    return &m_bonesInfo[static_cast<size_t>(id)];
+}
+
 Skeleton::BoneInfo *Skeleton::getBone(int boneID)
 {
     if (boneID < 0 || static_cast<size_t>(boneID) >= m_bonesInfo.size())
         return nullptr;
 
     return &m_bonesInfo[boneID];
+}
+
+const Skeleton::BoneInfo *Skeleton::getBone(int boneID) const
+{
+    if (boneID < 0 || static_cast<size_t>(boneID) >= m_bonesInfo.size())
+        return nullptr;
+
+    return &m_bonesInfo[static_cast<size_t>(boneID)];
 }
 
 Skeleton::BoneInfo *Skeleton::getParent()

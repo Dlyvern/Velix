@@ -289,7 +289,16 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
     }
 
     if (!m_descriptorSetsInitialized)
-        m_descriptorSetsInitialized = true;
+    m_descriptorSetsInitialized = true;
+}
+
+void LightingRenderGraphPass::freeResources()
+{
+    m_colorRenderTargets.clear();
+    for (auto &descriptorSet : m_descriptorSets)
+        descriptorSet = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+    outputs.color.set(MultiHandle{});
 }
 
 void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)

@@ -1,8 +1,10 @@
 #include "Engine/Render/GraphPasses/GBufferRenderGraphPass.hpp"
 
+#include "Core/Logger.hpp"
 #include "Core/VulkanContext.hpp"
 
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 #include "Engine/Shaders/ShaderFamily.hpp"
 
@@ -13,6 +15,57 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 namespace
 {
+    uint32_t sampleCountToInt(VkSampleCountFlagBits sampleCount)
+    {
+        switch (sampleCount)
+        {
+        case VK_SAMPLE_COUNT_2_BIT:
+            return 2u;
+        case VK_SAMPLE_COUNT_4_BIT:
+            return 4u;
+        case VK_SAMPLE_COUNT_8_BIT:
+            return 8u;
+        case VK_SAMPLE_COUNT_16_BIT:
+            return 16u;
+        case VK_SAMPLE_COUNT_32_BIT:
+            return 32u;
+        case VK_SAMPLE_COUNT_64_BIT:
+            return 64u;
+        case VK_SAMPLE_COUNT_1_BIT:
+        default:
+            return 1u;
+        }
+    }
+
+    VkSampleCountFlagBits resolveGBufferSampleCount()
+    {
+        const auto context = core::VulkanContext::getContext();
+        const auto requested = RenderQualitySettings::getInstance().getRequestedMsaaSampleCount();
+
+        if (requested == VK_SAMPLE_COUNT_1_BIT)
+            return VK_SAMPLE_COUNT_1_BIT;
+
+        const auto clamped = context->clampSupportedSampleCount(requested);
+        if (clamped != requested)
+        {
+            VX_ENGINE_WARNING_STREAM("GBuffer MSAA requested "
+                                     << sampleCountToInt(requested)
+                                     << "x, but the adapter only supports up to "
+                                     << sampleCountToInt(clamped)
+                                     << "x for color+depth framebuffers. Clamping.\n");
+        }
+
+        if (!context->supportsSampleZeroDepthResolve())
+        {
+            VX_ENGINE_WARNING_STREAM("GBuffer MSAA requested "
+                                     << sampleCountToInt(requested)
+                                     << "x, but depth resolve mode SAMPLE_ZERO is unavailable. Falling back to Off.\n");
+            return VK_SAMPLE_COUNT_1_BIT;
+        }
+
+        return clamped;
+    }
+
     constexpr float kSharedDepthBiasConstantFactor = -0.25f;
     constexpr float kSharedDepthBiasSlopeFactor = 0.0f;
 
@@ -90,6 +143,7 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             key.depthBiasEnable = depthPrepassCovered;
             key.depthBiasConstantFactor = depthPrepassCovered ? kSharedDepthBiasConstantFactor : 0.0f;
             key.depthBiasSlopeFactor = depthPrepassCovered ? kSharedDepthBiasSlopeFactor : 0.0f;
+            key.rasterizationSamples = m_rasterizationSamples;
             return key;
         };
 
@@ -247,49 +301,81 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
 
 std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext &renderContext) const
 {
+    const bool msaaEnabled = m_rasterizationSamples != VK_SAMPLE_COUNT_1_BIT;
+
     IRenderGraphPass::RenderPassExecution execution{};
     execution.renderArea.offset = {0, 0};
     execution.renderArea.extent = m_extent;
     execution.colorFormats = m_colorFormats;
     execution.depthFormat = m_depthFormat;
+    execution.rasterizationSamples = m_rasterizationSamples;
 
     VkRenderingAttachmentInfo normalColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    normalColor.imageView = m_normalRenderTargets[renderContext.currentImageIndex]->vkImageView();
+    normalColor.imageView = (msaaEnabled ? m_msaaNormalRenderTargets[renderContext.currentImageIndex]
+                                         : m_normalRenderTargets[renderContext.currentImageIndex])->vkImageView();
     normalColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     normalColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     normalColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     normalColor.clearValue = m_clearValues[0];
+    if (msaaEnabled)
+    {
+        normalColor.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+        normalColor.resolveImageView = m_normalRenderTargets[renderContext.currentImageIndex]->vkImageView();
+        normalColor.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
 
     VkRenderingAttachmentInfo albedoColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    albedoColor.imageView = m_albedoRenderTargets[renderContext.currentImageIndex]->vkImageView();
+    albedoColor.imageView = (msaaEnabled ? m_msaaAlbedoRenderTargets[renderContext.currentImageIndex]
+                                         : m_albedoRenderTargets[renderContext.currentImageIndex])->vkImageView();
     albedoColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     albedoColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     albedoColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     albedoColor.clearValue = m_clearValues[1];
+    if (msaaEnabled)
+    {
+        albedoColor.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+        albedoColor.resolveImageView = m_albedoRenderTargets[renderContext.currentImageIndex]->vkImageView();
+        albedoColor.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
 
     VkRenderingAttachmentInfo materialColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    materialColor.imageView = m_materialRenderTargets[renderContext.currentImageIndex]->vkImageView();
+    materialColor.imageView = (msaaEnabled ? m_msaaMaterialRenderTargets[renderContext.currentImageIndex]
+                                           : m_materialRenderTargets[renderContext.currentImageIndex])->vkImageView();
     materialColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     materialColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     materialColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     materialColor.clearValue = m_clearValues[2];
+    if (msaaEnabled)
+    {
+        materialColor.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+        materialColor.resolveImageView = m_materialRenderTargets[renderContext.currentImageIndex]->vkImageView();
+        materialColor.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
 
     VkRenderingAttachmentInfo emissiveColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    emissiveColor.imageView = m_emissiveRenderTargets[renderContext.currentImageIndex]->vkImageView();
+    emissiveColor.imageView = (msaaEnabled ? m_msaaEmissiveRenderTargets[renderContext.currentImageIndex]
+                                           : m_emissiveRenderTargets[renderContext.currentImageIndex])->vkImageView();
     emissiveColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     emissiveColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     emissiveColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     emissiveColor.clearValue = m_clearValues[3];
+    if (msaaEnabled)
+    {
+        emissiveColor.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+        emissiveColor.resolveImageView = m_emissiveRenderTargets[renderContext.currentImageIndex]->vkImageView();
+        emissiveColor.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
 
     VkRenderingAttachmentInfo objectColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    objectColor.imageView = m_objectIdRenderTarget ? m_objectIdRenderTarget->vkImageView() : VK_NULL_HANDLE;
+    const auto *objectAttachmentTarget = msaaEnabled ? m_msaaObjectIdRenderTarget : m_objectIdRenderTarget;
+    objectColor.imageView = objectAttachmentTarget ? objectAttachmentTarget->vkImageView() : VK_NULL_HANDLE;
     objectColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     objectColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     objectColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     objectColor.clearValue = m_clearValues[4];
 
     VkRenderingAttachmentInfo depthAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    depthAttachment.imageView = m_depthRenderTarget->vkImageView();
+    depthAttachment.imageView = (msaaEnabled ? m_msaaDepthRenderTarget : m_depthRenderTarget)->vkImageView();
     depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     // When using a depth prepass the buffer is already filled — load it.
     // Opaque objects use EQUAL test + no write, so STORE is still needed
@@ -297,9 +383,15 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     depthAttachment.loadOp = m_hasExternalDepth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.clearValue = m_clearValues[5];
+    if (msaaEnabled)
+    {
+        depthAttachment.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+        depthAttachment.resolveImageView = m_depthRenderTarget->vkImageView();
+        depthAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
 
     execution.colorsRenderingItems = {normalColor, albedoColor, materialColor, emissiveColor};
-    if (m_enableObjectId && m_objectIdRenderTarget)
+    if (m_enableObjectId && objectAttachmentTarget)
         execution.colorsRenderingItems.push_back(objectColor);
     execution.depthRenderingItem = depthAttachment;
 
@@ -307,8 +399,19 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     execution.targets[m_albedoTextureHandlers[renderContext.currentImageIndex]] = m_albedoRenderTargets[renderContext.currentImageIndex];
     execution.targets[m_materialTextureHandlers[renderContext.currentImageIndex]] = m_materialRenderTargets[renderContext.currentImageIndex];
     execution.targets[m_emissiveTextureHandlers[renderContext.currentImageIndex]] = m_emissiveRenderTargets[renderContext.currentImageIndex];
-    if (m_enableObjectId && m_objectIdRenderTarget && m_objectIdTextureHandler.isValid())
+    if (msaaEnabled)
+    {
+        execution.targets[m_msaaNormalTextureHandlers[renderContext.currentImageIndex]] = m_msaaNormalRenderTargets[renderContext.currentImageIndex];
+        execution.targets[m_msaaAlbedoTextureHandlers[renderContext.currentImageIndex]] = m_msaaAlbedoRenderTargets[renderContext.currentImageIndex];
+        execution.targets[m_msaaMaterialTextureHandlers[renderContext.currentImageIndex]] = m_msaaMaterialRenderTargets[renderContext.currentImageIndex];
+        execution.targets[m_msaaEmissiveTextureHandlers[renderContext.currentImageIndex]] = m_msaaEmissiveRenderTargets[renderContext.currentImageIndex];
+        execution.targets[m_msaaDepthTextureHandler] = m_msaaDepthRenderTarget;
+    }
+
+    if (!msaaEnabled && m_enableObjectId && m_objectIdRenderTarget && m_objectIdTextureHandler.isValid())
         execution.targets[m_objectIdTextureHandler] = m_objectIdRenderTarget;
+    if (msaaEnabled && m_enableObjectId && m_msaaObjectIdRenderTarget && m_msaaObjectIdTextureHandler.isValid())
+        execution.targets[m_msaaObjectIdTextureHandler] = m_msaaObjectIdRenderTarget;
     execution.targets[m_depthTextureHandler] = m_depthRenderTarget;
 
     return {execution};
@@ -328,31 +431,57 @@ void GBufferRenderGraphPass::setExtent(VkExtent2D extent)
 void GBufferRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 {
     m_depthRenderTarget = storage.getTexture(m_depthTextureHandler);
+    m_msaaDepthRenderTarget = m_msaaDepthTextureHandler.isValid() ? storage.getTexture(m_msaaDepthTextureHandler) : nullptr;
     m_objectIdRenderTarget = (m_enableObjectId && m_objectIdTextureHandler.isValid()) ? storage.getTexture(m_objectIdTextureHandler) : nullptr;
+    m_msaaObjectIdRenderTarget = (m_enableObjectId && m_msaaObjectIdTextureHandler.isValid()) ? storage.getTexture(m_msaaObjectIdTextureHandler) : nullptr;
 
     const int imageCount = static_cast<int>(core::VulkanContext::getContext()->getSwapchain()->getImages().size());
     m_normalRenderTargets.resize(imageCount);
+    m_msaaNormalRenderTargets.resize(imageCount);
     m_albedoRenderTargets.resize(imageCount);
+    m_msaaAlbedoRenderTargets.resize(imageCount);
     m_materialRenderTargets.resize(imageCount);
+    m_msaaMaterialRenderTargets.resize(imageCount);
     m_emissiveRenderTargets.resize(imageCount);
+    m_msaaEmissiveRenderTargets.resize(imageCount);
 
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
     {
         m_normalRenderTargets[imageIndex] = storage.getTexture(m_normalTextureHandlers[imageIndex]);
+        m_msaaNormalRenderTargets[imageIndex] = m_msaaNormalTextureHandlers.empty() ? nullptr : storage.getTexture(m_msaaNormalTextureHandlers[imageIndex]);
         m_albedoRenderTargets[imageIndex] = storage.getTexture(m_albedoTextureHandlers[imageIndex]);
+        m_msaaAlbedoRenderTargets[imageIndex] = m_msaaAlbedoTextureHandlers.empty() ? nullptr : storage.getTexture(m_msaaAlbedoTextureHandlers[imageIndex]);
         m_materialRenderTargets[imageIndex] = storage.getTexture(m_materialTextureHandlers[imageIndex]);
+        m_msaaMaterialRenderTargets[imageIndex] = m_msaaMaterialTextureHandlers.empty() ? nullptr : storage.getTexture(m_msaaMaterialTextureHandlers[imageIndex]);
         m_emissiveRenderTargets[imageIndex] = storage.getTexture(m_emissiveTextureHandlers[imageIndex]);
+        m_msaaEmissiveRenderTargets[imageIndex] = m_msaaEmissiveTextureHandlers.empty() ? nullptr : storage.getTexture(m_msaaEmissiveTextureHandlers[imageIndex]);
     }
 }
 
 void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 {
     m_normalTextureHandlers.clear();
+    m_msaaNormalTextureHandlers.clear();
     m_albedoTextureHandlers.clear();
+    m_msaaAlbedoTextureHandlers.clear();
     m_materialTextureHandlers.clear();
+    m_msaaMaterialTextureHandlers.clear();
     m_emissiveTextureHandlers.clear();
+    m_msaaEmissiveTextureHandlers.clear();
     m_colorFormats.clear();
+    m_msaaDepthTextureHandler = {};
     m_objectIdTextureHandler = {};
+    m_msaaObjectIdTextureHandler = {};
+    m_rasterizationSamples = resolveGBufferSampleCount();
+
+    bool msaaEnabled = m_rasterizationSamples != VK_SAMPLE_COUNT_1_BIT;
+    if (msaaEnabled && m_hasExternalDepth &&
+        (!m_externalDepthHandlerPtr || !m_externalResolvedDepthHandlerPtr || !m_externalResolvedDepthHandlerPtr->isValid()))
+    {
+        VX_ENGINE_WARNING_STREAM("GBuffer MSAA requested, but the external depth-prepass path does not expose both multisampled and resolved depth targets. Falling back to Off.\n");
+        m_rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        msaaEnabled = false;
+    }
 
     const VkFormat normalFormat = VK_FORMAT_R8G8B8A8_UNORM;
     const VkFormat albedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
@@ -369,6 +498,12 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     RGPTextureDescription emissiveTextureDescription{emissiveFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription objectIdTextureDescription{VK_FORMAT_R32_UINT, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription depthTextureDescription{m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+    RGPTextureDescription msaaNormalTextureDescription{normalFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    RGPTextureDescription msaaAlbedoTextureDescription{albedoFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    RGPTextureDescription msaaMaterialTextureDescription{materialFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    RGPTextureDescription msaaEmissiveTextureDescription{emissiveFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    RGPTextureDescription msaaObjectIdTextureDescription{VK_FORMAT_R32_UINT, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    RGPTextureDescription msaaDepthTextureDescription{m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
     normalTextureDescription.setCustomExtentFunction([this]
                                                      { return m_extent; });
@@ -382,6 +517,25 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
                                                        { return m_extent; });
     depthTextureDescription.setCustomExtentFunction([this]
                                                     { return m_extent; });
+    msaaNormalTextureDescription.setCustomExtentFunction([this]
+                                                         { return m_extent; });
+    msaaAlbedoTextureDescription.setCustomExtentFunction([this]
+                                                         { return m_extent; });
+    msaaMaterialTextureDescription.setCustomExtentFunction([this]
+                                                           { return m_extent; });
+    msaaEmissiveTextureDescription.setCustomExtentFunction([this]
+                                                           { return m_extent; });
+    msaaObjectIdTextureDescription.setCustomExtentFunction([this]
+                                                           { return m_extent; });
+    msaaDepthTextureDescription.setCustomExtentFunction([this]
+                                                        { return m_extent; });
+
+    msaaNormalTextureDescription.setSampleCount(m_rasterizationSamples);
+    msaaAlbedoTextureDescription.setSampleCount(m_rasterizationSamples);
+    msaaMaterialTextureDescription.setSampleCount(m_rasterizationSamples);
+    msaaEmissiveTextureDescription.setSampleCount(m_rasterizationSamples);
+    msaaObjectIdTextureDescription.setSampleCount(m_rasterizationSamples);
+    msaaDepthTextureDescription.setSampleCount(m_rasterizationSamples);
 
     objectIdTextureDescription.setDebugName("__ELIX_OBJECT_ID_GBUFFER_TEXTURE__");
     depthTextureDescription.setDebugName("__ELIX_DEPTH_GBUFFER_TEXTURE__");
@@ -389,29 +543,64 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     if (m_enableObjectId)
     {
         m_objectIdTextureHandler = builder.createTexture(objectIdTextureDescription);
-        builder.write(m_objectIdTextureHandler, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC);
+        if (msaaEnabled)
+        {
+            msaaObjectIdTextureDescription.setDebugName("__ELIX_OBJECT_ID_GBUFFER_MSAA_TEXTURE__");
+            m_msaaObjectIdTextureHandler = builder.createTexture(msaaObjectIdTextureDescription);
+            builder.write(m_msaaObjectIdTextureHandler, RGPTextureUsage::COLOR_ATTACHMENT);
+        }
+        else
+        {
+            builder.write(m_objectIdTextureHandler, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC);
+        }
     }
 
     if (m_hasExternalDepth && m_externalDepthHandlerPtr)
     {
-        // Dereference the live pointer — by the time GBuffer's setup() runs,
-        // the depth prepass (added earlier, lower id) has already assigned its
-        // handler ID via builder.createTexture().
-        m_depthTextureHandler = *m_externalDepthHandlerPtr;
-        builder.read(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
-        builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+        if (msaaEnabled)
+        {
+            m_msaaDepthTextureHandler = *m_externalDepthHandlerPtr;
+            m_depthTextureHandler = *m_externalResolvedDepthHandlerPtr;
+            builder.read(m_msaaDepthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+            builder.write(m_msaaDepthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+            builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+        }
+        else
+        {
+            // Dereference the live pointer — by the time GBuffer's setup() runs,
+            // the depth prepass (added earlier, lower id) has already assigned its
+            // handler ID via builder.createTexture().
+            m_depthTextureHandler = *m_externalDepthHandlerPtr;
+            builder.read(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+            builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+        }
     }
     else
     {
-        m_depthTextureHandler = builder.createTexture(depthTextureDescription);
-        builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+        if (msaaEnabled)
+        {
+            msaaDepthTextureDescription.setDebugName("__ELIX_DEPTH_GBUFFER_MSAA_TEXTURE__");
+            m_msaaDepthTextureHandler = builder.createTexture(msaaDepthTextureDescription);
+            m_depthTextureHandler = builder.createTexture(depthTextureDescription);
+            builder.write(m_msaaDepthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+            builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+        }
+        else
+        {
+            m_depthTextureHandler = builder.createTexture(depthTextureDescription);
+            builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+        }
     }
 
     const int imageCount = static_cast<int>(core::VulkanContext::getContext()->getSwapchain()->getImages().size());
     m_normalTextureHandlers.reserve(imageCount);
+    m_msaaNormalTextureHandlers.reserve(imageCount);
     m_albedoTextureHandlers.reserve(imageCount);
+    m_msaaAlbedoTextureHandlers.reserve(imageCount);
     m_materialTextureHandlers.reserve(imageCount);
+    m_msaaMaterialTextureHandlers.reserve(imageCount);
     m_emissiveTextureHandlers.reserve(imageCount);
+    m_msaaEmissiveTextureHandlers.reserve(imageCount);
 
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
     {
@@ -434,6 +623,29 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         builder.write(albedoTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(materialTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(emissiveTexture, RGPTextureUsage::COLOR_ATTACHMENT);
+
+        if (msaaEnabled)
+        {
+            msaaNormalTextureDescription.setDebugName("__ELIX_NORMAL_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
+            msaaAlbedoTextureDescription.setDebugName("__ELIX_ALBEDO_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
+            msaaMaterialTextureDescription.setDebugName("__ELIX_MATERIAL_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
+            msaaEmissiveTextureDescription.setDebugName("__ELIX_EMISSIVE_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
+
+            const auto msaaNormalTexture = builder.createTexture(msaaNormalTextureDescription);
+            const auto msaaAlbedoTexture = builder.createTexture(msaaAlbedoTextureDescription);
+            const auto msaaMaterialTexture = builder.createTexture(msaaMaterialTextureDescription);
+            const auto msaaEmissiveTexture = builder.createTexture(msaaEmissiveTextureDescription);
+
+            m_msaaNormalTextureHandlers.push_back(msaaNormalTexture);
+            m_msaaAlbedoTextureHandlers.push_back(msaaAlbedoTexture);
+            m_msaaMaterialTextureHandlers.push_back(msaaMaterialTexture);
+            m_msaaEmissiveTextureHandlers.push_back(msaaEmissiveTexture);
+
+            builder.write(msaaNormalTexture, RGPTextureUsage::COLOR_ATTACHMENT);
+            builder.write(msaaAlbedoTexture, RGPTextureUsage::COLOR_ATTACHMENT);
+            builder.write(msaaMaterialTexture, RGPTextureUsage::COLOR_ATTACHMENT);
+            builder.write(msaaEmissiveTexture, RGPTextureUsage::COLOR_ATTACHMENT);
+        }
     }
 
     outputs.normals.set(m_normalTextureHandlers);

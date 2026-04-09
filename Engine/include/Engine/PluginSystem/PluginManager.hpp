@@ -20,12 +20,23 @@ public:
         Custom  // User-managed — respects EngineConfig::isPluginEnabled().
     };
 
+    enum class PluginLoadStatus
+    {
+        Loaded,            // onLoad() was called successfully
+        Disabled,          // user disabled via EngineConfig
+        LibraryLoadFailed, // dlopen / LoadLibrary failed
+        MissingDependency, // one or more getDependencies() names not found
+        NoCreateSymbol,    // shared library has no createPlugin symbol
+    };
+
     struct PluginInfo
     {
-        std::string pluginName; // from IPlugin::getName(), empty if no createPlugin symbol
-        std::string filename;   // basename of the .so/.dll
+        std::string pluginName;          // from IPlugin::getName(), empty if no createPlugin symbol
+        std::string filename;            // basename of the .so/.dll
+        std::vector<std::string> missingDependencies; // populated when status == MissingDependency
         PluginCategory category{PluginCategory::Custom};
-        bool loaded{false};     // false if disabled or load failed
+        PluginLoadStatus status{PluginLoadStatus::Loaded};
+        bool loaded{false};              // true only when status == Loaded
     };
 
     static PluginManager &instance();

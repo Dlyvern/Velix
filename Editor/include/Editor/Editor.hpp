@@ -85,15 +85,13 @@ public:
         engine::ScriptsRegister::setActiveRegister(nullptr);
 
         if (auto previousProject = m_currentProject.lock(); previousProject && previousProject != project && previousProject->projectLibrary)
-        {
-            engine::PluginLoader::closeLibrary(previousProject->projectLibrary);
-            previousProject->projectLibrary = nullptr;
-        }
+            previousProject->unloadProjectLibrary();
 
         m_projectScriptsRegister = nullptr;
         m_loadedGameModulePath.clear();
         m_currentProject = project;
         m_currentScenePath.clear();
+        m_savedSceneSnapshot.clear();
         invalidateModelDetailsCache();
         m_assetsPreviewSystem.setProject(project.get());
         m_cachedProjectRootPath = project ? resolveProjectRootPath(*project) : std::filesystem::path{};
@@ -231,6 +229,11 @@ public:
         m_reloadShadersCallback = std::move(callback);
     }
 
+    void setScriptReloadScenesProvider(std::function<std::vector<engine::Scene::SharedPtr>()> provider)
+    {
+        m_scriptReloadScenesProvider = std::move(provider);
+    }
+
     void setRenderViewportOnly(bool value)
     {
         m_renderOnlyViewport = value;
@@ -337,6 +340,7 @@ private:
     // Callback invoked when "Reload Engine Shaders" is pressed.
     // It should compile all shaders and populate outErrors, returning compiled count.
     std::function<size_t(std::vector<std::string> *)> m_reloadShadersCallback;
+    std::function<std::vector<engine::Scene::SharedPtr>()> m_scriptReloadScenesProvider;
 
     // Results of the last shader reload, displayed in Dev Tools panel.
     int m_devToolsLastCompiledCount{-1};
@@ -380,6 +384,7 @@ private:
     std::vector<std::function<void(EditorMode)>> m_onModeChangedCallbacks;
 
     void changeMode(EditorMode mode);
+    void setGameplayInputReleasedForEditor(bool released, bool showNotification = true);
 
     enum class GuizmoOperation
     {
@@ -398,7 +403,8 @@ private:
         BOX_Z,
         CAPSULE_RADIUS_Y,
         CAPSULE_RADIUS_Z,
-        CAPSULE_HEIGHT
+        CAPSULE_HEIGHT,
+        CAPSULE_HEIGHT_BOTTOM
     };
 
     enum class RightSidebarPanelId : uint8_t
@@ -412,6 +418,8 @@ private:
     void resetSceneAutosaveTimer();
     void updateSceneAutosave(float deltaSeconds);
     bool hasUnsavedSceneChanges();
+    bool captureSceneSnapshot(std::string &outSnapshot);
+    void refreshSavedSceneSnapshot();
     void buildCurrentProject();
     void exportCurrentProjectPacket();
     void drawExportProjectDialog();
@@ -422,6 +430,7 @@ private:
     void focusSelectedEntity();
 
     void drawGuizmo();
+    void drawSelectedSkeletalBoneOverlay(const ImVec2 &imageMin, const ImVec2 &imageMax);
 
     float m_movementSpeed{3.0f};
 
@@ -473,6 +482,7 @@ private:
     glm::vec3 m_colliderDragStartBoxHalfExtents{0.5f};
     float m_colliderDragStartCapsuleRadius{0.5f};
     float m_colliderDragStartCapsuleHalfHeight{0.5f};
+    float m_colliderDragStartCapsuleCenterOffset{0.0f};
 
     EditorResourcesStorage m_resourceStorage;
     std::shared_ptr<AssetsWindow> m_assetsWindow{nullptr};
@@ -520,10 +530,14 @@ private:
     actions::EditorEntityClipboard m_entityClipboard{};
     engine::Scene::SharedPtr m_scene{nullptr};
     std::filesystem::path m_currentScenePath;
+    std::string m_savedSceneSnapshot;
     float m_sceneAutosaveElapsedSeconds{0.0f};
     engine::Entity *m_selectedEntity{nullptr};
+    bool m_gameplayInputReleasedForEditor{false};
     std::optional<uint32_t> m_selectedMeshSlot;
     std::optional<uint32_t> m_lastScrolledMeshSlot; // tracks last slot we auto-scrolled to
+    bool m_showSelectedSkeletalBones{false};
+    int m_selectedSkeletonBoneId{-1};
 
     enum class UIPlacementTool : uint8_t
     {
@@ -554,9 +568,12 @@ private:
     glm::vec2 ndcToViewportPixel(const glm::vec2 &ndcPos, const ImVec2 &imageMin, const ImVec2 &imageMax) const;
     glm::vec2 snapNdcToGrid(const glm::vec2 &ndcPos) const;
     glm::vec3 computeBillboardPlacementWorldPosition(const glm::vec2 &ndcPos) const;
+    bool trySelectSkeletalBoneAtViewportPosition(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax);
     bool trySelectEditorBillboardAtViewportPosition(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax);
     bool placeUIElementAtViewportPosition(const ImVec2 &pixelPos, const ImVec2 &imageMin, const ImVec2 &imageMax);
     void clearSelectedUIElement();
+    void clearSelectedSkeletalBoneSelection();
+    std::string getSelectedSkeletalBoneName() const;
     std::filesystem::path m_selectedAssetPath;
     std::filesystem::path m_lastModelDetailsAssetPath;
 

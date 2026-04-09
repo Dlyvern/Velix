@@ -2,13 +2,16 @@
 #define ELIX_UI_BILLBOARD_HPP
 
 #include "Core/Macros.hpp"
-#include "Engine/Texture.hpp"
 
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
+#include <memory>
 #include <string>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+
+class Texture;
+
 ELIX_CUSTOM_NAMESPACE_BEGIN(ui)
 
 /// World-space camera-facing quad game object rendered by UIRenderGraphPass.
@@ -23,7 +26,7 @@ public:
     void clearTexture();
 
     const std::string  &getTexturePath() const;
-    Texture::SharedPtr  getTexture() const;
+    std::shared_ptr<Texture> getTexture() const;
 
     void             setWorldPosition(const glm::vec3 &pos);
     const glm::vec3 &getWorldPosition() const;
@@ -42,7 +45,7 @@ public:
 
 private:
     std::string        m_texturePath;
-    Texture::SharedPtr m_texture{nullptr};
+    std::shared_ptr<Texture> m_texture{nullptr};
 
     glm::vec3 m_worldPosition{0.0f};
     float     m_size{1.0f};

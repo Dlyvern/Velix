@@ -22,9 +22,14 @@ public:
 
     [[nodiscard]] const std::string &getScriptName() const;
     [[nodiscard]] Script *getScript() const;
+    [[nodiscard]] bool isAttached() const;
+    // True when the script name is set but no script instance exists (e.g. plugin not loaded).
+    [[nodiscard]] bool isBroken() const;
     void setSerializedVariables(const Script::ExposedVariablesMap &variables);
     const Script::ExposedVariablesMap &getSerializedVariables() const;
     void syncSerializedVariablesFromScript();
+    void releaseScriptInstance();
+    void setScriptInstance(Script *script, bool attachAfterBinding = false);
 
     ~ScriptComponent() override;
 

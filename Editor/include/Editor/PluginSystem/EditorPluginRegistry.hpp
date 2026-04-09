@@ -24,10 +24,14 @@ public:
 
     const std::vector<elix::sdk::IEditorPlugin *> &getPlugins() const;
 
+    // True if any plugin set ctx.wantsBrushInput = true during the last dispatchFrame.
+    bool anyPluginWantsBrush() const { return m_lastFrameWantsBrush; }
+
 private:
     EditorPluginRegistry() = default;
 
     std::vector<elix::sdk::IEditorPlugin *> m_plugins;
+    bool m_lastFrameWantsBrush{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

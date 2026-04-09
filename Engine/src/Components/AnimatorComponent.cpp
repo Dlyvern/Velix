@@ -115,6 +115,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 void AnimatorComponent::onOwnerAttached()
 {
     refreshAnimationBindings();
+    applyImmediatePoseIfAvailable();
 }
 
 void AnimatorComponent::addPostAnimHook(const void *ownerKey, PostAnimHook fn)
@@ -156,12 +157,14 @@ void AnimatorComponent::setAnimations(const std::vector<Animation> &animations, 
     m_isAnimationCompleted = false;
 
     refreshAnimationBindings();
+    applyImmediatePoseIfAvailable();
 }
 
 void AnimatorComponent::bindSkeleton(Skeleton *skeletonForAnimations)
 {
     m_boundSkeleton = skeletonForAnimations;
     refreshAnimationBindings();
+    applyImmediatePoseIfAvailable();
 }
 
 const std::vector<Animation> &AnimatorComponent::getAnimations() const
@@ -359,6 +362,47 @@ void AnimatorComponent::refreshAnimationBindings()
     }
 }
 
+void AnimatorComponent::applyImmediatePoseIfAvailable()
+{
+    if (m_tree.has_value())
+    {
+        ensureTreeActivePath();
+        applyTreePose();
+        firePostAnimHooks();
+        return;
+    }
+
+    if (m_currentAnimation)
+    {
+        applyCurrentAnimationPose();
+        firePostAnimHooks();
+    }
+}
+
+bool AnimatorComponent::shouldLockRootBoneY(const Skeleton::BoneInfo *bone, const Skeleton *skeleton) const
+{
+    if (!m_ignoreRootBoneY || !bone)
+        return false;
+
+    if (bone->parentId == -1)
+        return true;
+
+    if (!skeleton)
+        return false;
+
+    const auto *parentBone = skeleton->getBone(bone->parentId);
+    if (!parentBone || parentBone->parentId != -1)
+        return false;
+
+    std::string loweredName = bone->name;
+    std::transform(loweredName.begin(), loweredName.end(), loweredName.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    return loweredName.find("hip") != std::string::npos ||
+           loweredName.find("pelvis") != std::string::npos ||
+           loweredName.find("root") != std::string::npos;
+}
+
 void AnimatorComponent::playAnimation(Animation *animation, const bool repeat)
 {
     if (!animation)
@@ -418,6 +462,20 @@ void AnimatorComponent::setAnimationSpeed(float speed)
 float AnimatorComponent::getAnimationSpeed() const
 {
     return m_animationSpeed;
+}
+
+void AnimatorComponent::setIgnoreRootBoneY(bool ignore)
+{
+    if (m_ignoreRootBoneY == ignore)
+        return;
+
+    m_ignoreRootBoneY = ignore;
+    applyImmediatePoseIfAvailable();
+}
+
+bool AnimatorComponent::getIgnoreRootBoneY() const
+{
+    return m_ignoreRootBoneY;
 }
 
 void AnimatorComponent::setCurrentTime(float currentTime)
@@ -482,7 +540,9 @@ void AnimatorComponent::calculateBoneTransform(Skeleton::BoneInfo *boneInfo, con
         float t = (deltaTime == 0) ? 0.0f : (currentTime - startFrame->timeStamp) / deltaTime;
         t = glm::clamp(t, 0.0f, 1.0f);
 
-        const glm::vec3 position = interpolateVec3(startFrame->position, endFrame->position, t);
+        glm::vec3 position = interpolateVec3(startFrame->position, endFrame->position, t);
+        if (shouldLockRootBoneY(boneInfo, animation->skeletonForAnimation))
+            position.y = glm::vec3(boneInfo->localBindTransform[3]).y;
         const glm::quat rotation = glm::normalize(interpolateQuat(startFrame->rotation, endFrame->rotation, t));
         const glm::vec3 scale = interpolateVec3(startFrame->scale, endFrame->scale, t);
 
@@ -519,6 +579,8 @@ void AnimatorComponent::loadTree(const std::string &assetPath)
     auto loaded = engine::AssetsLoader::loadAnimationTree(assetPath);
     if (!loaded.has_value())
         return;
+
+    loaded->assetPath = assetPath;
     setTree(loaded.value());
 }
 
@@ -533,6 +595,9 @@ void AnimatorComponent::setTree(const AnimationTree &tree)
     cacheTreeAnimations();
     initTreeParams();
     ensureTreeActivePath();
+    // Do NOT apply pose here — bones stay at bind pose (T-pose) until
+    // the game loop calls update(). This prevents the T-pose→idle flash
+    // when assigning a tree in the editor.
 }
 
 void AnimatorComponent::clearTree()
@@ -966,13 +1031,19 @@ float AnimatorComponent::getNodeNormalizedTime(const AnimationTreeNode *node, fl
     if (durationSeconds <= 0.0f)
         return 0.0f;
 
+    const float startOffsetSeconds =
+        (node->type == AnimationTreeNode::Type::ClipState)
+            ? durationSeconds * glm::clamp(node->startNormalizedTime, 0.0f, 1.0f)
+            : 0.0f;
+    const float totalElapsedSeconds = elapsedSeconds + startOffsetSeconds;
+
     if (node->loop)
     {
-        const float wrapped = std::fmod(elapsedSeconds, durationSeconds);
+        const float wrapped = std::fmod(totalElapsedSeconds, durationSeconds);
         return (wrapped >= 0.0f ? wrapped : wrapped + durationSeconds) / durationSeconds;
     }
 
-    return glm::clamp(elapsedSeconds / durationSeconds, 0.0f, 1.0f);
+    return glm::clamp(totalElapsedSeconds / durationSeconds, 0.0f, 1.0f);
 }
 
 bool AnimatorComponent::isNodeFinished(const AnimationTreeNode *node, float elapsedSeconds) const
@@ -981,7 +1052,14 @@ bool AnimatorComponent::isNodeFinished(const AnimationTreeNode *node, float elap
         return false;
 
     const float durationSeconds = getNodeDurationSeconds(node);
-    return durationSeconds > 0.0f && elapsedSeconds >= durationSeconds;
+    if (durationSeconds <= 0.0f)
+        return false;
+
+    const float startOffsetSeconds =
+        (node->type == AnimationTreeNode::Type::ClipState)
+            ? durationSeconds * glm::clamp(node->startNormalizedTime, 0.0f, 1.0f)
+            : 0.0f;
+    return elapsedSeconds + startOffsetSeconds >= durationSeconds;
 }
 
 void AnimatorComponent::buildPoseSource(const AnimationTreeNode *node, float elapsedSeconds, TreePoseSource &outPose) const
@@ -994,7 +1072,11 @@ void AnimatorComponent::buildPoseSource(const AnimationTreeNode *node, float ela
     {
         outPose.primary = getAnimationClip(node->animationAssetPath, node->clipIndex);
         if (outPose.primary)
-            outPose.primaryTicks = resolveStatePlaybackTicks(elapsedSeconds, outPose.primary, node->loop);
+        {
+            const float durationSeconds = getAnimationDurationSeconds(outPose.primary);
+            const float startOffsetSeconds = durationSeconds * glm::clamp(node->startNormalizedTime, 0.0f, 1.0f);
+            outPose.primaryTicks = resolveStatePlaybackTicks(elapsedSeconds + startOffsetSeconds, outPose.primary, node->loop);
+        }
         return;
     }
 
@@ -1128,15 +1210,6 @@ void AnimatorComponent::applyBlendedBoneTransform(Skeleton::BoneInfo *bone, cons
     glm::vec3 nextScale{};
     samplePoseSource(targetPose, nextPos, nextRot, nextScale);
 
-    const float transitionBlend = poseB ? blend : 0.0f;
-    const glm::vec3 pos = interpolateVec3(currentPos, nextPos, transitionBlend);
-    const glm::quat rot = glm::normalize(interpolateQuat(currentRot, nextRot, transitionBlend));
-    const glm::vec3 sca = interpolateVec3(currentScale, nextScale, transitionBlend);
-
-    const glm::mat4 local = glm::translate(glm::mat4(1.0f), pos) * glm::toMat4(rot) * glm::scale(glm::mat4(1.0f), sca);
-    const glm::mat4 global = parentTransform * local;
-    bone->finalTransformation = global;
-
     Skeleton *skel = m_boundSkeleton;
     if (!skel)
         skel = poseA.primary ? poseA.primary->skeletonForAnimation : nullptr;
@@ -1146,6 +1219,18 @@ void AnimatorComponent::applyBlendedBoneTransform(Skeleton::BoneInfo *bone, cons
         skel = poseB->primary ? poseB->primary->skeletonForAnimation : nullptr;
     if (!skel && poseB)
         skel = poseB->secondary ? poseB->secondary->skeletonForAnimation : nullptr;
+
+    const float transitionBlend = poseB ? blend : 0.0f;
+    glm::vec3 pos = interpolateVec3(currentPos, nextPos, transitionBlend);
+    if (shouldLockRootBoneY(bone, skel))
+        pos.y = glm::vec3(bone->localBindTransform[3]).y;
+    const glm::quat rot = glm::normalize(interpolateQuat(currentRot, nextRot, transitionBlend));
+    const glm::vec3 sca = interpolateVec3(currentScale, nextScale, transitionBlend);
+
+    const glm::mat4 local = glm::translate(glm::mat4(1.0f), pos) * glm::toMat4(rot) * glm::scale(glm::mat4(1.0f), sca);
+    const glm::mat4 global = parentTransform * local;
+    bone->finalTransformation = global;
+
     if (!skel)
         return;
 

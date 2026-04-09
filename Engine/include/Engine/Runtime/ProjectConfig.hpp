@@ -46,6 +46,7 @@ private:
     bool m_enableSMAA{false};
     bool m_enableTAA{false};
     bool m_enableCMAA{false};
+    int m_msaaMode{0};
 
     bool m_enablePostProcessing{true};
     bool m_enableVSync{false};

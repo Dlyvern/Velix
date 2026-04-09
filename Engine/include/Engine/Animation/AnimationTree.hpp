@@ -37,6 +37,7 @@ struct AnimationTreeState
     int clipIndex{0};
     bool loop{true};
     float speed{1.0f};
+    float startNormalizedTime{0.0f};
 };
 
 struct AnimationTransitionCondition
@@ -113,6 +114,7 @@ struct AnimationTreeNode
     int clipIndex{0};
     bool loop{true};
     float speed{1.0f};
+    float startNormalizedTime{0.0f};
 
     // Blend space data
     std::string blendParameterName;
@@ -125,7 +127,7 @@ struct AnimationTreeNode
 class AnimationTree
 {
 public:
-    static constexpr uint32_t CURRENT_GRAPH_VERSION = 1u;
+    static constexpr uint32_t CURRENT_GRAPH_VERSION = 2u;
     static constexpr int ANY_NODE_ID = -1;
 
     std::string name;
@@ -146,7 +148,7 @@ public:
 
     [[nodiscard]] bool hasGraph() const
     {
-        return graphVersion >= CURRENT_GRAPH_VERSION &&
+        return graphVersion > 0u &&
                rootMachineNodeId >= 0 &&
                findNode(rootMachineNodeId) != nullptr;
     }
@@ -230,6 +232,7 @@ public:
                 node->clipIndex = legacyState.clipIndex;
                 node->loop = legacyState.loop;
                 node->speed = legacyState.speed;
+                node->startNormalizedTime = legacyState.startNormalizedTime;
             }
         }
 

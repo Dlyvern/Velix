@@ -433,7 +433,7 @@ void PerFrameDataWorker::syncSceneDrawItems(Scene *scene, const glm::vec3 &camer
         const std::vector<CPUMesh> *meshes = nullptr;
         if (staticMeshComponent && staticMeshComponent->isReady())
             meshes = &staticMeshComponent->getMeshes();
-        else if (skeletalMeshComponent && skeletalMeshComponent->isReady())
+        else if (skeletalMeshComponent && skeletalMeshComponent->isVisible() && skeletalMeshComponent->isReady())
             meshes = &skeletalMeshComponent->getMeshes();
         else if (terrainComponent)
         {

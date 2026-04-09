@@ -176,5 +176,13 @@ void PresentRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         m_descriptorSetsInitialized = true;
 }
 
+void PresentRenderGraphPass::freeResources()
+{
+    m_colorRenderTargets.clear();
+    for (auto &descriptorSet : m_descriptorSets)
+        descriptorSet = VK_NULL_HANDLE;
+    m_descriptorSetsInitialized = false;
+}
+
 ELIX_NESTED_NAMESPACE_END
 ELIX_CUSTOM_NAMESPACE_END

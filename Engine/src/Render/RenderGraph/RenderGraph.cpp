@@ -107,6 +107,79 @@ namespace
         }
     };
 
+    uint32_t sampleCountMultiplier(VkSampleCountFlagBits sampleCount)
+    {
+        switch (sampleCount)
+        {
+        case VK_SAMPLE_COUNT_1_BIT:
+            return 1u;
+        case VK_SAMPLE_COUNT_2_BIT:
+            return 2u;
+        case VK_SAMPLE_COUNT_4_BIT:
+            return 4u;
+        case VK_SAMPLE_COUNT_8_BIT:
+            return 8u;
+        case VK_SAMPLE_COUNT_16_BIT:
+            return 16u;
+        case VK_SAMPLE_COUNT_32_BIT:
+            return 32u;
+        case VK_SAMPLE_COUNT_64_BIT:
+            return 64u;
+        default:
+            return 1u;
+        }
+    }
+
+    uint64_t bytesPerTexel(VkFormat format)
+    {
+        switch (format)
+        {
+        case VK_FORMAT_R8_UNORM:
+            return 1ull;
+
+        case VK_FORMAT_D16_UNORM:
+            return 2ull;
+
+        case VK_FORMAT_R32_UINT:
+        case VK_FORMAT_D32_SFLOAT:
+        case VK_FORMAT_D24_UNORM_S8_UINT:
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+            return 4ull;
+
+        case VK_FORMAT_D32_SFLOAT_S8_UINT:
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+            return 8ull;
+
+        case VK_FORMAT_R32G32B32A32_SFLOAT:
+            return 16ull;
+
+        default:
+            return 4ull;
+        }
+    }
+
+    uint64_t estimateTextureDescriptionVramBytes(const elix::engine::renderGraph::RGPTextureDescription &description)
+    {
+        if (description.getIsSwapChainTarget())
+            return 0ull;
+
+        const VkExtent2D extent = description.getCustomExtentFunction()
+                                      ? description.getCustomExtentFunction()()
+                                      : description.getExtent();
+        if (extent.width == 0u || extent.height == 0u)
+            return 0ull;
+
+        const uint64_t pixelCount = static_cast<uint64_t>(extent.width) *
+                                    static_cast<uint64_t>(extent.height) *
+                                    static_cast<uint64_t>(std::max(description.getArrayLayers(), 1u)) *
+                                    static_cast<uint64_t>(sampleCountMultiplier(description.getSampleCount()));
+
+        return pixelCount * bytesPerTexel(description.getFormat());
+    }
+
     const elix::engine::RenderTarget *findTargetByImageView(
         const std::unordered_map<elix::engine::renderGraph::RGPResourceHandler, const elix::engine::RenderTarget *> &targets,
         VkImageView imageView)
@@ -263,6 +336,56 @@ RenderGraph::RenderGraph(bool presentToSwapchain) : m_presentToSwapchain(present
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
         if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS)
             throw std::runtime_error("Failed to create renderFinished semaphore for image!");
+}
+
+RenderGraphFrameProfilingData RenderGraph::getLastFrameBenchmarkData()
+{
+    RenderGraphFrameProfilingData benchmarkData = m_renderGraphProfiling->getLastFrameProfilingData();
+    const auto aliasRoots = buildAliasedTextureRoots();
+
+    std::unordered_map<std::string, uint64_t> passVramBytesByName;
+    passVramBytesByName.reserve(m_sortedRenderGraphPassIds.size());
+    std::unordered_set<RGPResourceHandler> uniqueGraphRoots;
+    uniqueGraphRoots.reserve(m_renderGraphPasses.size() * 2u);
+
+    for (const uint32_t passId : m_sortedRenderGraphPassIds)
+    {
+        auto *passData = findRenderGraphPassById(passId);
+        if (!passData || !passData->enabled || !passData->renderGraphPass)
+            continue;
+
+        std::unordered_set<RGPResourceHandler> passRoots;
+        passRoots.reserve(passData->passInfo.writes.size());
+        uint64_t passVramBytes = 0ull;
+
+        for (const auto &writeAccess : passData->passInfo.writes)
+        {
+            const auto *textureDescription = m_renderGraphPassesBuilder.getTextureDescription(writeAccess.resourceId);
+            if (!textureDescription || textureDescription->getIsSwapChainTarget())
+                continue;
+
+            const auto aliasRootIt = aliasRoots.find(writeAccess.resourceId);
+            const RGPResourceHandler rootHandler = aliasRootIt != aliasRoots.end() ? aliasRootIt->second : writeAccess.resourceId;
+            if (!passRoots.insert(rootHandler).second)
+                continue;
+
+            const uint64_t textureVramBytes = estimateTextureDescriptionVramBytes(*textureDescription);
+            passVramBytes += textureVramBytes;
+
+            if (uniqueGraphRoots.insert(rootHandler).second)
+                benchmarkData.renderGraphVramBytes += textureVramBytes;
+        }
+
+        passVramBytesByName[passData->renderGraphPass->getDebugName()] += passVramBytes;
+    }
+
+    for (auto &passProfilingData : benchmarkData.passes)
+    {
+        if (const auto it = passVramBytesByName.find(passProfilingData.passName); it != passVramBytesByName.end())
+            passProfilingData.vramBytes = it->second;
+    }
+
+    return benchmarkData;
 }
 
 std::vector<VkImageView> RenderGraph::getImageViews(const std::vector<RGPResourceHandler> &handlers) const
@@ -792,6 +915,12 @@ void RenderGraph::createDescriptorSetPool()
 
 void RenderGraph::recreateSwapChain()
 {
+    for (const auto &[_, renderPass] : m_renderGraphPasses)
+    {
+        if (renderPass.enabled && renderPass.renderGraphPass)
+            renderPass.renderGraphPass->freeResources();
+    }
+
     m_swapchain->recreate();
 
     auto barriers = m_renderGraphPassesCompiler.onSwapChainResized(m_renderGraphPassesBuilder, m_renderGraphPassesStorage);
@@ -1643,6 +1772,13 @@ bool RenderGraph::recompileDirtyPasses()
 void RenderGraph::compile()
 {
     sortRenderGraphPasses();
+
+    for (const auto &[_, renderPass] : m_renderGraphPasses)
+    {
+        if (renderPass.enabled && renderPass.renderGraphPass)
+            renderPass.renderGraphPass->freeResources();
+    }
+
     m_renderGraphPassesStorage.cleanup();
 
     const auto aliasRoots = buildAliasedTextureRoots();

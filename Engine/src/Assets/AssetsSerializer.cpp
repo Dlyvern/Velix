@@ -222,6 +222,7 @@ namespace
             !writePOD(stream, static_cast<int32_t>(node.clipIndex)) ||
             !writePOD(stream, static_cast<uint8_t>(node.loop ? 1u : 0u)) ||
             !writePOD(stream, node.speed) ||
+            !writePOD(stream, node.startNormalizedTime) ||
             !writeString(stream, node.blendParameterName))
             return false;
 
@@ -239,7 +240,9 @@ namespace
         return true;
     }
 
-    bool readAnimationTreeNode(std::istream &stream, elix::engine::AnimationTreeNode &outNode)
+    bool readAnimationTreeNode(std::istream &stream,
+                               elix::engine::AnimationTreeNode &outNode,
+                               uint32_t graphVersion)
     {
         int32_t nodeId = -1;
         int32_t parentMachineNodeId = -1;
@@ -286,8 +289,20 @@ namespace
         if (!readString(stream, outNode.animationAssetPath) ||
             !readPOD(stream, clipIndex) ||
             !readPOD(stream, loopValue) ||
-            !readPOD(stream, outNode.speed) ||
-            !readString(stream, outNode.blendParameterName))
+            !readPOD(stream, outNode.speed))
+            return false;
+
+        if (graphVersion >= 2u)
+        {
+            if (!readPOD(stream, outNode.startNormalizedTime))
+                return false;
+        }
+        else
+        {
+            outNode.startNormalizedTime = 0.0f;
+        }
+
+        if (!readString(stream, outNode.blendParameterName))
             return false;
 
         outNode.clipIndex = static_cast<int>(clipIndex);
@@ -338,13 +353,37 @@ namespace
         return true;
     }
 
-    bool writeMaterial(std::ostream &stream, const elix::engine::CPUMaterial &material)
+    // Returns the path relative to modelDir if it's under modelDir, otherwise returns it unchanged.
+    std::string makeRelativeTexturePath(const std::string &texturePath, const std::filesystem::path &modelDir)
+    {
+        if (texturePath.empty() || modelDir.empty())
+            return texturePath;
+
+        const std::filesystem::path p(texturePath);
+        if (!p.is_absolute())
+            return texturePath; // already relative
+
+        std::error_code ec;
+        const std::filesystem::path rel = std::filesystem::relative(p, modelDir, ec);
+        if (ec || rel.empty())
+            return texturePath;
+
+        const std::string relStr = rel.lexically_normal().string();
+        // Reject paths that escape the model directory (start with "..")
+        if (relStr.rfind("..", 0) == 0)
+            return texturePath;
+
+        return relStr;
+    }
+
+    bool writeMaterial(std::ostream &stream, const elix::engine::CPUMaterial &material,
+                       const std::filesystem::path &modelDir = {})
     {
         return writePOD(stream, material.flags) &&
-               writeString(stream, material.albedoTexture) &&
-               writeString(stream, material.normalTexture) &&
-               writeString(stream, material.ormTexture) &&
-               writeString(stream, material.emissiveTexture) &&
+               writeString(stream, makeRelativeTexturePath(material.albedoTexture, modelDir)) &&
+               writeString(stream, makeRelativeTexturePath(material.normalTexture, modelDir)) &&
+               writeString(stream, makeRelativeTexturePath(material.ormTexture, modelDir)) &&
+               writeString(stream, makeRelativeTexturePath(material.emissiveTexture, modelDir)) &&
                writeString(stream, material.name) &&
                writePOD(stream, material.baseColorFactor) &&
                writePOD(stream, material.emissiveFactor) &&
@@ -483,6 +522,21 @@ namespace
                 continue;
 
             bone->children = childrenByBone[boneIndex];
+            bone->childrenInfo.clear();
+            bone->childrenInfo.reserve(bone->children.size());
+        }
+
+        for (uint32_t boneIndex = 0; boneIndex < bonesCount; ++boneIndex)
+        {
+            auto *bone = skeleton.getBone(static_cast<int>(boneIndex));
+            if (!bone)
+                continue;
+
+            for (const int childId : bone->children)
+            {
+                if (auto *child = skeleton.getBone(childId))
+                    bone->childrenInfo.push_back(child);
+            }
         }
 
         outSkeleton = skeleton;
@@ -747,6 +801,8 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
     if (!writePOD(payloadStream, meshesCount))
         return false;
 
+    const std::filesystem::path modelDir = std::filesystem::path(outputPath).parent_path().lexically_normal();
+
     for (const auto &mesh : modelAsset.meshes)
     {
         if (!writeString(payloadStream, mesh.name) ||
@@ -754,7 +810,7 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
             !writeVector(payloadStream, mesh.indices) ||
             !writePOD(payloadStream, mesh.vertexStride) ||
             !writePOD(payloadStream, mesh.vertexLayoutHash) ||
-            !writeMaterial(payloadStream, mesh.material) ||
+            !writeMaterial(payloadStream, mesh.material, modelDir) ||
             !writePOD(payloadStream, mesh.localTransform) ||
             !writePOD(payloadStream, mesh.attachedBoneId))
             return false;
@@ -1273,6 +1329,7 @@ bool AssetsSerializer::writeAnimationTree(const AnimationTree &tree, const std::
 {
     AnimationTree serializedTree = tree;
     serializedTree.ensureGraph();
+    serializedTree.graphVersion = AnimationTree::CURRENT_GRAPH_VERSION;
 
     std::ostringstream payloadStream(std::ios::binary);
 
@@ -1508,7 +1565,7 @@ std::optional<AnimationTree> AssetsSerializer::readAnimationTree(const std::stri
             tree.graphNodes.resize(nodeCount);
             for (auto &node : tree.graphNodes)
             {
-                if (!readAnimationTreeNode(stream, node))
+                if (!readAnimationTreeNode(stream, node, tree.graphVersion))
                     return std::nullopt;
             }
         }

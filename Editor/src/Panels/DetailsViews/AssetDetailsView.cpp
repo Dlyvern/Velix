@@ -938,7 +938,7 @@ void AssetDetailsView::draw(Editor &editor)
                                                  : stem;
             const std::filesystem::path outputPath = assetPath.parent_path() / (strippedStem + ".anim.elixasset");
             if (engine::AssetsLoader::exportAnimationsFromModel(assetPath.string(), outputPath.string()))
-                editor.m_notificationManager.showSuccess("Animations exported to " + outputPath.filename().string());
+                editor.m_notificationManager.showSuccess("Animations exported to " + outputPath.parent_path().filename().string() + "/");
             else
                 editor.m_notificationManager.showError("Failed to export animations");
         }

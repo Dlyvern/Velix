@@ -34,16 +34,14 @@ python --version 2>&1 || echo [VelixFlow] WARNING: python not found in PATH
 
 if not exist "%PHYSX_PRESET_TEMPLATE%" (
     echo [VelixFlow] Error: PhysX preset template not found at "%PHYSX_PRESET_TEMPLATE%"
-    popd
-    exit /b 1
+    call :cleanup_and_exit 1
 )
 
 echo [VelixFlow] Preparing PhysX preset %PHYSX_PRESET%...
 python -c "from pathlib import Path; template = Path(r'%PHYSX_PRESET_TEMPLATE%'); output = Path(r'%PHYSX_PRESET_XML%'); text = template.read_text(); text = text.replace('name=\"%PHYSX_PRESET_BASE%\"', 'name=\"%PHYSX_PRESET%\"', 1); text = text.replace('name=\"PX_BUILDSNIPPETS\" value=\"True\"', 'name=\"PX_BUILDSNIPPETS\" value=\"False\"', 1); text = text.replace('name=\"PX_BUILDPVDRUNTIME\" value=\"True\"', 'name=\"PX_BUILDPVDRUNTIME\" value=\"False\"', 1); output.write_text(text)"
 if errorlevel 1 (
     echo [VelixFlow] Error: Failed to write temporary PhysX preset
-    popd
-    exit /b 1
+    call :cleanup_and_exit 1
 )
 
 echo [VelixFlow] Generating Visual Studio project files...
@@ -52,25 +50,19 @@ if errorlevel 1 (
     echo [VelixFlow] Error: Failed to generate PhysX Visual Studio projects
     echo [VelixFlow] Available presets:
     dir /b compiler 2>nul
-    if exist "%PHYSX_PRESET_XML%" del /q "%PHYSX_PRESET_XML%"
-    popd
-    exit /b 1
+    call :cleanup_and_exit 1
 )
 
 if not exist "%PHYSX_SOLUTION%" (
     echo [VelixFlow] Error: Generated PhysX solution not found at "%PHYSX_SOLUTION%"
-    if exist "%PHYSX_PRESET_XML%" del /q "%PHYSX_PRESET_XML%"
-    popd
-    exit /b 1
+    call :cleanup_and_exit 1
 )
 
 echo [VelixFlow] Building PhysX in %PHYSX_BUILD_TYPE% mode...
 msbuild "%PHYSX_SOLUTION%" /p:Configuration=%PHYSX_MSBUILD_CONFIGURATION% /maxcpucount /t:Build /v:n /nologo
 if errorlevel 1 (
     echo [VelixFlow] Error: MSBuild returned a non-zero exit code
-    if exist "%PHYSX_PRESET_XML%" del /q "%PHYSX_PRESET_XML%"
-    popd
-    exit /b 1
+    call :cleanup_and_exit 1
 )
 echo [VelixFlow] MSBuild completed successfully
 
@@ -82,9 +74,7 @@ if not exist "%PHYSX_BUILD_OUTPUT%\" (
     echo [VelixFlow] Error: PhysX build output directory not found at "%PHYSX_BUILD_OUTPUT%"
     echo [VelixFlow] Contents of bin\:
     dir /b "%PHYSX_ROOT%\bin" 2>nul
-    if exist "%PHYSX_PRESET_XML%" del /q "%PHYSX_PRESET_XML%"
-    popd
-    exit /b 1
+    call :cleanup_and_exit 1
 )
 
 echo [VelixFlow] Using PhysX build output from %PHYSX_BUILD_OUTPUT%
@@ -92,15 +82,23 @@ echo [VelixFlow] Copying built PhysX binaries to %PHYSX_LIB_OUTPUT%...
 mkdir "%PHYSX_LIB_OUTPUT%" 2>nul
 
 robocopy "%PHYSX_BUILD_OUTPUT%" "%PHYSX_LIB_OUTPUT%" *.lib *.dll *.pdb /njh /njs /ndl /nc /ns /np
-set ROBOCOPY_EXIT=%ERRORLEVEL%
+set "ROBOCOPY_EXIT=%ERRORLEVEL%"
+echo [VelixFlow] robocopy exit code: %ROBOCOPY_EXIT%
 if %ROBOCOPY_EXIT% GEQ 8 (
     echo [VelixFlow] Error: Failed to copy PhysX binaries (robocopy exit %ROBOCOPY_EXIT%)
-    if exist "%PHYSX_PRESET_XML%" del /q "%PHYSX_PRESET_XML%"
-    popd
-    exit /b 1
+    call :cleanup_and_exit 1
 )
 
-if exist "%PHYSX_PRESET_XML%" del /q "%PHYSX_PRESET_XML%"
 echo [VelixFlow] PhysX built and installed to %PHYSX_LIB_OUTPUT%
+call :cleanup_and_exit 0
+
+:cleanup_and_exit
+set "VELIX_EXIT_CODE=%~1"
+if exist "%PHYSX_PRESET_XML%" (
+    del /f /q "%PHYSX_PRESET_XML%" >nul 2>&1
+    if exist "%PHYSX_PRESET_XML%" (
+        echo [VelixFlow] Warning: Failed to delete temporary PhysX preset "%PHYSX_PRESET_XML%"
+    )
+)
 popd
-exit /b 0
+endlocal & exit /b %VELIX_EXIT_CODE%

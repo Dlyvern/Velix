@@ -150,9 +150,11 @@ jobs:
         shell: cmd
         run: |
           call external\physx\scripts\build_physx_windows.bat checked
-          if errorlevel 1 (
+          set "PHYSX_BUILD_EXIT=%ERRORLEVEL%"
+          echo [VelixFlow] build_physx_windows.bat exit code: %PHYSX_BUILD_EXIT%
+          if not "%PHYSX_BUILD_EXIT%"=="0" (
             echo [VelixFlow] PhysX build failed
-            exit /b 1
+            exit /b %PHYSX_BUILD_EXIT%
           )
 
       - name: Configure

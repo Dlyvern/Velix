@@ -1,4 +1,5 @@
 #include "Engine/UI/Billboard.hpp"
+#include "Engine/Texture.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Core/Logger.hpp"
 

@@ -4,6 +4,7 @@
 #include "Core/Macros.hpp"
 
 #include <cstdint>
+#include <volk.h>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -49,6 +50,14 @@ public:
         CMAA = 4
     };
 
+    enum class MsaaMode : uint8_t
+    {
+        Off = 0,
+        X2 = 1,
+        X4 = 2,
+        X8 = 3
+    };
+
     enum class RayTracingMode : uint8_t
     {
         Off = 0,
@@ -82,6 +91,7 @@ public:
     float rtRoughnessThreshold{0.4f};  // skip surfaces rougher than this (0=only perfect mirrors, 1=all)
     float rtReflectionStrength{1.0f};  // overall reflection intensity multiplier
     bool enableFXAA{true};
+    MsaaMode msaaMode{MsaaMode::Off};
     bool enableBloom{true};
 
     float bloomThreshold{0.85f};
@@ -202,6 +212,27 @@ public:
         case AntiAliasingMode::NONE:
         default:
             break;
+        }
+    }
+
+    void setMsaaMode(MsaaMode mode)
+    {
+        msaaMode = mode;
+    }
+
+    VkSampleCountFlagBits getRequestedMsaaSampleCount() const
+    {
+        switch (msaaMode)
+        {
+        case MsaaMode::X2:
+            return VK_SAMPLE_COUNT_2_BIT;
+        case MsaaMode::X4:
+            return VK_SAMPLE_COUNT_4_BIT;
+        case MsaaMode::X8:
+            return VK_SAMPLE_COUNT_8_BIT;
+        case MsaaMode::Off:
+        default:
+            return VK_SAMPLE_COUNT_1_BIT;
         }
     }
 

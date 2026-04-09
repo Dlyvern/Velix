@@ -61,6 +61,11 @@ public:
         RenderQualitySettings::getInstance().setAntiAliasingMode(mode);
     }
 
+    void setMsaaMode(RenderQualitySettings::MsaaMode mode)
+    {
+        RenderQualitySettings::getInstance().setMsaaMode(mode);
+    }
+
     void setVSync(bool enable)
     {
         RenderQualitySettings::getInstance().enableVSync = enable;

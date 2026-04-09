@@ -29,6 +29,10 @@ namespace
 {
     constexpr float kPreviewMinDistance = 0.35f;
     constexpr float kPreviewMaxDistance = 40.0f;
+    constexpr float kPreviewTargetFps = 12.0f;
+    constexpr size_t kPreviewMaxMeshCount = 2u;
+    constexpr size_t kPreviewMaxTotalVertices = 45000u;
+    constexpr const char *kBindPoseClipHint = "Empty Clip State uses the skeleton bind pose.";
 
     struct PreviewCandidateInfo
     {
@@ -37,6 +41,7 @@ namespace
         glm::vec3 boundsMin{0.0f};
         glm::vec3 boundsMax{0.0f};
         float score{-1.0f};
+        size_t vertexCount{0u};
         bool skinned{false};
     };
 
@@ -46,6 +51,14 @@ namespace
                std::isalpha(static_cast<unsigned char>(path[0])) &&
                path[1] == ':' &&
                (path[2] == '\\' || path[2] == '/');
+    }
+
+    std::string animationTreeClipDisplayLabel(const std::string &assetPath)
+    {
+        if (assetPath.empty())
+            return "Bind Pose";
+
+        return std::filesystem::path(assetPath).stem().string();
     }
 
     std::string resolvePreviewAssetPath(const std::string &path, const std::string &referenceAssetPath)
@@ -198,6 +211,7 @@ namespace
             hashCombine(seed, node.clipIndex);
             hashCombine(seed, node.loop);
             hashCombine(seed, node.speed);
+            hashCombine(seed, node.startNormalizedTime);
             hashCombine(seed, node.blendParameterName);
 
             for (int childNodeId : node.childNodeIds)
@@ -390,6 +404,7 @@ namespace
         outCandidate.boundsMin = transformedMin;
         outCandidate.boundsMax = transformedMax;
         outCandidate.score = glm::length(transformedMax - transformedMin);
+        outCandidate.vertexCount = outCandidate.previewMesh.vertexData.size() / sizeof(engine::vertex::Vertex3D);
         outCandidate.skinned = isSkinnedPreviewSource(sourceMesh);
         return true;
     }
@@ -474,6 +489,34 @@ void AnimationTreePanel::refreshLivePreviewDescriptor()
     m_livePreviewSampler = sampler;
 }
 
+void AnimationTreePanel::refreshAnimationList(AnimTreeUIState &ui) const
+{
+    ui.availableAnimAssets.clear();
+    if (!m_project)
+        return;
+
+    const std::filesystem::path root = resolveProjectRootPath(*m_project);
+    if (root.empty() || !std::filesystem::exists(root))
+        return;
+
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::recursive_directory_iterator(root, ec))
+    {
+        if (ec) { ec.clear(); continue; }
+        if (!entry.is_regular_file(ec)) { ec.clear(); continue; }
+        const std::string p = entry.path().string();
+        if (p.find(".anim.elixasset") != std::string::npos)
+            ui.availableAnimAssets.push_back(p);
+    }
+
+    std::sort(ui.availableAnimAssets.begin(), ui.availableAnimAssets.end(),
+              [](const std::string &a, const std::string &b)
+              {
+                  return std::filesystem::path(a).stem().string() <
+                         std::filesystem::path(b).stem().string();
+              });
+}
+
 void AnimationTreePanel::openTree(const std::filesystem::path &path,
                                   engine::AnimatorComponent *animator,
                                   engine::SkeletalMeshComponent *skeletalMesh)
@@ -489,6 +532,7 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
             auto it = m_uiStates.find(key);
             if (it != m_uiStates.end())
             {
+                it->second.tree.assetPath = key;
                 auto &preview = it->second.preview;
                 if (hasPreviewSource)
                 {
@@ -497,7 +541,9 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
                     preview.active = true;
                     preview.runtimeReady = false;
                     preview.playing = true;
+                    preview.poseDirty = true;
                     preview.playbackSpeed = 1.0f;
+                    preview.playbackAccumulator = 0.0f;
                     preview.syncedTreeHash = 0u;
                     preview.previewMeshes.clear(); // will be rebuilt lazily in update()
                     preview.modelMatrix = glm::mat4(1.0f);
@@ -526,6 +572,7 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
         else
             ui.tree.name = path.stem().string();
 
+        ui.tree.assetPath = key;
         ui.tree.ensureGraph();
         ui.currentMachineNodeId = ui.tree.rootMachineNodeId;
 
@@ -536,13 +583,16 @@ void AnimationTreePanel::openTree(const std::filesystem::path &path,
             ui.preview.active = true;
             ui.preview.runtimeReady = false;
             ui.preview.playing = true;
+            ui.preview.poseDirty = true;
             ui.preview.playbackSpeed = 1.0f;
+            ui.preview.playbackAccumulator = 0.0f;
             ui.preview.syncedTreeHash = 0u;
             ui.preview.isFirstActivation = true;
             // GPU meshes are created lazily in update() to avoid calling Vulkan during ImGui render phase
         }
 
         m_uiStates[key] = std::move(ui);
+        refreshAnimationList(m_uiStates[key]);
     }
 }
 
@@ -663,8 +713,13 @@ void AnimationTreePanel::drawSingleEditor(OpenTreeEditor &editor)
     // Toolbar
     if (ImGui::Button("Save"))
     {
-        if (m_saveTreeFunction && m_saveTreeFunction(editor.path, ui.tree))
+        engine::AnimationTree treeToSave = ui.tree;
+        treeToSave.assetPath = key;
+        if (m_saveTreeFunction && m_saveTreeFunction(editor.path, treeToSave))
         {
+            ui.tree.assetPath = key;
+            if (ui.preview.animator)
+                ui.preview.animator->loadTree(key);
             ui.dirty = false;
             if (m_notificationManager)
                 m_notificationManager->showSuccess("Animation tree saved");
@@ -924,9 +979,7 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
         }
         else if (node->type == engine::AnimationTreeNode::Type::ClipState)
         {
-            const std::string clipText = node->animationAssetPath.empty()
-                                             ? "Drop .anim here"
-                                             : std::filesystem::path(node->animationAssetPath).stem().string();
+            const std::string clipText = animationTreeClipDisplayLabel(node->animationAssetPath);
             if (node->animationAssetPath.empty())
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.6f, 1.0f));
 
@@ -1257,7 +1310,7 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
         if (ui.newNodeType == 1)
         {
             ImGui::InputText("Clip path", ui.newNodeClipPath, sizeof(ui.newNodeClipPath));
-            ImGui::TextDisabled("(or drag .anim.elixasset after creating)");
+            ImGui::TextDisabled("(leave empty for Bind Pose, or drag .anim.elixasset after creating)");
 
             if (ImGui::BeginDragDropTarget())
             {
@@ -1267,6 +1320,28 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
                     std::strncpy(ui.newNodeClipPath, dropped.c_str(), sizeof(ui.newNodeClipPath) - 1);
                 }
                 ImGui::EndDragDropTarget();
+            }
+
+            // Combo picker
+            const std::string newNodePreview = ui.newNodeClipPath[0] == '\0'
+                ? "(Bind Pose)" : std::filesystem::path(ui.newNodeClipPath).stem().string();
+            if (ImGui::BeginCombo("Pick animation##newNode", newNodePreview.c_str()))
+            {
+                if (ImGui::Button("Refresh list"))
+                    refreshAnimationList(ui);
+                ImGui::Separator();
+                if (ImGui::Selectable("(Bind Pose)", ui.newNodeClipPath[0] == '\0'))
+                    ui.newNodeClipPath[0] = '\0';
+                for (const auto &assetPath : ui.availableAnimAssets)
+                {
+                    const std::string label = std::filesystem::path(assetPath).stem().string();
+                    const bool selected = (std::string(ui.newNodeClipPath) == assetPath);
+                    if (ImGui::Selectable(label.c_str(), selected))
+                        std::strncpy(ui.newNodeClipPath, assetPath.c_str(), sizeof(ui.newNodeClipPath) - 1);
+                    if (selected)
+                        ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
             }
         }
 
@@ -1293,9 +1368,7 @@ void AnimationTreePanel::drawNodeGraph(AnimTreeUIState &ui, const std::filesyste
             }
             if (ui.nodeEditorContext)
             {
-                ed::SetCurrentEditor(ui.nodeEditorContext);
                 ed::SetNodePosition(ed::NodeId(graphNodeId(nodeId)), ImVec2(newPosition.x, newPosition.y));
-                ed::SetCurrentEditor(nullptr);
             }
 
             ui.selectedNodeId = nodeId;
@@ -1804,9 +1877,7 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
 
         if (selectedNode->type == engine::AnimationTreeNode::Type::ClipState)
         {
-            const std::string clipText = selectedNode->animationAssetPath.empty()
-                                             ? "Drop .anim here"
-                                             : std::filesystem::path(selectedNode->animationAssetPath).stem().string();
+            const std::string clipText = animationTreeClipDisplayLabel(selectedNode->animationAssetPath);
             ImGui::Button(clipText.c_str(), ImVec2(-1.0f, 0.0f));
             if (ImGui::BeginDragDropTarget())
             {
@@ -1823,7 +1894,42 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
                 ImGui::EndDragDropTarget();
             }
 
-            if (ImGui::SmallButton("Clear Clip"))
+            // Combo box picker
+            {
+                const std::string previewLabel = animationTreeClipDisplayLabel(selectedNode->animationAssetPath);
+                if (ImGui::BeginCombo("##animPicker", previewLabel.c_str()))
+                {
+                    if (ImGui::Button("Refresh list"))
+                        refreshAnimationList(ui);
+
+                    ImGui::Separator();
+
+                    if (ImGui::Selectable("(Bind Pose)", selectedNode->animationAssetPath.empty()))
+                    {
+                        selectedNode->animationAssetPath.clear();
+                        ui.dirty = true;
+                    }
+                    for (const auto &assetPath : ui.availableAnimAssets)
+                    {
+                        const std::string label = std::filesystem::path(assetPath).stem().string();
+                        const bool selected = (selectedNode->animationAssetPath == assetPath);
+                        if (ImGui::Selectable(label.c_str(), selected))
+                        {
+                            selectedNode->animationAssetPath = assetPath;
+                            ui.dirty = true;
+                        }
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+
+            if (selectedNode->animationAssetPath.empty())
+            {
+                ImGui::TextDisabled("%s", kBindPoseClipHint);
+            }
+            else if (ImGui::SmallButton("Use Bind Pose"))
             {
                 selectedNode->animationAssetPath.clear();
                 ui.dirty = true;
@@ -1832,8 +1938,25 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
                 ui.dirty = true;
             if (ImGui::Checkbox("Loop", &selectedNode->loop))
                 ui.dirty = true;
-            if (ImGui::DragFloat("Speed", &selectedNode->speed, 0.01f, 0.01f, 5.0f, "%.2f"))
+            if (ImGui::SliderFloat("Start Time", &selectedNode->startNormalizedTime, 0.0f, 1.0f, "%.2f"))
                 ui.dirty = true;
+            if (ImGui::DragFloat("Speed", &selectedNode->speed, 0.01f, 0.0f, 5.0f, "%.2f"))
+                ui.dirty = true;
+            if (ImGui::SmallButton("Freeze Last Frame"))
+            {
+                selectedNode->startNormalizedTime = 1.0f;
+                selectedNode->loop = false;
+                selectedNode->speed = 0.0f;
+                ui.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Freeze First Frame"))
+            {
+                selectedNode->startNormalizedTime = 0.0f;
+                selectedNode->speed = 0.0f;
+                ui.dirty = true;
+            }
+            ImGui::TextDisabled("Set Speed to 0 to freeze the clip at Start Time.");
             return;
         }
 
@@ -1858,8 +1981,9 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
 
             if (ImGui::Checkbox("Loop", &selectedNode->loop))
                 ui.dirty = true;
-            if (ImGui::DragFloat("Speed", &selectedNode->speed, 0.01f, 0.01f, 5.0f, "%.2f"))
+            if (ImGui::DragFloat("Speed", &selectedNode->speed, 0.01f, 0.0f, 5.0f, "%.2f"))
                 ui.dirty = true;
+            ImGui::TextDisabled("Set Speed to 0 to freeze the blend space on its current sampled frame.");
 
             ImGui::Separator();
             ImGui::TextUnformatted("Samples");
@@ -1890,6 +2014,36 @@ void AnimationTreePanel::drawTransitionInspector(AnimTreeUIState &ui)
                         }
                     }
                     ImGui::EndDragDropTarget();
+                }
+
+                // Combo box picker for this sample
+                {
+                    const std::string samplePreview = sample.animationAssetPath.empty()
+                        ? "(none)" : std::filesystem::path(sample.animationAssetPath).stem().string();
+                    if (ImGui::BeginCombo("##samplePicker", samplePreview.c_str()))
+                    {
+                        if (ImGui::Button("Refresh list"))
+                            refreshAnimationList(ui);
+                        ImGui::Separator();
+                        if (ImGui::Selectable("(none)", sample.animationAssetPath.empty()))
+                        {
+                            sample.animationAssetPath.clear();
+                            ui.dirty = true;
+                        }
+                        for (const auto &assetPath : ui.availableAnimAssets)
+                        {
+                            const std::string label = std::filesystem::path(assetPath).stem().string();
+                            const bool selected = (sample.animationAssetPath == assetPath);
+                            if (ImGui::Selectable(label.c_str(), selected))
+                            {
+                                sample.animationAssetPath = assetPath;
+                                ui.dirty = true;
+                            }
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
                 }
 
                 if (ImGui::InputInt("Clip Index", &sample.clipIndex))
@@ -1943,6 +2097,8 @@ void AnimationTreePanel::update(float deltaTime)
         if (skeletonShapeChanged)
         {
             preview.runtimeReady = false;
+            preview.poseDirty = true;
+            preview.playbackAccumulator = 0.0f;
             preview.syncedTreeHash = 0u;
             preview.previewMeshes.clear();
             preview.modelMatrix = glm::mat4(1.0f);
@@ -1953,6 +2109,8 @@ void AnimationTreePanel::update(float deltaTime)
             preview.previewSkeleton = preview.skeletalMesh->getSkeleton();
             preview.previewSkeleton.calculateBindPoseTransforms();
             preview.previewAnimator.bindSkeleton(&preview.previewSkeleton);
+            preview.poseDirty = true;
+            preview.playbackAccumulator = 0.0f;
             preview.syncedTreeHash = 0u;
             preview.runtimeReady = true;
         }
@@ -1965,6 +2123,8 @@ void AnimationTreePanel::update(float deltaTime)
             preview.previewAnimator.setTree(ui.tree);
             preview.syncedTreeHash = treeHash;
             preview.previewAnimator.update(0.0f);
+            preview.poseDirty = true;
+            preview.playbackAccumulator = 0.0f;
         }
 
         // Lazily create GPU meshes the first time update() runs (safe Vulkan context)
@@ -1984,27 +2144,37 @@ void AnimationTreePanel::update(float deltaTime)
 
             if (!candidates.empty())
             {
+                std::sort(candidates.begin(), candidates.end(),
+                          [](const PreviewCandidateInfo &left, const PreviewCandidateInfo &right)
+                          { return left.score > right.score; });
+
                 // Find the best candidate by score (largest bounding diagonal = most body)
                 float bestScore = -1.0f;
                 for (const auto &c : candidates)
                     if (c.score > bestScore)
                         bestScore = c.score;
 
-                // Include all candidates that are at least 10% the size of the primary.
-                // This collects body + clothing + accessories while excluding tiny decals/props.
-                const float scoreThreshold = bestScore * 0.1f;
+                // Keep the main body and only the most significant companion mesh.
+                // Small accessories are disproportionately expensive in CPU-skinned preview mode.
+                const float scoreThreshold = bestScore * 0.2f;
 
                 glm::vec3 combinedMin(std::numeric_limits<float>::max());
                 glm::vec3 combinedMax(std::numeric_limits<float>::lowest());
+                size_t acceptedVertexCount = 0u;
 
-                for (const auto &candidate : candidates)
+                auto appendCandidate = [&](const PreviewCandidateInfo &candidate)
                 {
-                    if (candidate.score < scoreThreshold)
-                        continue;
+                    if (!preview.previewMeshes.empty())
+                    {
+                        if (preview.previewMeshes.size() >= kPreviewMaxMeshCount)
+                            return false;
+                        if (acceptedVertexCount + candidate.vertexCount > kPreviewMaxTotalVertices)
+                            return false;
+                    }
 
                     auto gpu = engine::GPUMesh::createFromMesh(candidate.previewMesh);
                     if (!gpu)
-                        continue;
+                        return false;
 
                     auto material = preview.skeletalMesh->getMaterialOverride(candidate.slot);
                     if (!material)
@@ -2027,8 +2197,18 @@ void AnimationTreePanel::update(float deltaTime)
 
                     combinedMin = glm::min(combinedMin, candidate.boundsMin);
                     combinedMax = glm::max(combinedMax, candidate.boundsMax);
+                    acceptedVertexCount += candidate.vertexCount;
 
                     preview.previewMeshes.push_back(std::move(entry));
+                    return true;
+                };
+
+                for (const auto &candidate : candidates)
+                {
+                    if (candidate.score < scoreThreshold)
+                        continue;
+
+                    appendCandidate(candidate);
                 }
 
                 // Fallback: if nothing passed the threshold, add every candidate
@@ -2036,36 +2216,20 @@ void AnimationTreePanel::update(float deltaTime)
                 {
                     for (const auto &candidate : candidates)
                     {
-                        auto gpu = engine::GPUMesh::createFromMesh(candidate.previewMesh);
-                        if (!gpu)
+                        if (!appendCandidate(candidate))
                             continue;
 
-                        auto material = createPreviewMaterial(candidate.previewMesh.material,
-                                                              preview.skeletalMesh->getAssetPath());
-                        gpu->material = material ? material : engine::Material::getDefaultMaterial();
-
-                        PreviewMeshEntry entry{};
-                        entry.gpuMesh = std::move(gpu);
-                        entry.material = entry.gpuMesh->material
-                                             ? entry.gpuMesh->material
-                                             : engine::Material::getDefaultMaterial();
-                        entry.sourceMesh = cpuMeshes[candidate.slot];
-                        entry.localTransform = candidate.previewMesh.localTransform;
-                        entry.attachedBoneId = candidate.previewMesh.attachedBoneId;
-                        entry.skinned = candidate.skinned;
-                        if (entry.skinned)
-                            entry.dynamicVertices.resize(
-                                candidate.previewMesh.vertexData.size() / sizeof(engine::vertex::Vertex3D));
-
-                        combinedMin = glm::min(combinedMin, candidate.boundsMin);
-                        combinedMax = glm::max(combinedMax, candidate.boundsMax);
-
-                        preview.previewMeshes.push_back(std::move(entry));
+                        if (preview.previewMeshes.size() >= kPreviewMaxMeshCount ||
+                            acceptedVertexCount >= kPreviewMaxTotalVertices)
+                            break;
                     }
                 }
 
                 if (combinedMin.x <= combinedMax.x)
                     preview.modelMatrix = buildPreviewNormalizationTransform(combinedMin, combinedMax);
+
+                if (!preview.previewMeshes.empty())
+                    preview.poseDirty = true;
             }
         }
 
@@ -2075,8 +2239,18 @@ void AnimationTreePanel::update(float deltaTime)
             preview.isFirstActivation = false;
         }
 
-        const float previewDeltaTime = preview.playing ? deltaTime * glm::max(preview.playbackSpeed, 0.0f) : 0.0f;
-        preview.previewAnimator.update(previewDeltaTime);
+        if (preview.playing)
+        {
+            preview.playbackAccumulator += deltaTime * glm::max(preview.playbackSpeed, 0.0f);
+            const float previewStep = 1.0f / kPreviewTargetFps;
+            if (preview.playbackAccumulator >= previewStep)
+            {
+                const float stepDeltaTime = std::min(preview.playbackAccumulator, previewStep * 2.0f);
+                preview.playbackAccumulator = 0.0f;
+                preview.previewAnimator.update(stepDeltaTime);
+                preview.poseDirty = true;
+            }
+        }
 
         if (!m_previewPass)
             continue;
@@ -2095,7 +2269,7 @@ void AnimationTreePanel::update(float deltaTime)
             if (!gpu)
                 continue;
 
-            if (previewMesh.skinned)
+            if (previewMesh.skinned && preview.poseDirty)
             {
                 updateSkinnedPreviewVertices(previewMesh.sourceMesh, finalBones, previewMesh.dynamicVertices);
                 if (!previewMesh.dynamicVertices.empty())
@@ -2121,6 +2295,7 @@ void AnimationTreePanel::update(float deltaTime)
 
         data.hasData = !data.meshes.empty();
         m_previewPass->setPreviewData(data);
+        preview.poseDirty = false;
         submittedPreview = true;
         break; // one active preview at a time
     }
@@ -2209,6 +2384,8 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
     {
         preview.runtimeReady = false;
         preview.syncedTreeHash = 0u;
+        preview.poseDirty = true;
+        preview.playbackAccumulator = 0.0f;
     }
 
     ImGui::SameLine();
@@ -2253,6 +2430,7 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
             {
                 preview.previewAnimator.setFloat(param.name, value);
                 preview.previewAnimator.update(0.0f);
+                preview.poseDirty = true;
             }
             break;
         }
@@ -2263,6 +2441,7 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
             {
                 preview.previewAnimator.setBool(param.name, value);
                 preview.previewAnimator.update(0.0f);
+                preview.poseDirty = true;
             }
             break;
         }
@@ -2273,6 +2452,7 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
             {
                 preview.previewAnimator.setInt(param.name, value);
                 preview.previewAnimator.update(0.0f);
+                preview.poseDirty = true;
             }
             break;
         }
@@ -2282,6 +2462,7 @@ void AnimationTreePanel::drawPreviewPane(AnimTreeUIState &ui)
             {
                 preview.previewAnimator.setTrigger(param.name);
                 preview.previewAnimator.update(0.0f);
+                preview.poseDirty = true;
             }
             break;
         }

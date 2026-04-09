@@ -3,6 +3,9 @@
 
 #include "Core/Macros.hpp"
 
+#include <string>
+#include <vector>
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class IPlugin
@@ -16,6 +19,10 @@ public:
     virtual void onLoad() = 0;
 
     virtual void onUnload() = 0;
+
+    // Return the names of plugins this plugin depends on.
+    // The engine will refuse to load this plugin if any dependency is missing.
+    virtual std::vector<std::string> getDependencies() const { return {}; }
 };
 
 // Each plugin shared library must export these two C symbols:

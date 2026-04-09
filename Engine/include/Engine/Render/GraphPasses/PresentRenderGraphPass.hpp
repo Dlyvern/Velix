@@ -28,6 +28,7 @@ public:
     void setExtent(VkExtent2D extent);
 
     void compile(renderGraph::RGPResourcesStorage &storage) override;
+    void freeResources() override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
 
 private:

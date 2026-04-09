@@ -26,6 +26,16 @@ public:
                      float lifetime = 0.0f,
                      bool depthTest = true);
 
+    static void triangle(glm::vec3 a, glm::vec3 b, glm::vec3 c,
+                         glm::vec4 color = {1.0f, 1.0f, 1.0f, 0.2f},
+                         float lifetime = 0.0f,
+                         bool depthTest = true);
+
+    static void polygonFilled(const std::vector<glm::vec3> &points,
+                              glm::vec4 color = {1.0f, 1.0f, 1.0f, 0.2f},
+                              float lifetime = 0.0f,
+                              bool depthTest = true);
+
     static void box(glm::mat4 transform,
                     glm::vec3 halfExtents,
                     glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f},
@@ -71,7 +81,8 @@ public:
                       float size,
                       float lifetime = 0.0f);
 
-    static void collectVertices(std::vector<Vertex> &out);
+    static void collectVertices(std::vector<Vertex> &outLines,
+                                std::vector<Vertex> &outTriangles);
 
     static void flush(float deltaTime);
     static bool hasShapes();
@@ -79,15 +90,22 @@ public:
 private:
     struct Shape
     {
+        enum class Primitive : uint8_t
+        {
+            LineList = 0,
+            TriangleList = 1
+        };
+
         std::vector<Vertex> vertices;
         float lifetime; // remaining seconds; 0 = this-frame-only
         bool depthTest; // stored for potential future multi-pipeline support
+        Primitive primitive{Primitive::LineList};
     };
 
     static std::vector<Shape> &shapes();
     static std::mutex &mutex();
 
-    static void pushShape(std::vector<Vertex> verts, float lifetime, bool depthTest);
+    static void pushShape(std::vector<Vertex> verts, float lifetime, bool depthTest, Shape::Primitive primitive);
 
     // Helpers
     static Vertex makeVertex(glm::vec3 p, glm::vec4 c);

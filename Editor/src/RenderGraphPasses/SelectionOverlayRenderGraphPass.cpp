@@ -123,6 +123,14 @@ void SelectionOverlayRenderGraphPass::compile(engine::renderGraph::RGPResourcesS
     m_descriptorSetsBuilt = true;
 }
 
+void SelectionOverlayRenderGraphPass::freeResources()
+{
+    m_colorRenderTargets.clear();
+    for (auto &descriptorSet : m_descriptorSets)
+        descriptorSet = VK_NULL_HANDLE;
+    m_descriptorSetsBuilt = false;
+}
+
 void SelectionOverlayRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const engine::RenderGraphPassPerFrameData &data,
                                              const engine::RenderGraphPassContext &renderContext)
 {

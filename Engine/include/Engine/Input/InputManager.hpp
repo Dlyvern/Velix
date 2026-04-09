@@ -68,6 +68,10 @@ public:
     void setCursorVisible(bool visible);
     bool isCursorVisible() const;
 
+    // Editor/dev override: temporarily suppress gameplay input and force a free cursor.
+    void setGameplayInputSuppressed(bool suppressed);
+    bool isGameplayInputSuppressed() const;
+
     // Internal: called by the GLFW scroll callback
     void onScrollEvent(float yDelta);
 
@@ -94,6 +98,7 @@ private:
     bool m_firstUpdate{true};
     bool m_cursorLocked{false};
     bool m_cursorVisible{true};
+    bool m_gameplayInputSuppressed{false};
 };
 
 ELIX_NESTED_NAMESPACE_END

@@ -310,6 +310,14 @@ void ImGuiRenderGraphPass::cleanup()
     m_gameViewportImageViews.clear();
 }
 
+void ImGuiRenderGraphPass::freeResources()
+{
+    cleanup();
+    m_colorRenderTargets.clear();
+    if (m_editor)
+        m_editor->setObjectIdColorImage(nullptr);
+}
+
 void ImGuiRenderGraphPass::shutdownPersistentImGuiBackend()
 {
     std::lock_guard<std::mutex> lock(g_imguiBackendMutex);

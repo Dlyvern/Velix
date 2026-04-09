@@ -31,10 +31,10 @@ void DebugDraw::addLine(std::vector<Vertex> &v, glm::vec3 a, glm::vec3 b, glm::v
     v.push_back(makeVertex(b, c));
 }
 
-void DebugDraw::pushShape(std::vector<Vertex> verts, float lifetime, bool depthTest)
+void DebugDraw::pushShape(std::vector<Vertex> verts, float lifetime, bool depthTest, Shape::Primitive primitive)
 {
     std::lock_guard<std::mutex> lock(mutex());
-    shapes().push_back({std::move(verts), lifetime, depthTest});
+    shapes().push_back({std::move(verts), lifetime, depthTest, primitive});
 }
 
 void DebugDraw::line(glm::vec3 a, glm::vec3 b, glm::vec4 color, float lifetime, bool depthTest)
@@ -42,7 +42,34 @@ void DebugDraw::line(glm::vec3 a, glm::vec3 b, glm::vec4 color, float lifetime, 
     std::vector<Vertex> v;
     v.reserve(2);
     addLine(v, a, b, color);
-    pushShape(std::move(v), lifetime, depthTest);
+    pushShape(std::move(v), lifetime, depthTest, Shape::Primitive::LineList);
+}
+
+void DebugDraw::triangle(glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec4 color, float lifetime, bool depthTest)
+{
+    std::vector<Vertex> v;
+    v.reserve(3);
+    v.push_back(makeVertex(a, color));
+    v.push_back(makeVertex(b, color));
+    v.push_back(makeVertex(c, color));
+    pushShape(std::move(v), lifetime, depthTest, Shape::Primitive::TriangleList);
+}
+
+void DebugDraw::polygonFilled(const std::vector<glm::vec3> &points, glm::vec4 color, float lifetime, bool depthTest)
+{
+    if (points.size() < 3u)
+        return;
+
+    std::vector<Vertex> v;
+    v.reserve((points.size() - 2u) * 3u);
+    for (size_t index = 1u; index + 1u < points.size(); ++index)
+    {
+        v.push_back(makeVertex(points[0u], color));
+        v.push_back(makeVertex(points[index], color));
+        v.push_back(makeVertex(points[index + 1u], color));
+    }
+
+    pushShape(std::move(v), lifetime, depthTest, Shape::Primitive::TriangleList);
 }
 
 void DebugDraw::box(glm::mat4 transform, glm::vec3 e, glm::vec4 color, float lifetime, bool depthTest)
@@ -83,7 +110,7 @@ void DebugDraw::box(glm::mat4 transform, glm::vec3 e, glm::vec4 color, float lif
     for (auto &e2 : edges)
         addLine(v, w[e2[0]], w[e2[1]], color);
 
-    pushShape(std::move(v), lifetime, depthTest);
+    pushShape(std::move(v), lifetime, depthTest, Shape::Primitive::LineList);
 }
 
 void DebugDraw::sphere(glm::vec3 center, float radius, glm::vec4 color, float lifetime, bool depthTest, int segments)
@@ -108,7 +135,7 @@ void DebugDraw::sphere(glm::vec3 center, float radius, glm::vec4 color, float li
     circle([](float a) -> glm::vec3
            { return {0.0f, std::sin(a), std::cos(a)}; }); // YZ
 
-    pushShape(std::move(v), lifetime, depthTest);
+    pushShape(std::move(v), lifetime, depthTest, Shape::Primitive::LineList);
 }
 
 void DebugDraw::frustum(glm::mat4 invViewProj, glm::vec4 color, float lifetime)
@@ -149,7 +176,7 @@ void DebugDraw::frustum(glm::mat4 invViewProj, glm::vec4 color, float lifetime)
     addLine(v, w[2], w[6], color);
     addLine(v, w[3], w[7], color);
 
-    pushShape(std::move(v), lifetime, true);
+    pushShape(std::move(v), lifetime, true, Shape::Primitive::LineList);
 }
 
 void DebugDraw::raycast(glm::vec3 origin, glm::vec3 direction, float length, glm::vec4 color, float lifetime)
@@ -164,7 +191,7 @@ void DebugDraw::raycast(glm::vec3 origin, glm::vec3 direction, float length, glm
     addLine(v, end - rx, end + rx, color);
     addLine(v, end - ry, end + ry, color);
     addLine(v, end - rz, end + rz, color);
-    pushShape(std::move(v), lifetime, true);
+    pushShape(std::move(v), lifetime, true, Shape::Primitive::LineList);
 }
 
 void DebugDraw::capsule(glm::vec3 base, glm::vec3 tip, float radius, glm::vec4 color, float lifetime)
@@ -185,7 +212,7 @@ void DebugDraw::capsule(glm::vec3 base, glm::vec3 tip, float radius, glm::vec4 c
     addLine(v, base - r1, tip - r1, color);
     addLine(v, base + r2, tip + r2, color);
     addLine(v, base - r2, tip - r2, color);
-    pushShape(std::move(v), lifetime, true);
+    pushShape(std::move(v), lifetime, true, Shape::Primitive::LineList);
 }
 
 void DebugDraw::cone(glm::vec3 apex, glm::vec3 direction, float length,
@@ -213,7 +240,7 @@ void DebugDraw::cone(glm::vec3 apex, glm::vec3 direction, float length,
             addLine(v, apex, p0, color); // 4 lines from apex
     }
 
-    pushShape(std::move(v), lifetime, true);
+    pushShape(std::move(v), lifetime, true, Shape::Primitive::LineList);
 }
 
 void DebugDraw::aabb(glm::vec3 mn, glm::vec3 mx, glm::vec4 color, float lifetime)
@@ -230,7 +257,7 @@ void DebugDraw::cross(glm::vec3 center, float size, float lifetime)
     addLine(v, center - glm::vec3(size, 0, 0), center + glm::vec3(size, 0, 0), {1, 0, 0, 1}); // X red
     addLine(v, center - glm::vec3(0, size, 0), center + glm::vec3(0, size, 0), {0, 1, 0, 1}); // Y green
     addLine(v, center - glm::vec3(0, 0, size), center + glm::vec3(0, 0, size), {0, 0, 1, 1}); // Z blue
-    pushShape(std::move(v), lifetime, true);
+    pushShape(std::move(v), lifetime, true, Shape::Primitive::LineList);
 }
 
 void DebugDraw::flush(float deltaTime)
@@ -250,12 +277,16 @@ void DebugDraw::flush(float deltaTime)
     }
 }
 
-void DebugDraw::collectVertices(std::vector<Vertex> &out)
+void DebugDraw::collectVertices(std::vector<Vertex> &outLines,
+                                std::vector<Vertex> &outTriangles)
 {
     std::lock_guard<std::mutex> lock(mutex());
     for (auto &shape : shapes())
+    {
+        auto &target = shape.primitive == Shape::Primitive::TriangleList ? outTriangles : outLines;
         for (const auto &vert : shape.vertices)
-            out.push_back(vert);
+            target.push_back(vert);
+    }
 }
 
 bool DebugDraw::hasShapes()

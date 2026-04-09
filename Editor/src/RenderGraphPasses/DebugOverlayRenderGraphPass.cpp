@@ -64,9 +64,9 @@ void DebugOverlayRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder
                                             VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                                             VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 
-    // ── Lines pipeline layout ────────────────────────────────────────────────
+    // ── Overlay pipeline layout ──────────────────────────────────────────────
     // set 0 = camera UBO (shared cameraDescriptorSetLayout)
-    m_linesPipelineLayout = core::PipelineLayout::createShared(
+    m_overlayPipelineLayout = core::PipelineLayout::createShared(
         device,
         std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{
             *engine::EngineShaderFamilies::cameraDescriptorSetLayout},
@@ -104,15 +104,29 @@ void DebugOverlayRenderGraphPass::compile(engine::renderGraph::RGPResourcesStora
     }
     m_descriptorSetsBuilt = true;
 
-    // Per-frame host-visible vertex buffers for debug lines
-    if (m_vertexBuffers.empty())
+    // Per-frame host-visible vertex buffers for debug geometry
+    if (m_lineVertexBuffers.empty())
     {
-        m_vertexBuffers.resize(imageCount);
-        const VkDeviceSize bufSize = static_cast<VkDeviceSize>(kMaxDebugVertices) *
+        m_lineVertexBuffers.resize(imageCount);
+        const VkDeviceSize bufSize = static_cast<VkDeviceSize>(kMaxDebugLineVertices) *
                                      sizeof(engine::DebugDraw::Vertex);
         for (uint32_t i = 0; i < imageCount; ++i)
         {
-            m_vertexBuffers[i] = core::Buffer::createShared(
+            m_lineVertexBuffers[i] = core::Buffer::createShared(
+                bufSize,
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                core::memory::MemoryUsage::CPU_TO_GPU);
+        }
+    }
+
+    if (m_triangleVertexBuffers.empty())
+    {
+        m_triangleVertexBuffers.resize(imageCount);
+        const VkDeviceSize bufSize = static_cast<VkDeviceSize>(kMaxDebugTriangleVertices) *
+                                     sizeof(engine::DebugDraw::Vertex);
+        for (uint32_t i = 0; i < imageCount; ++i)
+        {
+            m_triangleVertexBuffers[i] = core::Buffer::createShared(
                 bufSize,
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                 core::memory::MemoryUsage::CPU_TO_GPU);
@@ -146,52 +160,83 @@ void DebugOverlayRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
                             &m_blitDescriptorSets[renderContext.currentImageIndex], 0, nullptr);
     engine::renderGraph::profiling::cmdDraw(commandBuffer, 3, 1, 0, 0);
 
-    // ── 2. Debug lines ───────────────────────────────────────────────────────
-    static thread_local std::vector<engine::DebugDraw::Vertex> vertices;
-    vertices.clear();
-    engine::DebugDraw::collectVertices(vertices);
+    // ── 2. Debug triangles and lines ─────────────────────────────────────────
+    static thread_local std::vector<engine::DebugDraw::Vertex> lineVertices;
+    static thread_local std::vector<engine::DebugDraw::Vertex> triangleVertices;
+    lineVertices.clear();
+    triangleVertices.clear();
+    engine::DebugDraw::collectVertices(lineVertices, triangleVertices);
 
-    if (vertices.empty())
+    if (lineVertices.empty() && triangleVertices.empty())
         return;
-
-    const uint32_t drawCount = static_cast<uint32_t>(
-        std::min(vertices.size(), static_cast<size_t>(kMaxDebugVertices)));
-    // drawCount must be even (line pairs)
-    const uint32_t vertexCount = drawCount & ~1u;
-    if (vertexCount == 0)
-        return;
-
-    // Upload to the per-frame vertex buffer
-    auto &vb = m_vertexBuffers[renderContext.currentImageIndex];
-    void *mapped = nullptr;
-    vb->map(mapped);
-    std::memcpy(mapped, vertices.data(), vertexCount * sizeof(engine::DebugDraw::Vertex));
-    vb->unmap();
-
-    engine::GraphicsPipelineKey lineKey{};
-    lineKey.shader        = engine::ShaderId::DebugLines;
-    lineKey.blend         = engine::BlendMode::AlphaBlend;
-    lineKey.cull          = engine::CullMode::None;
-    lineKey.depthTest     = false;
-    lineKey.depthWrite    = false;
-    lineKey.depthCompare  = VK_COMPARE_OP_LESS;
-    lineKey.polygonMode   = VK_POLYGON_MODE_FILL;
-    lineKey.topology      = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    lineKey.colorFormats  = {m_format};
-    lineKey.pipelineLayout = m_linesPipelineLayout;
-
-    auto linesPipeline = engine::GraphicsPipelineManager::getOrCreate(lineKey);
-    vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, linesPipeline);
 
     vkCmdBindDescriptorSets(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            m_linesPipelineLayout, 0, 1,
+                            m_overlayPipelineLayout, 0, 1,
                             &data.cameraDescriptorSet, 0, nullptr);
 
-    const VkDeviceSize offset = 0;
-    VkBuffer rawVB = vb->vk();
-    vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, &rawVB, &offset);
+    const uint32_t triangleDrawCount = static_cast<uint32_t>(
+        std::min(triangleVertices.size(), static_cast<size_t>(kMaxDebugTriangleVertices)));
+    const uint32_t triangleVertexCount = triangleDrawCount - (triangleDrawCount % 3u);
+    if (triangleVertexCount > 0u)
+    {
+        auto &vb = m_triangleVertexBuffers[renderContext.currentImageIndex];
+        void *mapped = nullptr;
+        vb->map(mapped);
+        std::memcpy(mapped, triangleVertices.data(), triangleVertexCount * sizeof(engine::DebugDraw::Vertex));
+        vb->unmap();
 
-    engine::renderGraph::profiling::cmdDraw(commandBuffer, vertexCount, 1, 0, 0);
+        engine::GraphicsPipelineKey triangleKey{};
+        triangleKey.shader = engine::ShaderId::DebugLines;
+        triangleKey.blend = engine::BlendMode::AlphaBlend;
+        triangleKey.cull = engine::CullMode::None;
+        triangleKey.depthTest = false;
+        triangleKey.depthWrite = false;
+        triangleKey.depthCompare = VK_COMPARE_OP_LESS;
+        triangleKey.polygonMode = VK_POLYGON_MODE_FILL;
+        triangleKey.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        triangleKey.colorFormats = {m_format};
+        triangleKey.pipelineLayout = m_overlayPipelineLayout;
+
+        auto trianglePipeline = engine::GraphicsPipelineManager::getOrCreate(triangleKey);
+        vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline);
+
+        const VkDeviceSize offset = 0;
+        VkBuffer rawVB = vb->vk();
+        vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, &rawVB, &offset);
+        engine::renderGraph::profiling::cmdDraw(commandBuffer, triangleVertexCount, 1, 0, 0);
+    }
+
+    const uint32_t lineDrawCount = static_cast<uint32_t>(
+        std::min(lineVertices.size(), static_cast<size_t>(kMaxDebugLineVertices)));
+    const uint32_t lineVertexCount = lineDrawCount & ~1u;
+    if (lineVertexCount > 0u)
+    {
+        auto &vb = m_lineVertexBuffers[renderContext.currentImageIndex];
+        void *mapped = nullptr;
+        vb->map(mapped);
+        std::memcpy(mapped, lineVertices.data(), lineVertexCount * sizeof(engine::DebugDraw::Vertex));
+        vb->unmap();
+
+        engine::GraphicsPipelineKey lineKey{};
+        lineKey.shader = engine::ShaderId::DebugLines;
+        lineKey.blend = engine::BlendMode::AlphaBlend;
+        lineKey.cull = engine::CullMode::None;
+        lineKey.depthTest = false;
+        lineKey.depthWrite = false;
+        lineKey.depthCompare = VK_COMPARE_OP_LESS;
+        lineKey.polygonMode = VK_POLYGON_MODE_FILL;
+        lineKey.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+        lineKey.colorFormats = {m_format};
+        lineKey.pipelineLayout = m_overlayPipelineLayout;
+
+        auto linesPipeline = engine::GraphicsPipelineManager::getOrCreate(lineKey);
+        vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_GRAPHICS, linesPipeline);
+
+        const VkDeviceSize offset = 0;
+        VkBuffer rawVB = vb->vk();
+        vkCmdBindVertexBuffers(commandBuffer->vk(), 0, 1, &rawVB, &offset);
+        engine::renderGraph::profiling::cmdDraw(commandBuffer, lineVertexCount, 1, 0, 0);
+    }
 }
 
 std::vector<engine::renderGraph::IRenderGraphPass::RenderPassExecution>
@@ -233,7 +278,8 @@ void DebugOverlayRenderGraphPass::freeResources()
     for (auto &s : m_blitDescriptorSets)
         s = VK_NULL_HANDLE;
     m_descriptorSetsBuilt = false;
-    m_vertexBuffers.clear();
+    m_lineVertexBuffers.clear();
+    m_triangleVertexBuffers.clear();
 }
 
 ELIX_NESTED_NAMESPACE_END

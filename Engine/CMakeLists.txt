@@ -67,6 +67,10 @@ target_link_libraries(${PROJECT_NAME}
         freetype
 )
 
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} PUBLIC dbghelp)
+endif()
+
 install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin

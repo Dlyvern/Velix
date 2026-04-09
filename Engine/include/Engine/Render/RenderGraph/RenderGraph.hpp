@@ -155,6 +155,8 @@ public:
         return m_renderGraphProfiling->getLastFrameProfilingData();
     }
 
+    RenderGraphFrameProfilingData getLastFrameBenchmarkData();
+
     uint32_t getCurrentImageIndex() const
     {
         return m_imageIndex;

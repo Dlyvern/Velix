@@ -168,6 +168,15 @@ void ShadowRenderGraphPass::cleanup()
     destroyLayerViews();
 }
 
+void ShadowRenderGraphPass::freeResources()
+{
+    destroyLayerViews();
+    m_renderTarget = nullptr;
+    m_cubeRenderTarget = nullptr;
+    m_arrayRenderTarget = nullptr;
+    m_executionInfos.clear();
+}
+
 VkImageView ShadowRenderGraphPass::createSingleLayerView(const RenderTarget *target, uint32_t baseArrayLayer) const
 {
     if (!target || !target->getImage())

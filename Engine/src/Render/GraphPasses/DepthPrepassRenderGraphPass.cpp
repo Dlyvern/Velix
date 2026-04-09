@@ -2,9 +2,11 @@
 
 #include "Core/VulkanContext.hpp"
 #include "Core/VulkanHelpers.hpp"
+#include "Core/Logger.hpp"
 
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Builders/GraphicsPipelineKey.hpp"
+#include "Engine/Render/RenderQualitySettings.hpp"
 #include "Engine/Render/RenderGraph/RenderGraphDrawProfiler.hpp"
 #include "Engine/Shaders/ShaderFamily.hpp"
 #include "Engine/Material.hpp"
@@ -14,6 +16,57 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 namespace
 {
+    uint32_t sampleCountToInt(VkSampleCountFlagBits sampleCount)
+    {
+        switch (sampleCount)
+        {
+        case VK_SAMPLE_COUNT_2_BIT:
+            return 2u;
+        case VK_SAMPLE_COUNT_4_BIT:
+            return 4u;
+        case VK_SAMPLE_COUNT_8_BIT:
+            return 8u;
+        case VK_SAMPLE_COUNT_16_BIT:
+            return 16u;
+        case VK_SAMPLE_COUNT_32_BIT:
+            return 32u;
+        case VK_SAMPLE_COUNT_64_BIT:
+            return 64u;
+        case VK_SAMPLE_COUNT_1_BIT:
+        default:
+            return 1u;
+        }
+    }
+
+    VkSampleCountFlagBits resolveDepthPrepassSampleCount()
+    {
+        const auto context = core::VulkanContext::getContext();
+        const auto requested = RenderQualitySettings::getInstance().getRequestedMsaaSampleCount();
+
+        if (requested == VK_SAMPLE_COUNT_1_BIT)
+            return VK_SAMPLE_COUNT_1_BIT;
+
+        const auto clamped = context->clampSupportedSampleCount(requested);
+        if (clamped != requested)
+        {
+            VX_ENGINE_WARNING_STREAM("DepthPrepass MSAA requested "
+                                     << sampleCountToInt(requested)
+                                     << "x, but the adapter only supports up to "
+                                     << sampleCountToInt(clamped)
+                                     << "x for color+depth framebuffers. Clamping.\n");
+        }
+
+        if (!context->supportsSampleZeroDepthResolve())
+        {
+            VX_ENGINE_WARNING_STREAM("DepthPrepass MSAA requested "
+                                     << sampleCountToInt(requested)
+                                     << "x, but depth resolve mode SAMPLE_ZERO is unavailable. Falling back to Off.\n");
+            return VK_SAMPLE_COUNT_1_BIT;
+        }
+
+        return clamped;
+    }
+
     struct DepthPrepassPC
     {
         uint32_t baseInstance{0};
@@ -48,22 +101,46 @@ void DepthPrepassRenderGraphPass::setExtent(VkExtent2D extent)
 void DepthPrepassRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 {
     m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
+    m_rasterizationSamples = resolveDepthPrepassSampleCount();
+    const bool msaaEnabled = m_rasterizationSamples != VK_SAMPLE_COUNT_1_BIT;
 
-    RGPTextureDescription depthDesc{m_depthFormat,
-                                    RGPTextureUsage::DEPTH_STENCIL,
-                                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
-    depthDesc.setDebugName("__ELIX_DEPTH_PREPASS_TEXTURE__");
-    depthDesc.setCustomExtentFunction([this] { return m_extent; });
+    RGPTextureDescription resolvedDepthDesc{m_depthFormat,
+                                            RGPTextureUsage::DEPTH_STENCIL,
+                                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+    resolvedDepthDesc.setDebugName("__ELIX_DEPTH_PREPASS_TEXTURE__");
+    resolvedDepthDesc.setCustomExtentFunction([this] { return m_extent; });
 
-    m_depthTextureHandler = builder.createTexture(depthDesc);
-    builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+    if (msaaEnabled)
+    {
+        RGPTextureDescription depthAttachmentDesc{m_depthFormat,
+                                                  RGPTextureUsage::DEPTH_STENCIL,
+                                                  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                                  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+        depthAttachmentDesc.setDebugName("__ELIX_DEPTH_PREPASS_MSAA_TEXTURE__");
+        depthAttachmentDesc.setCustomExtentFunction([this] { return m_extent; });
+        depthAttachmentDesc.setSampleCount(m_rasterizationSamples);
+
+        m_depthAttachmentTextureHandler = builder.createTexture(depthAttachmentDesc);
+        m_depthTextureHandler = builder.createTexture(resolvedDepthDesc);
+
+        builder.write(m_depthAttachmentTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+        builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+    }
+    else
+    {
+        m_depthTextureHandler = builder.createTexture(resolvedDepthDesc);
+        m_depthAttachmentTextureHandler = m_depthTextureHandler;
+        builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
+    }
+
     outputs.depth.set(m_depthTextureHandler);
 }
 
 void DepthPrepassRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 {
     m_depthRenderTarget = storage.getTexture(m_depthTextureHandler);
+    m_depthAttachmentRenderTarget = storage.getTexture(m_depthAttachmentTextureHandler);
 }
 
 void DepthPrepassRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
@@ -112,6 +189,7 @@ void DepthPrepassRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
         key.depthCompare  = VK_COMPARE_OP_LESS;
         key.polygonMode   = VK_POLYGON_MODE_FILL;
         key.topology      = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        key.rasterizationSamples = m_rasterizationSamples;
         key.colorFormats  = {};               // no color output
         key.depthFormat   = m_depthFormat;
         key.pipelineLayout = pipelineLayout;
@@ -193,21 +271,33 @@ void DepthPrepassRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
 std::vector<IRenderGraphPass::RenderPassExecution> DepthPrepassRenderGraphPass::getRenderPassExecutions(
     const RenderGraphPassContext &) const
 {
+    const bool msaaEnabled = m_rasterizationSamples != VK_SAMPLE_COUNT_1_BIT;
+
     IRenderGraphPass::RenderPassExecution execution{};
     execution.renderArea.offset = {0, 0};
     execution.renderArea.extent = m_extent;
     execution.colorFormats      = {};
     execution.depthFormat       = m_depthFormat;
+    execution.rasterizationSamples = m_rasterizationSamples;
 
     VkRenderingAttachmentInfo depthAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    depthAttachment.imageView   = m_depthRenderTarget->vkImageView();
+    depthAttachment.imageView   = (msaaEnabled ? m_depthAttachmentRenderTarget : m_depthRenderTarget)->vkImageView();
     depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depthAttachment.loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.clearValue  = m_depthClear;
 
+    if (msaaEnabled)
+    {
+        depthAttachment.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+        depthAttachment.resolveImageView = m_depthRenderTarget->vkImageView();
+        depthAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
     execution.depthRenderingItem = depthAttachment;
     execution.targets[m_depthTextureHandler] = m_depthRenderTarget;
+    if (msaaEnabled)
+        execution.targets[m_depthAttachmentTextureHandler] = m_depthAttachmentRenderTarget;
 
     return {execution};
 }

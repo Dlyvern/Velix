@@ -17,12 +17,14 @@ struct RenderGraphPassProfilingData
     uint32_t drawCalls{0};
     double cpuTimeMs{0.0};
     double gpuTimeMs{0.0};
+    uint64_t vramBytes{0};
 };
 
 struct RenderGraphFrameProfilingData
 {
     uint64_t frameIndex{0};
     uint32_t totalDrawCalls{0};
+    uint64_t renderGraphVramBytes{0};
 
     double cpuPrepareFrameMs{0.0}; // fence wait + pool reset + acquire + recompile + resolve profiling
     double cpuActualFrameMs{0.0};  // all pass recording + primary CB end + submit + present

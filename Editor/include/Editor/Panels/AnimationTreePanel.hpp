@@ -46,7 +46,9 @@ public:
         bool                          active{false};
         bool                          runtimeReady{false};
         bool                          playing{true};
+        bool                          poseDirty{true};
         float                         playbackSpeed{1.0f};
+        float                         playbackAccumulator{0.0f};
         std::size_t                   syncedTreeHash{0u};
         engine::AnimatorComponent     previewAnimator{};
         engine::Skeleton              previewSkeleton{};
@@ -126,6 +128,9 @@ private:
 
         // Live preview
         AnimPreviewContext preview{};
+
+        // Cached list of .anim.elixasset paths found in the project
+        std::vector<std::string> availableAnimAssets;
     };
 
     struct OpenTreeEditor
@@ -134,6 +139,8 @@ private:
         bool open{true};
         bool confirmCloseRequested{false};
     };
+
+    void refreshAnimationList(AnimTreeUIState &ui) const;
 
     void drawSingleEditor(OpenTreeEditor &editor);
     void drawNodeGraph(AnimTreeUIState &ui, const std::filesystem::path &path);

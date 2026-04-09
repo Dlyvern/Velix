@@ -47,35 +47,9 @@ public:
         return m_perMeshMaterialOverrides[slot];
     }
 
-    void clearMaterialOverride(size_t slot)
-    {
-        const size_t currentSize = std::max({m_meshes.size(), m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size()});
-        if (slot >= currentSize)
-            return;
+    void clearMaterialOverride(size_t slot);
 
-        const size_t requiredSize = std::max(currentSize, slot + 1);
-        if (m_perMeshMaterialOverrides.size() < requiredSize)
-            m_perMeshMaterialOverrides.resize(requiredSize, nullptr);
-        if (m_perMeshMaterialOverridePaths.size() < requiredSize)
-            m_perMeshMaterialOverridePaths.resize(requiredSize);
-
-        m_perMeshMaterialOverrides[slot] = nullptr;
-        m_perMeshMaterialOverridePaths[slot].clear();
-    }
-
-    void setMaterialOverridePath(size_t slot, const std::string &path)
-    {
-        if (!m_meshes.empty() && slot >= m_meshes.size())
-            return;
-
-        const size_t requiredSize = std::max({m_meshes.size(), m_perMeshMaterialOverrides.size(), m_perMeshMaterialOverridePaths.size(), slot + 1});
-        if (m_perMeshMaterialOverrides.size() < requiredSize)
-            m_perMeshMaterialOverrides.resize(requiredSize, nullptr);
-        if (m_perMeshMaterialOverridePaths.size() < requiredSize)
-            m_perMeshMaterialOverridePaths.resize(requiredSize);
-
-        m_perMeshMaterialOverridePaths[slot] = path;
-    }
+    void setMaterialOverridePath(size_t slot, const std::string &path);
 
     const std::string &getMaterialOverridePath(size_t slot) const
     {
@@ -109,6 +83,7 @@ public:
 
     // Called by PerFrameDataWorker when handle transitions Ready → meshes populated.
     void onModelLoaded();
+    void applyMaterialOverrideCpuDataToMeshes();
 
     // Called on unload — clears CPU mesh data so it can be GC'd.
     void clearMeshes() { m_meshes.clear(); m_perMeshMaterialOverrides.clear(); }

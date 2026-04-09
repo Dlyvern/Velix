@@ -48,7 +48,9 @@ public:
     bool hasBone(const std::string &boneName) const;
 
     BoneInfo *getBone(const std::string &boneName);
+    const BoneInfo *getBone(const std::string &boneName) const;
     BoneInfo *getBone(int boneID);
+    const BoneInfo *getBone(int boneID) const;
     BoneInfo *getParent();
 
     void calculateBindPoseTransforms();

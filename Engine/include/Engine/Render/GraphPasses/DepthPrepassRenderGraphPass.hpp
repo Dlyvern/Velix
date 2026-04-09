@@ -21,6 +21,7 @@ public:
     void setExtent(VkExtent2D extent);
 
     RGPResourceHandler &getDepthTextureHandler() { return m_depthTextureHandler; }
+    RGPResourceHandler &getDepthAttachmentTextureHandler() { return m_depthAttachmentTextureHandler; }
 
     struct Outputs
     {
@@ -34,9 +35,12 @@ private:
 
     VkFormat m_depthFormat{VK_FORMAT_UNDEFINED};
     VkClearValue m_depthClear{};
+    VkSampleCountFlagBits m_rasterizationSamples{VK_SAMPLE_COUNT_1_BIT};
 
     const RenderTarget *m_depthRenderTarget{nullptr};
+    const RenderTarget *m_depthAttachmentRenderTarget{nullptr};
     RGPResourceHandler  m_depthTextureHandler;
+    RGPResourceHandler  m_depthAttachmentTextureHandler;
 };
 
 ELIX_CUSTOM_NAMESPACE_END

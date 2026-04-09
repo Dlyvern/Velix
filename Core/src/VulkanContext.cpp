@@ -12,6 +12,7 @@
 #include <limits>
 #include <algorithm>
 #include <unordered_map>
+#include <array>
 
 #include "Core/Memory/VMAAllocator.hpp"
 #include "Core/VulkanHelpers.hpp"
@@ -34,6 +35,30 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityF
 }
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
+
+namespace
+{
+    VkSampleCountFlagBits highestSupportedSampleCount(VkSampleCountFlags counts)
+    {
+        constexpr std::array<VkSampleCountFlagBits, 7> kDescendingSampleCounts{
+            VK_SAMPLE_COUNT_64_BIT,
+            VK_SAMPLE_COUNT_32_BIT,
+            VK_SAMPLE_COUNT_16_BIT,
+            VK_SAMPLE_COUNT_8_BIT,
+            VK_SAMPLE_COUNT_4_BIT,
+            VK_SAMPLE_COUNT_2_BIT,
+            VK_SAMPLE_COUNT_1_BIT,
+        };
+
+        for (const auto sampleCount : kDescendingSampleCounts)
+        {
+            if ((counts & sampleCount) != 0u)
+                return sampleCount;
+        }
+
+        return VK_SAMPLE_COUNT_1_BIT;
+    }
+}
 
 std::shared_ptr<VulkanContext> VulkanContext::create(platform::Window &window)
 {
@@ -223,22 +248,35 @@ void VulkanContext::createLogicalDevice()
     m_accelerationStructureProperties = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
 
     VkPhysicalDeviceProperties2 properties2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-    properties2.pNext = nullptr;
+    VkPhysicalDeviceDepthStencilResolveProperties depthStencilResolveProperties{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES};
+    properties2.pNext = &depthStencilResolveProperties;
     m_rayTracingPipelineProperties.pNext = nullptr;
     m_accelerationStructureProperties.pNext = nullptr;
 
     if (hasRTP)
     {
-        properties2.pNext = &m_rayTracingPipelineProperties;
+        depthStencilResolveProperties.pNext = &m_rayTracingPipelineProperties;
         if (hasAS)
             m_rayTracingPipelineProperties.pNext = &m_accelerationStructureProperties;
     }
     else if (hasAS)
     {
-        properties2.pNext = &m_accelerationStructureProperties;
+        depthStencilResolveProperties.pNext = &m_accelerationStructureProperties;
     }
+    else
+        depthStencilResolveProperties.pNext = nullptr;
 
     vkGetPhysicalDeviceProperties2(m_physicalDevice, &properties2);
+
+    const VkPhysicalDeviceProperties &physicalDeviceProperties = properties2.properties;
+    const VkSampleCountFlags commonSampleCounts =
+        physicalDeviceProperties.limits.framebufferColorSampleCounts &
+        physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+    m_maxUsableSampleCount = highestSupportedSampleCount(commonSampleCounts);
+    m_sampleZeroDepthResolveSupported =
+        depthStencilResolveProperties.supportedDepthResolveModes != VK_RESOLVE_MODE_NONE &&
+        (depthStencilResolveProperties.supportedDepthResolveModes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT) != 0u;
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
@@ -427,6 +465,36 @@ bool VulkanContext::hasRayTracingPipelineSupport() const
 bool VulkanContext::hasTimelineSemaphoreSupport() const
 {
     return m_timelineSemaphoreSupported;
+}
+
+VkSampleCountFlagBits VulkanContext::getMaxUsableSampleCount() const
+{
+    return m_maxUsableSampleCount;
+}
+
+VkSampleCountFlagBits VulkanContext::clampSupportedSampleCount(VkSampleCountFlagBits requested) const
+{
+    if (requested <= VK_SAMPLE_COUNT_1_BIT)
+        return VK_SAMPLE_COUNT_1_BIT;
+
+    return std::min(requested, m_maxUsableSampleCount);
+}
+
+VkSampleCountFlagBits VulkanContext::getEffectiveMsaaSampleCount(VkSampleCountFlagBits requested) const
+{
+    const VkSampleCountFlagBits clampedSampleCount = clampSupportedSampleCount(requested);
+    if (clampedSampleCount <= VK_SAMPLE_COUNT_1_BIT)
+        return VK_SAMPLE_COUNT_1_BIT;
+
+    if (!m_sampleZeroDepthResolveSupported)
+        return VK_SAMPLE_COUNT_1_BIT;
+
+    return clampedSampleCount;
+}
+
+bool VulkanContext::supportsSampleZeroDepthResolve() const
+{
+    return m_sampleZeroDepthResolveSupported;
 }
 
 bool VulkanContext::hasRayTracingDeviceFeaturesEnabled() const

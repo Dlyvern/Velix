@@ -252,9 +252,10 @@ namespace
 
 Scene::Scene() : m_physicsScene(PhysXCore::getInstance()->getPhysics()
 #if defined(PHYSX_GPU_ENABLED) && PX_SUPPORT_GPU_PHYSX
-    , PhysXCore::getInstance()->getCudaContextManager()
+                                    ,
+                                PhysXCore::getInstance()->getCudaContextManager()
 #endif
-)
+                 )
 {
 }
 
@@ -766,6 +767,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
             float speed;
             bool looped;
             bool paused;
+            bool ignoreRootBoneY;
         };
         std::vector<AnimatorState> pendingAnimatorStates;
         SceneMaterialResolver decalMaterialResolver;
@@ -1012,7 +1014,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                                                      componentJson.value("selected_animation", -1),
                                                      componentJson.value("speed", 1.0f),
                                                      componentJson.value("looped", true),
-                                                     componentJson.value("paused", false)});
+                                                     componentJson.value("paused", false),
+                                                     componentJson.value("ignore_root_bone_y", false)});
                 }
                 else if (type == "camera")
                 {
@@ -1211,6 +1214,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                     if (!characterMovement)
                         continue;
 
+                    characterMovement->setCapsuleCenterOffsetY(componentJson.value("center_offset_y", characterMovement->getCapsuleCenterOffsetY()));
                     characterMovement->setStepOffset(componentJson.value("step_offset", characterMovement->getStepOffset()));
                     characterMovement->setContactOffset(componentJson.value("contact_offset", characterMovement->getContactOffset()));
                     characterMovement->setSlopeLimitDegrees(componentJson.value("slope_limit_degrees", characterMovement->getSlopeLimitDegrees()));
@@ -1241,29 +1245,28 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                     if (!scriptName.empty())
                     {
                         Script *script = ScriptsRegister::createScriptFromActiveRegister(scriptName);
-                        if (script)
+                        if (!script)
+                            VX_ENGINE_WARNING_STREAM("Script not found in registry: '" << scriptName
+                                                     << "' — adding as broken component (plugin may not be loaded)\n");
+
+                        auto *scriptComponent = gameObject->addComponent<ScriptComponent>(scriptName, script);
+
+                        if (scriptComponent &&
+                            componentJson.contains("variables") &&
+                            componentJson["variables"].is_object())
                         {
-                            auto *scriptComponent = gameObject->addComponent<ScriptComponent>(scriptName, script);
-
-                            if (scriptComponent &&
-                                componentJson.contains("variables") &&
-                                componentJson["variables"].is_object())
+                            Script::ExposedVariablesMap serializedVariables;
+                            for (auto it = componentJson["variables"].begin(); it != componentJson["variables"].end(); ++it)
                             {
-                                Script::ExposedVariablesMap serializedVariables;
-                                for (auto it = componentJson["variables"].begin(); it != componentJson["variables"].end(); ++it)
-                                {
-                                    Script::ExposedVariable variable;
-                                    if (!scriptVariableFromJson(it.value(), variable))
-                                        continue;
+                                Script::ExposedVariable variable;
+                                if (!scriptVariableFromJson(it.value(), variable))
+                                    continue;
 
-                                    serializedVariables[it.key()] = std::move(variable);
-                                }
-
-                                scriptComponent->setSerializedVariables(serializedVariables);
+                                serializedVariables[it.key()] = std::move(variable);
                             }
+
+                            scriptComponent->setSerializedVariables(serializedVariables);
                         }
-                        else
-                            VX_ENGINE_WARNING_STREAM("Script not found in registry: " << scriptName << '\n');
                     }
                 }
                 else if (type == "particle_system")
@@ -1486,7 +1489,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                 else if (type == "reflection_probe")
                 {
                     auto *probe = gameObject->addComponent<ReflectionProbeComponent>();
-                    probe->radius    = componentJson.value("radius", 5.0f);
+                    probe->radius = componentJson.value("radius", 5.0f);
                     probe->intensity = componentJson.value("intensity", 1.0f);
                     const std::string hdrPath = resolveScenePath(componentJson.value("hdr_path", std::string{}));
                     if (!hdrPath.empty())
@@ -1536,6 +1539,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
             anim->setAnimationSpeed(state.speed);
             anim->setAnimationLooped(state.looped);
             anim->setAnimationPaused(state.paused);
+            anim->setIgnoreRootBoneY(state.ignoreRootBoneY);
             if (state.selectedAnim >= 0)
                 anim->setSelectedAnimationIndex(state.selectedAnim);
         }
@@ -1750,6 +1754,7 @@ void Scene::saveSceneToFile(const std::string &filePath)
             j["speed"] = anim->getAnimationSpeed();
             j["looped"] = anim->isAnimationLooped();
             j["paused"] = anim->isAnimationPaused();
+            j["ignore_root_bone_y"] = anim->getIgnoreRootBoneY();
 
             if (!anim->getExternalAnimationAssetPaths().empty())
             {
@@ -1871,6 +1876,7 @@ void Scene::saveSceneToFile(const std::string &filePath)
             j["type"] = "character_movement";
             j["radius"] = characterMovement->getCapsuleRadius();
             j["height"] = characterMovement->getCapsuleHeight();
+            j["center_offset_y"] = characterMovement->getCapsuleCenterOffsetY();
             j["step_offset"] = characterMovement->getStepOffset();
             j["contact_offset"] = characterMovement->getContactOffset();
             j["slope_limit_degrees"] = characterMovement->getSlopeLimitDegrees();
@@ -2313,6 +2319,7 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
             componentJson["speed"] = animator->getAnimationSpeed();
             componentJson["looped"] = animator->isAnimationLooped();
             componentJson["paused"] = animator->isAnimationPaused();
+            componentJson["ignore_root_bone_y"] = animator->getIgnoreRootBoneY();
 
             if (!animator->getExternalAnimationAssetPaths().empty())
             {
@@ -2433,6 +2440,7 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
             componentJson["type"] = "character_movement";
             componentJson["radius"] = characterMovement->getCapsuleRadius();
             componentJson["height"] = characterMovement->getCapsuleHeight();
+            componentJson["center_offset_y"] = characterMovement->getCapsuleCenterOffsetY();
             componentJson["step_offset"] = characterMovement->getStepOffset();
             componentJson["contact_offset"] = characterMovement->getContactOffset();
             componentJson["slope_limit_degrees"] = characterMovement->getSlopeLimitDegrees();
@@ -2699,10 +2707,10 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
         if (const auto *probe = object.getComponent<ReflectionProbeComponent>())
         {
             nlohmann::json j;
-            j["type"]      = "reflection_probe";
-            j["radius"]    = probe->radius;
+            j["type"] = "reflection_probe";
+            j["radius"] = probe->radius;
             j["intensity"] = probe->intensity;
-            j["hdr_path"]  = normalizeSerializedPath(probe->hdrPath);
+            j["hdr_path"] = normalizeSerializedPath(probe->hdrPath);
             componentsJson.push_back(std::move(j));
         }
 
@@ -2839,6 +2847,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
         float speed{1.0f};
         bool looped{true};
         bool paused{false};
+        bool ignoreRootBoneY{false};
     };
     std::vector<AnimatorState> pendingAnimatorStates;
     SceneMaterialResolver decalMaterialResolver;
@@ -3021,6 +3030,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                     auto *staticMeshComponent = entity->addComponent<StaticMeshComponent>(meshes);
                     staticMeshComponent->setAssetPath(assetPath);
                     restoreMaterialOverrides(staticMeshComponent, componentJson.value("material_overrides", nlohmann::json::array()));
+                    staticMeshComponent->applyMaterialOverrideCpuDataToMeshes();
                 }
             }
             else if (type == "terrain")
@@ -3054,6 +3064,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                             modelAsset->meshes, modelAsset->skeleton.value());
                         skeletalMeshComponent->setAssetPath(assetPath);
                         restoreMaterialOverrides(skeletalMeshComponent, componentJson.value("material_overrides", nlohmann::json::array()));
+                        skeletalMeshComponent->applyMaterialOverrideCpuDataToMeshes();
 
                         if (!modelAsset->animations.empty())
                         {
@@ -3068,12 +3079,12 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
             else if (type == "animator")
             {
                 ensureAnimatorAnimationsLoaded(entity, componentJson);
-                pendingAnimatorStates.push_back({
-                    entity,
-                    componentJson.value("selected_animation", -1),
-                    componentJson.value("speed", 1.0f),
-                    componentJson.value("looped", true),
-                    componentJson.value("paused", false)});
+                pendingAnimatorStates.push_back({entity,
+                                                 componentJson.value("selected_animation", -1),
+                                                 componentJson.value("speed", 1.0f),
+                                                 componentJson.value("looped", true),
+                                                 componentJson.value("paused", false),
+                                                 componentJson.value("ignore_root_bone_y", false)});
             }
             else if (type == "camera")
             {
@@ -3274,6 +3285,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                 if (!characterMovement)
                     continue;
 
+                characterMovement->setCapsuleCenterOffsetY(componentJson.value("center_offset_y", characterMovement->getCapsuleCenterOffsetY()));
                 characterMovement->setStepOffset(componentJson.value("step_offset", characterMovement->getStepOffset()));
                 characterMovement->setContactOffset(componentJson.value("contact_offset", characterMovement->getContactOffset()));
                 characterMovement->setSlopeLimitDegrees(componentJson.value("slope_limit_degrees", characterMovement->getSlopeLimitDegrees()));
@@ -3304,29 +3316,28 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                 if (!scriptName.empty())
                 {
                     Script *script = ScriptsRegister::createScriptFromActiveRegister(scriptName);
-                    if (script)
+                    if (!script)
+                        VX_ENGINE_WARNING_STREAM("Script not found in registry: '" << scriptName
+                                                 << "' — adding as broken component (plugin may not be loaded)\n");
+
+                    auto *scriptComponent = entity->addComponent<ScriptComponent>(scriptName, script);
+
+                    if (scriptComponent &&
+                        componentJson.contains("variables") &&
+                        componentJson["variables"].is_object())
                     {
-                        auto *scriptComponent = entity->addComponent<ScriptComponent>(scriptName, script);
-
-                        if (scriptComponent &&
-                            componentJson.contains("variables") &&
-                            componentJson["variables"].is_object())
+                        Script::ExposedVariablesMap serializedVariables;
+                        for (auto variableIt = componentJson["variables"].begin(); variableIt != componentJson["variables"].end(); ++variableIt)
                         {
-                            Script::ExposedVariablesMap serializedVariables;
-                            for (auto variableIt = componentJson["variables"].begin(); variableIt != componentJson["variables"].end(); ++variableIt)
-                            {
-                                Script::ExposedVariable variable;
-                                if (!scriptVariableFromJson(variableIt.value(), variable))
-                                    continue;
+                            Script::ExposedVariable variable;
+                            if (!scriptVariableFromJson(variableIt.value(), variable))
+                                continue;
 
-                                serializedVariables[variableIt.key()] = std::move(variable);
-                            }
-
-                            scriptComponent->setSerializedVariables(serializedVariables);
+                            serializedVariables[variableIt.key()] = std::move(variable);
                         }
+
+                        scriptComponent->setSerializedVariables(serializedVariables);
                     }
-                    else
-                        VX_ENGINE_WARNING_STREAM("Script not found in registry: " << scriptName << '\n');
                 }
             }
             else if (type == "particle_system")
@@ -3513,7 +3524,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
             else if (type == "reflection_probe")
             {
                 auto *probe = entity->addComponent<ReflectionProbeComponent>();
-                probe->radius    = componentJson.value("radius", 5.0f);
+                probe->radius = componentJson.value("radius", 5.0f);
                 probe->intensity = componentJson.value("intensity", 1.0f);
                 const std::string hdrPath = resolveSerializedPath(componentJson.value("hdr_path", std::string{}));
                 if (!hdrPath.empty())
@@ -3570,6 +3581,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
         animator->setAnimationSpeed(state.speed);
         animator->setAnimationLooped(state.looped);
         animator->setAnimationPaused(state.paused);
+        animator->setIgnoreRootBoneY(state.ignoreRootBoneY);
         if (state.selectedAnimation >= 0)
             animator->setSelectedAnimationIndex(state.selectedAnimation);
     }

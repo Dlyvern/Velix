@@ -120,7 +120,8 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
             PluginInfo info;
             info.filename = filename;
             info.category = category;
-            info.loaded = false;
+            info.status   = PluginLoadStatus::Disabled;
+            info.loaded   = false;
             m_pluginInfos.push_back(std::move(info));
             continue;
         }
@@ -132,7 +133,8 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
             PluginInfo info;
             info.filename = filename;
             info.category = category;
-            info.loaded = false;
+            info.status   = PluginLoadStatus::LibraryLoadFailed;
+            info.loaded   = false;
             m_pluginInfos.push_back(std::move(info));
             continue;
         }
@@ -159,30 +161,62 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
         auto destroyFn = PluginLoader::getFunction<DestroyFn>("destroyPlugin", handle);
 
         if (!createFn)
-        {
             VX_ENGINE_WARNING_STREAM("[PluginManager] No createPlugin symbol in: " << filename << '\n');
-        }
 
         IPlugin *plugin = nullptr;
         if (createFn)
-        {
             plugin = createFn();
-            if (plugin)
-            {
-                plugin->onLoad();
-                VX_ENGINE_INFO_STREAM("[PluginManager] Loaded plugin: " << plugin->getName()
-                                                                        << " v" << plugin->getVersion() << '\n');
-                m_pluginPtrs.push_back(plugin);
-            }
-        }
 
         PluginInfo info;
         info.pluginName = plugin ? plugin->getName() : stem;
         info.filename   = filename;
         info.category   = category;
-        info.loaded     = true;
-        m_pluginInfos.push_back(info);
 
+        if (plugin)
+        {
+            // Check dependencies before calling onLoad().
+            const auto deps = plugin->getDependencies();
+            std::vector<std::string> missing;
+            for (const auto &depName : deps)
+            {
+                const bool found = std::any_of(m_pluginPtrs.begin(), m_pluginPtrs.end(),
+                                               [&depName](const IPlugin *p)
+                                               { return p && std::string(p->getName()) == depName; });
+                if (!found)
+                    missing.push_back(depName);
+            }
+
+            if (!missing.empty())
+            {
+                for (const auto &dep : missing)
+                    VX_ENGINE_ERROR_STREAM("[PluginManager] Plugin '" << info.pluginName
+                                          << "' requires missing plugin: '" << dep << "'\n");
+
+                if (destroyFn)
+                    destroyFn(plugin);
+                PluginLoader::closeLibrary(handle);
+
+                info.status              = PluginLoadStatus::MissingDependency;
+                info.loaded              = false;
+                info.missingDependencies = std::move(missing);
+                m_pluginInfos.push_back(std::move(info));
+                continue;
+            }
+
+            plugin->onLoad();
+            VX_ENGINE_INFO_STREAM("[PluginManager] Loaded plugin: " << plugin->getName()
+                                                                    << " v" << plugin->getVersion() << '\n');
+            m_pluginPtrs.push_back(plugin);
+            info.status = PluginLoadStatus::Loaded;
+            info.loaded = true;
+        }
+        else
+        {
+            info.status = createFn ? PluginLoadStatus::Loaded : PluginLoadStatus::NoCreateSymbol;
+            info.loaded = (info.status == PluginLoadStatus::Loaded);
+        }
+
+        m_pluginInfos.push_back(info);
         m_plugins.push_back({filename, handle, plugin, destroyFn, category});
     }
 }

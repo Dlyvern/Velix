@@ -207,12 +207,16 @@ namespace
         const bool supportsRayQuery = context && context->hasRayQuerySupport();
         const bool supportsRayPipeline = context && context->hasRayTracingPipelineSupport();
         const bool supportsAnyRT = supportsRayQuery || supportsRayPipeline;
+        const VkSampleCountFlagBits effectiveMsaaSamples = context
+            ? context->getEffectiveMsaaSampleCount(settings.getRequestedMsaaSampleCount())
+            : VK_SAMPLE_COUNT_1_BIT;
 
         size_t seed = 0u;
         hashCombine(seed, settings.enablePostProcessing);
         hashCombine(seed, settings.enableRayTracing && settings.enableRTShadows && supportsAnyRT);
         hashCombine(seed, settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT);
         hashCombine(seed, settings.enableRayTracing && settings.enableRTAO && supportsRayQuery);
+        hashCombine(seed, static_cast<uint32_t>(effectiveMsaaSamples));
         hashCombine(seed, renderGraphUsesSSR(settings));
         hashCombine(seed, renderGraphUsesVolumetricFog(settings, scene));
         hashCombine(seed, static_cast<uint32_t>(settings.volumetricFogQuality));

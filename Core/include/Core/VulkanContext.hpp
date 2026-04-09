@@ -53,6 +53,10 @@ public:
     bool hasRayTracingPipelineSupport() const;
     bool hasRayTracingDeviceFeaturesEnabled() const;
     bool hasTimelineSemaphoreSupport() const;
+    VkSampleCountFlagBits getMaxUsableSampleCount() const;
+    VkSampleCountFlagBits clampSupportedSampleCount(VkSampleCountFlagBits requested) const;
+    VkSampleCountFlagBits getEffectiveMsaaSampleCount(VkSampleCountFlagBits requested) const;
+    bool supportsSampleZeroDepthResolve() const;
     const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &getRayTracingPipelineProperties() const;
 
     void cleanup();
@@ -157,6 +161,8 @@ private:
     bool m_bufferDeviceAddressSupported{false};
     bool m_depthClampSupported{false};
     bool m_timelineSemaphoreSupported{false};
+    VkSampleCountFlagBits m_maxUsableSampleCount{VK_SAMPLE_COUNT_1_BIT};
+    bool m_sampleZeroDepthResolveSupported{false};
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rayTracingPipelineProperties{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
     VkPhysicalDeviceAccelerationStructurePropertiesKHR m_accelerationStructureProperties{

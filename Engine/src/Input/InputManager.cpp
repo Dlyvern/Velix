@@ -101,17 +101,26 @@ void InputManager::update()
 
 bool InputManager::isKeyDown(KeyCode key) const
 {
+    if (m_gameplayInputSuppressed)
+        return false;
+
     return m_currentKeys.count(static_cast<int>(key)) > 0;
 }
 
 bool InputManager::isKeyJustPressed(KeyCode key) const
 {
+    if (m_gameplayInputSuppressed)
+        return false;
+
     const int k = static_cast<int>(key);
     return m_currentKeys.count(k) > 0 && m_previousKeys.count(k) == 0;
 }
 
 bool InputManager::isKeyJustReleased(KeyCode key) const
 {
+    if (m_gameplayInputSuppressed)
+        return false;
+
     const int k = static_cast<int>(key);
     return m_currentKeys.count(k) == 0 && m_previousKeys.count(k) > 0;
 }
@@ -120,6 +129,9 @@ bool InputManager::isKeyJustReleased(KeyCode key) const
 
 bool InputManager::isMouseButtonDown(int button) const
 {
+    if (m_gameplayInputSuppressed)
+        return false;
+
     if (button < 0 || button >= k_mouseButtonCount)
         return false;
     return m_currentMouseButtons[button];
@@ -132,6 +144,9 @@ bool InputManager::isMouseButtonDown(MouseButton button) const
 
 bool InputManager::isMouseButtonJustPressed(int button) const
 {
+    if (m_gameplayInputSuppressed)
+        return false;
+
     if (button < 0 || button >= k_mouseButtonCount)
         return false;
     return m_currentMouseButtons[button] && !m_previousMouseButtons[button];
@@ -144,6 +159,9 @@ bool InputManager::isMouseButtonJustPressed(MouseButton button) const
 
 bool InputManager::isMouseButtonJustReleased(int button) const
 {
+    if (m_gameplayInputSuppressed)
+        return false;
+
     if (button < 0 || button >= k_mouseButtonCount)
         return false;
     return !m_currentMouseButtons[button] && m_previousMouseButtons[button];
@@ -163,11 +181,17 @@ glm::vec2 InputManager::getMousePosition() const
 
 glm::vec2 InputManager::getMouseDelta() const
 {
+    if (m_gameplayInputSuppressed)
+        return glm::vec2(0.0f);
+
     return m_mouseDelta;
 }
 
 float InputManager::getScrollDelta() const
 {
+    if (m_gameplayInputSuppressed)
+        return 0.0f;
+
     return m_scrollDelta;
 }
 
@@ -182,7 +206,7 @@ void InputManager::setCursorLocked(bool locked)
 
 bool InputManager::isCursorLocked() const
 {
-    return m_cursorLocked;
+    return !m_gameplayInputSuppressed && m_cursorLocked;
 }
 
 void InputManager::setCursorVisible(bool visible)
@@ -193,7 +217,22 @@ void InputManager::setCursorVisible(bool visible)
 
 bool InputManager::isCursorVisible() const
 {
-    return m_cursorVisible;
+    return m_gameplayInputSuppressed || m_cursorVisible;
+}
+
+void InputManager::setGameplayInputSuppressed(bool suppressed)
+{
+    if (m_gameplayInputSuppressed == suppressed)
+        return;
+
+    m_gameplayInputSuppressed = suppressed;
+    m_firstUpdate = true; // avoid a large mouse delta when recapturing gameplay input
+    applyCursorMode();
+}
+
+bool InputManager::isGameplayInputSuppressed() const
+{
+    return m_gameplayInputSuppressed;
 }
 
 void InputManager::onScrollEvent(float yDelta)
@@ -207,7 +246,9 @@ void InputManager::applyCursorMode()
         return;
 
     int mode;
-    if (m_cursorLocked)
+    if (m_gameplayInputSuppressed)
+        mode = GLFW_CURSOR_NORMAL;
+    else if (m_cursorLocked)
         mode = GLFW_CURSOR_DISABLED;
     else if (!m_cursorVisible)
         mode = GLFW_CURSOR_HIDDEN;

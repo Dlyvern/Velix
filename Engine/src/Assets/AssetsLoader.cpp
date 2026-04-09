@@ -8,6 +8,7 @@
 #include <stb_image.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -205,8 +206,178 @@ namespace
             material.metallicFactor = 0.0f;
     }
 
+    std::string sanitizeFileStem(std::string value)
+    {
+        for (char &character : value)
+        {
+            const bool isAlphaNumeric = (character >= 'a' && character <= 'z') ||
+                                        (character >= 'A' && character <= 'Z') ||
+                                        (character >= '0' && character <= '9');
+            const bool isAllowedPunctuation = character == '_' || character == '-';
+
+            if (!isAlphaNumeric && !isAllowedPunctuation)
+                character = '_';
+        }
+
+        if (value.empty())
+            return "Material";
+
+        return value;
+    }
+
+    std::filesystem::path makeAbsoluteNormalized(const std::filesystem::path &path)
+    {
+        std::error_code errorCode;
+        const std::filesystem::path absolutePath = std::filesystem::absolute(path, errorCode);
+        if (errorCode)
+            return path.lexically_normal();
+
+        return absolutePath.lexically_normal();
+    }
+
+    std::optional<std::string> tryResolveExistingPath(const std::filesystem::path &candidatePath)
+    {
+        if (candidatePath.empty())
+            return std::nullopt;
+
+        const std::filesystem::path normalizedPath = makeAbsoluteNormalized(candidatePath);
+        std::error_code existsError;
+        if (std::filesystem::exists(normalizedPath, existsError) && !existsError)
+            return normalizedPath.string();
+
+        return std::nullopt;
+    }
+
+    std::string resolveAssetPathAgainstMaterial(const std::string &assetPath,
+                                                const std::filesystem::path &materialAssetPath)
+    {
+        if (assetPath.empty())
+            return {};
+
+        if (looksLikeWindowsAbsolutePath(assetPath))
+            return normalizePath(assetPath).string();
+
+        const std::filesystem::path parsedPath(assetPath);
+        if (parsedPath.is_absolute())
+            return makeAbsoluteNormalized(parsedPath).string();
+
+        if (!materialAssetPath.empty())
+        {
+            std::filesystem::path probeDirectory = makeAbsoluteNormalized(materialAssetPath.parent_path());
+            while (!probeDirectory.empty())
+            {
+                if (auto resolvedPath = tryResolveExistingPath(probeDirectory / parsedPath); resolvedPath.has_value())
+                    return resolvedPath.value();
+
+                if (!probeDirectory.has_parent_path())
+                    break;
+
+                const std::filesystem::path parentDirectory = probeDirectory.parent_path();
+                if (parentDirectory == probeDirectory)
+                    break;
+
+                probeDirectory = parentDirectory;
+            }
+        }
+
+        const std::filesystem::path projectRoot = elix::engine::AssetsLoader::getTextureAssetImportRootDirectory();
+        if (!projectRoot.empty())
+        {
+            if (auto resolvedPath = tryResolveExistingPath(projectRoot / parsedPath); resolvedPath.has_value())
+                return resolvedPath.value();
+
+            const std::string projectRootName = toLowerCopy(projectRoot.filename().string());
+            auto segmentIterator = parsedPath.begin();
+            if (!projectRootName.empty() &&
+                segmentIterator != parsedPath.end() &&
+                toLowerCopy(segmentIterator->string()) == projectRootName)
+            {
+                std::filesystem::path projectRelativePath;
+                ++segmentIterator;
+                for (; segmentIterator != parsedPath.end(); ++segmentIterator)
+                    projectRelativePath /= *segmentIterator;
+
+                if (auto resolvedPath = tryResolveExistingPath(projectRoot / projectRelativePath); resolvedPath.has_value())
+                    return resolvedPath.value();
+            }
+
+            return makeAbsoluteNormalized(projectRoot / parsedPath).string();
+        }
+
+        return normalizePath(assetPath).string();
+    }
+
+    void normalizeMaterialTexturePaths(elix::engine::CPUMaterial &material,
+                                       const std::filesystem::path &materialAssetPath)
+    {
+        material.albedoTexture = resolveAssetPathAgainstMaterial(material.albedoTexture, materialAssetPath);
+        material.normalTexture = resolveAssetPathAgainstMaterial(material.normalTexture, materialAssetPath);
+        material.ormTexture = resolveAssetPathAgainstMaterial(material.ormTexture, materialAssetPath);
+        material.emissiveTexture = resolveAssetPathAgainstMaterial(material.emissiveTexture, materialAssetPath);
+    }
+
+    void overlayModelMaterialsFromSidecarDirectory(elix::engine::ModelAsset &modelAsset)
+    {
+        const std::filesystem::path assetPath = normalizePath(modelAsset.assetPath);
+        if (assetPath.empty())
+            return;
+
+        const std::filesystem::path materialsDirectory =
+            assetPath.parent_path() / (assetPath.stem().string() + "_Materials");
+
+        std::error_code directoryError;
+        if (!std::filesystem::exists(materialsDirectory, directoryError) ||
+            directoryError ||
+            !std::filesystem::is_directory(materialsDirectory, directoryError) ||
+            directoryError)
+            return;
+
+        for (auto &mesh : modelAsset.meshes)
+        {
+            std::vector<std::string> candidateNames;
+            if (!mesh.material.name.empty())
+                candidateNames.push_back(mesh.material.name);
+            if (!mesh.name.empty() && mesh.name != mesh.material.name)
+                candidateNames.push_back(mesh.name);
+
+            std::optional<std::filesystem::path> resolvedMaterialPath;
+            for (const auto &candidateName : candidateNames)
+            {
+                const std::array<std::string, 2> candidateStems = {
+                    candidateName,
+                    sanitizeFileStem(candidateName)};
+
+                for (const auto &candidateStem : candidateStems)
+                {
+                    const std::filesystem::path materialPath = materialsDirectory / (candidateStem + ".elixmat");
+                    std::error_code existsError;
+                    if (std::filesystem::exists(materialPath, existsError) && !existsError)
+                    {
+                        resolvedMaterialPath = materialPath.lexically_normal();
+                        break;
+                    }
+                }
+
+                if (resolvedMaterialPath.has_value())
+                    break;
+            }
+
+            if (!resolvedMaterialPath.has_value())
+                continue;
+
+            auto materialAsset = elix::engine::AssetsLoader::loadMaterial(resolvedMaterialPath->string());
+            if (!materialAsset.has_value())
+                continue;
+
+            mesh.material = materialAsset->material;
+            normalizeMaterialTexturePaths(mesh.material, resolvedMaterialPath.value());
+        }
+    }
+
     void sanitizeModelMaterialData(elix::engine::ModelAsset &modelAsset)
     {
+        overlayModelMaterialsFromSidecarDirectory(modelAsset);
+
         for (auto &mesh : modelAsset.meshes)
             sanitizeMaterialForRuntime(mesh.material, true);
     }
@@ -1306,20 +1477,39 @@ bool AssetsLoader::exportAnimationsFromModel(const std::string &modelAssetPath, 
         return false;
     }
 
-    const std::filesystem::path normalizedOutputPath = normalizePath(outputAssetPath);
+    VX_ENGINE_INFO_STREAM("Exporting " << model->animations.size() << " animations from model: " << normalizedModelPath.string() << '\n');
 
-    AnimationAsset animationAsset{};
-    animationAsset.name = normalizedModelPath.stem().string();
-    animationAsset.sourcePath = normalizedModelPath.string();
-    animationAsset.assetPath = normalizedOutputPath.string();
-    animationAsset.animations = std::move(model->animations);
-    sanitizeAnimationClipNames(animationAsset.animations, animationAsset.name);
+    sanitizeAnimationClipNames(model->animations, normalizedModelPath.stem().string());
+
+    const std::filesystem::path outputDir = normalizePath(outputAssetPath).parent_path();
 
     AssetsSerializer serializer;
-    if (!serializer.writeAnimationAsset(animationAsset, normalizedOutputPath.string()))
+    for (auto &anim : model->animations)
     {
-        VX_ENGINE_ERROR_STREAM("Failed to serialize exported animation asset: " << normalizedOutputPath.string() << '\n');
-        return false;
+        // Build a unique output path: AnimName.anim.elixasset, AnimName (2).anim.elixasset, etc.
+        std::filesystem::path perClipPath = outputDir / (anim.name + ".anim.elixasset");
+        {
+            std::error_code ec;
+            int suffix = 2;
+            while (std::filesystem::exists(perClipPath, ec))
+            {
+                perClipPath = outputDir / (anim.name + " (" + std::to_string(suffix++) + ").anim.elixasset");
+            }
+        }
+
+        AnimationAsset animationAsset{};
+        animationAsset.name       = anim.name;
+        animationAsset.sourcePath = normalizedModelPath.string();
+        animationAsset.assetPath  = perClipPath.string();
+        animationAsset.animations = {anim};
+
+        VX_ENGINE_INFO_STREAM("Writing clip '" << anim.name << "' to: " << perClipPath.string() << '\n');
+
+        if (!serializer.writeAnimationAsset(animationAsset, perClipPath.string()))
+        {
+            VX_ENGINE_ERROR_STREAM("Failed to serialize animation clip '" << anim.name << "': " << perClipPath.string() << '\n');
+            return false;
+        }
     }
 
     return true;
@@ -1341,6 +1531,8 @@ std::optional<AnimationAsset> AssetsLoader::loadAnimationAsset(const std::string
 
     sanitizeAnimationClipNames(animAsset->animations, sourcePath.stem().string());
 
+    VX_ENGINE_INFO_STREAM("Loaded animation asset '" << sourcePath.string() << "' with " << animAsset->animations.size() << " clips\n");
+
     return animAsset;
 }
 
@@ -1351,7 +1543,10 @@ std::optional<AnimationTree> AssetsLoader::loadAnimationTree(const std::string &
         return std::nullopt;
 
     AssetsSerializer serializer;
-    return serializer.readAnimationTree(normalizedPath.string());
+    auto tree = serializer.readAnimationTree(normalizedPath.string());
+    if (tree.has_value())
+        tree->assetPath = normalizedPath.string();
+    return tree;
 }
 
 bool AssetsLoader::saveAnimationTree(const AnimationTree &tree, const std::string &path)
@@ -1361,7 +1556,9 @@ bool AssetsLoader::saveAnimationTree(const AnimationTree &tree, const std::strin
         return false;
 
     AssetsSerializer serializer;
-    return serializer.writeAnimationTree(tree, normalizedPath.string());
+    AnimationTree treeToSave = tree;
+    treeToSave.assetPath = normalizedPath.string();
+    return serializer.writeAnimationTree(treeToSave, normalizedPath.string());
 }
 
 std::optional<ParticleSystem::SharedPtr> AssetsLoader::loadParticleSystem(const std::string &path)

@@ -30,6 +30,35 @@ struct EditorContext
     bool brushStrokeActive{false};
     bool brushStrokeStart{false};
     glm::vec2 brushNdcPosition{0.0f, 0.0f};
+
+    bool selectionClearRequested{false};
+    elix::engine::Entity *selectionRequestedEntity{nullptr};
+    bool selectionRequestedMeshSlotValid{false};
+    uint32_t selectionRequestedMeshSlot{0u};
+
+    void requestSelection(elix::engine::Entity *entity)
+    {
+        selectionClearRequested = false;
+        selectionRequestedEntity = entity;
+        selectionRequestedMeshSlotValid = false;
+        selectionRequestedMeshSlot = 0u;
+    }
+
+    void requestSelection(elix::engine::Entity *entity, uint32_t meshSlot)
+    {
+        selectionClearRequested = false;
+        selectionRequestedEntity = entity;
+        selectionRequestedMeshSlotValid = true;
+        selectionRequestedMeshSlot = meshSlot;
+    }
+
+    void requestSelectionClear()
+    {
+        selectionClearRequested = true;
+        selectionRequestedEntity = nullptr;
+        selectionRequestedMeshSlotValid = false;
+        selectionRequestedMeshSlot = 0u;
+    }
 };
 
 class IEditorPlugin : public VXPlugin

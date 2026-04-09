@@ -24,6 +24,7 @@ public:
     void setup(RGPResourcesBuilder &builder) override;
     void compile(RGPResourcesStorage &storage) override;
     void cleanup() override;
+    void freeResources() override;
     void syncQualitySettings();
     void syncActiveShadowCounts(uint32_t activeSpotCount, uint32_t activePointCount);
 

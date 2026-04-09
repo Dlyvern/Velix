@@ -35,7 +35,8 @@ public:
     void freeResources() override;
 
 private:
-    static constexpr uint32_t kMaxDebugVertices = 131072; // 128 K line endpoints
+    static constexpr uint32_t kMaxDebugLineVertices = 131072;
+    static constexpr uint32_t kMaxDebugTriangleVertices = 196608;
 
     std::vector<engine::renderGraph::RGPResourceHandler> &m_inputHandlers;
     std::vector<engine::renderGraph::RGPResourceHandler>  m_outputHandlers;
@@ -53,11 +54,12 @@ private:
     core::Sampler::SharedPtr             m_sampler;
     bool m_descriptorSetsBuilt{false};
 
-    // Lines pipeline resources (camera set 0, no additional descriptors)
-    core::PipelineLayout::SharedPtr m_linesPipelineLayout;
+    // Overlay pipeline resources (camera set 0, no additional descriptors)
+    core::PipelineLayout::SharedPtr m_overlayPipelineLayout;
 
-    // Per-frame host-visible vertex buffer for debug lines
-    std::vector<core::Buffer::SharedPtr> m_vertexBuffers;
+    // Per-frame host-visible vertex buffers for debug geometry
+    std::vector<core::Buffer::SharedPtr> m_lineVertexBuffers;
+    std::vector<core::Buffer::SharedPtr> m_triangleVertexBuffers;
 };
 
 ELIX_NESTED_NAMESPACE_END

@@ -36,6 +36,7 @@ public:
     void record(core::CommandBuffer::SharedPtr commandBuffer,
                 const RenderGraphPassPerFrameData &data,
                 const RenderGraphPassContext &renderContext) override;
+    void freeResources() override;
 
     std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const override;
     bool canRecordInParallel() const override { return false; }

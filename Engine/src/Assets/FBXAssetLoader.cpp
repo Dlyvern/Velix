@@ -135,9 +135,9 @@ namespace
         if (texturePath.is_absolute() && std::filesystem::exists(texturePath, errorCode) && !errorCode)
             return texturePath.lexically_normal().string();
 
-        // FBX can contain authoring-machine absolute paths (Windows drive path).
+        // FBX can contain authoring-machine absolute paths (Windows or Linux).
         // Try local alternatives before keeping original unresolved path.
-        if (looksLikeWindowsAbsolutePath(portablePath))
+        if (texturePath.is_absolute() || looksLikeWindowsAbsolutePath(portablePath))
         {
             const std::filesystem::path fileName = texturePath.filename();
             if (!fileName.empty())

@@ -21,11 +21,17 @@ void EditorPluginRegistry::unregisterAll()
 
 void EditorPluginRegistry::dispatchFrame(elix::sdk::EditorContext &ctx)
 {
+    ctx.wantsBrushInput = false;
+    ctx.selectionClearRequested = false;
+    ctx.selectionRequestedEntity = nullptr;
+    ctx.selectionRequestedMeshSlotValid = false;
+    ctx.selectionRequestedMeshSlot = 0u;
     for (auto *plugin : m_plugins)
     {
         if (plugin)
             plugin->onEditorFrame(ctx);
     }
+    m_lastFrameWantsBrush = ctx.wantsBrushInput;
 }
 
 const std::vector<elix::sdk::IEditorPlugin *> &EditorPluginRegistry::getPlugins() const

@@ -1,5 +1,6 @@
 #include "Engine/SDK/VXCharacter.hpp"
 #include "Engine/SDK/VXGameState.hpp"
+#include "Engine/Components/AnimatorComponent.hpp"
 #include "Core/Logger.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -19,6 +20,9 @@ void VXCharacter::onStart()
         }
         m_movement = addComponent<CharacterMovementComponent>(scene);
     }
+
+    if (auto *animator = getComponent<AnimatorComponent>())
+        animator->setIgnoreRootBoneY(true);
 }
 
 void VXCharacter::move(glm::vec3 direction, float deltaTime)

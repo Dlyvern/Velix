@@ -36,6 +36,7 @@ public:
                       const glm::vec3 &worldPos, float radius, float intensity);
 
     void compile(renderGraph::RGPResourcesStorage &storage) override;
+    void freeResources() override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
 
     std::vector<RGPResourceHandler> &getOutput()

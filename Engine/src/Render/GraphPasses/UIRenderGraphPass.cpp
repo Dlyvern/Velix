@@ -152,6 +152,19 @@ void UIRenderGraphPass::compile(RGPResourcesStorage &storage)
     m_passthroughSetsBuilt = true;
 }
 
+void UIRenderGraphPass::freeResources()
+{
+    m_outputRenderTargets.clear();
+    for (auto &descriptorSet : m_passthroughDescriptorSets)
+        descriptorSet = VK_NULL_HANDLE;
+    m_passthroughDescriptorSets.clear();
+    m_passthroughSetsBuilt = false;
+    m_preparedBillboards.clear();
+    m_preparedTexts.clear();
+    m_preparedButtons.clear();
+    m_transientVertexBuffersByFrame.clear();
+}
+
 void UIRenderGraphPass::recordPassthrough(core::CommandBuffer::SharedPtr commandBuffer,
                                           uint32_t frameIndex)
 {

@@ -11,6 +11,63 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
+namespace
+{
+    const char *shaderIdToString(ShaderId shaderId)
+    {
+        switch (shaderId)
+        {
+        case ShaderId::StaticShadow: return "StaticShadow";
+        case ShaderId::SkinnedShadow: return "SkinnedShadow";
+        case ShaderId::PreviewMesh: return "PreviewMesh";
+        case ShaderId::SkyboxHDR: return "SkyboxHDR";
+        case ShaderId::Skybox: return "Skybox";
+        case ShaderId::SkyLight: return "SkyLight";
+        case ShaderId::ToneMap: return "ToneMap";
+        case ShaderId::SelectionOverlay: return "SelectionOverlay";
+        case ShaderId::Present: return "Present";
+        case ShaderId::ObjectIdResolve: return "ObjectIdResolve";
+        case ShaderId::GBufferStatic: return "GBufferStatic";
+        case ShaderId::GBufferSkinned: return "GBufferSkinned";
+        case ShaderId::Lighting: return "Lighting";
+        case ShaderId::LightingRayQuery: return "LightingRayQuery";
+        case ShaderId::FXAA: return "FXAA";
+        case ShaderId::BloomExtract: return "BloomExtract";
+        case ShaderId::BloomComposite: return "BloomComposite";
+        case ShaderId::SSAO: return "SSAO";
+        case ShaderId::SMAA: return "SMAA";
+        case ShaderId::ContactShadow: return "ContactShadow";
+        case ShaderId::CinematicEffects: return "CinematicEffects";
+        case ShaderId::EditorBillboard: return "EditorBillboard";
+        case ShaderId::Billboard: return "Billboard";
+        case ShaderId::UIText: return "UIText";
+        case ShaderId::UIQuad: return "UIQuad";
+        case ShaderId::Particle: return "Particle";
+        case ShaderId::Glass: return "Glass";
+        case ShaderId::RTReflections: return "RTReflections";
+        case ShaderId::RTAO: return "RTAO";
+        case ShaderId::RTShadowsRayQuery: return "RTShadowsRayQuery";
+        case ShaderId::DepthPrepassStatic: return "DepthPrepassStatic";
+        case ShaderId::DepthPrepassSkinned: return "DepthPrepassSkinned";
+        case ShaderId::TAA: return "TAA";
+        case ShaderId::AnimPreview: return "AnimPreview";
+        case ShaderId::SSR: return "SSR";
+        case ShaderId::VolumetricFogLighting: return "VolumetricFogLighting";
+        case ShaderId::VolumetricFogTemporal: return "VolumetricFogTemporal";
+        case ShaderId::VolumetricFogComposite: return "VolumetricFogComposite";
+        case ShaderId::ProbeCapture: return "ProbeCapture";
+        case ShaderId::DebugBlit: return "DebugBlit";
+        case ShaderId::DebugLines: return "DebugLines";
+        case ShaderId::MotionBlur: return "MotionBlur";
+        case ShaderId::Decal: return "Decal";
+        case ShaderId::Sprite2D: return "Sprite2D";
+        case ShaderId::None: return "None";
+        }
+
+        return "Unknown";
+    }
+}
+
 core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(const GraphicsPipelineKey &key)
 {
     {
@@ -30,9 +87,11 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(const Gra
     m_pipelines[key] = created;
 
     VX_ENGINE_DEBUG_STREAM("Created graphics pipeline (shader="
-                           << static_cast<uint32_t>(key.shader)
+                           << shaderIdToString(key.shader)
                            << ", blend=" << static_cast<uint32_t>(key.blend)
                            << ", cull=" << static_cast<uint32_t>(key.cull)
+                           << (key.customFragSpvPath.empty() ? "" : ", custom_frag=")
+                           << (key.customFragSpvPath.empty() ? "" : key.customFragSpvPath)
                            << ", pipelines_cached=" << m_pipelines.size() << ")");
 
     return created;
@@ -75,8 +134,8 @@ void GraphicsPipelineManager::loadShaderModules()
     skyLightShader = std::make_shared<core::Shader>("./resources/shaders/dynamic_sky_light.vert.spv", "./resources/shaders/dynamic_sky_light.frag.spv");
     toneMapShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/tonemap.frag.spv");
     selectionOverlayShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/selection_overlay.frag.spv");
-
     presentShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/present.frag.spv");
+    objectIdResolveShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/object_id_resolve.frag.spv");
 
     gBufferStaticShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_static.vert.spv", "./resources/shaders/gbuffer_static.frag.spv");
     gBufferSkinnedShader = std::make_shared<core::Shader>("./resources/shaders/gbuffer_skinned.vert.spv", "./resources/shaders/gbuffer_static.frag.spv");
@@ -113,6 +172,7 @@ void GraphicsPipelineManager::loadShaderModules()
     debugLinesShader = std::make_shared<core::Shader>("./resources/shaders/debug_lines.vert.spv", "./resources/shaders/debug_lines.frag.spv");
     motionBlurShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv",  "./resources/shaders/motion_blur.frag.spv");
     decalShader      = std::make_shared<core::Shader>("./resources/shaders/decal.vert.spv",       "./resources/shaders/decal.frag.spv");
+    sprite2dShader   = std::make_shared<core::Shader>("./resources/shaders/sprite.vert.spv",      "./resources/shaders/sprite.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -135,6 +195,7 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(toneMapShader);
     destroyShader(selectionOverlayShader);
     destroyShader(presentShader);
+    destroyShader(objectIdResolveShader);
     destroyShader(gBufferStaticShader);
     destroyShader(gBufferSkinnedShader);
     destroyShader(lightingShader);
@@ -167,6 +228,7 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(debugLinesShader);
     destroyShader(motionBlurShader);
     destroyShader(decalShader);
+    destroyShader(sprite2dShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -215,6 +277,9 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         break;
     case ShaderId::Present:
         stages = presentShader->getShaderStages();
+        break;
+    case ShaderId::ObjectIdResolve:
+        stages = objectIdResolveShader->getShaderStages();
         break;
     case ShaderId::GBufferStatic:
     {
@@ -323,6 +388,9 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::Decal:
         stages = decalShader->getShaderStages();
         break;
+    case ShaderId::Sprite2D:
+        stages = sprite2dShader->getShaderStages();
+        break;
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
@@ -389,7 +457,8 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
         vertexAttributeDescriptions = {attributeDescription};
     }
     else if (key.shader == ShaderId::ToneMap || key.shader == ShaderId::SelectionOverlay ||
-             key.shader == ShaderId::Present || key.shader == ShaderId::Lighting ||
+             key.shader == ShaderId::Present || key.shader == ShaderId::ObjectIdResolve ||
+             key.shader == ShaderId::Lighting ||
              key.shader == ShaderId::LightingRayQuery ||
              key.shader == ShaderId::FXAA || key.shader == ShaderId::BloomExtract ||
              key.shader == ShaderId::BloomComposite ||
@@ -400,7 +469,8 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
              key.shader == ShaderId::VolumetricFogComposite ||
              key.shader == ShaderId::ContactShadow || key.shader == ShaderId::CinematicEffects ||
              key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||
-             key.shader == ShaderId::Particle || key.shader == ShaderId::RTReflections ||
+             key.shader == ShaderId::Particle || key.shader == ShaderId::Sprite2D ||
+             key.shader == ShaderId::RTReflections ||
              key.shader == ShaderId::RTAO || key.shader == ShaderId::DebugBlit ||
              key.shader == ShaderId::MotionBlur)
     {
@@ -471,6 +541,9 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
                 colorBlendAttachments[attachmentIndex].colorWriteMask = 0;
         }
     }
+
+    if (key.shader == ShaderId::ObjectIdResolve && !colorBlendAttachments.empty())
+        colorBlendAttachments.front().colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
 
     if (key.shader == ShaderId::StaticShadow || key.shader == ShaderId::SkinnedShadow)
     {
