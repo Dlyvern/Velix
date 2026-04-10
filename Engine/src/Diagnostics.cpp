@@ -28,8 +28,8 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <dbghelp.h>
 #include <windows.h>
+#include <dbghelp.h>
 #elif defined(__linux__) || defined(__APPLE__)
 #include <execinfo.h>
 #if defined(__GNUC__) || defined(__clang__)

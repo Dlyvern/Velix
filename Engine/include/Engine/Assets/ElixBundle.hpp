@@ -3,6 +3,7 @@
 
 #include "Core/Macros.hpp"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
