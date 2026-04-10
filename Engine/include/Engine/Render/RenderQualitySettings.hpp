@@ -90,7 +90,7 @@ public:
     int rtReflectionSamples{1};        // rays per pixel: 1=mirror, 4-8=glossy
     float rtRoughnessThreshold{0.4f};  // skip surfaces rougher than this (0=only perfect mirrors, 1=all)
     float rtReflectionStrength{1.0f};  // overall reflection intensity multiplier
-    bool enableFXAA{true};
+    AntiAliasingMode antiAliasingMode{AntiAliasingMode::FXAA};
     MsaaMode msaaMode{MsaaMode::Off};
     bool enableBloom{true};
 
@@ -127,11 +127,6 @@ public:
     bool useBentNormals{false};
 
     float shadowAmbientStrength{0.5f};
-
-    bool enableTAA{false};
-
-    bool enableSMAA{false};
-    bool enableCMAA{false};
 
     bool enableColorGrading{false};
     float colorGradingSaturation{1.0f};
@@ -177,42 +172,12 @@ public:
 
     AntiAliasingMode getAntiAliasingMode() const
     {
-        if (enableTAA)
-            return AntiAliasingMode::TAA;
-        if (enableCMAA)
-            return AntiAliasingMode::CMAA;
-        if (enableSMAA)
-            return AntiAliasingMode::SMAA;
-        if (enableFXAA)
-            return AntiAliasingMode::FXAA;
-        return AntiAliasingMode::NONE;
+        return antiAliasingMode;
     }
 
     void setAntiAliasingMode(AntiAliasingMode mode)
     {
-        enableFXAA = false;
-        enableSMAA = false;
-        enableTAA = false;
-        enableCMAA = false;
-
-        switch (mode)
-        {
-        case AntiAliasingMode::FXAA:
-            enableFXAA = true;
-            break;
-        case AntiAliasingMode::SMAA:
-            enableSMAA = true;
-            break;
-        case AntiAliasingMode::TAA:
-            enableTAA = true;
-            break;
-        case AntiAliasingMode::CMAA:
-            enableCMAA = true;
-            break;
-        case AntiAliasingMode::NONE:
-        default:
-            break;
-        }
+        antiAliasingMode = mode;
     }
 
     void setMsaaMode(MsaaMode mode)

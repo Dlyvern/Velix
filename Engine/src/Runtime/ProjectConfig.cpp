@@ -14,6 +14,22 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 namespace
 {
     constexpr const char *k_filename = "project.settings";
+
+    RenderQualitySettings::AntiAliasingMode resolveLegacyAntiAliasingMode(bool enableFXAA,
+                                                                          bool enableSMAA,
+                                                                          bool enableTAA,
+                                                                          bool enableCMAA)
+    {
+        if (enableTAA)
+            return RenderQualitySettings::AntiAliasingMode::TAA;
+        if (enableCMAA)
+            return RenderQualitySettings::AntiAliasingMode::CMAA;
+        if (enableSMAA)
+            return RenderQualitySettings::AntiAliasingMode::SMAA;
+        if (enableFXAA)
+            return RenderQualitySettings::AntiAliasingMode::FXAA;
+        return RenderQualitySettings::AntiAliasingMode::NONE;
+    }
 }
 
 bool ProjectConfig::load(const std::filesystem::path &projectRoot)
@@ -89,10 +105,46 @@ bool ProjectConfig::load(const std::filesystem::path &projectRoot)
         m_shadowCascadeCount = r["shadow_cascade_count"].get<uint32_t>();
     RF("shadow_max_distance", m_shadowMaxDistance);
 
-    RB("enable_fxaa", m_enableFXAA);
-    RB("enable_smaa", m_enableSMAA);
-    RB("enable_taa", m_enableTAA);
-    RB("enable_cmaa", m_enableCMAA);
+    bool hasExplicitAntiAliasingMode = false;
+    if (r.contains("anti_aliasing_mode") && r["anti_aliasing_mode"].is_number_integer())
+    {
+        m_antiAliasingMode = r["anti_aliasing_mode"].get<int>();
+        hasExplicitAntiAliasingMode = true;
+    }
+
+    bool legacyEnableFXAA = false;
+    bool legacyEnableSMAA = false;
+    bool legacyEnableTAA = false;
+    bool legacyEnableCMAA = false;
+    bool hasLegacyAntiAliasingFlags = false;
+    if (r.contains("enable_fxaa") && r["enable_fxaa"].is_boolean())
+    {
+        legacyEnableFXAA = r["enable_fxaa"].get<bool>();
+        hasLegacyAntiAliasingFlags = true;
+    }
+    if (r.contains("enable_smaa") && r["enable_smaa"].is_boolean())
+    {
+        legacyEnableSMAA = r["enable_smaa"].get<bool>();
+        hasLegacyAntiAliasingFlags = true;
+    }
+    if (r.contains("enable_taa") && r["enable_taa"].is_boolean())
+    {
+        legacyEnableTAA = r["enable_taa"].get<bool>();
+        hasLegacyAntiAliasingFlags = true;
+    }
+    if (r.contains("enable_cmaa") && r["enable_cmaa"].is_boolean())
+    {
+        legacyEnableCMAA = r["enable_cmaa"].get<bool>();
+        hasLegacyAntiAliasingFlags = true;
+    }
+    if (!hasExplicitAntiAliasingMode && hasLegacyAntiAliasingFlags)
+    {
+        m_antiAliasingMode = static_cast<int>(resolveLegacyAntiAliasingMode(
+            legacyEnableFXAA,
+            legacyEnableSMAA,
+            legacyEnableTAA,
+            legacyEnableCMAA));
+    }
     RI("msaa_mode", m_msaaMode);
 
     RB("enable_post_processing", m_enablePostProcessing);
@@ -192,10 +244,7 @@ bool ProjectConfig::save(const std::filesystem::path &projectRoot) const
         {"shadow_quality", m_shadowQuality},
         {"shadow_cascade_count", m_shadowCascadeCount},
         {"shadow_max_distance", m_shadowMaxDistance},
-        {"enable_fxaa", m_enableFXAA},
-        {"enable_smaa", m_enableSMAA},
-        {"enable_taa", m_enableTAA},
-        {"enable_cmaa", m_enableCMAA},
+        {"anti_aliasing_mode", m_antiAliasingMode},
         {"msaa_mode", m_msaaMode},
         {"enable_post_processing", m_enablePostProcessing},
         {"enable_vsync", m_enableVSync},
@@ -294,10 +343,7 @@ void ProjectConfig::applyRenderSettings() const
     }
 
     rs.shadowMaxDistance = std::max(m_shadowMaxDistance, 20.0f);
-    rs.enableFXAA = m_enableFXAA;
-    rs.enableSMAA = m_enableSMAA;
-    rs.enableTAA = m_enableTAA;
-    rs.enableCMAA = m_enableCMAA;
+    rs.setAntiAliasingMode(static_cast<RenderQualitySettings::AntiAliasingMode>(std::clamp(m_antiAliasingMode, 0, 4)));
     rs.msaaMode = static_cast<RenderQualitySettings::MsaaMode>(std::clamp(m_msaaMode, 0, 3));
     rs.enablePostProcessing = m_enablePostProcessing;
     rs.enableVSync = m_enableVSync;
@@ -361,10 +407,7 @@ void ProjectConfig::captureRenderSettings()
     m_shadowCascadeCount = rs.getShadowCascadeCount();
     m_shadowMaxDistance = rs.shadowMaxDistance;
 
-    m_enableFXAA = rs.enableFXAA;
-    m_enableSMAA = rs.enableSMAA;
-    m_enableTAA = rs.enableTAA;
-    m_enableCMAA = rs.enableCMAA;
+    m_antiAliasingMode = static_cast<int>(rs.getAntiAliasingMode());
     m_msaaMode = static_cast<int>(rs.msaaMode);
 
     m_enablePostProcessing = rs.enablePostProcessing;

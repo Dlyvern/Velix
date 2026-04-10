@@ -170,6 +170,25 @@ namespace
         seed ^= std::hash<TValue>{}(value) + 0x9e3779b97f4a7c15ULL + (seed << 6u) + (seed >> 2u);
     }
 
+    const char *antiAliasingModeLabel(elix::engine::RenderQualitySettings::AntiAliasingMode mode)
+    {
+        using AntiAliasingMode = elix::engine::RenderQualitySettings::AntiAliasingMode;
+        switch (mode)
+        {
+        case AntiAliasingMode::FXAA:
+            return "FXAA";
+        case AntiAliasingMode::SMAA:
+            return "SMAA (Lite)";
+        case AntiAliasingMode::TAA:
+            return "TAA";
+        case AntiAliasingMode::CMAA:
+            return "CMAA (Preset)";
+        case AntiAliasingMode::NONE:
+        default:
+            return "None";
+        }
+    }
+
     size_t hashRenderQualitySettings(const elix::engine::RenderQualitySettings &settings)
     {
         size_t seed = 0;
@@ -191,7 +210,7 @@ namespace
         hashCombine(seed, settings.rtReflectionSamples);
         hashCombine(seed, settings.rtRoughnessThreshold);
         hashCombine(seed, settings.rtReflectionStrength);
-        hashCombine(seed, settings.enableFXAA);
+        hashCombine(seed, static_cast<uint32_t>(settings.getAntiAliasingMode()));
         hashCombine(seed, static_cast<uint32_t>(settings.msaaMode));
         hashCombine(seed, settings.enableBloom);
         hashCombine(seed, settings.bloomThreshold);
@@ -220,9 +239,6 @@ namespace
         hashCombine(seed, settings.gtaoSteps);
         hashCombine(seed, settings.useBentNormals);
         hashCombine(seed, settings.shadowAmbientStrength);
-        hashCombine(seed, settings.enableTAA);
-        hashCombine(seed, settings.enableSMAA);
-        hashCombine(seed, settings.enableCMAA);
         hashCombine(seed, settings.enableColorGrading);
         hashCombine(seed, settings.colorGradingSaturation);
         hashCombine(seed, settings.colorGradingContrast);
@@ -5163,27 +5179,35 @@ void Editor::drawRenderSettings()
     const char *aaModes[] = {
         "None",
         "FXAA",
-        "SMAA",
+        "SMAA (Lite)",
         "TAA",
-        "CMAA"};
+        "CMAA (Preset)"};
 
     int aaModeIndex = static_cast<int>(settings.getAntiAliasingMode());
     if (ImGui::Combo("Mode##aa_mode", &aaModeIndex, aaModes, IM_ARRAYSIZE(aaModes)))
         settings.setAntiAliasingMode(static_cast<engine::RenderQualitySettings::AntiAliasingMode>(aaModeIndex));
 
-    ImGui::SetItemTooltip("Choose one AA method. FXAA, SMAA, CMAA, and TAA are all implemented.");
+    ImGui::SetItemTooltip("Choose one post-AA method. MSAA stays separate and can be combined with any of these.");
 
     const auto aaMode = settings.getAntiAliasingMode();
+    const auto effectiveAaMode = settings.enablePostProcessing
+                                     ? aaMode
+                                     : engine::RenderQualitySettings::AntiAliasingMode::NONE;
     if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::FXAA)
         ImGui::TextDisabled("FXAA: fast, cheapest, softer image.");
     else if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::SMAA)
-        ImGui::TextDisabled("SMAA: sharper edges than FXAA, slightly heavier.");
+        ImGui::TextDisabled("SMAA Lite: sharper than FXAA, but this is a simplified single-pass variant.");
     else if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::CMAA)
-        ImGui::TextDisabled("CMAA: conservative morphological AA, keeps more fine detail than FXAA.");
+        ImGui::TextDisabled("CMAA preset: uses the SMAA Lite pass with more conservative thresholds.");
     else if (aaMode == engine::RenderQualitySettings::AntiAliasingMode::TAA)
-        ImGui::TextDisabled("TAA: neighbourhood-clamped temporal accumulation, reduces specular shimmer.");
+        ImGui::TextDisabled("TAA: simple neighbourhood-clamped temporal filter without motion-vector reprojection yet.");
     else
         ImGui::TextDisabled("AA disabled.");
+
+    if (!settings.enablePostProcessing)
+        ImGui::TextDisabled("Effective Post-AA: None, because Enable Post-Processing is OFF.");
+    else
+        ImGui::TextDisabled("Effective Post-AA in graph: %s.", antiAliasingModeLabel(effectiveAaMode));
 
     const char *msaaModes[] = {
         "Off",
@@ -8397,8 +8421,33 @@ void Editor::drawBenchmark()
     ImGui::Text("Frame time: %.3f ms", 1000.0f / fps);
     ImGui::Text("VSync: %s", engine::RenderQualitySettings::getInstance().enableVSync ? "ON" : "OFF");
     ImGui::TextDisabled("FPS above is full editor loop; detailed CPU/GPU numbers below are render-graph only.");
-    if (m_isGameViewportVisible)
-        ImGui::TextDisabled("Game Viewport graph is active; table below shows only main Viewport graph.");
+    const auto requestedAaMode = engine::RenderQualitySettings::getInstance().getAntiAliasingMode();
+    const auto effectiveAaMode = engine::RenderQualitySettings::getInstance().enablePostProcessing
+                                     ? requestedAaMode
+                                     : engine::RenderQualitySettings::AntiAliasingMode::NONE;
+    ImGui::Text("Post-Processing: %s", engine::RenderQualitySettings::getInstance().enablePostProcessing ? "ON" : "OFF");
+    ImGui::Text("Requested Post-AA: %s", antiAliasingModeLabel(requestedAaMode));
+    ImGui::Text("Effective Post-AA: %s", antiAliasingModeLabel(effectiveAaMode));
+    const bool canShowGameViewportGraph = m_isGameViewportVisible;
+    if (!canShowGameViewportGraph && m_benchmarkGraphSource == BenchmarkGraphSource::GameViewport)
+        m_benchmarkGraphSource = BenchmarkGraphSource::MainViewport;
+
+    if (canShowGameViewportGraph)
+    {
+        const char *graphSources[] = {"Main Viewport", "Game Viewport"};
+        int graphSourceIndex = static_cast<int>(m_benchmarkGraphSource);
+        if (ImGui::Combo("Graph Source", &graphSourceIndex, graphSources, IM_ARRAYSIZE(graphSources)))
+            m_benchmarkGraphSource = static_cast<BenchmarkGraphSource>(graphSourceIndex);
+    }
+
+    const auto &profilingData =
+        (canShowGameViewportGraph && m_benchmarkGraphSource == BenchmarkGraphSource::GameViewport)
+            ? m_gameRenderGraphProfilingData
+            : m_mainRenderGraphProfilingData;
+    const auto &activePassNames =
+        (canShowGameViewportGraph && m_benchmarkGraphSource == BenchmarkGraphSource::GameViewport)
+            ? m_gameRenderGraphPassNames
+            : m_mainRenderGraphPassNames;
 
     auto &engineConfig = engine::EngineConfig::instance();
     bool detailedRenderProfiling = engineConfig.getDetailedRenderProfilingEnabled();
@@ -8414,8 +8463,17 @@ void Editor::drawBenchmark()
     ImGui::Separator();
     ImGui::Text("VRAM: %ld MB   RAM: %ld MB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM(),
                 core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
-    ImGui::Text("Render Graph VRAM: %.2f MB", static_cast<double>(m_renderGraphProfilingData.renderGraphVramBytes) / (1024.0 * 1024.0));
-    ImGui::Text("Draw calls: %u", m_renderGraphProfilingData.totalDrawCalls);
+    ImGui::Text("Render Graph VRAM: %.2f MB", static_cast<double>(profilingData.renderGraphVramBytes) / (1024.0 * 1024.0));
+    ImGui::Text("Draw calls: %u", profilingData.totalDrawCalls);
+    ImGui::Text("Active graph passes: %zu", activePassNames.size());
+
+    if (!activePassNames.empty())
+    {
+        ImGui::Separator();
+        ImGui::Text("Current Graph Topology");
+        for (const auto &passName : activePassNames)
+            ImGui::BulletText("%s", passName.c_str());
+    }
 
     {
         const auto stats = engine::AssetManager::getInstance().getStats();
@@ -8433,14 +8491,14 @@ void Editor::drawBenchmark()
 
     ImGui::Separator();
 
-    ImGui::Text("CPU prepare frame : %.3f ms", m_renderGraphProfilingData.cpuPrepareFrameMs);
+    ImGui::Text("CPU prepare frame : %.3f ms", profilingData.cpuPrepareFrameMs);
     ImGui::SetItemTooltip("Fence wait + command pool reset + image acquire + recompile");
-    ImGui::TextDisabled("  incl. GPU sync wait: %.3f ms", m_renderGraphProfilingData.cpuWaitForFenceMs);
-    ImGui::Text("CPU actual frame  : %.3f ms", m_renderGraphProfilingData.cpuActualFrameMs);
+    ImGui::TextDisabled("  incl. GPU sync wait: %.3f ms", profilingData.cpuWaitForFenceMs);
+    ImGui::Text("CPU actual frame  : %.3f ms", profilingData.cpuActualFrameMs);
     ImGui::SetItemTooltip("All pass recording + primary CB end + submit + present");
 
-    if (m_renderGraphProfilingData.gpuTimingAvailable)
-        ImGui::Text("GPU actual frame  : %.3f ms", m_renderGraphProfilingData.gpuActualFrameMs);
+    if (profilingData.gpuTimingAvailable)
+        ImGui::Text("GPU actual frame  : %.3f ms", profilingData.gpuActualFrameMs);
     else
         ImGui::TextDisabled("GPU actual frame  : unavailable");
 
@@ -8462,7 +8520,7 @@ void Editor::drawBenchmark()
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableHeadersRow();
 
-            for (const auto &passData : m_renderGraphProfilingData.passes)
+            for (const auto &passData : profilingData.passes)
             {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -8481,7 +8539,7 @@ void Editor::drawBenchmark()
                 ImGui::Text("%.3f", passData.cpuTimeMs);
 
                 ImGui::TableSetColumnIndex(5);
-                if (m_renderGraphProfilingData.gpuTimingAvailable)
+                if (profilingData.gpuTimingAvailable)
                     ImGui::Text("%.3f", passData.gpuTimeMs);
                 else
                     ImGui::TextUnformatted("-");

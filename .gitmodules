@@ -67,3 +67,9 @@
 [submodule "resources/plugins/EnginePlugins"]
 	path = resources/plugins/EnginePlugins
 	url = git@github.com:Dlyvern/EnginePlugins.git
+[submodule "external/lz4"]
+	path = external/lz4
+	url = https://github.com/lz4/lz4.git
+[submodule "external/curl"]
+	path = external/curl
+	url = https://github.com/curl/curl.git

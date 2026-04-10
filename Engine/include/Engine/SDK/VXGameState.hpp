@@ -43,7 +43,10 @@ public:
     void setFXAA(bool enable)
     {
         auto &s = RenderQualitySettings::getInstance();
-        s.enableFXAA = enable;
+        if (enable)
+            s.setAntiAliasingMode(RenderQualitySettings::AntiAliasingMode::FXAA);
+        else if (s.getAntiAliasingMode() == RenderQualitySettings::AntiAliasingMode::FXAA)
+            s.setAntiAliasingMode(RenderQualitySettings::AntiAliasingMode::NONE);
     }
 
     void setBloom(bool enable)

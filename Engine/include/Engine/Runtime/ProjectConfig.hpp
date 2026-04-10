@@ -42,10 +42,7 @@ private:
     uint32_t m_shadowCascadeCount{4};
     float m_shadowMaxDistance{180.0f};
 
-    bool m_enableFXAA{true};
-    bool m_enableSMAA{false};
-    bool m_enableTAA{false};
-    bool m_enableCMAA{false};
+    int m_antiAliasingMode{1};
     int m_msaaMode{0};
 
     bool m_enablePostProcessing{true};

@@ -388,6 +388,24 @@ RenderGraphFrameProfilingData RenderGraph::getLastFrameBenchmarkData()
     return benchmarkData;
 }
 
+std::vector<std::string> RenderGraph::getActivePassDebugNames() const
+{
+    std::vector<std::string> passNames;
+    passNames.reserve(m_sortedRenderGraphPasses.size());
+
+    for (size_t index = 0; index < m_sortedRenderGraphPasses.size(); ++index)
+    {
+        const auto *pass = m_sortedRenderGraphPasses[index];
+        if (!pass)
+            continue;
+
+        const std::string debugName = pass->getDebugName();
+        passNames.push_back(debugName.empty() ? ("Pass " + std::to_string(index)) : debugName);
+    }
+
+    return passNames;
+}
+
 std::vector<VkImageView> RenderGraph::getImageViews(const std::vector<RGPResourceHandler> &handlers) const
 {
     std::vector<VkImageView> imageViews;

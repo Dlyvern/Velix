@@ -1308,6 +1308,7 @@ void EditorRuntime::initEditorRenderGraph()
     m_renderGraph->setup();
     m_renderGraph->createRenderGraphResources();
     m_editorRenderGraphTopologyHash = editorRenderGraphTopologyHash(m_activeScene.get(), m_editor.get());
+    m_editor->setRenderGraphPassNames(m_renderGraph->getActivePassDebugNames());
 
     // Eagerly register / re-register the anim-tree preview image with ImGui.
     // This must happen after createRenderGraphResources() (so compile() has run and
@@ -1632,6 +1633,7 @@ void EditorRuntime::initGameViewportRenderGraph()
     m_gameViewportRenderGraph->setup();
     m_gameViewportRenderGraph->createRenderGraphResources();
     m_gameViewportRenderGraphTopologyHash = gameViewportRenderGraphTopologyHash(m_activeScene.get());
+    m_editor->setRenderGraphPassNames(m_gameViewportRenderGraph->getActivePassDebugNames(), true);
 }
 
 void EditorRuntime::addLoadingRenderToImGui()
@@ -1872,6 +1874,7 @@ void EditorRuntime::tick(float deltaTime)
         syncNearestReflectionProbe(m_gameLightingRenderGraphPass, m_activeScene.get(), m_gameRenderCamera);
         m_gameViewportRenderGraph->prepareFrame(m_gameRenderCamera, m_activeScene.get(), deltaTime);
         m_gameViewportRenderGraph->draw();
+        m_editor->setRenderGraphProfilingData(m_gameViewportRenderGraph->getLastFrameBenchmarkData(), true);
 
         if (m_imGuiRenderGraphPass && m_gameViewportOutputHandlers)
             m_imGuiRenderGraphPass->setGameViewportImages(
@@ -1882,6 +1885,7 @@ void EditorRuntime::tick(float deltaTime)
     else if (m_imGuiRenderGraphPass)
     {
         m_imGuiRenderGraphPass->setGameViewportImages({}, m_gameRenderCamera != nullptr, 0u);
+        m_editor->setRenderGraphProfilingData(engine::renderGraph::RenderGraphFrameProfilingData{}, true);
     }
 
     if (m_stillLoadingTheScene)

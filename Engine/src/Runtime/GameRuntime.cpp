@@ -200,6 +200,14 @@ namespace
         lightingPass->setProbeData(VK_NULL_HANDLE, VK_NULL_HANDLE, {}, 0.0f, 0.0f);
     }
 
+    elix::engine::RenderQualitySettings::AntiAliasingMode renderGraphAntiAliasingMode(
+        const elix::engine::RenderQualitySettings &settings)
+    {
+        return settings.enablePostProcessing
+                   ? settings.getAntiAliasingMode()
+                   : elix::engine::RenderQualitySettings::AntiAliasingMode::NONE;
+    }
+
     size_t renderGraphTopologyHash(const elix::engine::Scene *scene)
     {
         const auto &settings = elix::engine::RenderQualitySettings::getInstance();
@@ -217,6 +225,7 @@ namespace
         hashCombine(seed, settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT);
         hashCombine(seed, settings.enableRayTracing && settings.enableRTAO && supportsRayQuery);
         hashCombine(seed, static_cast<uint32_t>(effectiveMsaaSamples));
+        hashCombine(seed, static_cast<uint32_t>(renderGraphAntiAliasingMode(settings)));
         hashCombine(seed, renderGraphUsesSSR(settings));
         hashCombine(seed, renderGraphUsesVolumetricFog(settings, scene));
         hashCombine(seed, static_cast<uint32_t>(settings.volumetricFogQuality));
@@ -411,6 +420,7 @@ void GameRuntime::initRenderGraph()
     const bool useVolumetricFog = renderGraphUsesVolumetricFog(settings, m_scene.get());
     const bool useParticles = renderGraphUsesParticles(m_scene.get());
     const bool useUI = renderGraphUsesUI(m_scene.get());
+    const auto aaMode = renderGraphAntiAliasingMode(settings);
 
     m_gBufferRenderGraphPass = m_renderGraph->addPass<renderGraph::GBufferRenderGraphPass>(false);
     m_shadowRenderGraphPass = m_renderGraph->addPass<renderGraph::ShadowRenderGraphPass>();
@@ -544,16 +554,26 @@ void GameRuntime::initRenderGraph()
         m_tonemapRenderGraphPass->getHandlers(),
         m_bloomRenderGraphPass->getHandlers());
 
-    m_fxaaRenderGraphPass = m_renderGraph->addPass<renderGraph::FXAARenderGraphPass>(
-        m_bloomCompositeRenderGraphPass->getHandlers());
-
-    m_smaaRenderGraphPass = m_renderGraph->addPass<renderGraph::SMAAPassRenderGraphPass>(
-        m_fxaaRenderGraphPass->getHandlers());
-
-    m_taaRenderGraphPass = m_renderGraph->addPass<renderGraph::TAARenderGraphPass>(
-        m_smaaRenderGraphPass->getHandlers());
-
-    auto *finalSceneInput = &m_taaRenderGraphPass->getHandlers();
+    auto *finalSceneInput = &m_bloomCompositeRenderGraphPass->getHandlers();
+    switch (aaMode)
+    {
+    case RenderQualitySettings::AntiAliasingMode::FXAA:
+        m_fxaaRenderGraphPass = m_renderGraph->addPass<renderGraph::FXAARenderGraphPass>(*finalSceneInput);
+        finalSceneInput = &m_fxaaRenderGraphPass->getHandlers();
+        break;
+    case RenderQualitySettings::AntiAliasingMode::SMAA:
+    case RenderQualitySettings::AntiAliasingMode::CMAA:
+        m_smaaRenderGraphPass = m_renderGraph->addPass<renderGraph::SMAAPassRenderGraphPass>(*finalSceneInput);
+        finalSceneInput = &m_smaaRenderGraphPass->getHandlers();
+        break;
+    case RenderQualitySettings::AntiAliasingMode::TAA:
+        m_taaRenderGraphPass = m_renderGraph->addPass<renderGraph::TAARenderGraphPass>(*finalSceneInput);
+        finalSceneInput = &m_taaRenderGraphPass->getHandlers();
+        break;
+    case RenderQualitySettings::AntiAliasingMode::NONE:
+    default:
+        break;
+    }
     if (useUI)
     {
         m_uiRenderGraphPass = m_renderGraph->addPass<renderGraph::UIRenderGraphPass>(

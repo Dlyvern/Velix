@@ -3,7 +3,6 @@ project(VelixEditor)
 
 set(CMAKE_CXX_STANDARD 20)
 
-find_package(CURL REQUIRED)
 set(INCLUDE_DIR include)
 set(SRC_DIR src)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -18,6 +17,10 @@ add_library(${PROJECT_NAME} STATIC
 target_include_directories(${PROJECT_NAME} PUBLIC
         ${INCLUDE_DIR}
 )
+
+if(NOT TARGET CURL::libcurl)
+    message(FATAL_ERROR "Vendored CURL target CURL::libcurl was not found. Ensure external/curl is initialized.")
+endif()
 
 target_link_libraries(${PROJECT_NAME}
         PUBLIC
