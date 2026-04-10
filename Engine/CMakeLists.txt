@@ -67,6 +67,11 @@ target_link_libraries(${PROJECT_NAME}
 
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} PUBLIC dbghelp)
+    # On Windows, volk's global function-pointer table lives inside VelixCore.dll.
+    # Other DLLs cannot import data symbols from it without __declspec(dllimport),
+    # which volk's extern declarations don't have.  Give Engine its own private volk
+    # copy and populate it after VulkanContext::create() finishes.
+    target_link_libraries(${PROJECT_NAME} PRIVATE volk)
 endif()
 
 install(TARGETS ${PROJECT_NAME}

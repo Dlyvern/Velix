@@ -177,6 +177,16 @@ bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
     scripting::setActiveWindow(m_window.get());
 
     m_vulkanContext = core::VulkanContext::create(*m_window);
+
+#ifdef _WIN32
+    // On Windows each DLL has its own volk global function-pointer table.
+    // Core initialised its copy inside VulkanContext::create(); now populate
+    // the Engine DLL's copy with the same instance/device.
+    volkInitialize();
+    volkLoadInstance(m_vulkanContext->getInstance());
+    volkLoadDevice(m_vulkanContext->getDevice()->vk());
+#endif
+
     auto props = m_vulkanContext->getPhysicalDevicePoperties();
 
     const auto executableDirectory = diagnostics::getExecutableDirectory();
