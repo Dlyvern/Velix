@@ -102,15 +102,22 @@ VulkanContext::~VulkanContext()
 void VulkanContext::initVulkan(platform::Window &window)
 {
     m_window = &window;
+    VX_CORE_INFO_STREAM("[Startup] Initializing Vulkan");
     VX_VK_CHECK(volkInitialize());
 
+    VX_CORE_INFO_STREAM("[Startup] Creating Vulkan instance");
     createInstance();
+    VX_CORE_INFO_STREAM("[Startup] Creating Vulkan surface");
     createDebugger();
     createSurface(window);
+    VX_CORE_INFO_STREAM("[Startup] Selecting Vulkan physical device");
     pickPhysicalDevice();
+    VX_CORE_INFO_STREAM("[Startup] Creating Vulkan logical device");
     createLogicalDevice();
 
+    VX_CORE_INFO_STREAM("[Startup] Creating Vulkan swapchain");
     m_swapChain = SwapChain::create(window, m_surface, m_device, m_physicalDevice, m_queueFamilyIndices.graphicsFamily.value(), m_queueFamilyIndices.presentFamily.value());
+    VX_CORE_INFO_STREAM("[Startup] Vulkan initialized");
 }
 
 void VulkanContext::createLogicalDevice()
@@ -845,7 +852,9 @@ void VulkanContext::pickPhysicalDevice()
     VX_CORE_INFO_STREAM("[Vulkan] Selected GPU: " << selected.deviceName
                                                   << " ("
                                                   << toDeviceTypeName(selected.deviceType)
-                                                  << ")\n");
+                                                  << ", vendor 0x" << std::hex << selected.vendorID
+                                                  << ", device 0x" << selected.deviceID
+                                                  << std::dec << ")\n");
 
     const bool selectedHardwareGpu = selected.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ||
                                      selected.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;

@@ -8,47 +8,89 @@
 #include <stdexcept>
 #include <iostream>
 #include <algorithm>
+#include <sstream>
 
 #include <GLFW/glfw3.h>
+
+namespace
+{
+    std::string formatGlfwError(const std::string &prefix)
+    {
+        const char *description = nullptr;
+        const int errorCode = glfwGetError(&description);
+
+        if (errorCode == GLFW_NO_ERROR || !description || !description[0])
+            return prefix;
+
+        std::ostringstream message;
+        message << prefix << ": " << description << " (GLFW error " << errorCode << ')';
+        return message.str();
+    }
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(platform)
 
 Window::Window(uint32_t width, uint32_t height, const std::string &title, uint8_t windowFlags) : m_width(width), m_height(height), m_title(title)
 {
-    m_monitor = glfwGetPrimaryMonitor();
+    const bool wantsExclusiveFullscreen = (windowFlags & EWINDOW_FLAGS_FULLSCREEN) != 0;
+    const bool wantsBorderlessFullscreen = (windowFlags & EWINDOW_FLAGS_FULLSCREEN_WINDOWED) != 0;
 
-    if (!m_monitor)
-        VX_WARNING("Failed to find monitor");
-
+    glfwDefaultWindowHints();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    if (windowFlags & EWINDOW_FLAGS_FULLSCREEN_WINDOWED)
-    {
-        const GLFWvidmode *mode = glfwGetVideoMode(m_monitor);
-        glfwWindowHint(GLFW_RED_BITS, mode->redBits);
-        glfwWindowHint(GLFW_GREEN_BITS, mode->greenBits);
-        glfwWindowHint(GLFW_BLUE_BITS, mode->blueBits);
-        glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
+    if (windowFlags & EWINDOW_FLAGS_NOT_RESIZABLE)
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-        // Kinda bad...
-        m_width = mode->width;
-        m_height = mode->height;
+    if (windowFlags & EWINDOW_FLAGS_HIDDEN)
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+
+    if (windowFlags & EWINDOW_FLAGS_MAXIMIZED)
+        glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
+
+    if (wantsBorderlessFullscreen)
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+
+    if (wantsExclusiveFullscreen || wantsBorderlessFullscreen)
+    {
+        m_monitor = glfwGetPrimaryMonitor();
+        if (!m_monitor)
+            VX_WARNING("Failed to find primary monitor, falling back to windowed mode");
     }
 
-    // if(windowFlags & EWINDOW_FLAGS_NOT_RESIZABLE)
-    //     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    if (wantsBorderlessFullscreen && m_monitor)
+    {
+        const GLFWvidmode *mode = glfwGetVideoMode(m_monitor);
+        if (mode)
+        {
+            glfwWindowHint(GLFW_RED_BITS, mode->redBits);
+            glfwWindowHint(GLFW_GREEN_BITS, mode->greenBits);
+            glfwWindowHint(GLFW_BLUE_BITS, mode->blueBits);
+            glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
 
-    bool useMonitor = windowFlags & EWINDOW_FLAGS_FULLSCREEN;
+            m_width = static_cast<int>(mode->width);
+            m_height = static_cast<int>(mode->height);
+        }
+        else
+            VX_WARNING("Failed to get video mode for borderless fullscreen window, falling back to requested size");
+    }
 
+    const bool useMonitor = wantsExclusiveFullscreen && m_monitor;
+
+    VX_CORE_INFO_STREAM("[Startup] Creating window: " << title << " (" << m_width << "x" << m_height
+                                                     << (useMonitor ? ", fullscreen" : ", windowed") << ')');
     m_window = glfwCreateWindow(m_width, m_height, title.c_str(), useMonitor ? m_monitor : nullptr, nullptr);
 
     if (!m_window)
-        throw std::runtime_error("Failed to create GLFW window");
+        throw std::runtime_error(formatGlfwError("Failed to create GLFW window"));
+
+    VX_CORE_INFO_STREAM("[Startup] Window created");
 
     glfwSetWindowUserPointer(m_window, this);
 
     glfwSetFramebufferSizeCallback(m_window, &Window::onWindowResize);
     glfwSetWindowCloseCallback(m_window, &Window::onAboutToClose);
+
+    m_isFullscreen = useMonitor;
 }
 
 void Window::centerizedOnScreen()

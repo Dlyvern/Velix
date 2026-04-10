@@ -41,6 +41,11 @@
 
 namespace
 {
+    void logGlfwError(int errorCode, const char *description)
+    {
+        VX_DEV_ERROR_STREAM("GLFW error (" << errorCode << "): " << (description ? description : "Unknown error") << '\n');
+    }
+
     inline void tuneProcessFileDescriptorLimits()
     {
 #if defined(_WIN32)
@@ -143,9 +148,15 @@ bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
     renderSettings.ssrSteps = engineConfig.getSSRSteps();
     renderSettings.ssrRoughnessCutoff = engineConfig.getSSRRoughnessCutoff();
 
+    glfwSetErrorCallback(logGlfwError);
     if (!glfwInit())
     {
-        VX_DEV_ERROR_STREAM("Failed to initialize GLFW\n");
+        const char *description = nullptr;
+        const int errorCode = glfwGetError(&description);
+        if (errorCode != GLFW_NO_ERROR && description && description[0])
+            VX_DEV_ERROR_STREAM("Failed to initialize GLFW: " << description << " (" << errorCode << ")\n");
+        else
+            VX_DEV_ERROR_STREAM("Failed to initialize GLFW\n");
         return false;
     }
     // TODO ONLY IF DEBUG

@@ -59,6 +59,22 @@ target_link_libraries(${PROJECT_NAME} PRIVATE VelixEngine VelixCore VelixEditor)
 # (e.g. ScriptsRegister::instance from REGISTER_SCRIPT).
 set_target_properties(${PROJECT_NAME} PROPERTIES ENABLE_EXPORTS ON)
 
+if(WIN32 AND TARGET glfw)
+    get_target_property(_velix_glfw_target_type glfw TYPE)
+    if(_velix_glfw_target_type STREQUAL "SHARED_LIBRARY")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:glfw>"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/$<TARGET_FILE_NAME:glfw>"
+            COMMENT "Copying GLFW runtime next to executable"
+        )
+
+        install(TARGETS glfw
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        )
+    endif()
+endif()
+
 if(UNIX)
     target_link_options(${PROJECT_NAME} PRIVATE "-Wl,--export-dynamic")
 endif()

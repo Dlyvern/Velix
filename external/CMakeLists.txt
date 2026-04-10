@@ -11,6 +11,13 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "Disable GLFW examples" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "Disable GLFW tests" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "Disable GLFW docs" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "Disable GLFW install target" FORCE)
+if(WIN32)
+    # GLFW stores process-wide state (initialization, monitors, windows, callbacks).
+    # When it is linked statically into multiple Windows DLLs, each module gets its
+    # own private copy of that state.  Velix initialises GLFW from Engine and creates
+    # windows from Core, so Windows needs a single shared GLFW runtime.
+    set(GLFW_LIBRARY_TYPE SHARED CACHE STRING "Build GLFW as a shared library on Windows" FORCE)
+endif()
 add_subdirectory(glfw)
 
 # tinyobjloader
