@@ -477,7 +477,7 @@ VkSampleCountFlagBits VulkanContext::clampSupportedSampleCount(VkSampleCountFlag
     if (requested <= VK_SAMPLE_COUNT_1_BIT)
         return VK_SAMPLE_COUNT_1_BIT;
 
-    return std::min(requested, m_maxUsableSampleCount);
+    return (std::min)(requested, m_maxUsableSampleCount);
 }
 
 VkSampleCountFlagBits VulkanContext::getEffectiveMsaaSampleCount(VkSampleCountFlagBits requested) const
