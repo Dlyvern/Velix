@@ -12,7 +12,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    
+
     add_compile_options(
         "$<$<CONFIG:Debug>:/MTd>"
         "$<$<CONFIG:Release>:/MT>"
@@ -20,6 +20,11 @@ if(MSVC)
 
     add_compile_options(/std:c++20)
 endif()
+
+# On Windows, MSVC does not export any symbols from SHARED libraries by default,
+# so VelixCore.lib / VelixEngine.lib are never written without this.
+# GCC/Clang export everything by default, so this only matters on Windows.
+set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 if(WIN32)
     set(VELIX_CMAKE_EXECUTABLE_NAME "cmake.exe")
