@@ -55,6 +55,12 @@ add_executable(${PROJECT_NAME} main.cpp)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE VelixEngine VelixCore VelixEditor)
 
+if(WIN32)
+    # The executable hosts the editor static library, which calls Vulkan directly.
+    # Give the EXE its own volk table on Windows, just like VelixEngine.dll.
+    target_link_libraries(${PROJECT_NAME} PRIVATE volk)
+endif()
+
 # Required for runtime-loaded game modules that reference engine symbols
 # (e.g. ScriptsRegister::instance from REGISTER_SCRIPT).
 set_target_properties(${PROJECT_NAME} PROPERTIES ENABLE_EXPORTS ON)

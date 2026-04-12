@@ -30,6 +30,7 @@
 
 #include <backends/imgui_impl_vulkan.h>
 #include <GLFW/glfw3.h>
+#include <volk.h>
 
 #include <algorithm>
 #include <cctype>
@@ -661,6 +662,15 @@ void EditorRuntime::setLoadingWindowDecorationsVisible(bool visible)
 
 bool EditorRuntime::init()
 {
+#ifdef _WIN32
+    {
+        const auto context = core::VulkanContext::getContext();
+        volkInitialize();
+        volkLoadInstance(context->getInstance());
+        volkLoadDevice(context->getDevice()->vk());
+    }
+#endif
+
     m_project = ProjectLoader::loadProject(m_projectPath);
 
     if (!m_project)

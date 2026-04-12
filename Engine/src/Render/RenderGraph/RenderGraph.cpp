@@ -1418,6 +1418,10 @@ void RenderGraph::setup()
             continue;
         }
 
+        const std::string &debugName = passData->renderGraphPass->getDebugName();
+        VX_ENGINE_INFO_STREAM("[RenderGraph] Setup pass " << passData->id << ": "
+                                                         << (debugName.empty() ? "<unnamed>" : debugName) << '\n');
+
         m_renderGraphPassesBuilder.setCurrentPass(&passData->passInfo);
         passData->renderGraphPass->setup(m_renderGraphPassesBuilder);
     }
