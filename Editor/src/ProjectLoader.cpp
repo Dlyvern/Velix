@@ -7,6 +7,16 @@
 #include <algorithm>
 #include <cctype>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Assets/AssetsSerializer.hpp"
 
@@ -16,6 +26,34 @@ ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
 namespace
 {
+    std::filesystem::path pathFromPossiblyUtf8String(const std::string &value)
+    {
+#if defined(_WIN32)
+        if (!value.empty())
+        {
+            const int wideLength = MultiByteToWideChar(CP_UTF8,
+                                                       MB_ERR_INVALID_CHARS,
+                                                       value.data(),
+                                                       static_cast<int>(value.size()),
+                                                       nullptr,
+                                                       0);
+            if (wideLength > 0)
+            {
+                std::wstring wideValue(static_cast<std::size_t>(wideLength), L'\0');
+                MultiByteToWideChar(CP_UTF8,
+                                    MB_ERR_INVALID_CHARS,
+                                    value.data(),
+                                    static_cast<int>(value.size()),
+                                    wideValue.data(),
+                                    wideLength);
+                return std::filesystem::path(wideValue);
+            }
+        }
+#endif
+
+        return std::filesystem::path(value);
+    }
+
     ExportTargetSelection parseExportTargetSelection(const nlohmann::json &jsonValue, ExportTargetSelection fallback)
     {
         if (!jsonValue.is_string())
@@ -52,14 +90,14 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
         return nullptr;
     }
 
-    const std::filesystem::path inputPath(projectPath);
+    const std::filesystem::path inputPath = pathFromPossiblyUtf8String(projectPath);
     if (!std::filesystem::exists(inputPath))
     {
         VX_EDITOR_ERROR_STREAM("Project path does not exist\n");
         return nullptr;
     }
 
-    std::string projectConfigPath;
+    std::filesystem::path projectConfigPath;
     const std::filesystem::path projectDirectory = std::filesystem::is_directory(inputPath)
                                                        ? inputPath
                                                        : (inputPath.has_parent_path() ? inputPath.parent_path() : std::filesystem::current_path());
@@ -73,7 +111,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
     {
         const std::string extension = inputPath.extension().string();
         if (extension == ".elixproject" || extension == ".elixirproject")
-            projectConfigPath = inputPath.string();
+            projectConfigPath = inputPath;
     }
 
     for (const auto &projectConfigName : knownProjectConfigNames)
@@ -85,7 +123,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
         if (!std::filesystem::exists(candidatePath))
             continue;
 
-        projectConfigPath = candidatePath.string();
+        projectConfigPath = candidatePath;
         break;
     }
 
@@ -107,7 +145,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
             if (extension != ".elixproject" && extension != ".elixirproject")
                 continue;
 
-            projectConfigPath = entry.path().string();
+            projectConfigPath = entry.path();
             break;
         }
     }
@@ -149,7 +187,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
     // std::string exportDir;
 
     auto project = std::make_shared<Project>();
-    const std::filesystem::path configDirectory = std::filesystem::path(projectConfigPath).parent_path();
+    const std::filesystem::path configDirectory = projectConfigPath.parent_path();
 
     auto getConfigString = [&](std::initializer_list<const char *> keys, const std::string &fallback = std::string{}) -> std::string
     {
@@ -172,7 +210,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
         if (rawPath.empty())
             return {};
 
-        std::filesystem::path path(rawPath);
+        std::filesystem::path path = pathFromPossiblyUtf8String(rawPath);
         if (path.is_relative())
             path = basePath / path;
 
@@ -180,12 +218,12 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
     };
 
     project->name = getConfigString({"name"}, configDirectory.filename().string());
-    project->configPath = std::filesystem::path(projectConfigPath).lexically_normal().string();
+    project->configPath = projectConfigPath.lexically_normal().string();
 
-    const auto rawFullPath = getConfigString({"path", "project_path"}, configDirectory.string());
-    project->fullPath = makeAbsolute(rawFullPath, configDirectory);
-    if (project->fullPath.empty())
-        project->fullPath = configDirectory.lexically_normal().string();
+    const auto rawFullPath = getConfigString({"path", "project_path"});
+    project->fullPath = rawFullPath.empty()
+                            ? configDirectory.lexically_normal().string()
+                            : makeAbsolute(rawFullPath, configDirectory);
     project->fullPath = resolveProjectRootPath(*project).string();
 
     const auto rawEntryScene = getConfigString({"scene", "entry_scene"});
@@ -195,7 +233,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
 
     project->resourcesDir = makeAbsolute(getConfigString({"resources_path", "resources_dir", "assets_dir"}), project->fullPath);
     project->sourcesDir = makeAbsolute(getConfigString({"sources_path", "source_dir", "src_dir"}), project->fullPath);
-    project->buildDir = makeAbsolute(getConfigString({"build_dir"}, (std::filesystem::path(project->fullPath) / "build").string()), configDirectory);
+    project->buildDir = makeAbsolute(getConfigString({"build_dir"}), configDirectory);
     project->scenesDir = makeAbsolute(getConfigString({"scenes_dir", "scene_dir"}), project->fullPath);
     project->exportDir = makeAbsolute(getConfigString({"export_dir"}), project->fullPath);
 

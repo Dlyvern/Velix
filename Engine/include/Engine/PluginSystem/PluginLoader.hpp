@@ -3,6 +3,7 @@
 
 #include "Core/Macros.hpp"
 
+#include <filesystem>
 #include <string>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -29,6 +30,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 namespace PluginLoader
 {
+    LibraryHandle loadLibrary(const std::filesystem::path& libraryPath);
     LibraryHandle loadLibrary(const std::string& libraryPath);
     void* getFunction(const std::string& functionName, LibraryHandle library);
     void closeLibrary(LibraryHandle library);

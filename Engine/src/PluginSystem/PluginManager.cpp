@@ -126,7 +126,7 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
             continue;
         }
 
-        LibraryHandle handle = PluginLoader::loadLibrary(path.string());
+        LibraryHandle handle = PluginLoader::loadLibrary(path);
         if (!handle)
         {
             VX_ENGINE_WARNING_STREAM("[PluginManager] Failed to load plugin library: " << path << '\n');

@@ -18,12 +18,12 @@ DescriptorSetLayout::DescriptorSetLayout(VkDevice device,
 
     VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
     flagsInfo.bindingCount  = static_cast<uint32_t>(bindingFlags.size());
-    flagsInfo.pBindingFlags = bindingFlags.data();
+    flagsInfo.pBindingFlags = bindingFlags.empty() ? nullptr : bindingFlags.data();
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutInfo.pNext        = &flagsInfo;
+    layoutInfo.pNext        = bindingFlags.empty() ? nullptr : &flagsInfo;
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    layoutInfo.pBindings    = bindings.data();
+    layoutInfo.pBindings    = bindings.empty() ? nullptr : bindings.data();
 
     VX_VK_CHECK(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_handle));
 
@@ -36,7 +36,7 @@ void DescriptorSetLayout::createVk(const std::vector<VkDescriptorSetLayoutBindin
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    layoutInfo.pBindings = bindings.data();
+    layoutInfo.pBindings = bindings.empty() ? nullptr : bindings.data();
 
     VX_VK_CHECK(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_handle));
 

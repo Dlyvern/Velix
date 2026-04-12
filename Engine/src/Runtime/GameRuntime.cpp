@@ -758,7 +758,7 @@ bool GameRuntime::loadProjectModule(std::string *errorMessage)
     const std::filesystem::path moduleDirectory = m_modulePath.parent_path();
     for (const auto &runtimeLibraryPath : findVelixSdkLibrariesInDirectory(moduleDirectory))
     {
-        auto runtimeLibraryHandle = PluginLoader::loadLibrary(runtimeLibraryPath.string());
+        auto runtimeLibraryHandle = PluginLoader::loadLibrary(runtimeLibraryPath);
         if (!runtimeLibraryHandle)
         {
             VX_ENGINE_WARNING_STREAM("Failed to preload runtime library '" << runtimeLibraryPath << "'. GameModule load may fail.\n");
@@ -768,7 +768,7 @@ bool GameRuntime::loadProjectModule(std::string *errorMessage)
         m_preloadedRuntimeLibraries.push_back(runtimeLibraryHandle);
     }
 
-    m_gameModuleLibrary = PluginLoader::loadLibrary(m_modulePath.string());
+    m_gameModuleLibrary = PluginLoader::loadLibrary(m_modulePath);
     if (!m_gameModuleLibrary)
     {
         ScriptsRegister::setActiveRegister(nullptr);

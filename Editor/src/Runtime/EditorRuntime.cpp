@@ -503,7 +503,7 @@ namespace
         std::filesystem::copy_file(sourceLibraryPath, temporaryCopyPath, std::filesystem::copy_options::overwrite_existing, copyError);
         if (!copyError)
         {
-            loadedLibrary.handle = elix::engine::PluginLoader::loadLibrary(temporaryCopyPath.string());
+            loadedLibrary.handle = elix::engine::PluginLoader::loadLibrary(temporaryCopyPath);
             if (loadedLibrary.handle)
             {
                 loadedLibrary.loadedPath = temporaryCopyPath;
@@ -519,7 +519,7 @@ namespace
             VX_EDITOR_WARNING_STREAM("Failed to create hot reload copy for game module: " << temporaryCopyPath << " (" << copyError.message() << ")\n");
         }
 
-        loadedLibrary.handle = elix::engine::PluginLoader::loadLibrary(sourceLibraryPath.string());
+        loadedLibrary.handle = elix::engine::PluginLoader::loadLibrary(sourceLibraryPath);
         if (loadedLibrary.handle)
             loadedLibrary.loadedPath = sourceLibraryPath;
 

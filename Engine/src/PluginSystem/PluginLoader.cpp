@@ -5,13 +5,13 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-LibraryHandle PluginLoader::loadLibrary(const std::string &libraryPath)
+LibraryHandle PluginLoader::loadLibrary(const std::filesystem::path &libraryPath)
 {
 #ifdef _WIN32
-    HMODULE lib = LoadLibrary(libraryPath.c_str());
+    HMODULE lib = LoadLibraryW(libraryPath.c_str());
 
     if (!lib)
-        VX_ENGINE_ERROR_STREAM("Failed to load library " << std::endl);
+        VX_ENGINE_ERROR_STREAM("Failed to load library: " << libraryPath << '\n');
 
     return lib;
 #else
@@ -24,6 +24,11 @@ LibraryHandle PluginLoader::loadLibrary(const std::string &libraryPath)
 
     return handle;
 #endif
+}
+
+LibraryHandle PluginLoader::loadLibrary(const std::string &libraryPath)
+{
+    return loadLibrary(std::filesystem::path(libraryPath));
 }
 
 void *PluginLoader::getFunction(const std::string &functionName, LibraryHandle library)

@@ -14,18 +14,17 @@ void PipelineLayout::createVk(const std::vector<std::reference_wrapper<const Des
 {
     ELIX_VK_CREATE_GUARD()
 
-    //*That is kinda sad...
-
     std::vector<VkDescriptorSetLayout> vkSetLayouts;
+    vkSetLayouts.reserve(setLayouts.size());
 
     for (const auto &des : setLayouts)
         vkSetLayouts.push_back(des.get().vk());
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(vkSetLayouts.size());
-    pipelineLayoutInfo.pSetLayouts = vkSetLayouts.data();
+    pipelineLayoutInfo.pSetLayouts = vkSetLayouts.empty() ? nullptr : vkSetLayouts.data();
     pipelineLayoutInfo.pushConstantRangeCount = static_cast<uint32_t>(pushConstants.size());
-    pipelineLayoutInfo.pPushConstantRanges = pushConstants.data();
+    pipelineLayoutInfo.pPushConstantRanges = pushConstants.empty() ? nullptr : pushConstants.data();
 
     VX_VK_CHECK(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_handle));
 

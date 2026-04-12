@@ -128,10 +128,20 @@ std::filesystem::path FileHelper::getExecutablePath()
 std::filesystem::path FileHelper::getExecutableFilePath()
 {
 #if defined(_WIN32)
-    char buffer[MAX_PATH];
-    DWORD size = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
-    if (size == 0 || size == MAX_PATH)
+    std::wstring buffer(MAX_PATH, L'\0');
+    DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (size == 0)
         return {};
+
+    while (size >= buffer.size() - 1u)
+    {
+        buffer.resize(buffer.size() * 2u, L'\0');
+        size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (size == 0)
+            return {};
+    }
+
+    buffer.resize(size);
     return std::filesystem::path(buffer);
 
 #elif defined(__linux__)

@@ -464,7 +464,7 @@ namespace
         std::filesystem::copy_file(sourceLibraryPath, temporaryCopyPath, std::filesystem::copy_options::overwrite_existing, copyError);
         if (!copyError)
         {
-            loadedLibrary.handle = engine::PluginLoader::loadLibrary(temporaryCopyPath.string());
+            loadedLibrary.handle = engine::PluginLoader::loadLibrary(temporaryCopyPath);
             if (loadedLibrary.handle)
             {
                 loadedLibrary.loadedPath = temporaryCopyPath;
@@ -480,7 +480,7 @@ namespace
             VX_EDITOR_WARNING_STREAM("Failed to create hot reload copy for game module: " << temporaryCopyPath << " (" << copyError.message() << ")\n");
         }
 
-        loadedLibrary.handle = engine::PluginLoader::loadLibrary(sourceLibraryPath.string());
+        loadedLibrary.handle = engine::PluginLoader::loadLibrary(sourceLibraryPath);
         if (loadedLibrary.handle)
             loadedLibrary.loadedPath = sourceLibraryPath;
 
@@ -3778,7 +3778,7 @@ bool Editor::saveProjectExportSettings()
     if (!project || project->configPath.empty())
         return false;
 
-    std::ifstream input(project->configPath);
+    std::ifstream input(std::filesystem::path(project->configPath));
     if (!input.is_open())
         return false;
 
@@ -3840,7 +3840,7 @@ bool Editor::saveProjectExportSettings()
     writePlatformSettings("linux", project->linuxExport);
     writePlatformSettings("windows", project->windowsExport);
 
-    std::ofstream output(project->configPath, std::ios::trunc);
+    std::ofstream output(std::filesystem::path(project->configPath), std::ios::trunc);
     if (!output.is_open())
         return false;
 

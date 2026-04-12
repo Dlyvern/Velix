@@ -74,6 +74,13 @@ if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE volk)
 endif()
 
+if(UNIX)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN"
+    )
+endif()
+
 install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
