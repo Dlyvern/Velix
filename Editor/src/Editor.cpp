@@ -8421,33 +8421,7 @@ void Editor::drawBenchmark()
     ImGui::Text("Frame time: %.3f ms", 1000.0f / fps);
     ImGui::Text("VSync: %s", engine::RenderQualitySettings::getInstance().enableVSync ? "ON" : "OFF");
     ImGui::TextDisabled("FPS above is full editor loop; detailed CPU/GPU numbers below are render-graph only.");
-    const auto requestedAaMode = engine::RenderQualitySettings::getInstance().getAntiAliasingMode();
-    const auto effectiveAaMode = engine::RenderQualitySettings::getInstance().enablePostProcessing
-                                     ? requestedAaMode
-                                     : engine::RenderQualitySettings::AntiAliasingMode::NONE;
-    ImGui::Text("Post-Processing: %s", engine::RenderQualitySettings::getInstance().enablePostProcessing ? "ON" : "OFF");
-    ImGui::Text("Requested Post-AA: %s", antiAliasingModeLabel(requestedAaMode));
-    ImGui::Text("Effective Post-AA: %s", antiAliasingModeLabel(effectiveAaMode));
-    const bool canShowGameViewportGraph = m_isGameViewportVisible;
-    if (!canShowGameViewportGraph && m_benchmarkGraphSource == BenchmarkGraphSource::GameViewport)
-        m_benchmarkGraphSource = BenchmarkGraphSource::MainViewport;
-
-    if (canShowGameViewportGraph)
-    {
-        const char *graphSources[] = {"Main Viewport", "Game Viewport"};
-        int graphSourceIndex = static_cast<int>(m_benchmarkGraphSource);
-        if (ImGui::Combo("Graph Source", &graphSourceIndex, graphSources, IM_ARRAYSIZE(graphSources)))
-            m_benchmarkGraphSource = static_cast<BenchmarkGraphSource>(graphSourceIndex);
-    }
-
-    const auto &profilingData =
-        (canShowGameViewportGraph && m_benchmarkGraphSource == BenchmarkGraphSource::GameViewport)
-            ? m_gameRenderGraphProfilingData
-            : m_mainRenderGraphProfilingData;
-    const auto &activePassNames =
-        (canShowGameViewportGraph && m_benchmarkGraphSource == BenchmarkGraphSource::GameViewport)
-            ? m_gameRenderGraphPassNames
-            : m_mainRenderGraphPassNames;
+    const auto &profilingData = m_renderGraphProfilingData;
 
     auto &engineConfig = engine::EngineConfig::instance();
     bool detailedRenderProfiling = engineConfig.getDetailedRenderProfilingEnabled();
@@ -8465,15 +8439,6 @@ void Editor::drawBenchmark()
                 core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
     ImGui::Text("Render Graph VRAM: %.2f MB", static_cast<double>(profilingData.renderGraphVramBytes) / (1024.0 * 1024.0));
     ImGui::Text("Draw calls: %u", profilingData.totalDrawCalls);
-    ImGui::Text("Active graph passes: %zu", activePassNames.size());
-
-    if (!activePassNames.empty())
-    {
-        ImGui::Separator();
-        ImGui::Text("Current Graph Topology");
-        for (const auto &passName : activePassNames)
-            ImGui::BulletText("%s", passName.c_str());
-    }
 
     {
         const auto stats = engine::AssetManager::getInstance().getStats();

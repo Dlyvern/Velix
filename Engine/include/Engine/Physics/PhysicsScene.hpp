@@ -36,7 +36,13 @@ public:
 
     physx::PxRigidStatic *createStatic(const physx::PxTransform &transform);
 
+    physx::PxD6Joint *createD6Joint(physx::PxRigidActor *actor0,
+                                    const physx::PxTransform &localFrame0,
+                                    physx::PxRigidActor *actor1,
+                                    const physx::PxTransform &localFrame1);
+
     void removeActor(physx::PxActor &actor, bool wakeOnLostTouch = true, bool release = false);
+    void removeJoint(physx::PxJoint &joint, bool release = true);
 
     physx::PxController *createController(const physx::PxVec3 &position, float radius, float height);
 

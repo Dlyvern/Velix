@@ -15,6 +15,7 @@
 #include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Components/ReflectionProbeComponent.hpp"
 #include "Engine/Components/DecalComponent.hpp"
+#include "Engine/Components/RagdollComponent.hpp"
 #include "Core/VulkanContext.hpp"
 
 #include "Engine/Particles/Modules/SpawnModule.hpp"
@@ -235,6 +236,126 @@ namespace
             variable.value);
 
         return jsonValue;
+    }
+
+    nlohmann::json ragdollProfileToJson(const elix::engine::RagdollProfile &profile)
+    {
+        nlohmann::json json;
+        json["reference_bone"] = profile.referenceBoneName;
+        json["bodies"] = nlohmann::json::array();
+        json["joints"] = nlohmann::json::array();
+
+        for (const auto &body : profile.bodies)
+        {
+            nlohmann::json bodyJson;
+            bodyJson["bone"] = body.boneName;
+            bodyJson["shape"] = body.shapeType == elix::engine::RagdollBodyShapeType::Box ? "box" : "capsule";
+            bodyJson["box_half_extents"] = {body.boxHalfExtents.x, body.boxHalfExtents.y, body.boxHalfExtents.z};
+            bodyJson["capsule_radius"] = body.capsuleRadius;
+            bodyJson["capsule_half_height"] = body.capsuleHalfHeight;
+            bodyJson["body_local_position"] = {body.bodyLocalPosition.x, body.bodyLocalPosition.y, body.bodyLocalPosition.z};
+            bodyJson["body_local_euler_degrees"] = {body.bodyLocalEulerDegrees.x, body.bodyLocalEulerDegrees.y, body.bodyLocalEulerDegrees.z};
+            bodyJson["mass"] = body.mass;
+            bodyJson["linear_damping"] = body.linearDamping;
+            bodyJson["angular_damping"] = body.angularDamping;
+            json["bodies"].push_back(std::move(bodyJson));
+        }
+
+        for (const auto &joint : profile.joints)
+        {
+            nlohmann::json jointJson;
+            jointJson["parent_bone"] = joint.parentBoneName;
+            jointJson["child_bone"] = joint.childBoneName;
+            jointJson["swing_y_limit_deg"] = joint.swingYLimitDeg;
+            jointJson["swing_z_limit_deg"] = joint.swingZLimitDeg;
+            jointJson["twist_lower_limit_deg"] = joint.twistLowerLimitDeg;
+            jointJson["twist_upper_limit_deg"] = joint.twistUpperLimitDeg;
+            jointJson["collision_enabled"] = joint.collisionEnabled;
+            json["joints"].push_back(std::move(jointJson));
+        }
+
+        return json;
+    }
+
+    void ragdollProfileFromJson(const nlohmann::json &json, elix::engine::RagdollProfile &outProfile)
+    {
+        outProfile = {};
+        if (!json.is_object())
+            return;
+
+        outProfile.referenceBoneName = json.value("reference_bone", std::string{});
+
+        if (json.contains("bodies") && json["bodies"].is_array())
+        {
+            for (const auto &bodyJson : json["bodies"])
+            {
+                if (!bodyJson.is_object())
+                    continue;
+
+                elix::engine::RagdollBodyDesc body{};
+                body.boneName = bodyJson.value("bone", std::string{});
+                const std::string shape = bodyJson.value("shape", std::string{"capsule"});
+                body.shapeType = (shape == "box") ? elix::engine::RagdollBodyShapeType::Box
+                                                   : elix::engine::RagdollBodyShapeType::Capsule;
+
+                if (bodyJson.contains("box_half_extents") &&
+                    bodyJson["box_half_extents"].is_array() &&
+                    bodyJson["box_half_extents"].size() == 3)
+                {
+                    body.boxHalfExtents = glm::vec3(bodyJson["box_half_extents"][0],
+                                                    bodyJson["box_half_extents"][1],
+                                                    bodyJson["box_half_extents"][2]);
+                }
+
+                if (bodyJson.contains("body_local_position") &&
+                    bodyJson["body_local_position"].is_array() &&
+                    bodyJson["body_local_position"].size() == 3)
+                {
+                    body.bodyLocalPosition = glm::vec3(bodyJson["body_local_position"][0],
+                                                       bodyJson["body_local_position"][1],
+                                                       bodyJson["body_local_position"][2]);
+                }
+
+                if (bodyJson.contains("body_local_euler_degrees") &&
+                    bodyJson["body_local_euler_degrees"].is_array() &&
+                    bodyJson["body_local_euler_degrees"].size() == 3)
+                {
+                    body.bodyLocalEulerDegrees = glm::vec3(bodyJson["body_local_euler_degrees"][0],
+                                                           bodyJson["body_local_euler_degrees"][1],
+                                                           bodyJson["body_local_euler_degrees"][2]);
+                }
+
+                body.capsuleRadius = bodyJson.value("capsule_radius", body.capsuleRadius);
+                body.capsuleHalfHeight = bodyJson.value("capsule_half_height", body.capsuleHalfHeight);
+                body.mass = bodyJson.value("mass", body.mass);
+                body.linearDamping = bodyJson.value("linear_damping", body.linearDamping);
+                body.angularDamping = bodyJson.value("angular_damping", body.angularDamping);
+
+                if (!body.boneName.empty())
+                    outProfile.bodies.push_back(std::move(body));
+            }
+        }
+
+        if (json.contains("joints") && json["joints"].is_array())
+        {
+            for (const auto &jointJson : json["joints"])
+            {
+                if (!jointJson.is_object())
+                    continue;
+
+                elix::engine::RagdollJointDesc joint{};
+                joint.parentBoneName = jointJson.value("parent_bone", std::string{});
+                joint.childBoneName = jointJson.value("child_bone", std::string{});
+                joint.swingYLimitDeg = jointJson.value("swing_y_limit_deg", joint.swingYLimitDeg);
+                joint.swingZLimitDeg = jointJson.value("swing_z_limit_deg", joint.swingZLimitDeg);
+                joint.twistLowerLimitDeg = jointJson.value("twist_lower_limit_deg", joint.twistLowerLimitDeg);
+                joint.twistUpperLimitDeg = jointJson.value("twist_upper_limit_deg", joint.twistUpperLimitDeg);
+                joint.collisionEnabled = jointJson.value("collision_enabled", joint.collisionEnabled);
+
+                if (!joint.parentBoneName.empty() && !joint.childBoneName.empty())
+                    outProfile.joints.push_back(std::move(joint));
+            }
+        }
     }
 
     glm::quat worldRotationFromForward(const glm::vec3 &forward)
@@ -1017,6 +1138,24 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                                                      componentJson.value("paused", false),
                                                      componentJson.value("ignore_root_bone_y", false)});
                 }
+                else if (type == "ragdoll")
+                {
+                    if (gameObject->getComponent<RigidBodyComponent>())
+                    {
+                        VX_ENGINE_WARNING_STREAM("Skipping ragdoll on entity '" << gameObject->getName()
+                                                 << "' because RigidBodyComponent is already present.\n");
+                        continue;
+                    }
+
+                    auto *ragdoll = gameObject->addComponent<RagdollComponent>(this);
+                    if (!ragdoll)
+                        continue;
+
+                    ragdollProfileFromJson(componentJson.value("profile", nlohmann::json::object()), ragdoll->getProfile());
+                    ragdoll->setDebugDrawBodies(componentJson.value("debug_draw_bodies", false));
+                    ragdoll->setDebugDrawJoints(componentJson.value("debug_draw_joints", false));
+                    ragdoll->buildFromProfile();
+                }
                 else if (type == "camera")
                 {
                     auto *cameraComponent = gameObject->addComponent<CameraComponent>();
@@ -1130,6 +1269,13 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                 }
                 else if (type == "rigid_body")
                 {
+                    if (gameObject->getComponent<RagdollComponent>())
+                    {
+                        VX_ENGINE_WARNING_STREAM("Skipping rigid body on entity '" << gameObject->getName()
+                                                 << "' because RagdollComponent is already present.\n");
+                        continue;
+                    }
+
                     const glm::vec3 worldPos = transformation->getWorldPosition();
                     const glm::quat worldRot = transformation->getWorldRotation();
                     auto *dynActor = m_physicsScene.createDynamic(
@@ -1771,6 +1917,16 @@ void Scene::saveSceneToFile(const std::string &filePath)
             componentsJson.push_back(j);
         }
 
+        if (const auto *ragdoll = object->getComponent<RagdollComponent>())
+        {
+            nlohmann::json j;
+            j["type"] = "ragdoll";
+            j["profile"] = ragdollProfileToJson(ragdoll->getProfile());
+            j["debug_draw_bodies"] = ragdoll->getDebugDrawBodies();
+            j["debug_draw_joints"] = ragdoll->getDebugDrawJoints();
+            componentsJson.push_back(j);
+        }
+
         if (const auto *cameraComponent = object->getComponent<CameraComponent>())
         {
             const auto camera = cameraComponent->getCamera();
@@ -2333,6 +2489,16 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
             if (const auto *tree = animator->getTree(); tree && !tree->assetPath.empty())
                 componentJson["tree_asset_path"] = normalizeSerializedPath(tree->assetPath);
 
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        if (const auto *ragdoll = object.getComponent<RagdollComponent>())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "ragdoll";
+            componentJson["profile"] = ragdollProfileToJson(ragdoll->getProfile());
+            componentJson["debug_draw_bodies"] = ragdoll->getDebugDrawBodies();
+            componentJson["debug_draw_joints"] = ragdoll->getDebugDrawJoints();
             componentsJson.push_back(std::move(componentJson));
         }
 
@@ -3086,6 +3252,24 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                                                  componentJson.value("paused", false),
                                                  componentJson.value("ignore_root_bone_y", false)});
             }
+            else if (type == "ragdoll")
+            {
+                if (entity->getComponent<RigidBodyComponent>())
+                {
+                    VX_ENGINE_WARNING_STREAM("Skipping ragdoll on restored entity '" << entity->getName()
+                                             << "' because RigidBodyComponent is already present.\n");
+                    continue;
+                }
+
+                auto *ragdoll = entity->addComponent<RagdollComponent>(this);
+                if (!ragdoll)
+                    continue;
+
+                ragdollProfileFromJson(componentJson.value("profile", nlohmann::json::object()), ragdoll->getProfile());
+                ragdoll->setDebugDrawBodies(componentJson.value("debug_draw_bodies", false));
+                ragdoll->setDebugDrawJoints(componentJson.value("debug_draw_joints", false));
+                ragdoll->buildFromProfile();
+            }
             else if (type == "camera")
             {
                 auto *cameraComponent = entity->addComponent<CameraComponent>();
@@ -3200,6 +3384,13 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
             }
             else if (type == "rigid_body")
             {
+                if (entity->getComponent<RagdollComponent>())
+                {
+                    VX_ENGINE_WARNING_STREAM("Skipping rigid body on restored entity '" << entity->getName()
+                                             << "' because RagdollComponent is already present.\n");
+                    continue;
+                }
+
                 if (!transformation)
                     continue;
 
@@ -3869,6 +4060,13 @@ void Scene::update(float deltaTime)
 
         if (auto *rigidBodyComponent = entity->getComponent<RigidBodyComponent>())
             rigidBodyComponent->syncFromPhysics();
+    }
+
+    for (size_t index = 0; index < m_entities.size(); ++index)
+    {
+        auto entity = m_entities[index];
+        if (entity && entity->isEnabled())
+            entity->postPhysicsUpdate(deltaTime);
     }
 }
 

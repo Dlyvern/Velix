@@ -16,11 +16,13 @@
 #include "Engine/Components/CollisionComponent.hpp"
 #include "Engine/Components/LightComponent.hpp"
 #include "Engine/Components/ParticleSystemComponent.hpp"
+#include "Engine/Components/RagdollComponent.hpp"
 #include "Engine/Components/RigidBodyComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
+#include "Engine/Skeleton.hpp"
 #include "Engine/Particles/Modules/ColorOverLifetimeModule.hpp"
 #include "Engine/Particles/Modules/ForceModule.hpp"
 #include "Engine/Particles/Modules/InitialVelocityModule.hpp"
@@ -210,6 +212,56 @@ namespace
         }
 
         return candidate.lexically_normal().string();
+    }
+
+    bool drawStringInput(const char *label, std::string &value)
+    {
+        std::array<char, 256> buffer{};
+        std::strncpy(buffer.data(), value.c_str(), buffer.size() - 1);
+        if (!ImGui::InputText(label, buffer.data(), buffer.size()))
+            return false;
+
+        value = buffer.data();
+        return true;
+    }
+
+    bool drawBoneCombo(const char *label,
+                       const elix::engine::Skeleton *skeleton,
+                       std::string &boneName)
+    {
+        const char *preview = boneName.empty() ? "<None>" : boneName.c_str();
+        bool changed = false;
+
+        if (!ImGui::BeginCombo(label, preview))
+            return false;
+
+        if (ImGui::Selectable("<None>", boneName.empty()))
+        {
+            boneName.clear();
+            changed = true;
+        }
+
+        if (skeleton)
+        {
+            for (size_t boneIndex = 0; boneIndex < skeleton->getBonesCount(); ++boneIndex)
+            {
+                const auto *bone = skeleton->getBone(static_cast<int>(boneIndex));
+                if (!bone)
+                    continue;
+
+                const bool isSelected = boneName == bone->name;
+                if (ImGui::Selectable(bone->name.c_str(), isSelected))
+                {
+                    boneName = bone->name;
+                    changed = true;
+                }
+                if (isSelected)
+                    ImGui::SetItemDefaultFocus();
+            }
+        }
+
+        ImGui::EndCombo();
+        return changed;
     }
 
     physx::PxTransform makePxTransformFromEntity(elix::engine::Entity *entity)
@@ -1019,8 +1071,15 @@ namespace
 
         // ── Physics ──────────────────────────────────────────────────────────
         reg.registerComponent("RigidBody", "Physics",
-            [](elix::engine::Entity *e, elix::engine::Scene *s, elix::engine::ComponentAddContext &)
+            [](elix::engine::Entity *e, elix::engine::Scene *s, elix::engine::ComponentAddContext &ctx)
             {
+                if (e->getComponent<elix::engine::RagdollComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Remove Ragdoll before adding RigidBody");
+                    ctx.closePopup = false;
+                    return;
+                }
+
                 physx::PxTransform transform = makePxTransformFromEntity(e);
                 auto rigid = s->getPhysicsScene().createDynamic(transform);
                 auto *rigidComponent = e->addComponent<elix::engine::RigidBodyComponent>(rigid);
@@ -1061,6 +1120,37 @@ namespace
                 const float height = std::max(0.5f, safeScale.y);
                 e->addComponent<elix::engine::CharacterMovementComponent>(s, radius, height);
                 if (ctx.showSuccess) ctx.showSuccess("Character movement added");
+            });
+
+        reg.registerComponent("Ragdoll", "Physics",
+            [](elix::engine::Entity *e, elix::engine::Scene *s, elix::engine::ComponentAddContext &ctx)
+            {
+                if (e->getComponent<elix::engine::RagdollComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Ragdoll already exists on this entity");
+                    ctx.closePopup = false;
+                    return;
+                }
+                if (!e->getComponent<elix::engine::SkeletalMeshComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Ragdoll requires a SkeletalMeshComponent");
+                    ctx.closePopup = false;
+                    return;
+                }
+                if (e->getComponent<elix::engine::RigidBodyComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Remove RigidBody before adding Ragdoll");
+                    ctx.closePopup = false;
+                    return;
+                }
+
+                auto *ragdoll = e->addComponent<elix::engine::RagdollComponent>(s);
+                if (!ragdoll)
+                    return;
+
+                ragdoll->autoGenerateHumanoidProfile();
+                if (ctx.showSuccess)
+                    ctx.showSuccess("Ragdoll added");
             });
 
         reg.registerComponent("Box Collision", "Physics",
@@ -1175,6 +1265,7 @@ void EntityDetailsView::draw(Editor &editor)
 
         if (m_selectedEntity->getComponent<engine::SkeletalMeshComponent>() && ImGui::MenuItem("Skeletal Mesh"))
         {
+            m_selectedEntity->removeComponent<engine::RagdollComponent>();
             m_selectedEntity->removeComponent<engine::AnimatorComponent>();
             m_selectedEntity->removeComponent<engine::SkeletalMeshComponent>();
             componentRemovedFromPopup = true;
@@ -1202,6 +1293,12 @@ void EntityDetailsView::draw(Editor &editor)
         if (m_selectedEntity->getComponent<engine::CharacterMovementComponent>() && ImGui::MenuItem("Character Movement"))
         {
             m_selectedEntity->removeComponent<engine::CharacterMovementComponent>();
+            componentRemovedFromPopup = true;
+        }
+
+        if (m_selectedEntity->getComponent<engine::RagdollComponent>() && ImGui::MenuItem("Ragdoll"))
+        {
+            m_selectedEntity->removeComponent<engine::RagdollComponent>();
             componentRemovedFromPopup = true;
         }
 
@@ -2057,6 +2154,187 @@ void EntityDetailsView::draw(Editor &editor)
                         }
                         ImGui::EndDragDropTarget();
                     }
+                }
+            }
+        }
+        else if (auto ragdollComponent = dynamic_cast<engine::RagdollComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Ragdoll", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                auto *skeletalMeshComponent = m_selectedEntity->getComponent<engine::SkeletalMeshComponent>();
+                engine::Skeleton *skeleton = skeletalMeshComponent ? &skeletalMeshComponent->getSkeleton() : nullptr;
+                const std::string selectedBoneName = editor.getSelectedSkeletalBoneName();
+                auto &profile = ragdollComponent->getProfile();
+
+                const char *stateLabel = "Inactive";
+                switch (ragdollComponent->getRuntimeState())
+                {
+                case engine::RagdollComponent::RuntimeState::Inactive:
+                    stateLabel = "Inactive";
+                    break;
+                case engine::RagdollComponent::RuntimeState::Simulating:
+                    stateLabel = "Simulating";
+                    break;
+                case engine::RagdollComponent::RuntimeState::Recovering:
+                    stateLabel = "Recovering";
+                    break;
+                }
+
+                ImGui::Text("State: %s", stateLabel);
+                ImGui::Text("Bodies: %zu  Joints: %zu", profile.bodies.size(), profile.joints.size());
+                if (!selectedBoneName.empty())
+                    ImGui::TextDisabled("Selected Bone: %s", selectedBoneName.c_str());
+
+                if (ImGui::Button("Auto Generate Humanoid"))
+                    ragdollComponent->autoGenerateHumanoidProfile();
+                ImGui::SameLine();
+                if (ImGui::Button("Rebuild Profile"))
+                    ragdollComponent->buildFromProfile();
+
+                bool debugDrawBodies = ragdollComponent->getDebugDrawBodies();
+                if (ImGui::Checkbox("Debug Draw Bodies", &debugDrawBodies))
+                    ragdollComponent->setDebugDrawBodies(debugDrawBodies);
+                bool debugDrawJoints = ragdollComponent->getDebugDrawJoints();
+                if (ImGui::Checkbox("Debug Draw Joints", &debugDrawJoints))
+                    ragdollComponent->setDebugDrawJoints(debugDrawJoints);
+
+                drawBoneCombo("Reference Bone", skeleton, profile.referenceBoneName);
+                if (!selectedBoneName.empty())
+                {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Use Selected##RagdollReference"))
+                        profile.referenceBoneName = selectedBoneName;
+                }
+
+                if (ImGui::Button("Enter Ragdoll"))
+                    ragdollComponent->enterRagdoll(true);
+                ImGui::SameLine();
+                if (ImGui::Button("Exit Ragdoll"))
+                    ragdollComponent->exitRagdoll(0.25f);
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Bodies");
+                if (ImGui::Button("Add Body"))
+                    profile.bodies.emplace_back();
+                if (!selectedBoneName.empty())
+                {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Add Selected Bone Body"))
+                    {
+                        engine::RagdollBodyDesc body{};
+                        body.boneName = selectedBoneName;
+                        profile.bodies.push_back(body);
+                    }
+                }
+
+                int bodyIndexToRemove = -1;
+                for (size_t bodyIndex = 0; bodyIndex < profile.bodies.size(); ++bodyIndex)
+                {
+                    auto &body = profile.bodies[bodyIndex];
+                    ImGui::PushID(static_cast<int>(bodyIndex));
+                    const std::string treeLabel = body.boneName.empty()
+                                                      ? ("Body " + std::to_string(bodyIndex))
+                                                      : body.boneName + "##RagdollBody";
+                    if (ImGui::TreeNodeEx(treeLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        drawBoneCombo("Bone", skeleton, body.boneName);
+                        if (!selectedBoneName.empty())
+                        {
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Use Selected##RagdollBodyBone"))
+                                body.boneName = selectedBoneName;
+                        }
+
+                        int shapeType = static_cast<int>(body.shapeType);
+                        if (ImGui::Combo("Shape", &shapeType, "Box\0Capsule\0"))
+                            body.shapeType = static_cast<engine::RagdollBodyShapeType>(shapeType);
+
+                        if (body.shapeType == engine::RagdollBodyShapeType::Box)
+                        {
+                            ImGui::DragFloat3("Box Half Extents", &body.boxHalfExtents.x, 0.005f, 0.01f, 10.0f, "%.3f");
+                        }
+                        else
+                        {
+                            ImGui::DragFloat("Capsule Radius", &body.capsuleRadius, 0.005f, 0.01f, 10.0f, "%.3f");
+                            ImGui::DragFloat("Capsule Half Height", &body.capsuleHalfHeight, 0.005f, 0.0f, 10.0f, "%.3f");
+                        }
+
+                        ImGui::DragFloat3("Body Local Position", &body.bodyLocalPosition.x, 0.005f, -10.0f, 10.0f, "%.3f");
+                        ImGui::DragFloat3("Body Local Euler", &body.bodyLocalEulerDegrees.x, 0.25f, -180.0f, 180.0f, "%.1f");
+                        ImGui::DragFloat("Mass", &body.mass, 0.01f, 0.01f, 100.0f, "%.2f");
+                        ImGui::DragFloat("Linear Damping", &body.linearDamping, 0.005f, 0.0f, 10.0f, "%.3f");
+                        ImGui::DragFloat("Angular Damping", &body.angularDamping, 0.005f, 0.0f, 10.0f, "%.3f");
+
+                        if (ImGui::Button("Remove Body"))
+                            bodyIndexToRemove = static_cast<int>(bodyIndex);
+
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                if (bodyIndexToRemove >= 0)
+                    profile.bodies.erase(profile.bodies.begin() + bodyIndexToRemove);
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Joints");
+                if (ImGui::Button("Add Joint"))
+                    profile.joints.emplace_back();
+                if (!selectedBoneName.empty() && !profile.joints.empty())
+                {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Use selected bone buttons inside a joint to assign.");
+                }
+
+                int jointIndexToRemove = -1;
+                for (size_t jointIndex = 0; jointIndex < profile.joints.size(); ++jointIndex)
+                {
+                    auto &joint = profile.joints[jointIndex];
+                    ImGui::PushID(static_cast<int>(jointIndex));
+                    const std::string treeLabel =
+                        (joint.childBoneName.empty() ? ("Joint " + std::to_string(jointIndex)) : joint.childBoneName) + "##RagdollJoint";
+                    if (ImGui::TreeNodeEx(treeLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        drawBoneCombo("Parent Bone", skeleton, joint.parentBoneName);
+                        if (!selectedBoneName.empty())
+                        {
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Use Selected##RagdollJointParent"))
+                                joint.parentBoneName = selectedBoneName;
+                        }
+
+                        drawBoneCombo("Child Bone", skeleton, joint.childBoneName);
+                        if (!selectedBoneName.empty())
+                        {
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Use Selected##RagdollJointChild"))
+                                joint.childBoneName = selectedBoneName;
+                        }
+
+                        ImGui::DragFloat("Swing Y Limit", &joint.swingYLimitDeg, 0.5f, 0.0f, 179.0f, "%.1f");
+                        ImGui::DragFloat("Swing Z Limit", &joint.swingZLimitDeg, 0.5f, 0.0f, 179.0f, "%.1f");
+                        ImGui::DragFloat("Twist Lower", &joint.twistLowerLimitDeg, 0.5f, -179.0f, 179.0f, "%.1f");
+                        ImGui::DragFloat("Twist Upper", &joint.twistUpperLimitDeg, 0.5f, -179.0f, 179.0f, "%.1f");
+                        ImGui::Checkbox("Enable Collision", &joint.collisionEnabled);
+
+                        if (ImGui::Button("Remove Joint"))
+                            jointIndexToRemove = static_cast<int>(jointIndex);
+
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                if (jointIndexToRemove >= 0)
+                    profile.joints.erase(profile.joints.begin() + jointIndexToRemove);
+
+                ImGui::Separator();
+                ImGui::TextDisabled("Profile edits apply after Rebuild Profile or the next Enter Ragdoll.");
+                if (!skeleton || skeleton->getBonesCount() == 0)
+                    ImGui::TextDisabled("Skeleton data is not ready yet. The ragdoll profile will build after the model loads.");
+
+                if (ImGui::Button("Remove Ragdoll"))
+                {
+                    m_selectedEntity->removeComponent<engine::RagdollComponent>();
+                    return;
                 }
             }
         }

@@ -1,5 +1,6 @@
 #include "Editor/Panels/PluginsWindow.hpp"
 
+#include "Editor/FileHelper.hpp"
 #include "Engine/PluginSystem/PluginManager.hpp"
 #include "Engine/Runtime/EngineConfig.hpp"
 
@@ -46,7 +47,7 @@ void PluginsWindow::refreshInstalledStems()
 
     // Check which plugin .so files already exist next to the executable.
     namespace fs = std::filesystem;
-    const fs::path pluginsDir = fs::canonical("/proc/self/exe").parent_path() / "resources" / "plugins";
+    const fs::path pluginsDir = FileHelper::getExecutablePath() / "resources" / "plugins";
     if (!fs::exists(pluginsDir))
         return;
 
@@ -140,7 +141,7 @@ void PluginsWindow::drawMarketplaceTab()
     }
 
     namespace fs = std::filesystem;
-    const fs::path pluginsDir = fs::canonical("/proc/self/exe").parent_path() / "resources" / "plugins";
+    const fs::path pluginsDir = FileHelper::getExecutablePath() / "resources" / "plugins";
 
     for (const auto &me : marketEntries)
     {
@@ -222,7 +223,7 @@ void PluginsWindow::draw(bool *open)
 
                     if (ImGui::Checkbox(entry.name.c_str(), &enabled))
                     {
-                        entry.isEnabled     = enabled;
+                        entry.isEnabled = enabled;
                         entry.pendingChange = !entry.pendingChange;
                         engine::EngineConfig::instance().setPluginEnabled(entry.filename, enabled);
                         engine::EngineConfig::instance().save();
@@ -261,7 +262,7 @@ void PluginsWindow::draw(bool *open)
 
                     if (ImGui::Checkbox(entry.name.c_str(), &enabled))
                     {
-                        entry.isEnabled     = enabled;
+                        entry.isEnabled = enabled;
                         entry.pendingChange = !entry.pendingChange;
                         engine::EngineConfig::instance().setPluginEnabled(entry.filename, enabled);
                         engine::EngineConfig::instance().save();

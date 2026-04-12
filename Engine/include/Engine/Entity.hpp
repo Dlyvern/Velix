@@ -70,6 +70,19 @@ public:
 
     virtual void fixedUpdate(float fixedDelta) {}
 
+    virtual void postPhysicsUpdate(float deltaTime)
+    {
+        if (!m_enabled)
+            return;
+
+        for (auto &component : m_components)
+            component.second->postPhysicsUpdate(deltaTime);
+
+        for (auto &[_, components] : m_multiComponents)
+            for (auto &component : components)
+                component->postPhysicsUpdate(deltaTime);
+    }
+
     template <typename T, typename... Args>
     T *addComponent(Args &&...args)
     {

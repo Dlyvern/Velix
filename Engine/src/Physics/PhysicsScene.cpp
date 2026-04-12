@@ -92,12 +92,29 @@ physx::PxRigidDynamic *PhysicsScene::createDynamic(const physx::PxTransform &tra
     return dynamicBody;
 }
 
+physx::PxD6Joint *PhysicsScene::createD6Joint(physx::PxRigidActor *actor0,
+                                              const physx::PxTransform &localFrame0,
+                                              physx::PxRigidActor *actor1,
+                                              const physx::PxTransform &localFrame1)
+{
+    if (!m_physics)
+        return nullptr;
+
+    return physx::PxD6JointCreate(*m_physics, actor0, localFrame0, actor1, localFrame1);
+}
+
 void PhysicsScene::removeActor(physx::PxActor &actor, bool wakeOnLostTouch, bool release)
 {
     m_scene->removeActor(actor, wakeOnLostTouch);
 
     if (release)
         actor.release();
+}
+
+void PhysicsScene::removeJoint(physx::PxJoint &joint, bool release)
+{
+    if (release)
+        joint.release();
 }
 
 physx::PxRigidStatic *PhysicsScene::createStatic(const physx::PxTransform &transform)

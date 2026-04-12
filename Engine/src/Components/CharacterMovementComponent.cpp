@@ -31,6 +31,9 @@ void CharacterMovementComponent::update(float deltaTime)
 {
     (void)deltaTime;
 
+    if (!m_enabled)
+        return;
+
     if (!ensureController() || !m_transformComponent)
         return;
 
@@ -52,6 +55,9 @@ void CharacterMovementComponent::onDetach()
 
 bool CharacterMovementComponent::move(const glm::vec3 &worldDisplacement, float deltaTime, float minDistance)
 {
+    if (!m_enabled)
+        return false;
+
     if (!ensureController())
         return false;
 
@@ -70,6 +76,9 @@ bool CharacterMovementComponent::move(const glm::vec3 &worldDisplacement, float 
 
 void CharacterMovementComponent::teleport(const glm::vec3 &worldPosition)
 {
+    if (!m_enabled)
+        return;
+
     if (!ensureController())
         return;
 
@@ -207,6 +216,21 @@ uint32_t CharacterMovementComponent::getCollisionFlags() const
     return static_cast<uint32_t>(m_lastCollisionFlags);
 }
 
+void CharacterMovementComponent::setEnabled(bool enabled)
+{
+    if (m_enabled == enabled)
+        return;
+
+    m_enabled = enabled;
+    if (!m_enabled)
+        releaseController();
+}
+
+bool CharacterMovementComponent::isEnabled() const
+{
+    return m_enabled;
+}
+
 void CharacterMovementComponent::onOwnerAttached()
 {
     ECS::onOwnerAttached();
@@ -218,6 +242,9 @@ void CharacterMovementComponent::onOwnerAttached()
 
 bool CharacterMovementComponent::ensureController()
 {
+    if (!m_enabled)
+        return false;
+
     if (m_controller)
         return true;
 

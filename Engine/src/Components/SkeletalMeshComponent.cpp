@@ -1,5 +1,6 @@
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/AnimatorComponent.hpp"
+#include "Engine/Components/RagdollComponent.hpp"
 #include "Engine/Entity.hpp"
 
 #include "Engine/Assets/AssetsLoader.hpp"
@@ -289,6 +290,8 @@ void SkeletalMeshComponent::onModelLoaded()
         {
             if (auto *animator = owner->getComponent<AnimatorComponent>())
                 animator->bindSkeleton(&m_skeleton);
+            if (auto *ragdoll = owner->getComponent<RagdollComponent>())
+                ragdoll->buildFromProfile();
         }
     }
 }

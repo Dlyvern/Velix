@@ -836,33 +836,59 @@ void VulkanContext::pickPhysicalDevice()
     {
         switch (type)
         {
-        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
-            return "Discrete";
-        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
-            return "Integrated";
-        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
-            return "Virtual";
-        case VK_PHYSICAL_DEVICE_TYPE_CPU:
-            return "CPU";
-        default:
-            return "Other";
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:  return "Discrete GPU";
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return "Integrated GPU";
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:   return "Virtual GPU";
+        case VK_PHYSICAL_DEVICE_TYPE_CPU:           return "CPU";
+        default:                                    return "Other";
         }
     };
 
-    VX_CORE_INFO_STREAM("[Vulkan] Selected GPU: " << selected.deviceName
-                                                  << " ("
-                                                  << toDeviceTypeName(selected.deviceType)
-                                                  << ", vendor 0x" << std::hex << selected.vendorID
-                                                  << ", device 0x" << selected.deviceID
-                                                  << std::dec << ")\n");
+    // Driver properties (Vulkan 1.2 core — gives human-readable driver name/info)
+    VkPhysicalDeviceDriverProperties driverProps{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    VkPhysicalDeviceProperties2 props2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+    props2.pNext = &driverProps;
+    vkGetPhysicalDeviceProperties2(m_physicalDevice, &props2);
+
+    // VRAM: sum all DEVICE_LOCAL heaps
+    VkPhysicalDeviceMemoryProperties memProps{};
+    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memProps);
+    uint64_t vramBytes = 0;
+    for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i)
+        if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            vramBytes += memProps.memoryHeaps[i].size;
+
+    const uint64_t vramMB = vramBytes / (1024 * 1024);
+
+    // Max MSAA
+    const VkSampleCountFlags sampleCounts =
+        selected.limits.framebufferColorSampleCounts &
+        selected.limits.framebufferDepthSampleCounts;
+    const VkSampleCountFlagBits maxMsaa = highestSupportedSampleCount(sampleCounts);
+
+    const uint32_t apiMajor = VK_API_VERSION_MAJOR(selected.apiVersion);
+    const uint32_t apiMinor = VK_API_VERSION_MINOR(selected.apiVersion);
+    const uint32_t apiPatch = VK_API_VERSION_PATCH(selected.apiVersion);
+
+    VX_CORE_INFO_STREAM("[Vulkan] ┌─ Selected GPU ──────────────────────────────\n");
+    VX_CORE_INFO_STREAM("[Vulkan] │  Name:          " << selected.deviceName << "\n");
+    VX_CORE_INFO_STREAM("[Vulkan] │  Type:          " << toDeviceTypeName(selected.deviceType) << "\n");
+    VX_CORE_INFO_STREAM("[Vulkan] │  Vulkan API:    " << apiMajor << "." << apiMinor << "." << apiPatch << "\n");
+    VX_CORE_INFO_STREAM("[Vulkan] │  Driver:        " << driverProps.driverName << " — " << driverProps.driverInfo << "\n");
+    VX_CORE_INFO_STREAM("[Vulkan] │  VRAM:          " << vramMB << " MB (" << (vramMB / 1024) << " GB)\n");
+    VX_CORE_INFO_STREAM("[Vulkan] │  Max MSAA:      " << static_cast<uint32_t>(maxMsaa) << "x\n");
+    VX_CORE_INFO_STREAM("[Vulkan] │  Vendor ID:     0x" << std::hex << selected.vendorID << std::dec << "\n");
+    VX_CORE_INFO_STREAM("[Vulkan] │  Device ID:     0x" << std::hex << selected.deviceID << std::dec << "\n");
+    VX_CORE_INFO_STREAM("[Vulkan] └─────────────────────────────────────────────\n");
 
     const bool selectedHardwareGpu = selected.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ||
                                      selected.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
     if (!selectedHardwareGpu)
     {
-        VX_CORE_WARNING_STREAM("[Vulkan] Selected adapter is not a hardware GPU (" << toDeviceTypeName(selected.deviceType)
-                                                                                   << "). Performance may be very poor. "
-                                                                                   << "Please update/reinstall graphics drivers and ensure Vulkan runs on your real GPU.\n");
+        VX_CORE_WARNING_STREAM("[Vulkan] Selected adapter is not a hardware GPU ("
+                               << toDeviceTypeName(selected.deviceType)
+                               << "). Performance may be very poor. "
+                               << "Please update/reinstall graphics drivers and ensure Vulkan runs on your real GPU.\n");
     }
 }
 

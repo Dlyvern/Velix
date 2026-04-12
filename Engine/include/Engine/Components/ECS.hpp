@@ -9,6 +9,7 @@ class ECS
 {
 public:
     virtual void update(float deltaTime) {}
+    virtual void postPhysicsUpdate(float deltaTime) {}
     virtual void onAttach() {}
     virtual void onDetach() {}
     virtual ~ECS() = default;

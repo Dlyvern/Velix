@@ -45,6 +45,9 @@ public:
     bool isGrounded() const;
     uint32_t getCollisionFlags() const;
 
+    void setEnabled(bool enabled);
+    bool isEnabled() const;
+
 protected:
     void onOwnerAttached() override;
 
@@ -71,6 +74,7 @@ private:
     bool m_hasLastTransformPosition{false};
     glm::vec3 m_lastTransformPosition{0.0f};
     physx::PxControllerCollisionFlags m_lastCollisionFlags{};
+    bool m_enabled{true};
 };
 
 ELIX_NESTED_NAMESPACE_END

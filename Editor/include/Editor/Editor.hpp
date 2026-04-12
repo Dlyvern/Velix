@@ -162,21 +162,9 @@ public:
         return m_selectedMeshSlot.value() + 1u;
     }
 
-    void setRenderGraphProfilingData(const engine::renderGraph::RenderGraphFrameProfilingData &profilingData,
-                                     bool gameViewport = false)
+    void setRenderGraphProfilingData(const engine::renderGraph::RenderGraphFrameProfilingData &profilingData)
     {
-        if (gameViewport)
-            m_gameRenderGraphProfilingData = profilingData;
-        else
-            m_mainRenderGraphProfilingData = profilingData;
-    }
-
-    void setRenderGraphPassNames(std::vector<std::string> passNames, bool gameViewport = false)
-    {
-        if (gameViewport)
-            m_gameRenderGraphPassNames = std::move(passNames);
-        else
-            m_mainRenderGraphPassNames = std::move(passNames);
+        m_renderGraphProfilingData = profilingData;
     }
 
     void addOnViewportChangedCallback(const std::function<void(uint32_t width, uint32_t height)> &function);
@@ -626,12 +614,6 @@ private:
         Asset = 1
     };
 
-    enum class BenchmarkGraphSource : uint8_t
-    {
-        MainViewport = 0,
-        GameViewport = 1
-    };
-
     DetailsContext m_detailsContext{DetailsContext::Entity};
     bool m_isDockingWindowFullscreen{true};
     bool m_reinitDocking{true};
@@ -648,11 +630,7 @@ private:
 
     bool m_shotTexturePopup{false};
 
-    BenchmarkGraphSource m_benchmarkGraphSource{BenchmarkGraphSource::MainViewport};
-    engine::renderGraph::RenderGraphFrameProfilingData m_mainRenderGraphProfilingData;
-    engine::renderGraph::RenderGraphFrameProfilingData m_gameRenderGraphProfilingData;
-    std::vector<std::string> m_mainRenderGraphPassNames;
-    std::vector<std::string> m_gameRenderGraphPassNames;
+    engine::renderGraph::RenderGraphFrameProfilingData m_renderGraphProfilingData;
 };
 
 ELIX_NESTED_NAMESPACE_END

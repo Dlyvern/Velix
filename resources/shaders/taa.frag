@@ -24,8 +24,8 @@ vec3 toYCoCg(vec3 c)
 vec3 fromYCoCg(vec3 c)
 {
     float Y  = c.x;
-    float Co = c.y - 0.5;
-    float Cg = c.z - 0.5;
+    float Cg = c.y - 0.5;
+    float Co = c.z - 0.5;
     return clamp(vec3(Y + Co - Cg, Y + Cg, Y - Co - Cg), 0.0, 1.0);
 }
 

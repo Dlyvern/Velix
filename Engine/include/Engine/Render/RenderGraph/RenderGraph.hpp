@@ -156,7 +156,6 @@ public:
     }
 
     RenderGraphFrameProfilingData getLastFrameBenchmarkData();
-    std::vector<std::string> getActivePassDebugNames() const;
 
     uint32_t getCurrentImageIndex() const
     {
