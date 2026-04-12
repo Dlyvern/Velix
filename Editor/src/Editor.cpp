@@ -5092,9 +5092,9 @@ void Editor::drawRenderSettings()
     {
         ImGui::Indent();
         ImGui::DragFloat("Speed Up##ae", &settings.autoExposureSpeedUp, 0.1f, 0.1f, 10.0f, "%.1f");
-        ImGui::SetItemTooltip("Adaptation speed: dark scene -> bright exposure (s\u207B\u00B9)");
+        ImGui::SetItemTooltip("Adaptation speed: dark scene -> bright exposure (1/s)");
         ImGui::DragFloat("Speed Down##ae", &settings.autoExposureSpeedDown, 0.1f, 0.1f, 10.0f, "%.1f");
-        ImGui::SetItemTooltip("Adaptation speed: bright scene -> dark exposure (s\u207B\u00B9)");
+        ImGui::SetItemTooltip("Adaptation speed: bright scene -> dark exposure (1/s)");
         ImGui::DragFloat("Low Percent##ae", &settings.autoExposureLowPercent, 0.01f, 0.0f, 0.5f, "%.2f");
         ImGui::SetItemTooltip("Fraction of darkest pixels to ignore");
         ImGui::DragFloat("High Percent##ae", &settings.autoExposureHighPercent, 0.01f, 0.0f, 0.5f, "%.2f");

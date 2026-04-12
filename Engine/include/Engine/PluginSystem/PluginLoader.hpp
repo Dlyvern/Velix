@@ -6,8 +6,6 @@
 #include <filesystem>
 #include <string>
 
-ELIX_NESTED_NAMESPACE_BEGIN(engine)
-
 #ifdef _WIN32
     #ifndef WIN32_LEAN_AND_MEAN
         #define WIN32_LEAN_AND_MEAN
@@ -25,6 +23,13 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
     using LibraryHandle = HMODULE;
 #else
     #include <dlfcn.h>
+#endif
+
+ELIX_NESTED_NAMESPACE_BEGIN(engine)
+
+#ifdef _WIN32
+    using LibraryHandle = HMODULE;
+#else
     using LibraryHandle = void*;
 #endif
 
