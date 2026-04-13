@@ -1761,14 +1761,7 @@ bool RenderGraph::recompileDirtyPasses()
     }
 
     vkDeviceWaitIdle(m_device);
-    compile();
-
-    for (const uint32_t dirtyPassId : dirtyPassIds)
-    {
-        auto *passData = findRenderGraphPassById(dirtyPassId);
-        if (passData)
-            passData->renderGraphPass->recompilationIsDone();
-    }
+    compile(); // compile() clears all dirty flags on all passes
 
     return true;
 }
@@ -1808,6 +1801,12 @@ void RenderGraph::compile()
     for (const auto &[id, pass] : m_renderGraphPasses)
         if (pass.enabled)
             pass.renderGraphPass->compile(m_renderGraphPassesStorage);
+
+    // A full compile incorporates all passes — nothing is dirty afterwards.
+    // Clear all flags so the first frame doesn't trigger a redundant recompile
+    // from dirty marks that were set before this compile() call.
+    for (auto &[id, pass] : m_renderGraphPasses)
+        pass.renderGraphPass->recompilationIsDone();
 
     invalidateAllExecutionCaches();
 

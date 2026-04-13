@@ -21,6 +21,7 @@
 #include <cctype>
 #include <cmath>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace
 {
@@ -161,6 +162,25 @@ namespace
         return bone->children.front();
     }
 
+    template <typename Predicate>
+    int findNearestAncestorBone(const Skeleton &skeleton, int boneId, Predicate &&predicate)
+    {
+        int currentBoneId = boneId;
+        while (currentBoneId >= 0)
+        {
+            if (predicate(currentBoneId))
+                return currentBoneId;
+
+            const auto *bone = skeleton.getBone(currentBoneId);
+            if (!bone)
+                break;
+
+            currentBoneId = bone->parentId;
+        }
+
+        return -1;
+    }
+
     float distanceBetweenBones(const Skeleton &skeleton, int boneId, int otherBoneId)
     {
         const auto *bone = skeleton.getBone(boneId);
@@ -200,6 +220,37 @@ namespace
         return result;
     }
 
+    std::vector<glm::mat4> modelPoseToLocalPose(const Skeleton &skeleton, const std::vector<glm::mat4> &modelPose)
+    {
+        std::vector<glm::mat4> result(skeleton.getBonesCount(), glm::mat4(1.0f));
+
+        for (size_t boneIndex = 0; boneIndex < skeleton.getBonesCount(); ++boneIndex)
+        {
+            const auto *bone = skeleton.getBone(static_cast<int>(boneIndex));
+            if (!bone)
+                continue;
+
+            const glm::mat4 globalTransform =
+                boneIndex < modelPose.size() ? modelPose[boneIndex] : bone->globalBindTransform;
+
+            if (bone->parentId >= 0)
+            {
+                const auto *parentBone = skeleton.getBone(bone->parentId);
+                const glm::mat4 parentGlobalTransform =
+                    (parentBone && static_cast<size_t>(bone->parentId) < modelPose.size())
+                        ? modelPose[static_cast<size_t>(bone->parentId)]
+                        : (parentBone ? parentBone->globalBindTransform : glm::mat4(1.0f));
+                result[boneIndex] = glm::inverse(parentGlobalTransform) * globalTransform;
+            }
+            else
+            {
+                result[boneIndex] = globalTransform;
+            }
+        }
+
+        return result;
+    }
+
     glm::mat4 makeBodyOffsetMatrix(const RagdollBodyDesc &body)
     {
         return composeTransform(body.bodyLocalPosition, glm::quat(glm::radians(body.bodyLocalEulerDegrees)));
@@ -231,12 +282,8 @@ void RagdollComponent::update(float deltaTime)
         m_hasLastObservedEntityPosition = true;
     }
 
-    if (m_state == RuntimeState::Recovering && m_animator && m_recoveryDuration > kEpsilon)
-    {
+    if (m_state == RuntimeState::Recovering && m_recoveryDuration > kEpsilon)
         m_recoveryElapsed = std::min(m_recoveryElapsed + deltaTime, m_recoveryDuration);
-        if (m_recoveryElapsed >= m_recoveryDuration)
-            m_state = RuntimeState::Inactive;
-    }
 }
 
 void RagdollComponent::postPhysicsUpdate(float /*deltaTime*/)
@@ -248,20 +295,28 @@ void RagdollComponent::postPhysicsUpdate(float /*deltaTime*/)
 
     if (m_state == RuntimeState::Simulating)
     {
-        syncEntityTransformFromReferenceBody();
         writeSimulatedPoseToSkeleton();
-        drawDebug();
     }
     else if (m_state == RuntimeState::Recovering)
     {
         writeRecoveryPoseToSkeleton();
+        if (m_recoveryElapsed >= m_recoveryDuration)
+        {
+            m_recoveryPoseModel.clear();
+            m_state = RuntimeState::Inactive;
+        }
     }
+
+    drawDebug();
 }
 
 void RagdollComponent::onDetach()
 {
     unregisterAnimatorHook();
     destroyPhysicsObjects();
+    m_simulationReferencePoseLocal.clear();
+    m_simulationActivationPoseModel.clear();
+    m_hasPreRagdollEntityTransform = false;
     if (m_characterMovement)
         m_characterMovement->setEnabled(true);
 }
@@ -331,6 +386,7 @@ void RagdollComponent::autoGenerateHumanoidProfile()
 
     m_profile = {};
     std::unordered_map<int, RagdollJointDesc> jointsByChildBoneId;
+    std::unordered_set<int> generatedBodyBoneIds;
 
     for (const AutoBodyTemplate &entry : templates)
     {
@@ -367,10 +423,17 @@ void RagdollComponent::autoGenerateHumanoidProfile()
             body.capsuleHalfHeight = std::max(0.02f, length * entry.halfHeightScale * 0.5f);
         }
         m_profile.bodies.push_back(body);
+        generatedBodyBoneIds.insert(boneId);
 
-        if (bone->parentId >= 0)
+        const int parentBodyBoneId = findNearestAncestorBone(
+            skeleton,
+            bone->parentId,
+            [&](int ancestorBoneId)
+            { return generatedBodyBoneIds.contains(ancestorBoneId); });
+
+        if (parentBodyBoneId >= 0)
         {
-            const auto *parentBone = skeleton.getBone(bone->parentId);
+            const auto *parentBone = skeleton.getBone(parentBodyBoneId);
             if (parentBone)
             {
                 RagdollJointDesc joint{};
@@ -418,6 +481,12 @@ void RagdollComponent::enterRagdoll(bool preserveVelocity)
     if (!pose || pose->empty())
         return;
 
+    m_preRagdollEntityWorldPosition = m_transform->getWorldPosition();
+    m_preRagdollEntityWorldRotation = m_transform->getWorldRotation();
+    m_hasPreRagdollEntityTransform = true;
+    m_simulationActivationPoseModel = *pose;
+    m_simulationReferencePoseLocal = modelPoseToLocalPose(m_skeletalMesh->getSkeleton(), *pose);
+
     destroyPhysicsObjects();
     if (!createPhysicsObjectsFromPose(*pose, preserveVelocity))
         return;
@@ -434,7 +503,6 @@ void RagdollComponent::enterRagdoll(bool preserveVelocity)
     }
 
     m_state = RuntimeState::Simulating;
-    syncEntityTransformFromReferenceBody();
     writeSimulatedPoseToSkeleton();
 }
 
@@ -443,15 +511,51 @@ void RagdollComponent::exitRagdoll(float blendTime)
     if (m_state != RuntimeState::Simulating || !m_skeletalMesh)
         return;
 
-    m_recoveryPoseModel = currentSkeletonModelPose(m_skeletalMesh->getSkeleton());
+    Skeleton &skeleton = m_skeletalMesh->getSkeleton();
+    m_recoveryPoseModel = currentSkeletonModelPose(skeleton);
+    const std::vector<glm::mat4> restorePose =
+        (m_hasAnimatedPose && !m_cachedAnimatedPoseModel.empty())
+            ? m_cachedAnimatedPoseModel
+            : m_simulationActivationPoseModel;
+
     destroyPhysicsObjects();
+    m_simulationReferencePoseLocal.clear();
+    m_simulationActivationPoseModel.clear();
 
     if (m_characterMovement)
         m_characterMovement->setEnabled(true);
 
+    if (m_transform && m_hasPreRagdollEntityTransform)
+    {
+        m_transform->setWorldPosition(m_preRagdollEntityWorldPosition);
+        m_transform->setWorldRotation(m_preRagdollEntityWorldRotation);
+    }
+    m_hasPreRagdollEntityTransform = false;
+
     m_recoveryElapsed = 0.0f;
     m_recoveryDuration = std::max(blendTime, 0.0f);
-    m_state = RuntimeState::Recovering;
+
+    if (!m_recoveryPoseModel.empty() && m_recoveryDuration > kEpsilon)
+    {
+        m_state = RuntimeState::Recovering;
+        return;
+    }
+
+    if (!restorePose.empty())
+    {
+        for (size_t boneIndex = 0; boneIndex < skeleton.getBonesCount(); ++boneIndex)
+        {
+            auto *bone = skeleton.getBone(static_cast<int>(boneIndex));
+            if (!bone)
+                continue;
+
+            bone->finalTransformation =
+                boneIndex < restorePose.size() ? restorePose[boneIndex] : bone->globalBindTransform;
+        }
+    }
+
+    m_recoveryPoseModel.clear();
+    m_state = RuntimeState::Inactive;
 }
 
 bool RagdollComponent::isSimulating() const
@@ -610,10 +714,22 @@ bool RagdollComponent::rebuildRuntimeCache()
         const RagdollJointDesc &jointDesc = m_profile.joints[profileIndex];
         const int parentBoneId = skeleton.getBoneId(jointDesc.parentBoneName);
         const int childBoneId = skeleton.getBoneId(jointDesc.childBoneName);
-        if (parentBoneId < 0 || childBoneId < 0)
+        if (childBoneId < 0)
             continue;
 
-        const auto parentBodyIt = m_bodyIndexByBoneId.find(parentBoneId);
+        const int requestedParentBoneId = parentBoneId >= 0
+                                              ? parentBoneId
+                                              : (skeleton.getBone(childBoneId) ? skeleton.getBone(childBoneId)->parentId : -1);
+        const int resolvedParentBodyBoneId = findNearestAncestorBone(
+            skeleton,
+            requestedParentBoneId,
+            [&](int ancestorBoneId)
+            { return m_bodyIndexByBoneId.contains(ancestorBoneId); });
+
+        if (resolvedParentBodyBoneId < 0)
+            continue;
+
+        const auto parentBodyIt = m_bodyIndexByBoneId.find(resolvedParentBodyBoneId);
         const auto childBodyIt = m_bodyIndexByBoneId.find(childBoneId);
         if (parentBodyIt == m_bodyIndexByBoneId.end() || childBodyIt == m_bodyIndexByBoneId.end())
             continue;
@@ -669,6 +785,9 @@ bool RagdollComponent::createPhysicsObjectsFromPose(const std::vector<glm::mat4>
 
     PhysicsScene &physicsScene = m_scene->getPhysicsScene();
     const glm::mat4 entityWorld = m_transform->getMatrix();
+    auto *owner = getOwner<Entity>();
+    constexpr physx::PxU32 kRagdollPhysicsCategory = 2u;
+    const physx::PxU32 ragdollGroupId = owner ? owner->getId() : 0u;
 
     for (auto &runtimeBody : m_runtimeBodies)
     {
@@ -679,7 +798,10 @@ bool RagdollComponent::createPhysicsObjectsFromPose(const std::vector<glm::mat4>
         const glm::mat4 bodyWorldTransform = entityWorld * modelPose[runtimeBody.boneId] * runtimeBody.boneLocalToBody;
         auto *actor = physicsScene.createDynamic(toPxTransform(bodyWorldTransform));
         if (!actor)
+        {
+            destroyPhysicsObjects();
             return false;
+        }
 
         actor->userData = getOwner<Entity>();
         actor->setLinearDamping(std::max(bodyDesc.linearDamping, 0.0f));
@@ -703,8 +825,15 @@ bool RagdollComponent::createPhysicsObjectsFromPose(const std::vector<glm::mat4>
         if (!shape)
         {
             physicsScene.removeActor(*actor, true, true);
+            destroyPhysicsObjects();
             return false;
         }
+
+        physx::PxFilterData filterData = shape->getSimulationFilterData();
+        filterData.word0 = kRagdollPhysicsCategory;
+        filterData.word1 = ragdollGroupId;
+        shape->setSimulationFilterData(filterData);
+        shape->setQueryFilterData(filterData);
 
         shape->setLocalPose(toPxTransform(runtimeBody.shapeLocalPosition, runtimeBody.shapeLocalRotation));
         actor->attachShape(*shape);
@@ -730,6 +859,18 @@ bool RagdollComponent::createPhysicsObjectsFromPose(const std::vector<glm::mat4>
         RuntimeBody &childBody = m_runtimeBodies[runtimeJoint.childBodyIndex];
         if (!parentBody.actor || !childBody.actor)
             continue;
+
+        if (childBody.boneId >= 0 && childBody.boneId < static_cast<int>(modelPose.size()))
+        {
+            const glm::mat4 childBoneWorld = composeTransform(
+                extractTranslation(entityWorld * modelPose[childBody.boneId]),
+                extractRotation(entityWorld * modelPose[childBody.boneId]));
+            const glm::mat4 parentBodyWorld = fromPxTransform(parentBody.actor->getGlobalPose());
+            const glm::mat4 childBodyWorld = fromPxTransform(childBody.actor->getGlobalPose());
+
+            runtimeJoint.parentLocalFrame = glm::inverse(parentBodyWorld) * childBoneWorld;
+            runtimeJoint.childLocalFrame = glm::inverse(childBodyWorld) * childBoneWorld;
+        }
 
         auto *joint = physicsScene.createD6Joint(parentBody.actor,
                                                  toPxTransform(runtimeJoint.parentLocalFrame),
@@ -773,9 +914,10 @@ void RagdollComponent::syncEntityTransformFromReferenceBody()
 
     const glm::mat4 referenceBodyWorld = fromPxTransform(referenceBody.actor->getGlobalPose());
     const glm::mat4 referenceBoneWorld = referenceBodyWorld * referenceBody.bodyLocalToBone;
-    const glm::mat4 entityWorld = referenceBoneWorld * glm::inverse(m_referenceBoneModelAtActivation);
-    m_transform->setWorldPosition(extractTranslation(entityWorld));
-    m_transform->setWorldRotation(extractRotation(entityWorld));
+    const glm::mat4 entityScaleMatrix = glm::scale(glm::mat4(1.0f), extractScale(m_transform->getMatrix()));
+    const glm::mat4 rigidEntityWorld = referenceBoneWorld * glm::inverse(entityScaleMatrix * m_referenceBoneModelAtActivation);
+    m_transform->setWorldPosition(extractTranslation(rigidEntityWorld));
+    m_transform->setWorldRotation(extractRotation(rigidEntityWorld));
 }
 
 void RagdollComponent::writeSimulatedPoseToSkeleton()
@@ -785,25 +927,68 @@ void RagdollComponent::writeSimulatedPoseToSkeleton()
 
     Skeleton &skeleton = m_skeletalMesh->getSkeleton();
     const glm::mat4 inverseEntityWorld = glm::inverse(m_transform->getMatrix());
+    std::vector<glm::mat4> referenceLocalPose = m_simulationReferencePoseLocal;
+    if (referenceLocalPose.size() < skeleton.getBonesCount())
+        referenceLocalPose = modelPoseToLocalPose(skeleton, currentSkeletonModelPose(skeleton));
+
+    std::vector<glm::mat4> physicsDrivenBoneModel(skeleton.getBonesCount(), glm::mat4(1.0f));
+    std::vector<bool> hasPhysicsDrivenBone(skeleton.getBonesCount(), false);
 
     for (const auto &runtimeBody : m_runtimeBodies)
     {
-        if (!runtimeBody.actor)
-            continue;
-
-        auto *bone = skeleton.getBone(runtimeBody.boneId);
-        if (!bone)
+        if (!runtimeBody.actor ||
+            runtimeBody.boneId < 0 ||
+            static_cast<size_t>(runtimeBody.boneId) >= physicsDrivenBoneModel.size())
             continue;
 
         const glm::mat4 bodyWorld = fromPxTransform(runtimeBody.actor->getGlobalPose());
         const glm::mat4 boneWorld = bodyWorld * runtimeBody.bodyLocalToBone;
         const glm::mat4 boneModel = inverseEntityWorld * boneWorld;
-        const glm::vec3 bindScale = extractScale(bone->localBindTransform);
 
-        bone->finalTransformation = composeTransform(
+        glm::vec3 referenceScale(1.0f);
+        if (static_cast<size_t>(runtimeBody.boneId) < m_simulationActivationPoseModel.size())
+            referenceScale = extractScale(m_simulationActivationPoseModel[static_cast<size_t>(runtimeBody.boneId)]);
+        else if (const auto *bone = skeleton.getBone(runtimeBody.boneId))
+            referenceScale = extractScale(bone->globalBindTransform);
+
+        physicsDrivenBoneModel[static_cast<size_t>(runtimeBody.boneId)] = composeTransform(
             extractTranslation(boneModel),
             extractRotation(boneModel),
-            bindScale);
+            referenceScale);
+        hasPhysicsDrivenBone[static_cast<size_t>(runtimeBody.boneId)] = true;
+    }
+
+    std::function<void(int, const glm::mat4 &)> resolveBonePose = [&](int boneId, const glm::mat4 &parentModelTransform)
+    {
+        auto *bone = skeleton.getBone(boneId);
+        if (!bone)
+            return;
+
+        glm::mat4 modelTransform = bone->globalBindTransform;
+        if (static_cast<size_t>(boneId) < hasPhysicsDrivenBone.size() && hasPhysicsDrivenBone[static_cast<size_t>(boneId)])
+        {
+            modelTransform = physicsDrivenBoneModel[static_cast<size_t>(boneId)];
+        }
+        else
+        {
+            const glm::mat4 localTransform =
+                static_cast<size_t>(boneId) < referenceLocalPose.size()
+                    ? referenceLocalPose[static_cast<size_t>(boneId)]
+                    : bone->localBindTransform;
+            modelTransform = bone->parentId >= 0 ? parentModelTransform * localTransform : localTransform;
+        }
+
+        bone->finalTransformation = modelTransform;
+
+        for (const int childBoneId : bone->children)
+            resolveBonePose(childBoneId, modelTransform);
+    };
+
+    for (size_t boneIndex = 0; boneIndex < skeleton.getBonesCount(); ++boneIndex)
+    {
+        const auto *bone = skeleton.getBone(static_cast<int>(boneIndex));
+        if (bone && bone->parentId < 0)
+            resolveBonePose(static_cast<int>(boneIndex), glm::mat4(1.0f));
     }
 }
 
@@ -813,13 +998,15 @@ void RagdollComponent::writeRecoveryPoseToSkeleton()
         return;
 
     Skeleton &skeleton = m_skeletalMesh->getSkeleton();
-    std::vector<glm::mat4> animationPose = m_hasAnimatedPose ? m_cachedAnimatedPoseModel : currentSkeletonModelPose(skeleton);
+    std::vector<glm::mat4> animationPose = m_hasAnimatedPose ? m_cachedAnimatedPoseModel : m_simulationActivationPoseModel;
+    if (animationPose.empty())
+        animationPose = currentSkeletonModelPose(skeleton);
     if (animationPose.size() < skeleton.getBonesCount())
         animationPose.resize(skeleton.getBonesCount(), glm::mat4(1.0f));
 
-    float alpha = 0.0f;
-    if (m_animator && m_recoveryDuration > kEpsilon)
-        alpha = glm::clamp(m_recoveryElapsed / m_recoveryDuration, 0.0f, 1.0f);
+    const float alpha = m_recoveryDuration > kEpsilon
+                            ? glm::clamp(m_recoveryElapsed / m_recoveryDuration, 0.0f, 1.0f)
+                            : 1.0f;
 
     for (size_t boneIndex = 0; boneIndex < skeleton.getBonesCount(); ++boneIndex)
     {
@@ -830,12 +1017,11 @@ void RagdollComponent::writeRecoveryPoseToSkeleton()
         const glm::mat4 recoveryTransform =
             boneIndex < m_recoveryPoseModel.size() ? m_recoveryPoseModel[boneIndex] : bone->globalBindTransform;
         const glm::mat4 animationTransform = animationPose[boneIndex];
-        const glm::vec3 bindScale = extractScale(bone->localBindTransform);
 
         bone->finalTransformation = composeTransform(
             glm::mix(extractTranslation(recoveryTransform), extractTranslation(animationTransform), alpha),
             glm::normalize(glm::slerp(extractRotation(recoveryTransform), extractRotation(animationTransform), alpha)),
-            bindScale);
+            glm::mix(extractScale(recoveryTransform), extractScale(animationTransform), alpha));
     }
 }
 
@@ -844,27 +1030,113 @@ void RagdollComponent::drawDebug() const
     if (!m_debugDrawBodies && !m_debugDrawJoints)
         return;
 
+    std::vector<glm::mat4> poseFallback;
+    const std::vector<glm::mat4> *previewPose = nullptr;
+    if (m_skeletalMesh)
+    {
+        if (m_state == RuntimeState::Recovering && !m_recoveryPoseModel.empty())
+        {
+            previewPose = &m_recoveryPoseModel;
+        }
+        else if (m_hasAnimatedPose && !m_cachedAnimatedPoseModel.empty())
+        {
+            previewPose = &m_cachedAnimatedPoseModel;
+        }
+        else
+        {
+            poseFallback = currentSkeletonModelPose(m_skeletalMesh->getSkeleton());
+            if (!poseFallback.empty())
+                previewPose = &poseFallback;
+        }
+    }
+
+    const glm::mat4 entityWorld = m_transform ? m_transform->getMatrix() : glm::mat4(1.0f);
+    std::vector<glm::mat4> bodyWorldTransforms(m_runtimeBodies.size(), glm::mat4(1.0f));
+    std::vector<bool> hasBodyWorldTransform(m_runtimeBodies.size(), false);
+
+    for (size_t bodyIndex = 0; bodyIndex < m_runtimeBodies.size(); ++bodyIndex)
+    {
+        const auto &runtimeBody = m_runtimeBodies[bodyIndex];
+        glm::mat4 bodyWorld = entityWorld * runtimeBody.bindBodyModelTransform;
+
+        if (runtimeBody.actor)
+        {
+            bodyWorld = fromPxTransform(runtimeBody.actor->getGlobalPose());
+        }
+        else if (previewPose &&
+                 runtimeBody.boneId >= 0 &&
+                 runtimeBody.boneId < static_cast<int>(previewPose->size()))
+        {
+            bodyWorld = entityWorld * (*previewPose)[runtimeBody.boneId] * runtimeBody.boneLocalToBody;
+        }
+
+        bodyWorldTransforms[bodyIndex] = bodyWorld;
+        hasBodyWorldTransform[bodyIndex] = true;
+    }
+
     if (m_debugDrawBodies)
     {
-        for (const auto &runtimeBody : m_runtimeBodies)
+        for (size_t bodyIndex = 0; bodyIndex < m_runtimeBodies.size(); ++bodyIndex)
         {
-            if (!runtimeBody.actor)
+            const auto &runtimeBody = m_runtimeBodies[bodyIndex];
+            if (!hasBodyWorldTransform[bodyIndex])
                 continue;
 
             const RagdollBodyDesc &bodyDesc = m_profile.bodies[runtimeBody.profileIndex];
-            const glm::mat4 bodyWorld = fromPxTransform(runtimeBody.actor->getGlobalPose());
-            const glm::mat4 shapeWorld = bodyWorld * composeTransform(runtimeBody.shapeLocalPosition, runtimeBody.shapeLocalRotation);
+            const glm::mat4 bodyWorld = bodyWorldTransforms[bodyIndex];
+
+            glm::vec3 shapeLocalPosition = runtimeBody.shapeLocalPosition;
+            glm::quat shapeLocalRotation = runtimeBody.shapeLocalRotation;
+            if (runtimeBody.shape)
+            {
+                const physx::PxTransform localPose = runtimeBody.shape->getLocalPose();
+                shapeLocalPosition = glm::vec3(localPose.p.x, localPose.p.y, localPose.p.z);
+                shapeLocalRotation = glm::quat(localPose.q.w, localPose.q.x, localPose.q.y, localPose.q.z);
+            }
+
+            const glm::mat4 shapeWorld = bodyWorld * composeTransform(shapeLocalPosition, shapeLocalRotation);
 
             if (bodyDesc.shapeType == RagdollBodyShapeType::Box)
             {
-                DebugDraw::box(shapeWorld, bodyDesc.boxHalfExtents, glm::vec4(0.25f, 0.9f, 0.35f, 1.0f), 0.0f);
+                glm::vec3 boxHalfExtents = bodyDesc.boxHalfExtents;
+                if (runtimeBody.shape)
+                {
+                    const physx::PxGeometryHolder geometry(runtimeBody.shape->getGeometry());
+                    if (geometry.getType() == physx::PxGeometryType::eBOX)
+                    {
+                        const physx::PxBoxGeometry &boxGeometry = geometry.box();
+                        boxHalfExtents = glm::vec3(boxGeometry.halfExtents.x, boxGeometry.halfExtents.y, boxGeometry.halfExtents.z);
+                    }
+                }
+
+                DebugDraw::box(shapeWorld, boxHalfExtents, glm::vec4(0.25f, 0.9f, 0.35f, 1.0f), 0.0f);
             }
             else
             {
-                const glm::vec3 axis = glm::rotate(runtimeBody.shapeLocalRotation, glm::vec3(1.0f, 0.0f, 0.0f));
-                const glm::vec3 center = transformPoint(bodyWorld, runtimeBody.shapeLocalPosition);
-                const glm::vec3 offset = axis * bodyDesc.capsuleHalfHeight;
-                DebugDraw::capsule(center - offset, center + offset, bodyDesc.capsuleRadius, glm::vec4(0.25f, 0.9f, 0.35f, 1.0f), 0.0f);
+                float radius = bodyDesc.capsuleRadius;
+                float halfHeight = bodyDesc.capsuleHalfHeight;
+                if (runtimeBody.shape)
+                {
+                    const physx::PxGeometryHolder geometry(runtimeBody.shape->getGeometry());
+                    if (geometry.getType() == physx::PxGeometryType::eCAPSULE)
+                    {
+                        const physx::PxCapsuleGeometry &capsuleGeometry = geometry.capsule();
+                        radius = capsuleGeometry.radius;
+                        halfHeight = capsuleGeometry.halfHeight;
+                    }
+                }
+                else
+                {
+                    const glm::vec3 shapeScale = extractScale(shapeWorld);
+                    const float uniformScale = std::max({shapeScale.x, shapeScale.y, shapeScale.z, 0.01f});
+                    radius *= uniformScale;
+                    halfHeight *= uniformScale;
+                }
+
+                const glm::vec3 axis = glm::rotate(extractRotation(shapeWorld), glm::vec3(1.0f, 0.0f, 0.0f));
+                const glm::vec3 center = extractTranslation(shapeWorld);
+                const glm::vec3 offset = axis * halfHeight;
+                DebugDraw::capsule(center - offset, center + offset, radius, glm::vec4(0.25f, 0.9f, 0.35f, 1.0f), 0.0f);
             }
         }
     }
@@ -873,22 +1145,27 @@ void RagdollComponent::drawDebug() const
     {
         for (const auto &runtimeJoint : m_runtimeJoints)
         {
-            if (!runtimeJoint.joint ||
-                runtimeJoint.parentBodyIndex < 0 ||
+            if (runtimeJoint.parentBodyIndex < 0 ||
                 runtimeJoint.childBodyIndex < 0)
                 continue;
 
-            const RuntimeBody &parentBody = m_runtimeBodies[runtimeJoint.parentBodyIndex];
-            const RuntimeBody &childBody = m_runtimeBodies[runtimeJoint.childBodyIndex];
-            if (!parentBody.actor || !childBody.actor)
+            if (runtimeJoint.parentBodyIndex >= static_cast<int>(bodyWorldTransforms.size()) ||
+                runtimeJoint.childBodyIndex >= static_cast<int>(bodyWorldTransforms.size()) ||
+                !hasBodyWorldTransform[runtimeJoint.parentBodyIndex] ||
+                !hasBodyWorldTransform[runtimeJoint.childBodyIndex])
                 continue;
 
-            const glm::mat4 parentWorld = fromPxTransform(parentBody.actor->getGlobalPose());
-            const glm::mat4 childWorld = fromPxTransform(childBody.actor->getGlobalPose());
+            const glm::mat4 parentWorld = bodyWorldTransforms[runtimeJoint.parentBodyIndex];
+            const glm::mat4 childWorld = bodyWorldTransforms[runtimeJoint.childBodyIndex];
             const glm::vec3 parentAnchor = extractTranslation(parentWorld * runtimeJoint.parentLocalFrame);
             const glm::vec3 childAnchor = extractTranslation(childWorld * runtimeJoint.childLocalFrame);
-            DebugDraw::line(parentAnchor, childAnchor, glm::vec4(1.0f, 0.72f, 0.2f, 1.0f), 0.0f);
-            DebugDraw::cross(childAnchor, 0.03f, 0.0f);
+            const glm::vec3 parentCenter = extractTranslation(parentWorld);
+            const glm::vec3 childCenter = extractTranslation(childWorld);
+            const glm::vec3 jointAnchor = glm::mix(parentAnchor, childAnchor, 0.5f);
+
+            DebugDraw::line(parentCenter, jointAnchor, glm::vec4(1.0f, 0.72f, 0.2f, 1.0f), 0.0f);
+            DebugDraw::line(childCenter, jointAnchor, glm::vec4(1.0f, 0.72f, 0.2f, 1.0f), 0.0f);
+            DebugDraw::cross(jointAnchor, 0.04f, 0.0f);
         }
     }
 }

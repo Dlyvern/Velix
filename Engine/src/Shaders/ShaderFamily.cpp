@@ -5,8 +5,53 @@
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <functional>
+#include <stdexcept>
+#include <string>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
+
+namespace
+{
+    const core::DescriptorSetLayout &requireLayout(
+        const core::DescriptorSetLayout::SharedPtr &layout,
+        const char *layoutName)
+    {
+        if (!layout)
+            throw std::runtime_error(std::string("EngineShaderFamilies::") + layoutName + " was requested before initialization");
+
+        return *layout;
+    }
+}
+
+const ShaderFamily &EngineShaderFamilies::getMeshShaderFamily()
+{
+    return meshShaderFamily;
+}
+
+const core::DescriptorSetLayout &EngineShaderFamilies::getObjectDescriptorSetLayoutRef()
+{
+    return requireLayout(objectDescriptorSetLayout, "objectDescriptorSetLayout");
+}
+
+const core::DescriptorSetLayout &EngineShaderFamilies::getCameraDescriptorSetLayoutRef()
+{
+    return requireLayout(cameraDescriptorSetLayout, "cameraDescriptorSetLayout");
+}
+
+const core::DescriptorSetLayout &EngineShaderFamilies::getMaterialDescriptorSetLayoutRef()
+{
+    return requireLayout(materialDescriptorSetLayout, "materialDescriptorSetLayout");
+}
+
+VkDescriptorSetLayout EngineShaderFamilies::getBindlessMaterialSetLayout()
+{
+    return bindlessMaterialSetLayout;
+}
+
+VkPipelineLayout EngineShaderFamilies::getBindlessMeshPipelineLayout()
+{
+    return bindlessMeshPipelineLayout;
+}
 
 void EngineShaderFamilies::initEngineShaderFamilies()
 {

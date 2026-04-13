@@ -156,12 +156,17 @@ private:
     std::vector<glm::mat4> m_cachedAnimatedPoseModel;
     std::vector<glm::mat4> m_previousAnimatedPoseModel;
     std::vector<glm::mat4> m_recoveryPoseModel;
+    std::vector<glm::mat4> m_simulationReferencePoseLocal;
+    std::vector<glm::mat4> m_simulationActivationPoseModel;
     glm::mat4 m_referenceBoneModelAtActivation{1.0f};
     bool m_hasAnimatedPose{false};
 
     glm::vec3 m_lastObservedEntityPosition{0.0f};
     bool m_hasLastObservedEntityPosition{false};
     glm::vec3 m_estimatedEntityLinearVelocity{0.0f};
+    glm::vec3 m_preRagdollEntityWorldPosition{0.0f};
+    glm::quat m_preRagdollEntityWorldRotation{1.0f, 0.0f, 0.0f, 0.0f};
+    bool m_hasPreRagdollEntityTransform{false};
 
     float m_recoveryElapsed{0.0f};
     float m_recoveryDuration{0.25f};

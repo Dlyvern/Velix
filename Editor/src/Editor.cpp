@@ -18,6 +18,7 @@
 #include "Engine/Primitives.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Assets/AssetsSerializer.hpp"
+#include "Engine/Assets/LightmapUVGenerator.hpp"
 #include "Engine/Render/ObjectIdEncoding.hpp"
 #include "Engine/Shaders/ShaderCompiler.hpp"
 
@@ -1941,6 +1942,14 @@ Editor::~Editor()
 {
 }
 
+void Editor::releaseRenderGraphBackedImGuiResources()
+{
+    setAnimTreePreviewPass(nullptr);
+    setAnimTreePreviewDescriptorSet(VK_NULL_HANDLE);
+    setObjectIdColorImage(nullptr);
+    m_assetsPreviewSystem.releaseImguiDescriptors();
+}
+
 void Editor::setScene(engine::Scene::SharedPtr scene)
 {
     m_scene = std::move(scene);
@@ -2983,6 +2992,12 @@ void Editor::drawCustomTitleBar()
         if (ImGui::Button("Plugins..."))
         {
             m_showPluginsWindow = true;
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (ImGui::Button("Lightmap Baking..."))
+        {
+            m_showLightmapBakingPanel = true;
             ImGui::CloseCurrentPopup();
         }
 
@@ -5868,6 +5883,9 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     if (m_showPluginsWindow)
         m_pluginsWindow.draw(&m_showPluginsWindow);
 
+    if (m_showLightmapBakingPanel)
+        m_lightmapBakingPanel.draw(&m_showLightmapBakingPanel);
+
     // Dispatch per-frame callback to all registered editor plugins.
     {
         sdk::EditorContext ctx;
@@ -5929,6 +5947,14 @@ void Editor::updateAnimationPreview(float deltaTime)
             continue;
 
         animatorComponent->update(deltaTime);
+    }
+
+    for (const auto &entity : m_scene->getEntities())
+    {
+        if (!entity || !entity->isEnabled())
+            continue;
+
+        entity->postPhysicsUpdate(deltaTime);
     }
 }
 
@@ -7851,6 +7877,7 @@ void Editor::addPrimitiveEntity(const std::string &primitiveName)
     {
         auto mesh = engine::CPUMesh::build<engine::vertex::Vertex3D>(engine::cube::vertices, engine::cube::indices);
         mesh.name = "Cube";
+        engine::LightmapUVGenerator::generate(mesh);
         meshes.push_back(mesh);
     }
     else if (primitiveName == "Sphere")
@@ -7860,6 +7887,7 @@ void Editor::addPrimitiveEntity(const std::string &primitiveName)
         engine::circle::genereteVerticesAndIndices(vertices, indices);
         auto mesh = engine::CPUMesh::build<engine::vertex::Vertex3D>(vertices, indices);
         mesh.name = "Sphere";
+        engine::LightmapUVGenerator::generate(mesh);
         meshes.push_back(mesh);
     }
 

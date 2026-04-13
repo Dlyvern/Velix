@@ -252,6 +252,27 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
             giSampler   = m_defaultWhiteTexture->vkSampler();
         }
 
+        // Baked irradiance GBuffer attachment (binding 13) — black texture when not available.
+        VkImageView bakedIrrImageView = VK_NULL_HANDLE;
+        VkSampler   bakedIrrSampler   = m_defaultSampler;
+        if (m_bakedIrradianceHandlers && i < static_cast<uint32_t>(m_bakedIrradianceHandlers->size()))
+        {
+            const RenderTarget *bakedTarget = storage.getTexture((*m_bakedIrradianceHandlers)[i]);
+            if (bakedTarget)
+                bakedIrrImageView = bakedTarget->vkImageView();
+        }
+        if (bakedIrrImageView == VK_NULL_HANDLE)
+        {
+            // Fall back to black texture — lighting.frag checks dot(irr,irr) > threshold;
+            // black = 0 = no bake = use dynamic lighting (correct fallback).
+            auto *black2D = Texture::getDefaultBlackTexture().get();
+            if (black2D)
+            {
+                bakedIrrImageView = black2D->vkImageView();
+                bakedIrrSampler   = black2D->vkSampler();
+            }
+        }
+
         if (!m_descriptorSetsInitialized)
         {
             m_descriptorSets[i] = DescriptorSetBuilder::begin()
@@ -267,6 +288,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                                       .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
                                       .addImage(m_probeImageView, m_probeSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 11)
                                       .addImage(giImageView, giSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 12)
+                                      .addImage(bakedIrrImageView, bakedIrrSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 13)
                                       .build(device, pool, m_descriptorSetLayout);
         }
         else
@@ -284,6 +306,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
                 .addImage(rtShadowTexture->vkImageView(), m_defaultSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 10)
                 .addImage(m_probeImageView, m_probeSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 11)
                 .addImage(giImageView, giSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 12)
+                .addImage(bakedIrrImageView, bakedIrrSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 13)
                 .update(device, m_descriptorSets[i]);
         }
     }
@@ -332,6 +355,8 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
         if (m_giTextureHandlers && imageIndex < static_cast<int>(m_giTextureHandlers->size()))
             builder.read((*m_giTextureHandlers)[imageIndex], RGPTextureUsage::SAMPLED);
+        if (m_bakedIrradianceHandlers && imageIndex < static_cast<int>(m_bakedIrradianceHandlers->size()))
+            builder.read((*m_bakedIrradianceHandlers)[imageIndex], RGPTextureUsage::SAMPLED);
     }
     outputs.color.set(m_colorTextureHandler);
 
@@ -426,10 +451,17 @@ void LightingRenderGraphPass::setup(RGPResourcesBuilder &builder)
     giIrradianceBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     giIrradianceBinding.pImmutableSamplers = nullptr;
 
+    VkDescriptorSetLayoutBinding bakedIrradianceBinding{};
+    bakedIrradianceBinding.binding = 13;
+    bakedIrradianceBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bakedIrradianceBinding.descriptorCount = 1;
+    bakedIrradianceBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bakedIrradianceBinding.pImmutableSamplers = nullptr;
+
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(device, std::vector<VkDescriptorSetLayoutBinding>{bindingNormal,
                                                                                                                       bindingAlbedo, bindingMaterial, bindingEmissive, bindingDepth,
                                                                                                                       lightMapBinding, spotMapBinding, pointMapBinding, aoBinding, rtShadowBinding,
-                                                                                                                      probeEnvBinding, giIrradianceBinding});
+                                                                                                                      probeEnvBinding, giIrradianceBinding, bakedIrradianceBinding});
 
     VkPushConstantRange pcRange{};
     pcRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;

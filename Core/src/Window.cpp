@@ -310,7 +310,11 @@ void Window::onWindowResize(GLFWwindow *window, int width, int height)
 
 Window::~Window()
 {
-    glfwDestroyWindow(m_window);
+    if (m_window)
+    {
+        glfwDestroyWindow(m_window);
+        m_window = nullptr;
+    }
 }
 
 void Window::pollEvents()

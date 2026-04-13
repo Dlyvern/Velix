@@ -69,7 +69,7 @@ void DebugOverlayRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder
     m_overlayPipelineLayout = core::PipelineLayout::createShared(
         device,
         std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{
-            *engine::EngineShaderFamilies::cameraDescriptorSetLayout},
+            engine::EngineShaderFamilies::getCameraDescriptorSetLayoutRef()},
         std::vector<VkPushConstantRange>{});
 }
 

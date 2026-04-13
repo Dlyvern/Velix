@@ -47,6 +47,7 @@
 #include "Editor/AssetsPreviewSystem.hpp"
 #include "Editor/PluginSystem/EditorPluginRegistry.hpp"
 #include "Editor/Panels/PluginsWindow.hpp"
+#include "Editor/Panels/LightmapBakingPanel.hpp"
 
 #include <filesystem>
 
@@ -123,6 +124,7 @@ public:
                    VkDescriptorSet gameViewportDescriptorSet = VK_NULL_HANDLE,
                    bool hasGameCamera = false);
     void updateAnimationPreview(float deltaTime);
+    void releaseRenderGraphBackedImGuiResources();
 
     void setAnimTreePreviewDescriptorSet(VkDescriptorSet ds);
     void setAnimTreePreviewPass(AnimationTreePreviewPass *pass);
@@ -360,6 +362,9 @@ private:
     PluginsWindow m_pluginsWindow;
     bool m_showPluginsWindow{false};
 
+    LightmapBakingPanel m_lightmapBakingPanel;
+    bool m_showLightmapBakingPanel{false};
+
     void drawDocument();
     std::filesystem::path resolveCurrentScenePath() const;
 
@@ -500,6 +505,16 @@ public:
     {
         if (m_probeCaptureCallback)
             m_probeCaptureCallback(entity);
+    }
+
+    void setLightmapBakeCallback(std::function<void(const engine::LightmapBakeSettings &)> cb)
+    {
+        m_lightmapBakingPanel.setOnBakeRequested(std::move(cb));
+    }
+
+    void setLightmapBakeProgress(engine::LightmapBakeProgress *progress)
+    {
+        m_lightmapBakingPanel.setProgress(progress);
     }
 
 private:

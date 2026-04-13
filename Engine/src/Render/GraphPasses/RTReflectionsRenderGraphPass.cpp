@@ -27,7 +27,7 @@ namespace
         VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
 
     static_assert(offsetof(RTReflectionShadingInstanceData, material) == 32u);
-    static_assert(sizeof(Material::GPUParams) == 96u);
+    static_assert(sizeof(Material::GPUParams) == 104u);
 }
 
 struct RTReflectionsPC

@@ -37,6 +37,8 @@ struct MaterialParams
     uint  normalTexIdx;
     uint  ormTexIdx;
     uint  emissiveTexIdx;
+    uint  lightmapTexIdx;
+    uint  _lightmapPad;
 };
 
 struct ReflectionInstance

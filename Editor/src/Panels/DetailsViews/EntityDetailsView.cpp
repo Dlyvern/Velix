@@ -8,6 +8,7 @@
 #include "Engine/Components/AnimatorComponent.hpp"
 #include "Engine/Components/AudioComponent.hpp"
 #include "Engine/Components/ReflectionProbeComponent.hpp"
+#include "Engine/Components/LightmapComponent.hpp"
 #include "Engine/Components/DecalComponent.hpp"
 #include "Engine/Components/SpriteComponent.hpp"
 #include "Engine/Components/CameraComponent.hpp"
@@ -21,6 +22,7 @@
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
+#include "Engine/Components/TerrainComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
 #include "Engine/Skeleton.hpp"
 #include "Engine/Particles/Modules/ColorOverLifetimeModule.hpp"
@@ -1045,6 +1047,18 @@ namespace
                 psComp->setParticleSystem(newSys);
             });
 
+        reg.registerComponent("Lightmap", "Rendering",
+            [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &ctx)
+            {
+                if (e->getComponent<elix::engine::LightmapComponent>())
+                {
+                    if (ctx.showWarning) ctx.showWarning("Lightmap component already exists on this entity");
+                    ctx.closePopup = false;
+                    return;
+                }
+                e->addComponent<elix::engine::LightmapComponent>();
+            });
+
         reg.registerComponent("Decal", "Common",
             [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &ctx)
             {
@@ -1616,6 +1630,12 @@ void EntityDetailsView::draw(Editor &editor)
         {
             if (ImGui::CollapsingHeader("Static mesh", ImGuiTreeNodeFlags_DefaultOpen))
             {
+                bool renderMesh = staticComponent->isVisible();
+                if (ImGui::Checkbox("Render Mesh##StaticMeshVisible", &renderMesh))
+                    staticComponent->setVisible(renderMesh);
+
+                ImGui::Separator();
+
                 const auto &meshes = staticComponent->getMeshes();
 
                 ImGui::PushID("StaticMeshAllSlotsMaterial");
@@ -1751,6 +1771,10 @@ void EntityDetailsView::draw(Editor &editor)
         {
             if (ImGui::CollapsingHeader("Skeletal mesh", ImGuiTreeNodeFlags_DefaultOpen))
             {
+                bool renderMesh = skeletalMeshComponent->isVisible();
+                if (ImGui::Checkbox("Render Mesh##SkeletalMeshVisible", &renderMesh))
+                    skeletalMeshComponent->setVisible(renderMesh);
+
                 bool showBones = editor.m_showSelectedSkeletalBones;
                 if (ImGui::Checkbox("Show Bones", &showBones))
                 {
@@ -1902,6 +1926,24 @@ void EntityDetailsView::draw(Editor &editor)
                     ImGui::Separator();
                     ImGui::PopID();
                 }
+            }
+        }
+        else if (auto terrainComponent = dynamic_cast<engine::TerrainComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                bool renderMesh = terrainComponent->isVisible();
+                if (ImGui::Checkbox("Render Mesh##TerrainVisible", &renderMesh))
+                    terrainComponent->setVisible(renderMesh);
+
+                ImGui::TextDisabled("Asset: %s",
+                                    terrainComponent->getTerrainAssetPath().empty()
+                                        ? "<None>"
+                                        : terrainComponent->getTerrainAssetPath().c_str());
+                ImGui::Text("Quads Per Chunk: %u", terrainComponent->getQuadsPerChunk());
+
+                if (!terrainComponent->getMaterialOverridePath().empty())
+                    ImGui::TextWrapped("Material Override: %s", terrainComponent->getMaterialOverridePath().c_str());
             }
         }
         else if (auto animatorComponent = dynamic_cast<engine::AnimatorComponent *>(component.get()))

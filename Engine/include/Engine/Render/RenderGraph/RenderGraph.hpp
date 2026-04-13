@@ -162,6 +162,23 @@ public:
         return m_imageIndex;
     }
 
+    // Returns the camera descriptor set for a given swapchain image index.
+    // The set contains binding 0=cameraUBO, 1=lightSpaceUBO, 2=lightSSBO.
+    // Used by offline passes (e.g. LightmapBaker) that need light data.
+    VkDescriptorSet getCameraDescriptorSet(uint32_t imageIndex) const
+    {
+        if (imageIndex < m_cameraDescriptorSets.size())
+            return m_cameraDescriptorSets[imageIndex];
+        return VK_NULL_HANDLE;
+    }
+
+    // Returns the raw resource storage so external passes can resolve handlers
+    // to RenderTarget pointers (read-only).
+    const RGPResourcesStorage &getStorage() const { return m_renderGraphPassesStorage; }
+
+    // Expose the mesh registry for offline passes (e.g. LightmapBaker).
+    MeshGeometryRegistry &getMeshGeometryRegistry() { return m_meshGeometryRegistry; }
+
     std::vector<VkImageView> getImageViews(const std::vector<RGPResourceHandler> &handlers) const;
 
     static constexpr uint16_t MAX_FRAMES_IN_FLIGHT = 2;

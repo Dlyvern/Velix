@@ -62,8 +62,8 @@ void PreviewAssetsRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilde
     m_pipelineLayout = core::PipelineLayout::createShared(
         device,
         std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{
-            *engine::EngineShaderFamilies::cameraDescriptorSetLayout,
-            *engine::EngineShaderFamilies::materialDescriptorSetLayout},
+            engine::EngineShaderFamilies::getCameraDescriptorSetLayoutRef(),
+            engine::EngineShaderFamilies::getMaterialDescriptorSetLayoutRef()},
         std::vector<VkPushConstantRange>{
             engine::PushConstant<ModelOnly>::getRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)});
 

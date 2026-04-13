@@ -35,6 +35,7 @@
 
 #include "Engine/Mesh.hpp"
 #include "Engine/Primitives.hpp"
+#include "Engine/Assets/LightmapUVGenerator.hpp"
 
 #include "nlohmann/json.hpp"
 #include <glm/common.hpp>
@@ -1042,6 +1043,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
             {
                 CPUMesh mesh = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
                 mesh.name = "Cube";
+                LightmapUVGenerator::generate(mesh);
                 gameObject->addComponent<StaticMeshComponent>(std::vector<CPUMesh>{mesh});
             }
 
@@ -1070,12 +1072,14 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                             circle::genereteVerticesAndIndices(verts, inds);
                             auto mesh = CPUMesh::build<vertex::Vertex3D>(verts, inds);
                             mesh.name = "Sphere";
+                            LightmapUVGenerator::generate(mesh);
                             meshes.push_back(mesh);
                         }
                         else
                         {
                             auto mesh = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
                             mesh.name = "Cube";
+                            LightmapUVGenerator::generate(mesh);
                             meshes.push_back(mesh);
                         }
                     }
@@ -1087,6 +1091,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                             // Streaming path: create the component with a path-only handle.
                             // AssetManager will load the model data asynchronously.
                             auto *sm = gameObject->addComponent<StaticMeshComponent>(assetPath);
+                            sm->setVisible(componentJson.value("visible", true));
                             restoreMaterialOverrides(sm, componentJson.value("material_overrides", nlohmann::json::array()));
                         }
                     }
@@ -1095,6 +1100,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                     {
                         auto *sm = gameObject->addComponent<StaticMeshComponent>(meshes);
                         sm->setAssetPath(assetPath);
+                        sm->setVisible(componentJson.value("visible", true));
                         restoreMaterialOverrides(sm, componentJson.value("material_overrides", nlohmann::json::array()));
                     }
                 }
@@ -1104,6 +1110,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                     auto *terrainComponent = gameObject->addComponent<TerrainComponent>();
                     terrainComponent->setTerrainAssetPath(assetPath);
                     terrainComponent->setQuadsPerChunk(std::clamp(componentJson.value("quads_per_chunk", 63u), 1u, 512u));
+                    terrainComponent->setVisible(componentJson.value("visible", true));
 
                     if (componentJson.contains("material_override_path") && componentJson["material_override_path"].is_string())
                         terrainComponent->setMaterialOverridePath(resolveScenePath(componentJson["material_override_path"].get<std::string>()));
@@ -1125,6 +1132,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                         // Streaming path: handle resolved asynchronously; AnimatorComponent
                         // will be populated in PerFrameDataWorker once onModelLoaded() fires.
                         auto *skm = gameObject->addComponent<SkeletalMeshComponent>(assetPath);
+                        skm->setVisible(componentJson.value("visible", true));
                         restoreMaterialOverrides(skm, componentJson.value("material_overrides", nlohmann::json::array()));
                     }
                 }
@@ -1836,6 +1844,7 @@ void Scene::saveSceneToFile(const std::string &filePath)
         {
             nlohmann::json j;
             j["type"] = "static_mesh";
+            j["visible"] = sm->isVisible();
 
             const std::string &assetPath = sm->getAssetPath();
             if (assetPath.empty())
@@ -1866,6 +1875,7 @@ void Scene::saveSceneToFile(const std::string &filePath)
             nlohmann::json j;
             j["type"] = "skeletal_mesh";
             j["asset_path"] = toRelativePath(skm->getAssetPath());
+            j["visible"] = skm->isVisible();
 
             nlohmann::json overridesJson = nlohmann::json::array();
             for (size_t slot = 0; slot < skm->getMaterialSlotCount(); ++slot)
@@ -1885,6 +1895,7 @@ void Scene::saveSceneToFile(const std::string &filePath)
             j["type"] = "terrain";
             j["asset_path"] = toRelativePath(terrainComponent->getTerrainAssetPath());
             j["quads_per_chunk"] = terrainComponent->getQuadsPerChunk();
+            j["visible"] = terrainComponent->isVisible();
 
             if (!terrainComponent->getMaterialOverridePath().empty())
                 j["material_override_path"] = toRelativePath(terrainComponent->getMaterialOverridePath());
@@ -2411,6 +2422,7 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
         {
             nlohmann::json componentJson;
             componentJson["type"] = "static_mesh";
+            componentJson["visible"] = sm->isVisible();
 
             const std::string &assetPath = sm->getAssetPath();
             if (assetPath.empty())
@@ -2441,6 +2453,7 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
             nlohmann::json componentJson;
             componentJson["type"] = "skeletal_mesh";
             componentJson["asset_path"] = normalizeSerializedPath(skm->getAssetPath());
+            componentJson["visible"] = skm->isVisible();
 
             nlohmann::json overridesJson = nlohmann::json::array();
             for (size_t slot = 0; slot < skm->getMaterialSlotCount(); ++slot)
@@ -2460,6 +2473,7 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
             componentJson["type"] = "terrain";
             componentJson["asset_path"] = normalizeSerializedPath(terrainComponent->getTerrainAssetPath());
             componentJson["quads_per_chunk"] = terrainComponent->getQuadsPerChunk();
+            componentJson["visible"] = terrainComponent->isVisible();
 
             if (!terrainComponent->getMaterialOverridePath().empty())
                 componentJson["material_override_path"] = normalizeSerializedPath(terrainComponent->getMaterialOverridePath());
@@ -3195,6 +3209,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                 {
                     auto *staticMeshComponent = entity->addComponent<StaticMeshComponent>(meshes);
                     staticMeshComponent->setAssetPath(assetPath);
+                    staticMeshComponent->setVisible(componentJson.value("visible", true));
                     restoreMaterialOverrides(staticMeshComponent, componentJson.value("material_overrides", nlohmann::json::array()));
                     staticMeshComponent->applyMaterialOverrideCpuDataToMeshes();
                 }
@@ -3205,6 +3220,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                 auto *terrainComponent = entity->addComponent<TerrainComponent>();
                 terrainComponent->setTerrainAssetPath(assetPath);
                 terrainComponent->setQuadsPerChunk(std::clamp(componentJson.value("quads_per_chunk", 63u), 1u, 512u));
+                terrainComponent->setVisible(componentJson.value("visible", true));
 
                 if (componentJson.contains("material_override_path") && componentJson["material_override_path"].is_string())
                     terrainComponent->setMaterialOverridePath(resolveSerializedPath(componentJson["material_override_path"].get<std::string>()));
@@ -3229,6 +3245,7 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                         auto *skeletalMeshComponent = entity->addComponent<SkeletalMeshComponent>(
                             modelAsset->meshes, modelAsset->skeleton.value());
                         skeletalMeshComponent->setAssetPath(assetPath);
+                        skeletalMeshComponent->setVisible(componentJson.value("visible", true));
                         restoreMaterialOverrides(skeletalMeshComponent, componentJson.value("material_overrides", nlohmann::json::array()));
                         skeletalMeshComponent->applyMaterialOverrideCpuDataToMeshes();
 

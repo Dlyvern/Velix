@@ -34,7 +34,13 @@ void DebugDraw::addLine(std::vector<Vertex> &v, glm::vec3 a, glm::vec3 b, glm::v
 void DebugDraw::pushShape(std::vector<Vertex> verts, float lifetime, bool depthTest, Shape::Primitive primitive)
 {
     std::lock_guard<std::mutex> lock(mutex());
-    shapes().push_back({std::move(verts), lifetime, depthTest, primitive});
+    Shape shape{};
+    shape.vertices = std::move(verts);
+    shape.lifetime = lifetime;
+    shape.depthTest = depthTest;
+    shape.primitive = primitive;
+    shape.newlySubmitted = true;
+    shapes().push_back(std::move(shape));
 }
 
 void DebugDraw::line(glm::vec3 a, glm::vec3 b, glm::vec4 color, float lifetime, bool depthTest)
@@ -264,15 +270,27 @@ void DebugDraw::flush(float deltaTime)
 {
     std::lock_guard<std::mutex> lock(mutex());
     auto &s = shapes();
-    // Remove zero-lifetime shapes (drawn last frame) and decay positive lifetimes
+
     for (auto it = s.begin(); it != s.end();)
     {
-        if (it->lifetime <= 0.0f)
+        if (it->newlySubmitted)
+        {
+            it->newlySubmitted = false;
+            if (it->lifetime > 0.0f)
+                it->lifetime -= deltaTime;
+            ++it;
+        }
+        else if (it->lifetime <= 0.0f)
+        {
             it = s.erase(it);
+        }
         else
         {
             it->lifetime -= deltaTime;
-            ++it;
+            if (it->lifetime <= 0.0f)
+                it = s.erase(it);
+            else
+                ++it;
         }
     }
 }

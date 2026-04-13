@@ -1,4 +1,5 @@
 #include "Engine/PluginSystem/PluginManager.hpp"
+#include "Engine/PluginSystem/ComponentRegistry.hpp"
 #include "Engine/Runtime/EngineConfig.hpp"
 #include "Engine/Scripting/ScriptsRegister.hpp"
 #include "Core/Logger.hpp"
@@ -223,6 +224,12 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
 
 void PluginManager::unloadAll()
 {
+    // Clear registered component lambdas before any dlclose() so their destructors
+    // run while the plugin .so files are still mapped. Without this, the static
+    // ComponentRegistry destructor fires after dlclose() and calls into unmapped
+    // plugin code, causing a segfault.
+    ComponentRegistry::instance().clear();
+
     // Unload in reverse load order.
     for (auto it = m_plugins.rbegin(); it != m_plugins.rend(); ++it)
     {

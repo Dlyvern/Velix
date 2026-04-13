@@ -54,6 +54,7 @@ layout(set = 1, binding = 9) uniform sampler2D uSSAO;
 layout(set = 1, binding = 10) uniform sampler2DArray uRTShadowFactors;
 layout(set = 1, binding = 11) uniform samplerCube uProbeEnv;
 layout(set = 1, binding = 12) uniform sampler2D  uGIIrradiance;
+layout(set = 1, binding = 13) uniform sampler2D  uBakedIrradiance;
 
 layout(push_constant) uniform LightingPC
 {
@@ -364,6 +365,10 @@ void main()
     vec3 P_world = (camera.invView * vec4(P_view, 1.0)).xyz;
     vec3 N_world = normalize((camera.invView * vec4(N_view, 0.0)).xyz);
 
+    // Baked irradiance: if non-zero, skip dynamic shadow + direct-light computation.
+    vec3 bakedIrradiance = texture(uBakedIrradiance, vUV).rgb;
+    const bool hasBakedIrradiance = dot(bakedIrradiance, bakedIrradiance) > 0.0001;
+
     vec3 lighting = vec3(0.0);
     float directionalShadowMax = 0.0;
     bool hasDirectionalLight = false;
@@ -466,12 +471,20 @@ void main()
         if (NdotL <= 0.0)
             continue;
 
-        lighting += evaluateBRDF(N_view, V, L, albedo, metallic, roughness) * radiance * (1.0 - shadow);
+        // When baked irradiance is present skip dynamic shadow sampling (shadow already baked).
+        float effectiveShadow = hasBakedIrradiance ? 0.0 : shadow;
+        lighting += evaluateBRDF(N_view, V, L, albedo, metallic, roughness) * radiance * (1.0 - effectiveShadow);
     }
 
     float ambientFactor = hasDirectionalLight ? 0.03 : 0.0;
     vec3 ambient = albedo * ambientFactor * ao;
     ambient *= (1.0 - clamp(pc.shadowAmbientStrength, 0.0, 1.0) * directionalShadowMax);
+
+    // Replace the dynamic direct-light term with the baked irradiance when available.
+    if (hasBakedIrradiance)
+    {
+        lighting = bakedIrradiance * albedo * ao;
+    }
 
     // RT Global Illumination: replace flat ambient with sky-occlusion-based indirect diffuse.
     if (pc.giEnabled > 0.5)

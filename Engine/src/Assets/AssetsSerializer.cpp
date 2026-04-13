@@ -393,26 +393,39 @@ namespace
                writePOD(stream, material.normalScale) &&
                writePOD(stream, material.alphaCutoff) &&
                writePOD(stream, material.uvScale) &&
-               writePOD(stream, material.uvOffset);
+               writePOD(stream, material.uvOffset) &&
+               // v3: baked lightmap texture path (empty string = no lightmap)
+               writeString(stream, makeRelativeTexturePath(material.lightmapTexture, modelDir));
     }
 
-    bool readMaterial(std::istream &stream, elix::engine::CPUMaterial &outMaterial)
+    bool readMaterial(std::istream &stream, elix::engine::CPUMaterial &outMaterial,
+                      uint8_t modelPayloadVersion = 0u)
     {
-        return readPOD(stream, outMaterial.flags) &&
-               readString(stream, outMaterial.albedoTexture) &&
-               readString(stream, outMaterial.normalTexture) &&
-               readString(stream, outMaterial.ormTexture) &&
-               readString(stream, outMaterial.emissiveTexture) &&
-               readString(stream, outMaterial.name) &&
-               readPOD(stream, outMaterial.baseColorFactor) &&
-               readPOD(stream, outMaterial.emissiveFactor) &&
-               readPOD(stream, outMaterial.metallicFactor) &&
-               readPOD(stream, outMaterial.roughnessFactor) &&
-               readPOD(stream, outMaterial.aoStrength) &&
-               readPOD(stream, outMaterial.normalScale) &&
-               readPOD(stream, outMaterial.alphaCutoff) &&
-               readPOD(stream, outMaterial.uvScale) &&
-               readPOD(stream, outMaterial.uvOffset);
+        constexpr uint8_t kModelPayloadVersionWithLightmapUVs = 3u;
+
+        if (!readPOD(stream, outMaterial.flags) ||
+            !readString(stream, outMaterial.albedoTexture) ||
+            !readString(stream, outMaterial.normalTexture) ||
+            !readString(stream, outMaterial.ormTexture) ||
+            !readString(stream, outMaterial.emissiveTexture) ||
+            !readString(stream, outMaterial.name) ||
+            !readPOD(stream, outMaterial.baseColorFactor) ||
+            !readPOD(stream, outMaterial.emissiveFactor) ||
+            !readPOD(stream, outMaterial.metallicFactor) ||
+            !readPOD(stream, outMaterial.roughnessFactor) ||
+            !readPOD(stream, outMaterial.aoStrength) ||
+            !readPOD(stream, outMaterial.normalScale) ||
+            !readPOD(stream, outMaterial.alphaCutoff) ||
+            !readPOD(stream, outMaterial.uvScale) ||
+            !readPOD(stream, outMaterial.uvOffset))
+            return false;
+
+        // v3: baked lightmap texture path
+        if (modelPayloadVersion >= kModelPayloadVersionWithLightmapUVs)
+            if (!readString(stream, outMaterial.lightmapTexture))
+                return false;
+
+        return true;
     }
 
     bool writeSkeleton(std::ostream &stream, const std::optional<elix::engine::Skeleton> &skeletonOptional)
@@ -663,6 +676,10 @@ namespace
             if (texelsCount > (std::numeric_limits<uint64_t>::max() / (4u * sizeof(float))))
                 return std::nullopt;
             return texelsCount * 4u * sizeof(float);
+        case elix::engine::TextureAsset::PixelEncoding::RGBA16F:
+            if (texelsCount > (std::numeric_limits<uint64_t>::max() / 8u))
+                return std::nullopt;
+            return texelsCount * 8u; // 4 channels × 2 bytes (half-float)
         case elix::engine::TextureAsset::PixelEncoding::COMPRESSED_GPU:
         {
             const VkFormat format = static_cast<VkFormat>(textureAsset.vkFormat);
@@ -791,6 +808,7 @@ bool AssetsSerializer::writeTexture(const TextureAsset &textureAsset, const std:
 bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::string &outputPath) const
 {
     constexpr uint8_t kModelPayloadVersionWithBoneAttachments = 2u;
+    constexpr uint8_t kModelPayloadVersionWithLightmapUVs    = 3u;
 
     std::ostringstream payloadStream(std::ios::binary);
     if (!writeString(payloadStream, modelAsset.sourcePath) ||
@@ -814,6 +832,14 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
             !writePOD(payloadStream, mesh.localTransform) ||
             !writePOD(payloadStream, mesh.attachedBoneId))
             return false;
+
+        // v3: lightmap UV1 data (one vec2 per vertex, may be empty)
+        const uint32_t uvCount = static_cast<uint32_t>(mesh.lightmapUVs.size());
+        if (!writePOD(payloadStream, uvCount))
+            return false;
+        for (const auto &uv : mesh.lightmapUVs)
+            if (!writePOD(payloadStream, uv))
+                return false;
     }
 
     if (!writeSkeleton(payloadStream, modelAsset.skeleton))
@@ -859,7 +885,7 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
     if (compressionAlgorithm != static_cast<uint8_t>(Compressor::Algorithm::None))
         storedPayloadSize += sizeof(uint64_t);
 
-    if (!writeHeader(stream, Asset::AssetType::MODEL, storedPayloadSize, compressionAlgorithm, kModelPayloadVersionWithBoneAttachments))
+    if (!writeHeader(stream, Asset::AssetType::MODEL, storedPayloadSize, compressionAlgorithm, kModelPayloadVersionWithLightmapUVs))
         return false;
 
     if (compressionAlgorithm != static_cast<uint8_t>(Compressor::Algorithm::None))
@@ -1023,6 +1049,7 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
     auto parseModelPayload = [](std::istream &payloadStream, const std::string &assetPath, uint8_t modelPayloadVersion) -> std::optional<ModelAsset>
     {
         constexpr uint8_t kModelPayloadVersionWithBoneAttachments = 2u;
+        constexpr uint8_t kModelPayloadVersionWithLightmapUVs    = 3u;
 
         ModelAsset modelAsset{{}, std::nullopt, {}};
         if (!readString(payloadStream, modelAsset.sourcePath) ||
@@ -1045,7 +1072,7 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
                 !readVector(payloadStream, mesh.indices, 1ull << 31) ||
                 !readPOD(payloadStream, mesh.vertexStride) ||
                 !readPOD(payloadStream, mesh.vertexLayoutHash) ||
-                !readMaterial(payloadStream, mesh.material) ||
+                !readMaterial(payloadStream, mesh.material, modelPayloadVersion) ||
                 !readPOD(payloadStream, mesh.localTransform))
                 return std::nullopt;
 
@@ -1053,6 +1080,18 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
             if (modelPayloadVersion >= kModelPayloadVersionWithBoneAttachments &&
                 !readPOD(payloadStream, mesh.attachedBoneId))
                 return std::nullopt;
+
+            // v3: lightmap UV1 data
+            if (modelPayloadVersion >= kModelPayloadVersionWithLightmapUVs)
+            {
+                uint32_t uvCount = 0u;
+                if (!readPOD(payloadStream, uvCount))
+                    return std::nullopt;
+                mesh.lightmapUVs.resize(uvCount);
+                for (auto &uv : mesh.lightmapUVs)
+                    if (!readPOD(payloadStream, uv))
+                        return std::nullopt;
+            }
         }
 
         if (!readSkeleton(payloadStream, modelAsset.skeleton))
@@ -1135,6 +1174,7 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::vector<uint8_t>
     auto parseModelPayload = [](std::istream &payloadStream, const std::string &assetPath, uint8_t modelPayloadVersion) -> std::optional<ModelAsset>
     {
         constexpr uint8_t kModelPayloadVersionWithBoneAttachments = 2u;
+        constexpr uint8_t kModelPayloadVersionWithLightmapUVs    = 3u;
 
         ModelAsset modelAsset{{}, std::nullopt, {}};
         if (!readString(payloadStream, modelAsset.sourcePath) ||
@@ -1157,7 +1197,7 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::vector<uint8_t>
                 !readVector(payloadStream, mesh.indices, 1ull << 31) ||
                 !readPOD(payloadStream, mesh.vertexStride) ||
                 !readPOD(payloadStream, mesh.vertexLayoutHash) ||
-                !readMaterial(payloadStream, mesh.material) ||
+                !readMaterial(payloadStream, mesh.material, modelPayloadVersion) ||
                 !readPOD(payloadStream, mesh.localTransform))
                 return std::nullopt;
 
@@ -1165,6 +1205,18 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::vector<uint8_t>
             if (modelPayloadVersion >= kModelPayloadVersionWithBoneAttachments &&
                 !readPOD(payloadStream, mesh.attachedBoneId))
                 return std::nullopt;
+
+            // v3: lightmap UV1 data
+            if (modelPayloadVersion >= kModelPayloadVersionWithLightmapUVs)
+            {
+                uint32_t uvCount = 0u;
+                if (!readPOD(payloadStream, uvCount))
+                    return std::nullopt;
+                mesh.lightmapUVs.resize(uvCount);
+                for (auto &uv : mesh.lightmapUVs)
+                    if (!readPOD(payloadStream, uv))
+                        return std::nullopt;
+            }
         }
 
         if (!readSkeleton(payloadStream, modelAsset.skeleton))

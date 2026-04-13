@@ -48,6 +48,11 @@ public:
 
     AssetsPreviewSystem() = default;
 
+    void releaseImguiDescriptors()
+    {
+        clearEntries();
+    }
+
     void setProject(Project *project)
     {
         if (m_project != project)

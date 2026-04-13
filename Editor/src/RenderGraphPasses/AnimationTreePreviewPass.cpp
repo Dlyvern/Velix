@@ -84,7 +84,7 @@ void AnimationTreePreviewPass::setup(engine::renderGraph::RGPResourcesBuilder &b
         device,
         std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{
             *m_cameraDescriptorSetLayout,
-            *engine::EngineShaderFamilies::materialDescriptorSetLayout},
+            engine::EngineShaderFamilies::getMaterialDescriptorSetLayoutRef()},
         std::vector<VkPushConstantRange>{
             engine::PushConstant<ModelOnly>::getRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)});
 

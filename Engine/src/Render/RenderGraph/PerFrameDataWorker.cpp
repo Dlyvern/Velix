@@ -4,6 +4,7 @@
 #include "Core/SwapChain.hpp"
 #include "Core/VulkanContext.hpp"
 #include "Engine/Components/AnimatorComponent.hpp"
+#include "Engine/Components/LightmapComponent.hpp"
 #include "Engine/Components/SkeletalMeshComponent.hpp"
 #include "Engine/Components/StaticMeshComponent.hpp"
 #include "Engine/Components/TerrainComponent.hpp"
@@ -431,11 +432,11 @@ void PerFrameDataWorker::syncSceneDrawItems(Scene *scene, const glm::vec3 &camer
         }
 
         const std::vector<CPUMesh> *meshes = nullptr;
-        if (staticMeshComponent && staticMeshComponent->isReady())
+        if (staticMeshComponent && staticMeshComponent->isVisible() && staticMeshComponent->isReady())
             meshes = &staticMeshComponent->getMeshes();
         else if (skeletalMeshComponent && skeletalMeshComponent->isVisible() && skeletalMeshComponent->isReady())
             meshes = &skeletalMeshComponent->getMeshes();
-        else if (terrainComponent)
+        else if (terrainComponent && terrainComponent->isVisible())
         {
             terrainComponent->ensureChunkMeshesBuilt();
             meshes = &terrainComponent->getChunkMeshes();
@@ -847,6 +848,18 @@ void PerFrameDataWorker::buildRasterBatches()
             params.normalTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(reference.material->getNormalTexture().get());
             params.ormTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(reference.material->getOrmTexture().get());
             params.emissiveTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(reference.material->getEmissiveTexture().get());
+
+            // Register baked lightmap texture if the entity has a LightmapComponent.
+            if (const auto *lmc = reference.entity->getComponent<LightmapComponent>();
+                lmc && lmc->lightmapTexture)
+            {
+                params.lightmapTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(lmc->lightmapTexture.get());
+            }
+            else
+            {
+                params.lightmapTexIdx = 0xFFFFFFFFu;
+            }
+
             m_dependencies.bindlessRegistry->getCpuMaterialParams()[materialIndex] = params;
         }
 

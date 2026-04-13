@@ -1,5 +1,6 @@
 #include "Engine/Assets/OBJAssetLoader.hpp"
 #include "Engine/Vertex.hpp"
+#include "Engine/Assets/LightmapUVGenerator.hpp"
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
@@ -116,6 +117,7 @@ std::shared_ptr<IAsset> OBJAssetLoader::load(const std::string &filePath)
             }
         }
 
+        engine::LightmapUVGenerator::generate(mesh);
         meshes.push_back(std::move(mesh));
     }
 

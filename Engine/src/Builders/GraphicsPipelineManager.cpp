@@ -433,8 +433,21 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     std::vector<VkVertexInputBindingDescription> vertexBindingDescriptions;
     std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions;
 
-    if (key.shader == ShaderId::GBufferSkinned || key.shader == ShaderId::SkinnedShadow ||
-        key.shader == ShaderId::DepthPrepassSkinned || key.shader == ShaderId::AnimPreview)
+    if (key.shader == ShaderId::GBufferStatic)
+    {
+        // Binding 0: main Vertex3D data; binding 1: lightmap UV (vec2, per-vertex).
+        VkVertexInputBindingDescription lmBinding{};
+        lmBinding.binding = 1;
+        lmBinding.stride = sizeof(float) * 2;
+        lmBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D)), lmBinding};
+        vertexAttributeDescriptions = vertex::Vertex3D::getAttributeDescriptions();
+        // location 5 = lightmapUV from binding 1
+        vertexAttributeDescriptions.push_back({5, 1, VK_FORMAT_R32G32_SFLOAT, 0});
+    }
+    else if (key.shader == ShaderId::GBufferSkinned || key.shader == ShaderId::SkinnedShadow ||
+             key.shader == ShaderId::DepthPrepassSkinned || key.shader == ShaderId::AnimPreview)
     {
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::VertexSkinned))};
         vertexAttributeDescriptions = vertex::VertexSkinned::getAttributeDescriptions();

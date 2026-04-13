@@ -282,3 +282,11 @@ target_include_directories(imgui_node_editor PUBLIC
 )
 
 target_link_libraries(imgui_node_editor PUBLIC imgui)
+
+add_library(xatlas STATIC
+    ${CMAKE_CURRENT_LIST_DIR}/xatlas/source/xatlas/xatlas.cpp
+)
+target_include_directories(xatlas PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/xatlas/source/xatlas
+)
+set_target_properties(xatlas PROPERTIES POSITION_INDEPENDENT_CODE ON)

@@ -7,6 +7,7 @@
 #include <filesystem>
 
 #include "Engine/Skeleton.hpp"
+#include "Engine/Assets/LightmapUVGenerator.hpp"
 
 struct VertexKey
 {
@@ -1400,6 +1401,11 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
                                                                   << "\"\n");
             continue;
         }
+
+        // Generate lightmap UVs for static meshes using xatlas.
+        // Skinned meshes are excluded: lightmaps are baked onto static geometry only.
+        if (!isSkinnedMesh)
+            engine::LightmapUVGenerator::generate(cpuMesh);
 
         meshData.meshes.push_back(cpuMesh);
         ++emittedSubmeshCount;

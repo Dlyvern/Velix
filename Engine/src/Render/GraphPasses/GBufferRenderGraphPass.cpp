@@ -1,7 +1,10 @@
 #include "Engine/Render/GraphPasses/GBufferRenderGraphPass.hpp"
 
+#include "Core/Buffer.hpp"
 #include "Core/Logger.hpp"
 #include "Core/VulkanContext.hpp"
+
+#include <glm/vec2.hpp>
 
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Render/RenderQualitySettings.hpp"
@@ -84,14 +87,16 @@ GBufferRenderGraphPass::GBufferRenderGraphPass(bool enableObjectId)
     m_clearValues[1].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
     m_clearValues[2].color = {{1.0f, 1.0f, 0.0f, 0.0f}};
     m_clearValues[3].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-    m_clearValues[4].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-    m_clearValues[5].depthStencil = {1.0f, 0};
+    m_clearValues[4].color = {{0.0f, 0.0f, 0.0f, 0.0f}}; // bakedIrradiance
+    m_clearValues[5].color = {{0.0f, 0.0f, 0.0f, 0.0f}}; // objectId
+    m_clearValues[6].depthStencil = {1.0f, 0};
 
     setDebugName("GBuffer render graph pass");
     outputs.normals.setOwner(this);
     outputs.albedo.setOwner(this);
     outputs.material.setOwner(this);
     outputs.emissive.setOwner(this);
+    outputs.bakedIrradiance.setOwner(this);
     outputs.depth.setOwner(this);
     outputs.objectId.setOwner(this);
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
@@ -188,6 +193,18 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
         VkPipeline boundPipeline = VK_NULL_HANDLE;
         VkBuffer boundVertexBuffer = VK_NULL_HANDLE;
         VkBuffer boundIndexBuffer = VK_NULL_HANDLE;
+        VkBuffer boundLightmapUVBuffer = VK_NULL_HANDLE;
+
+        // Always ensure binding 1 has a valid buffer — bind dummy initially.
+        {
+            const VkBuffer dummyBuf = m_dummyLightmapUVBuffer ? static_cast<VkBuffer>(*m_dummyLightmapUVBuffer) : VK_NULL_HANDLE;
+            if (dummyBuf != VK_NULL_HANDLE)
+            {
+                const VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(commandBuffer, 1, 1, &dummyBuf, &offset);
+                boundLightmapUVBuffer = dummyBuf;
+            }
+        }
 
         const bool hasIndirectBuffer = data.indirectDrawBuffer != VK_NULL_HANDLE;
 
@@ -259,6 +276,19 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
                 {
                     vkCmdBindIndexBuffer(commandBuffer, ib, 0, batch.mesh->indexType);
                     boundIndexBuffer = ib;
+                }
+            }
+
+            // Bind lightmap UV buffer at vertex binding 1 (or keep dummy if none).
+            {
+                const VkBuffer lmBuf = (batch.mesh->lightmapUVBuffer)
+                                           ? static_cast<VkBuffer>(*batch.mesh->lightmapUVBuffer)
+                                           : (m_dummyLightmapUVBuffer ? static_cast<VkBuffer>(*m_dummyLightmapUVBuffer) : VK_NULL_HANDLE);
+                if (lmBuf != VK_NULL_HANDLE && lmBuf != boundLightmapUVBuffer)
+                {
+                    const VkDeviceSize offset = 0;
+                    vkCmdBindVertexBuffers(commandBuffer, 1, 1, &lmBuf, &offset);
+                    boundLightmapUVBuffer = lmBuf;
                 }
             }
 
@@ -366,13 +396,20 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
         emissiveColor.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
 
+    VkRenderingAttachmentInfo bakedIrradianceColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    bakedIrradianceColor.imageView = m_bakedIrradianceRenderTargets[renderContext.currentImageIndex]->vkImageView();
+    bakedIrradianceColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    bakedIrradianceColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    bakedIrradianceColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    bakedIrradianceColor.clearValue = m_clearValues[4];
+
     VkRenderingAttachmentInfo objectColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     const auto *objectAttachmentTarget = msaaEnabled ? m_msaaObjectIdRenderTarget : m_objectIdRenderTarget;
     objectColor.imageView = objectAttachmentTarget ? objectAttachmentTarget->vkImageView() : VK_NULL_HANDLE;
     objectColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     objectColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     objectColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    objectColor.clearValue = m_clearValues[4];
+    objectColor.clearValue = m_clearValues[5];
 
     VkRenderingAttachmentInfo depthAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     depthAttachment.imageView = (msaaEnabled ? m_msaaDepthRenderTarget : m_depthRenderTarget)->vkImageView();
@@ -382,7 +419,7 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     // (alpha-masked/transparent objects still write depth with LESS).
     depthAttachment.loadOp = m_hasExternalDepth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depthAttachment.clearValue = m_clearValues[5];
+    depthAttachment.clearValue = m_clearValues[6];
     if (msaaEnabled)
     {
         depthAttachment.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
@@ -390,7 +427,8 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
         depthAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
 
-    execution.colorsRenderingItems = {normalColor, albedoColor, materialColor, emissiveColor};
+    // loc 0=normal, 1=albedo, 2=material, 3=emissive, 4=bakedIrradiance, [5=objectId]
+    execution.colorsRenderingItems = {normalColor, albedoColor, materialColor, emissiveColor, bakedIrradianceColor};
     if (m_enableObjectId && objectAttachmentTarget)
         execution.colorsRenderingItems.push_back(objectColor);
     execution.depthRenderingItem = depthAttachment;
@@ -399,6 +437,7 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     execution.targets[m_albedoTextureHandlers[renderContext.currentImageIndex]] = m_albedoRenderTargets[renderContext.currentImageIndex];
     execution.targets[m_materialTextureHandlers[renderContext.currentImageIndex]] = m_materialRenderTargets[renderContext.currentImageIndex];
     execution.targets[m_emissiveTextureHandlers[renderContext.currentImageIndex]] = m_emissiveRenderTargets[renderContext.currentImageIndex];
+    execution.targets[m_bakedIrradianceTextureHandlers[renderContext.currentImageIndex]] = m_bakedIrradianceRenderTargets[renderContext.currentImageIndex];
     if (msaaEnabled)
     {
         execution.targets[m_msaaNormalTextureHandlers[renderContext.currentImageIndex]] = m_msaaNormalRenderTargets[renderContext.currentImageIndex];
@@ -444,6 +483,7 @@ void GBufferRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
     m_msaaMaterialRenderTargets.resize(imageCount);
     m_emissiveRenderTargets.resize(imageCount);
     m_msaaEmissiveRenderTargets.resize(imageCount);
+    m_bakedIrradianceRenderTargets.resize(imageCount);
 
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
     {
@@ -455,6 +495,27 @@ void GBufferRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         m_msaaMaterialRenderTargets[imageIndex] = m_msaaMaterialTextureHandlers.empty() ? nullptr : storage.getTexture(m_msaaMaterialTextureHandlers[imageIndex]);
         m_emissiveRenderTargets[imageIndex] = storage.getTexture(m_emissiveTextureHandlers[imageIndex]);
         m_msaaEmissiveRenderTargets[imageIndex] = m_msaaEmissiveTextureHandlers.empty() ? nullptr : storage.getTexture(m_msaaEmissiveTextureHandlers[imageIndex]);
+        m_bakedIrradianceRenderTargets[imageIndex] = storage.getTexture(m_bakedIrradianceTextureHandlers[imageIndex]);
+    }
+
+    // Create 1-element dummy lightmap UV VBO (vec2(0,0)) for meshes without baked UVs.
+    if (!m_dummyLightmapUVBuffer)
+    {
+        const glm::vec2 zeroUV{0.0f, 0.0f};
+        auto staging = core::Buffer::createShared(sizeof(glm::vec2), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                  core::memory::MemoryUsage::CPU_TO_GPU);
+        staging->upload(&zeroUV, sizeof(glm::vec2));
+        m_dummyLightmapUVBuffer = core::Buffer::createShared(sizeof(glm::vec2),
+                                                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                             core::memory::MemoryUsage::GPU_ONLY);
+        auto cmd = core::CommandBuffer::createShared(*core::VulkanContext::getContext()->getGraphicsCommandPool());
+        cmd->begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+        VkBufferCopy region{0, 0, sizeof(glm::vec2)};
+        vkCmdCopyBuffer(*cmd, *staging, *m_dummyLightmapUVBuffer, 1, &region);
+        cmd->end();
+        const VkQueue gfxQueue = core::VulkanContext::getContext()->getGraphicsQueue();
+        cmd->submit(gfxQueue);
+        vkQueueWaitIdle(gfxQueue);
     }
 }
 
@@ -468,6 +529,7 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     m_msaaMaterialTextureHandlers.clear();
     m_emissiveTextureHandlers.clear();
     m_msaaEmissiveTextureHandlers.clear();
+    m_bakedIrradianceTextureHandlers.clear();
     m_colorFormats.clear();
     m_msaaDepthTextureHandler = {};
     m_objectIdTextureHandler = {};
@@ -487,7 +549,9 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     const VkFormat albedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
     const VkFormat materialFormat = VK_FORMAT_R8G8B8A8_UNORM;
     const VkFormat emissiveFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-    m_colorFormats = {normalFormat, albedoFormat, materialFormat, emissiveFormat};
+    const VkFormat bakedIrradianceFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    // loc 0=normal, 1=albedo, 2=material, 3=emissive, 4=bakedIrradiance, [5=objectId]
+    m_colorFormats = {normalFormat, albedoFormat, materialFormat, emissiveFormat, bakedIrradianceFormat};
     if (m_enableObjectId)
         m_colorFormats.push_back(VK_FORMAT_R32_UINT);
     m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
@@ -496,6 +560,7 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     RGPTextureDescription albedoTextureDescription{albedoFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription materialTextureDescription{materialFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription emissiveTextureDescription{emissiveFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    RGPTextureDescription bakedIrradianceTextureDescription{bakedIrradianceFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription objectIdTextureDescription{VK_FORMAT_R32_UINT, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription depthTextureDescription{m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
     RGPTextureDescription msaaNormalTextureDescription{normalFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
@@ -513,6 +578,8 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
                                                        { return m_extent; });
     emissiveTextureDescription.setCustomExtentFunction([this]
                                                        { return m_extent; });
+    bakedIrradianceTextureDescription.setCustomExtentFunction([this]
+                                                              { return m_extent; });
     objectIdTextureDescription.setCustomExtentFunction([this]
                                                        { return m_extent; });
     depthTextureDescription.setCustomExtentFunction([this]
@@ -601,6 +668,7 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     m_msaaMaterialTextureHandlers.reserve(imageCount);
     m_emissiveTextureHandlers.reserve(imageCount);
     m_msaaEmissiveTextureHandlers.reserve(imageCount);
+    m_bakedIrradianceTextureHandlers.reserve(imageCount);
 
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
     {
@@ -608,21 +676,25 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         albedoTextureDescription.setDebugName("__ELIX_ALBEDO_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         materialTextureDescription.setDebugName("__ELIX_MATERIAL_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         emissiveTextureDescription.setDebugName("__ELIX_EMISSIVE_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
+        bakedIrradianceTextureDescription.setDebugName("__ELIX_BAKED_IRRADIANCE_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
 
         const auto normalTexture = builder.createTexture(normalTextureDescription);
         const auto albedoTexture = builder.createTexture(albedoTextureDescription);
         const auto materialTexture = builder.createTexture(materialTextureDescription);
         const auto emissiveTexture = builder.createTexture(emissiveTextureDescription);
+        const auto bakedIrradianceTexture = builder.createTexture(bakedIrradianceTextureDescription);
 
         m_normalTextureHandlers.push_back(normalTexture);
         m_albedoTextureHandlers.push_back(albedoTexture);
         m_materialTextureHandlers.push_back(materialTexture);
         m_emissiveTextureHandlers.push_back(emissiveTexture);
+        m_bakedIrradianceTextureHandlers.push_back(bakedIrradianceTexture);
 
         builder.write(normalTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(albedoTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(materialTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(emissiveTexture, RGPTextureUsage::COLOR_ATTACHMENT);
+        builder.write(bakedIrradianceTexture, RGPTextureUsage::COLOR_ATTACHMENT);
 
         if (msaaEnabled)
         {
@@ -652,6 +724,7 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     outputs.albedo.set(m_albedoTextureHandlers);
     outputs.material.set(m_materialTextureHandlers);
     outputs.emissive.set(m_emissiveTextureHandlers);
+    outputs.bakedIrradiance.set(m_bakedIrradianceTextureHandlers);
     outputs.depth.set(m_depthTextureHandler);
     outputs.objectId.set(m_objectIdTextureHandler);
 }

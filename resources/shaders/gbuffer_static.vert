@@ -29,14 +29,16 @@ layout(location = 1) in vec2 inTextures;
 layout(location = 2) in vec3 inNormal;
 layout(location = 3) in vec3 inBitangent;
 layout(location = 4) in vec3 inTangent;
+layout(location = 5) in vec2 inLightmapUV; // binding 1 — lightmap UV1
 
 layout(location = 0) out vec2 fragUV;
 layout(location = 1) out vec3 fragNormalView;
-layout(location = 2) out vec3 fragPositionView; 
+layout(location = 2) out vec3 fragPositionView;
 layout(location = 3) out vec3 fragTangentView;
 layout(location = 4) out vec3 fragBitangentView;
 layout(location = 5) out flat uint fragObjectId;
 layout(location = 6) out flat uint fragMaterialIndex;
+layout(location = 7) out vec2 fragLightmapUV;
 
 void main()
 {
@@ -65,6 +67,7 @@ void main()
     fragBitangentView = normalize(view3 * worldBitangent);
 
     fragPositionView = viewPos.xyz;
+    fragLightmapUV = inLightmapUV;
 
     gl_Position = cameraUniformObject.projection * viewPos;
 }

@@ -44,6 +44,8 @@ struct MaterialGPUParams
     uint normalTexIdx;
     uint ormTexIdx;
     uint emissiveTexIdx;
+    uint lightmapTexIdx;
+    uint _lightmapPad;
 };
 
 layout(set = 1, binding = 1, std430) readonly buffer MaterialBuffer

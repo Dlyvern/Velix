@@ -766,7 +766,7 @@ bool EditorRuntime::init()
     m_editor->setOnSceneOpenRequest([this](const std::filesystem::path &path)
                                     { openSceneFromFile(path); });
 
-    initEditorRenderGraph();
+    initEditorRenderGraph(m_editor->getViewportX(), m_editor->getViewportY());
     m_editorRenderGraphTopologyHash = editorRenderGraphTopologyHash(m_activeScene.get(), m_editor.get());
 
     applyEditorViewportExtent(m_editor->getViewportX(), m_editor->getViewportY());
@@ -787,6 +787,15 @@ bool EditorRuntime::init()
     m_editor->setProbeCaptureCallback([this](engine::Entity *entity)
     {
         m_pendingProbeCaptureEntity = entity;
+    });
+
+    // Lightmap baker
+    m_lightmapBaker = std::make_unique<engine::LightmapBaker>();
+    m_editor->setLightmapBakeProgress(&m_lightmapBakeProgress);
+    m_editor->setLightmapBakeCallback([this](const engine::LightmapBakeSettings &settings)
+    {
+        m_pendingLightmapBakeSettings = settings;
+        m_pendingLightmapBake         = true;
     });
 
     return true;
@@ -970,7 +979,7 @@ void EditorRuntime::shutdownGameViewportRenderGraph()
     m_gameViewportRenderGraphTopologyHash = 0u;
 }
 
-void EditorRuntime::initEditorRenderGraph()
+void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewportHeight)
 {
     if (m_renderGraph)
         m_renderGraph->cleanResources();
@@ -1134,6 +1143,7 @@ void EditorRuntime::initEditorRenderGraph()
         rtShadowHandlers,
         aoHandlers,
         giHandlers);
+    m_lightingRenderGraphPass->setBakedIrradianceHandlers(m_gBufferRenderGraphPass->getBakedIrradianceHandlers());
 
     auto *hdrSceneInput = &m_lightingRenderGraphPass->getOutput();
     if (useContactShadows)
@@ -1315,6 +1325,12 @@ void EditorRuntime::initEditorRenderGraph()
         *editorSceneInput,
         m_gBufferRenderGraphPass->getObjectTextureHandler());
 
+    // Apply the viewport extent before setup() so compile() inside setup() uses the
+    // correct extents from the start. This prevents a dirty-pass recompile on the
+    // first frame caused by the extent mismatch between the swapchain default and the
+    // actual editor viewport panel size.
+    applyEditorViewportExtent(viewportWidth, viewportHeight);
+
     m_renderGraph->setup();
     m_renderGraph->createRenderGraphResources();
     m_editorRenderGraphTopologyHash = editorRenderGraphTopologyHash(m_activeScene.get(), m_editor.get());
@@ -1344,7 +1360,7 @@ void EditorRuntime::initEditorRenderGraph()
     }
 }
 
-void EditorRuntime::initGameViewportRenderGraph()
+void EditorRuntime::initGameViewportRenderGraph(uint32_t viewportWidth, uint32_t viewportHeight)
 {
     shutdownGameViewportRenderGraph();
 
@@ -1489,6 +1505,7 @@ void EditorRuntime::initGameViewportRenderGraph()
         gameRTShadowHandlers,
         gameAOHandlers,
         gameGIHandlers);
+    m_gameLightingRenderGraphPass->setBakedIrradianceHandlers(m_gameGBufferRenderGraphPass->getBakedIrradianceHandlers());
 
     auto *hdrSceneInput = &m_gameLightingRenderGraphPass->getOutput();
     if (useContactShadows)
@@ -1638,6 +1655,11 @@ void EditorRuntime::initGameViewportRenderGraph()
         ldrSceneInput = &m_gameUIRenderGraphPass->getHandlers();
     }
     m_gameViewportOutputHandlers = ldrSceneInput;
+
+    // Apply the viewport extent before setup() so compile() inside setup() uses the
+    // correct extents from the start, eliminating the extra dirty-pass recompile on
+    // the first frame after the game viewport becomes visible.
+    applyGameViewportExtent(viewportWidth, viewportHeight);
 
     m_gameViewportRenderGraph->setup();
     m_gameViewportRenderGraph->createRenderGraphResources();
@@ -1819,11 +1841,12 @@ void EditorRuntime::tick(float deltaTime)
     const bool shouldRenderGameViewport = m_isPlaySessionActive || m_editor->isGameViewportVisible();
     if (!shouldRenderGameViewport && m_gameViewportRenderGraph)
         shutdownGameViewportRenderGraph();
-    if (shouldRenderGameViewport && !m_gameViewportRenderGraph)
-        initGameViewportRenderGraph();
-
     const uint32_t gameViewportWidth = m_editor->getGameViewportX();
     const uint32_t gameViewportHeight = m_editor->getGameViewportY();
+
+    if (shouldRenderGameViewport && !m_gameViewportRenderGraph)
+        initGameViewportRenderGraph(gameViewportWidth, gameViewportHeight);
+
     applyGameViewportExtent(gameViewportWidth, gameViewportHeight);
     if (m_gameRenderCamera && gameViewportWidth > 0 && gameViewportHeight > 0)
         m_gameRenderCamera->setAspect(static_cast<float>(gameViewportWidth) / static_cast<float>(gameViewportHeight));
@@ -1838,7 +1861,7 @@ void EditorRuntime::tick(float deltaTime)
                               << " -> "
                               << currentEditorTopologyHash
                               << '\n');
-        initEditorRenderGraph();
+        initEditorRenderGraph(editorViewportWidth, editorViewportHeight);
         applyEditorViewportExtent(editorViewportWidth, editorViewportHeight);
     }
 
@@ -1850,7 +1873,7 @@ void EditorRuntime::tick(float deltaTime)
                               << " -> "
                               << currentGameViewportTopologyHash
                               << '\n');
-        initGameViewportRenderGraph();
+        initGameViewportRenderGraph(gameViewportWidth, gameViewportHeight);
         applyGameViewportExtent(gameViewportWidth, gameViewportHeight);
     }
 
@@ -1904,6 +1927,25 @@ void EditorRuntime::tick(float deltaTime)
     {
         captureReflectionProbe(m_pendingProbeCaptureEntity);
         m_pendingProbeCaptureEntity = nullptr;
+    }
+
+    // --- Lightmap bake (synchronous GPU work, must run on main thread) ---
+    if (m_pendingLightmapBake && m_activeScene && m_shadowRenderGraphPass && m_renderGraph)
+    {
+        m_pendingLightmapBake = false;
+
+        const std::string lightmapDir = m_projectPath + "/lightmaps";
+        m_lightmapBaker->bake(m_activeScene.get(),
+                              m_shadowRenderGraphPass,
+                              m_renderGraph.get(),
+                              lightmapDir,
+                              m_pendingLightmapBakeSettings,
+                              m_lightmapBakeProgress);
+
+        // Rebuild the editor render graph so newly attached LightmapComponents
+        // are picked up (bindless texture slots re-registered).
+        const VkExtent2D lastExtent = m_lastEditorRenderExtent;
+        initEditorRenderGraph(lastExtent.width, lastExtent.height);
     }
 
     syncNearestReflectionProbe(m_lightingRenderGraphPass, m_activeScene.get(), m_editorRenderCamera);
@@ -2131,9 +2173,18 @@ void EditorRuntime::shutdown()
 
     if (m_editor)
     {
+        m_editor->releaseRenderGraphBackedImGuiResources();
         m_editor->setProjectScriptsRegister(nullptr, {});
         m_editor->setScene(nullptr);
     }
+
+    if (m_animTreePreviewDescriptorSet != VK_NULL_HANDLE)
+    {
+        ImGui_ImplVulkan_RemoveTexture(m_animTreePreviewDescriptorSet);
+        m_animTreePreviewDescriptorSet = VK_NULL_HANDLE;
+    }
+
+    m_animTreePreviewPass = nullptr;
 
     m_activeScene.reset();
     m_playScene.reset();

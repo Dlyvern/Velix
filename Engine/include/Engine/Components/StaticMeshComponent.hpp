@@ -72,6 +72,9 @@ public:
     void setAssetPath(const std::string &path) { m_assetPath = path; }
     const std::string &getAssetPath() const { return m_assetPath; }
 
+    void setVisible(bool visible) { m_visible = visible; }
+    [[nodiscard]] bool isVisible() const { return m_visible; }
+
     // ---- On-demand streaming ----
 
     // Returns the handle used for async loading.
@@ -94,6 +97,7 @@ private:
     std::vector<std::string> m_perMeshMaterialOverridePaths;
     std::string m_assetPath;
     AssetHandle<ModelAsset> m_modelHandle;
+    bool m_visible{true};
 };
 
 ELIX_NESTED_NAMESPACE_END

@@ -2,6 +2,7 @@
 #define ELIX_GBUFFER_RENDER_GRAPH_PASS_HPP
 
 #include "Engine/Render/GraphPasses/IRenderGraphPass.hpp"
+#include "Core/Buffer.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
@@ -38,6 +39,7 @@ public:
     std::vector<RGPResourceHandler> &getNormalTextureHandlers() { return m_normalTextureHandlers; }
     std::vector<RGPResourceHandler> &getMaterialTextureHandlers() { return m_materialTextureHandlers; }
     std::vector<RGPResourceHandler> &getEmissiveTextureHandlers() { return m_emissiveTextureHandlers; }
+    std::vector<RGPResourceHandler> &getBakedIrradianceHandlers() { return m_bakedIrradianceTextureHandlers; }
     bool usesObjectIdResolvePath() const { return m_msaaObjectIdTextureHandler.isValid(); }
 
     struct Outputs
@@ -46,12 +48,13 @@ public:
         RGPOutputSlot<MultiHandle>  albedo;
         RGPOutputSlot<MultiHandle>  material;
         RGPOutputSlot<MultiHandle>  emissive;
+        RGPOutputSlot<MultiHandle>  bakedIrradiance;
         RGPOutputSlot<SingleHandle> depth;
         RGPOutputSlot<SingleHandle> objectId;
     } outputs;
 
 private:
-    std::array<VkClearValue, 6> m_clearValues{};
+    std::array<VkClearValue, 7> m_clearValues{};
 
     std::vector<const RenderTarget *> m_normalRenderTargets;
     std::vector<const RenderTarget *> m_msaaNormalRenderTargets;
@@ -61,6 +64,7 @@ private:
     std::vector<const RenderTarget *> m_msaaMaterialRenderTargets;
     std::vector<const RenderTarget *> m_emissiveRenderTargets;
     std::vector<const RenderTarget *> m_msaaEmissiveRenderTargets;
+    std::vector<const RenderTarget *> m_bakedIrradianceRenderTargets;
     const RenderTarget *m_depthRenderTarget{nullptr};
     const RenderTarget *m_msaaDepthRenderTarget{nullptr};
     const RenderTarget *m_objectIdRenderTarget{nullptr};
@@ -81,6 +85,10 @@ private:
     std::vector<RGPResourceHandler> m_msaaMaterialTextureHandlers;
     std::vector<RGPResourceHandler> m_emissiveTextureHandlers;
     std::vector<RGPResourceHandler> m_msaaEmissiveTextureHandlers;
+    std::vector<RGPResourceHandler> m_bakedIrradianceTextureHandlers;
+
+    // One-element vec2(0,0) VBO bound at vertex binding 1 for meshes without lightmap UVs.
+    core::Buffer::SharedPtr m_dummyLightmapUVBuffer;
 
     RGPResourceHandler m_depthTextureHandler;
     RGPResourceHandler m_msaaDepthTextureHandler;

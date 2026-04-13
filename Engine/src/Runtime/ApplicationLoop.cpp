@@ -256,27 +256,32 @@ void ApplicationLoop::shutdown()
 
     ReflectionProbeComponent::flushDeferredCapturedCubemapReleases();
 
+    scripting::setActiveScene(nullptr);
+    scripting::setActiveWindow(nullptr);
+    AssetsLoader::clearAssetLoaders();
+
+    if (m_vulkanContext)
+    {
+        cache::GraphicsPipelineCache::saveCacheToFile(m_vulkanContext->getDevice(), m_graphicsPipelineCachePath);
+        GraphicsPipelineManager::destroy();
+        cache::GraphicsPipelineCache::deleteCache(m_vulkanContext->getDevice());
+
+        Material::deleteDefaultMaterial();
+        Texture::destroyDefaults();
+
+        utilities::AsyncGpuUpload::shutdown(m_vulkanContext->getDevice());
+
+        EngineShaderFamilies::cleanEngineShaderFamilies();
+
+        m_vulkanContext->cleanup();
+        m_vulkanContext.reset();
+    }
+
+    m_window.reset();
     glfwTerminate();
 
     PhysXCore::shutdown();
     audio::AudioSystem::shutdown();
-
-    cache::GraphicsPipelineCache::saveCacheToFile(m_vulkanContext->getDevice(), m_graphicsPipelineCachePath);
-    GraphicsPipelineManager::destroy();
-    cache::GraphicsPipelineCache::deleteCache(m_vulkanContext->getDevice());
-
-    scripting::setActiveScene(nullptr);
-    scripting::setActiveWindow(nullptr);
-    Material::deleteDefaultMaterial();
-    Texture::destroyDefaults();
-
-    utilities::AsyncGpuUpload::shutdown(m_vulkanContext->getDevice());
-
-    AssetsLoader::clearAssetLoaders();
-
-    EngineShaderFamilies::cleanEngineShaderFamilies();
-
-    m_vulkanContext->cleanup();
 }
 
 ELIX_NESTED_NAMESPACE_END

@@ -63,6 +63,7 @@ target_link_libraries(${PROJECT_NAME}
         physx
         fmod
         freetype
+        xatlas
 )
 
 if(WIN32)

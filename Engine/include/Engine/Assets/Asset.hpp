@@ -39,7 +39,8 @@ public:
     {
         RGBA8 = 0,
         RGBA32F = 1,
-        COMPRESSED_GPU = 2
+        COMPRESSED_GPU = 2,
+        RGBA16F = 3   // R16G16B16A16_SFLOAT — 8 bytes/pixel (half-float)
     };
 
     std::string name;

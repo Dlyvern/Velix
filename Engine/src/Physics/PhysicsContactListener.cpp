@@ -147,11 +147,22 @@ void PhysicsContactListener::onTrigger(physx::PxTriggerPair *pairs, physx::PxU32
 }
 
 physx::PxFilterFlags contactNotifyFilterShader(
-    physx::PxFilterObjectAttributes attributes0, physx::PxFilterData /*filterData0*/,
-    physx::PxFilterObjectAttributes attributes1, physx::PxFilterData /*filterData1*/,
+    physx::PxFilterObjectAttributes attributes0, physx::PxFilterData filterData0,
+    physx::PxFilterObjectAttributes attributes1, physx::PxFilterData filterData1,
     physx::PxPairFlags &pairFlags,
     const void * /*constantBlock*/, physx::PxU32 /*constantBlockSize*/)
 {
+    constexpr physx::PxU32 kRagdollPhysicsCategory = 2u;
+
+    if (filterData0.word0 == kRagdollPhysicsCategory &&
+        filterData1.word0 == kRagdollPhysicsCategory &&
+        filterData0.word1 != 0u &&
+        filterData0.word1 == filterData1.word1)
+    {
+        pairFlags = physx::PxPairFlags();
+        return physx::PxFilterFlag::eSUPPRESS;
+    }
+
     // Let triggers through
     if (physx::PxFilterObjectIsTrigger(attributes0) || physx::PxFilterObjectIsTrigger(attributes1))
     {

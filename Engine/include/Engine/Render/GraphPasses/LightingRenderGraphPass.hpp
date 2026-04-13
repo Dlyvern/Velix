@@ -35,6 +35,12 @@ public:
     void setProbeData(VkImageView view, VkSampler sampler,
                       const glm::vec3 &worldPos, float radius, float intensity);
 
+    // Optionally wire baked irradiance GBuffer attachment (binding 13).
+    void setBakedIrradianceHandlers(std::vector<RGPResourceHandler> &handlers)
+    {
+        m_bakedIrradianceHandlers = &handlers;
+    }
+
     void compile(renderGraph::RGPResourcesStorage &storage) override;
     void freeResources() override;
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
@@ -72,9 +78,10 @@ private:
     std::vector<RGPResourceHandler> &m_materialTextureHandlers;
     std::vector<RGPResourceHandler> &m_emissiveTextureHandlers;
 
-    std::vector<RGPResourceHandler> *m_rtShadowTextureHandlers{nullptr}; // optional, binding 10
-    std::vector<RGPResourceHandler> *m_aoTextureHandlers{nullptr};       // optional, binding 9
-    std::vector<RGPResourceHandler> *m_giTextureHandlers{nullptr};       // optional, binding 12
+    std::vector<RGPResourceHandler> *m_rtShadowTextureHandlers{nullptr};        // optional, binding 10
+    std::vector<RGPResourceHandler> *m_aoTextureHandlers{nullptr};             // optional, binding 9
+    std::vector<RGPResourceHandler> *m_giTextureHandlers{nullptr};             // optional, binding 12
+    std::vector<RGPResourceHandler> *m_bakedIrradianceHandlers{nullptr};       // optional, binding 13
 
     core::Sampler::SharedPtr m_defaultSampler{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};

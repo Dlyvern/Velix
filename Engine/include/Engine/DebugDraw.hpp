@@ -100,6 +100,7 @@ private:
         float lifetime; // remaining seconds; 0 = this-frame-only
         bool depthTest; // stored for potential future multi-pipeline support
         Primitive primitive{Primitive::LineList};
+        bool newlySubmitted{true};
     };
 
     static std::vector<Shape> &shapes();

@@ -8,12 +8,14 @@ layout(location = 3) in vec3 fragTangentView;
 layout(location = 4) in vec3 fragBitangentView;
 layout(location = 5) in flat uint fragObjectId;
 layout(location = 6) in flat uint fragMaterialIndex;
+layout(location = 7) in vec2 fragLightmapUV;
 
-layout(location = 0) out vec4 outGBufferNormal;   // normal (encoded)
-layout(location = 1) out vec4 outGBufferAlbedo;   // albedo + alpha
-layout(location = 2) out vec4 outGBufferMaterial; // ao, roughness, metallic, reserved
-layout(location = 3) out vec4 outGBufferEmissive; // emissive rgb
-layout(location = 4) out uint outObjectId;
+layout(location = 0) out vec4 outGBufferNormal;      // normal (encoded)
+layout(location = 1) out vec4 outGBufferAlbedo;      // albedo + alpha
+layout(location = 2) out vec4 outGBufferMaterial;    // ao, roughness, metallic, reserved
+layout(location = 3) out vec4 outGBufferEmissive;    // emissive rgb
+layout(location = 4) out vec4 outBakedIrradiance;    // pre-baked irradiance (0=dynamic lighting)
+layout(location = 5) out uint outObjectId;
 
 layout(set = 0, binding = 0) uniform CameraUniformObject
 {
@@ -44,6 +46,8 @@ struct MaterialGPUParams
     uint  normalTexIdx;
     uint  ormTexIdx;
     uint  emissiveTexIdx;
+    uint  lightmapTexIdx;  // 0xFFFFFFFF = no lightmap
+    uint  _lightmapPad;
 };
 
 layout(set = 1, binding = 1, std430) readonly buffer MaterialBuffer
@@ -149,4 +153,9 @@ void main()
     outGBufferAlbedo   = vec4(albedo, alpha);
     outGBufferMaterial = vec4(ao, roughness, metallic, 0.0);
     outGBufferEmissive = vec4(emissive, 1.0);
+
+    if (mat.lightmapTexIdx != 0xFFFFFFFFu)
+        outBakedIrradiance = texture(allTextures[nonuniformEXT(mat.lightmapTexIdx)], fragLightmapUV);
+    else
+        outBakedIrradiance = vec4(0.0);
 }

@@ -74,6 +74,9 @@ public:
         uint32_t normalTexIdx{0};
         uint32_t ormTexIdx{0};
         uint32_t emissiveTexIdx{0};
+        // Baked lightmap irradiance texture. 0xFFFFFFFF = no lightmap.
+        uint32_t lightmapTexIdx{0xFFFFFFFFu};
+        uint32_t _lightmapPad{0};   // keep 16-byte struct alignment
     };
 
     Material(Texture::SharedPtr texture);
@@ -156,6 +159,9 @@ public:
     std::string normalTexture;
     std::string ormTexture;
     std::string emissiveTexture;
+    // Path to the baked lightmap .texture.elixasset for this mesh.
+    // Empty = no baked lightmap.
+    std::string lightmapTexture;
     std::string name;
     MaterialDomain domain{MaterialDomain::Surface};
     DecalBlendMode decalBlendMode{DecalBlendMode::ColorNormal};

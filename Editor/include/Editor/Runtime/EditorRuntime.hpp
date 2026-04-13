@@ -48,6 +48,8 @@
 #include "Engine/Render/GraphPasses/RTGIDenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTTemporalAccumulationRenderGraphPass.hpp"
 
+#include "Engine/Render/LightmapBaker.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -93,9 +95,9 @@ private:
     int m_loadingPreviousWindowWidth{0};
     int m_loadingPreviousWindowHeight{0};
 
-    void initGameViewportRenderGraph();
+    void initGameViewportRenderGraph(uint32_t viewportWidth = 0, uint32_t viewportHeight = 0);
     void shutdownGameViewportRenderGraph();
-    void initEditorRenderGraph();
+    void initEditorRenderGraph(uint32_t viewportWidth = 0, uint32_t viewportHeight = 0);
     void switchActiveScene(const std::shared_ptr<engine::Scene> &scene);
     void onEditorModeChanged(Editor::EditorMode mode);
 
@@ -211,6 +213,12 @@ private:
     bool m_shouldUpdate{false};
     bool m_isPlaySessionActive{false};
     engine::Entity *m_pendingProbeCaptureEntity{nullptr};
+
+    // Lightmap baking
+    std::unique_ptr<engine::LightmapBaker> m_lightmapBaker;
+    engine::LightmapBakeProgress           m_lightmapBakeProgress;
+    bool                                   m_pendingLightmapBake{false};
+    engine::LightmapBakeSettings           m_pendingLightmapBakeSettings;
 };
 
 ELIX_NESTED_NAMESPACE_END

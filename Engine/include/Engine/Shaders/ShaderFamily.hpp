@@ -31,6 +31,13 @@ public:
     static constexpr uint32_t MAX_BINDLESS_TEXTURES  = 4096;
     static constexpr uint32_t MAX_BINDLESS_MATERIALS = 2048;
 
+    static const ShaderFamily &getMeshShaderFamily();
+    static const core::DescriptorSetLayout &getObjectDescriptorSetLayoutRef();
+    static const core::DescriptorSetLayout &getCameraDescriptorSetLayoutRef();
+    static const core::DescriptorSetLayout &getMaterialDescriptorSetLayoutRef();
+    static VkDescriptorSetLayout getBindlessMaterialSetLayout();
+    static VkPipelineLayout getBindlessMeshPipelineLayout();
+
     static void initEngineShaderFamilies();
     static void cleanEngineShaderFamilies();
 };

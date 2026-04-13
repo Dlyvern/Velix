@@ -31,6 +31,9 @@ public:
     void setQuadsPerChunk(uint32_t quadsPerChunk);
     uint32_t getQuadsPerChunk() const;
 
+    void setVisible(bool visible) { m_visible = visible; }
+    [[nodiscard]] bool isVisible() const { return m_visible; }
+
     void setChunksDirty();
     void ensureChunkMeshesBuilt();
 
@@ -45,6 +48,7 @@ private:
     std::string m_materialOverridePath{};
 
     uint32_t m_quadsPerChunk{63u};
+    bool m_visible{true};
     bool m_chunkMeshesDirty{true};
     std::vector<CPUMesh> m_chunkMeshes;
 };

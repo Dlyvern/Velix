@@ -47,6 +47,11 @@ public:
         return m_depthCubeTextureHandler;
     }
 
+    // Compiled shadow map views — valid after compile(), used by LightmapBaker.
+    VkImageView getDirectionalShadowImageView() const { return m_renderTarget ? m_renderTarget->vkImageView() : VK_NULL_HANDLE; }
+    VkImageView getSpotShadowImageView()        const { return m_arrayRenderTarget ? m_arrayRenderTarget->vkImageView() : VK_NULL_HANDLE; }
+    VkImageView getCubeShadowImageView()        const { return m_cubeRenderTarget ? m_cubeRenderTarget->vkImageView() : VK_NULL_HANDLE; }
+
     struct Outputs
     {
         RGPOutputSlot<SingleHandle> directionalShadow;
