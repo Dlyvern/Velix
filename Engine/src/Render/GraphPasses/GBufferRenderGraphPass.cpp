@@ -175,9 +175,12 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             if (pipelineIt != pipelineCache.end())
                 return pipelineIt->second;
 
-            const VkPipeline pipeline = GraphicsPipelineManager::getOrCreate(key);
-            pipelineCache.emplace(std::move(key), pipeline);
-            return pipeline;
+            const auto sharedPipeline = GraphicsPipelineManager::getOrCreate(key);
+            const VkPipeline vkPipeline = (sharedPipeline && sharedPipeline->isValid())
+                                              ? sharedPipeline->vk()
+                                              : VK_NULL_HANDLE;
+            pipelineCache.emplace(std::move(key), vkPipeline);
+            return vkPipeline;
         };
 
         // If the unified static geometry buffer is available and all static batches are
@@ -217,6 +220,8 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
                 continue;
 
             const VkPipeline batchPipeline = getPipelineForBatch(batch);
+            if (batchPipeline == VK_NULL_HANDLE)
+                continue; // pipeline creation failed (e.g. unsupported GPU feature) — skip silently
             if (batchPipeline != boundPipeline)
             {
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, batchPipeline);

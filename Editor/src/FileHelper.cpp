@@ -30,30 +30,77 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string &comman
     int exitCode = -1;
 
 #ifdef _WIN32
-    // Build the pipe command, redirecting stderr to stdout.
-    std::string pipeCmd = command + " 2>&1";
+    // Use CreateProcess + an anonymous pipe to capture stdout+stderr.
+    // This bypasses cmd.exe entirely, so there are no cmd.exe quoting quirks
+    // and Unicode paths (UTF-8 → UTF-16) are handled correctly.
 
-    // cmd.exe (invoked by _popen) requires the ENTIRE command to be wrapped in an
-    // extra pair of outer double-quotes when the executable token itself is quoted.
-    // Without this, cmd.exe strips the first quoted token as the outer delimiter
-    // and misinterprets the rest, producing ERROR_INVALID_NAME.
-    if (!pipeCmd.empty() && pipeCmd[0] == '"')
-        pipeCmd = "\"" + pipeCmd + "\"";
-
-    // Convert the UTF-8 command string to UTF-16 so that _wpopen can handle paths
-    // containing characters outside the current ANSI code page (e.g. accented letters,
-    // Cyrillic, CJK).  _popen uses the narrow ANSI code page and silently garbles or
-    // rejects such paths.
-    const int wideLen = MultiByteToWideChar(CP_UTF8, 0, pipeCmd.c_str(), -1, nullptr, 0);
+    // Convert UTF-8 command string to UTF-16.
+    const int wideLen = MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, nullptr, 0);
     std::wstring wideCmd(wideLen > 0 ? static_cast<size_t>(wideLen - 1) : 0u, L'\0');
     if (wideLen > 0)
-        MultiByteToWideChar(CP_UTF8, 0, pipeCmd.c_str(), -1, wideCmd.data(), wideLen);
+        MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, wideCmd.data(), wideLen);
 
-    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_wpopen(wideCmd.c_str(), L"r"), _pclose);
+    // Create an anonymous pipe; the child inherits the write end for stdout+stderr.
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength              = sizeof(sa);
+    sa.bInheritHandle       = TRUE;
+    sa.lpSecurityDescriptor = nullptr;
+
+    HANDLE hReadPipe = nullptr, hWritePipe = nullptr;
+    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0))
+    {
+        VX_EDITOR_ERROR_STREAM("Failed to create pipe for command: " << command);
+        return {-1, ""};
+    }
+    // Prevent the read end from being inherited by the child.
+    SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOW si{};
+    si.cb         = sizeof(si);
+    si.dwFlags    = STARTF_USESTDHANDLES;
+    si.hStdOutput = hWritePipe;
+    si.hStdError  = hWritePipe;
+    si.hStdInput  = nullptr;
+
+    PROCESS_INFORMATION pi{};
+    const BOOL created = CreateProcessW(
+        nullptr,           // derive executable from command line
+        wideCmd.data(),    // mutable UTF-16 command line
+        nullptr, nullptr,  // process / thread security attributes
+        TRUE,              // inherit handles (write pipe)
+        CREATE_NO_WINDOW,  // no console window
+        nullptr, nullptr,  // environment / working directory (inherit)
+        &si, &pi);
+
+    // Close the write end in the parent now that the child has inherited it.
+    // ReadFile will return EOF when the child exits and closes its own copy.
+    CloseHandle(hWritePipe);
+
+    if (!created)
+    {
+        CloseHandle(hReadPipe);
+        VX_EDITOR_ERROR_STREAM("Failed to execute command: " << command);
+        return {-1, ""};
+    }
+
+    // Drain all output.
+    DWORD bytesRead = 0;
+    while (ReadFile(hReadPipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytesRead, nullptr) && bytesRead > 0)
+        result.append(buffer.data(), bytesRead);
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD winExitCode = 0;
+    GetExitCodeProcess(pi.hProcess, &winExitCode);
+    exitCode = static_cast<int>(winExitCode);
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    CloseHandle(hReadPipe);
+
+    return {exitCode, result};
 #else
     std::string commandWithStderr = command + " 2>&1";
     std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(commandWithStderr.c_str(), "r"), pclose);
-#endif
 
     if (!pipe)
     {
@@ -64,17 +111,14 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string &comman
     while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr)
         result += buffer.data();
 
-#ifdef _WIN32
-    exitCode = _pclose(pipe.release());
-#else
     const int statusCode = pclose(pipe.release());
     if (WIFEXITED(statusCode))
         exitCode = WEXITSTATUS(statusCode);
     else
         exitCode = statusCode;
-#endif
 
     return {exitCode, result};
+#endif
 }
 
 bool FileHelper::launchDetachedCommand(const std::string &command)

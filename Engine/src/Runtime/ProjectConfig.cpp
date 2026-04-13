@@ -9,6 +9,14 @@
 #include <fstream>
 #include <iomanip>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <cstdio>
+#endif
+
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 namespace
@@ -38,6 +46,33 @@ bool ProjectConfig::load(const std::filesystem::path &projectRoot)
     if (!std::filesystem::exists(path))
         return true;
 
+#if defined(_WIN32)
+    FILE *rawFile = _wfopen(path.wstring().c_str(), L"rb");
+    if (!rawFile)
+    {
+        VX_ENGINE_WARNING_STREAM("Failed to open project config: " << path << '\n');
+        return false;
+    }
+    std::string fileContent;
+    {
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), rawFile)) > 0)
+            fileContent.append(buf, n);
+    }
+    fclose(rawFile);
+
+    nlohmann::json json;
+    try
+    {
+        json = nlohmann::json::parse(fileContent);
+    }
+    catch (const nlohmann::json::parse_error &e)
+    {
+        VX_ENGINE_WARNING_STREAM("Failed to parse project config: " << e.what() << '\n');
+        return false;
+    }
+#else
     std::ifstream file(path);
     if (!file.is_open())
     {
@@ -55,6 +90,7 @@ bool ProjectConfig::load(const std::filesystem::path &projectRoot)
         VX_ENGINE_WARNING_STREAM("Failed to parse project config: " << e.what() << '\n');
         return false;
     }
+#endif
 
     if (json.contains("camera") && json["camera"].is_object())
     {
@@ -294,6 +330,19 @@ bool ProjectConfig::save(const std::filesystem::path &projectRoot) const
         {"chromatic_aberration_strength", m_chromaticAberrationStrength}};
 
     const std::filesystem::path path = projectRoot / k_filename;
+
+#if defined(_WIN32)
+    FILE *rawFile = _wfopen(path.wstring().c_str(), L"wb");
+    if (!rawFile)
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to write project config: " << path << '\n');
+        return false;
+    }
+    const std::string jsonStr = json.dump(4) + "\n";
+    const bool writeOk = fwrite(jsonStr.data(), 1, jsonStr.size(), rawFile) == jsonStr.size();
+    fclose(rawFile);
+    return writeOk;
+#else
     std::ofstream file(path);
     if (!file.is_open())
     {
@@ -303,6 +352,7 @@ bool ProjectConfig::save(const std::filesystem::path &projectRoot) const
 
     file << std::setw(4) << json << '\n';
     return file.good();
+#endif
 }
 
 void ProjectConfig::applyRenderSettings() const

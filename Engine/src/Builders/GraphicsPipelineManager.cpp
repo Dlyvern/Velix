@@ -83,7 +83,21 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(const Gra
     if (it != m_pipelines.end())
         return it->second;
 
-    auto created = createPipeline(key);
+    core::GraphicsPipeline::SharedPtr created;
+    try
+    {
+        created = createPipeline(key);
+    }
+    catch (const std::exception &e)
+    {
+        VX_ENGINE_ERROR_STREAM("Graphics pipeline creation failed (shader="
+                               << shaderIdToString(key.shader)
+                               << "): " << e.what()
+                               << " — draw calls using this pipeline type will be skipped");
+        m_pipelines[key] = nullptr; // cache null so we do not retry every frame
+        return nullptr;
+    }
+
     m_pipelines[key] = created;
 
     VX_ENGINE_DEBUG_STREAM("Created graphics pipeline (shader="

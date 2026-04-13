@@ -88,7 +88,7 @@ public:                                                          \
         using std::shared_ptr<ClassName>::shared_ptr;            \
         operator HandleType() const                              \
         {                                                        \
-            return (*this)->m_handle;                            \
+            return this->get() ? (*this)->m_handle : HandleType{}; \
         }                                                        \
     };                                                           \
                                                                  \
