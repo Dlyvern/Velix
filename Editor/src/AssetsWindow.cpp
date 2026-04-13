@@ -1432,7 +1432,8 @@ void AssetsWindow::drawAssetGrid()
         ImGui::SameLine();
         if (ImGui::Button("Current Folder"))
         {
-            const std::string currentPath = m_currentDirectory.lexically_normal().string();
+            auto u8 = m_currentDirectory.lexically_normal().u8string();
+            const std::string currentPath(u8.begin(), u8.end());
             std::memset(m_importDestinationBuffer, 0, sizeof(m_importDestinationBuffer));
             std::strncpy(m_importDestinationBuffer, currentPath.c_str(), sizeof(m_importDestinationBuffer) - 1);
         }
@@ -1440,7 +1441,8 @@ void AssetsWindow::drawAssetGrid()
         ImGui::SameLine();
         if (ImGui::Button("Resources") && !projectRoot.empty())
         {
-            const std::string resourcesPath = (projectRoot / "resources").lexically_normal().string();
+            auto u8 = (projectRoot / "resources").lexically_normal().u8string();
+            const std::string resourcesPath(u8.begin(), u8.end());
             std::memset(m_importDestinationBuffer, 0, sizeof(m_importDestinationBuffer));
             std::strncpy(m_importDestinationBuffer, resourcesPath.c_str(), sizeof(m_importDestinationBuffer) - 1);
         }
@@ -1494,9 +1496,24 @@ void AssetsWindow::drawAssetGrid()
             {
                 std::function<void(const std::filesystem::path &)> drawDirectoryNode = [&](const std::filesystem::path &directory)
                 {
-                    std::string nodeName = directory.filename().string();
-                    if (nodeName.empty())
-                        nodeName = directory.string();
+                    // Use u8string() to safely handle Unicode directory names on Windows.
+                    // path::string() throws std::system_error when the path contains characters
+                    // that cannot be mapped to the current ANSI code page.
+                    auto toDisplayName = [](const std::filesystem::path &p) -> std::string {
+                        try {
+                            auto u8 = p.filename().u8string();
+                            std::string s(u8.begin(), u8.end());
+                            if (s.empty()) {
+                                auto u8full = p.u8string();
+                                s = std::string(u8full.begin(), u8full.end());
+                            }
+                            return s;
+                        } catch (...) {
+                            return "???";
+                        }
+                    };
+
+                    std::string nodeName = toDisplayName(directory);
 
                     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
                                                ImGuiTreeNodeFlags_SpanFullWidth;
@@ -1516,7 +1533,11 @@ void AssetsWindow::drawAssetGrid()
                     }
 
                     std::sort(childDirectories.begin(), childDirectories.end(), [](const std::filesystem::path &left, const std::filesystem::path &right)
-                              { return left.filename().string() < right.filename().string(); });
+                              {
+                                  auto lu8 = left.filename().u8string();
+                                  auto ru8 = right.filename().u8string();
+                                  return lu8 < ru8;
+                              });
 
                     if (childDirectories.empty())
                         flags |= ImGuiTreeNodeFlags_Leaf;
@@ -1548,7 +1569,10 @@ void AssetsWindow::drawAssetGrid()
                 if (ImGui::Button("Select All Visible"))
                 {
                     for (const auto &file : importFiles)
-                        m_importSelectedSourcePaths.insert(file.string());
+                    {
+                        auto u8 = file.u8string();
+                        m_importSelectedSourcePaths.insert(std::string(u8.begin(), u8.end()));
+                    }
                 }
 
                 ImGui::SameLine();
@@ -1566,7 +1590,8 @@ void AssetsWindow::drawAssetGrid()
                 {
                     for (const auto &file : importFiles)
                     {
-                        const std::string key = file.string();
+                        auto u8key = file.u8string();
+                        const std::string key(u8key.begin(), u8key.end());
                         bool selected = m_importSelectedSourcePaths.find(key) != m_importSelectedSourcePaths.end();
 
                         ImGui::PushID(key.c_str());
@@ -1596,7 +1621,11 @@ void AssetsWindow::drawAssetGrid()
         ImGui::SameLine();
         ImGui::Text("Selected: %zu", m_importSelectedSourcePaths.size());
 
-        ImGui::TextWrapped("Destination: %s", destinationDirectory.string().c_str());
+        {
+            auto u8dest = destinationDirectory.u8string();
+            std::string destStr(u8dest.begin(), u8dest.end());
+            ImGui::TextWrapped("Destination: %s", destStr.c_str());
+        }
         if (!destinationInsideProject)
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "Destination must be inside project root.");
 

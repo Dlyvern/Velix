@@ -145,7 +145,13 @@ namespace
 
     std::string quoteShellArgument(const std::filesystem::path &path)
     {
-        return quoteShellTextArgument(path.string());
+        // Use u8string() instead of string() so that paths containing Unicode characters
+        // (e.g. accented letters, Cyrillic) are represented as UTF-8.  On Windows,
+        // path::string() uses the current ANSI code page and throws / garbles characters
+        // outside it.  executeCommand() converts the full UTF-8 command to UTF-16 for
+        // _wpopen, so UTF-8 here is exactly what we need.
+        auto u8 = path.u8string();
+        return quoteShellTextArgument(std::string(u8.begin(), u8.end()));
     }
 
     std::string joinDetectedIdeNames(const std::vector<elix::engine::EngineConfig::IdeInfo> &ides)

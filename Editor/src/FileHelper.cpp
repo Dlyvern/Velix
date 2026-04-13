@@ -29,11 +29,29 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string &comman
     std::string result;
     int exitCode = -1;
 
-    std::string commandWithStderr = command + " 2>&1";
-
 #ifdef _WIN32
-    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(commandWithStderr.c_str(), "r"), _pclose);
+    // Build the pipe command, redirecting stderr to stdout.
+    std::string pipeCmd = command + " 2>&1";
+
+    // cmd.exe (invoked by _popen) requires the ENTIRE command to be wrapped in an
+    // extra pair of outer double-quotes when the executable token itself is quoted.
+    // Without this, cmd.exe strips the first quoted token as the outer delimiter
+    // and misinterprets the rest, producing ERROR_INVALID_NAME.
+    if (!pipeCmd.empty() && pipeCmd[0] == '"')
+        pipeCmd = "\"" + pipeCmd + "\"";
+
+    // Convert the UTF-8 command string to UTF-16 so that _wpopen can handle paths
+    // containing characters outside the current ANSI code page (e.g. accented letters,
+    // Cyrillic, CJK).  _popen uses the narrow ANSI code page and silently garbles or
+    // rejects such paths.
+    const int wideLen = MultiByteToWideChar(CP_UTF8, 0, pipeCmd.c_str(), -1, nullptr, 0);
+    std::wstring wideCmd(wideLen > 0 ? static_cast<size_t>(wideLen - 1) : 0u, L'\0');
+    if (wideLen > 0)
+        MultiByteToWideChar(CP_UTF8, 0, pipeCmd.c_str(), -1, wideCmd.data(), wideLen);
+
+    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_wpopen(wideCmd.c_str(), L"r"), _pclose);
 #else
+    std::string commandWithStderr = command + " 2>&1";
     std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(commandWithStderr.c_str(), "r"), pclose);
 #endif
 
