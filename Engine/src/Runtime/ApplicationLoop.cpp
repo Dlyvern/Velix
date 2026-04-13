@@ -134,6 +134,12 @@ bool ApplicationLoop::preInit(const ApplicationConfig &applicationConfig)
     diagnostics::installCrashHandler();
     tuneProcessFileDescriptorLimits();
 
+#if defined(_WIN32)
+    // Enable UTF-8 output so Unicode box-drawing characters in the startup
+    // banner (and any other Unicode log text) render correctly in the console.
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+
     auto &engineConfig = EngineConfig::instance();
     if (!engineConfig.reload())
         VX_ENGINE_WARNING_STREAM("Engine config loaded with errors: " << engineConfig.getConfigFilePath() << '\n');

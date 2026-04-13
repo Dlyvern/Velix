@@ -10,6 +10,7 @@
 
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Runtime/EngineConfig.hpp"
+#include "Engine/Runtime/ProjectConfig.hpp"
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
 #include "Engine/Components/CameraComponent.hpp"
 #include "Engine/Components/ParticleSystemComponent.hpp"
@@ -765,6 +766,16 @@ bool EditorRuntime::init()
     // Must be set BEFORE initEditorRenderGraph(), which triggers initStyle() → creates m_assetsWindow.
     m_editor->setOnSceneOpenRequest([this](const std::filesystem::path &path)
                                     { openSceneFromFile(path); });
+
+    // Apply saved project render-quality settings BEFORE the render graph is
+    // compiled so that passes (SSAO, bloom, etc.) are set up with the correct
+    // quality values from the very first frame.  setProject() below will reload
+    // the same config, but by then the graph is already live.
+    {
+        engine::ProjectConfig preloadConfig;
+        if (preloadConfig.load(projectRoot))
+            preloadConfig.applyRenderSettings();
+    }
 
     initEditorRenderGraph(m_editor->getViewportX(), m_editor->getViewportY());
     m_editorRenderGraphTopologyHash = editorRenderGraphTopologyHash(m_activeScene.get(), m_editor.get());

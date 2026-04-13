@@ -11,6 +11,7 @@
 #include "Engine/Components/CollisionComponent.hpp"
 #include "Engine/Components/CharacterMovementComponent.hpp"
 #include "Engine/Components/AudioComponent.hpp"
+#include "Engine/Components/LightmapComponent.hpp"
 #include "Engine/Components/ScriptComponent.hpp"
 #include "Engine/Components/ParticleSystemComponent.hpp"
 #include "Engine/Components/ReflectionProbeComponent.hpp"
@@ -2067,6 +2068,14 @@ void Scene::saveSceneToFile(const std::string &filePath)
             componentsJson.push_back(j);
         }
 
+        if (const auto *lmc = object->getComponent<LightmapComponent>(); lmc && !lmc->lightmapAssetPath.empty())
+        {
+            nlohmann::json j;
+            j["type"] = "lightmap";
+            j["asset_path"] = toRelativePath(lmc->lightmapAssetPath);
+            componentsJson.push_back(j);
+        }
+
         for (auto *script : object->getComponents<ScriptComponent>())
         {
             if (script->getScriptName().empty())
@@ -2641,6 +2650,14 @@ bool Scene::serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayl
             componentJson["min_distance"] = audio->getMinDistance();
             componentJson["max_distance"] = audio->getMaxDistance();
             componentJson["audio_type"] = (audio->getAudioType() == AudioComponent::AudioType::Music) ? "music" : "sound";
+            componentsJson.push_back(std::move(componentJson));
+        }
+
+        if (const auto *lmc = object.getComponent<LightmapComponent>(); lmc && !lmc->lightmapAssetPath.empty())
+        {
+            nlohmann::json componentJson;
+            componentJson["type"] = "lightmap";
+            componentJson["asset_path"] = normalizeSerializedPath(lmc->lightmapAssetPath);
             componentsJson.push_back(std::move(componentJson));
         }
 
@@ -3517,6 +3534,15 @@ Entity *Scene::restoreEntityHierarchy(const std::string &payload, uint32_t *outR
                 const std::string audioTypeString = componentJson.value("audio_type", "sound");
                 audio->setAudioType(audioTypeString == "music" ? AudioComponent::AudioType::Music
                                                                : AudioComponent::AudioType::Sound);
+            }
+            else if (type == "lightmap")
+            {
+                const std::string assetPath = resolveSerializedPath(componentJson.value("asset_path", std::string{}));
+                if (!assetPath.empty())
+                {
+                    auto *lmc = entity->addComponent<LightmapComponent>();
+                    lmc->loadFromPath(assetPath);
+                }
             }
             else if (type == "script")
             {

@@ -89,17 +89,19 @@ void LightmapBaker::createPipeline(uint32_t resolution)
     auto ctx     = core::VulkanContext::getContext();
     VkDevice dev = ctx->getDevice();
 
-    // Shadow sampler (depth compare, linear filter)
+    // Shadow sampler — plain linear sampler, no comparison.
+    // The bake shader uses sampler2DArray and does manual depth comparison,
+    // so compareEnable must be VK_FALSE to get raw depth values from texture().
     m_shadowSampler = core::Sampler::createShared(
         VK_FILTER_LINEAR,                        // magFilter
         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, // addressModeU
         VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,      // borderColor
-        VK_COMPARE_OP_LESS_OR_EQUAL,             // compareOp
+        VK_COMPARE_OP_NEVER,                     // compareOp (unused)
         VK_SAMPLER_MIPMAP_MODE_LINEAR,           // mipmapMode
         VK_FALSE,                                // anisotropyEnable
         1.0f,                                    // maxAnisotropy
         VK_FALSE,                                // unnormalizedCoordinates
-        VK_TRUE                                  // compareEnable
+        VK_FALSE                                 // compareEnable — raw depth readback
     );
 
     // Render pass — single R16G16B16A16_SFLOAT color attachment, no depth.

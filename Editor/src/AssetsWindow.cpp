@@ -2145,7 +2145,10 @@ void AssetsWindow::buildTreeNode(TreeNode *node, const std::filesystem::path &pa
             if (!entry.is_directory())
                 continue;
 
-            std::string dirName = entry.path().filename().string();
+            // Use u8string() to safely handle Unicode directory names on Windows
+            // (path::string() throws when characters can't be mapped to the current code page).
+            auto u8name = entry.path().filename().u8string();
+            std::string dirName(u8name.begin(), u8name.end());
 
             // Skip excluded directories
             if (m_excludedDirectories.find(dirName) != m_excludedDirectories.end())

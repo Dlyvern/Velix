@@ -1,8 +1,15 @@
 #version 450
 
+// Must match the GBufferPC / bindlessMeshPipelineLayout push-constant range (20 bytes).
+// Intel Windows drivers reject pipelines where the vertex shader's push-constant block
+// is smaller than the range declared in the pipeline layout.
 layout(push_constant) uniform ModelPushConstant
 {
-    uint baseInstance;
+    uint  baseInstance;
+    uint  _pad0;
+    uint  _pad1;
+    uint  _pad2;
+    float time;
 } modelPushConstant;
 
 layout(set = 0, binding = 0) uniform CameraUniformObject

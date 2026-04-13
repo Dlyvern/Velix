@@ -94,6 +94,7 @@ GPUMesh::SharedPtr MeshGeometryRegistry::createDrawMeshInstance(const CPUMesh &m
     instance->unifiedVertexOffset = sharedGeometry->unifiedVertexOffset;
     instance->unifiedFirstIndex = sharedGeometry->unifiedFirstIndex;
     instance->inUnifiedBuffer = sharedGeometry->inUnifiedBuffer;
+    instance->lightmapUVBuffer = sharedGeometry->lightmapUVBuffer;
 
     return instance;
 }

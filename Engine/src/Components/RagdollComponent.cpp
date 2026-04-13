@@ -295,6 +295,7 @@ void RagdollComponent::postPhysicsUpdate(float /*deltaTime*/)
 
     if (m_state == RuntimeState::Simulating)
     {
+        syncEntityTransformFromReferenceBody();
         writeSimulatedPoseToSkeleton();
     }
     else if (m_state == RuntimeState::Recovering)
