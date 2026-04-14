@@ -277,6 +277,33 @@ void VulkanContext::createLogicalDevice()
     vkGetPhysicalDeviceProperties2(m_physicalDevice, &properties2);
 
     const VkPhysicalDeviceProperties &physicalDeviceProperties = properties2.properties;
+
+    // Log GPU identity and driver version — essential for diagnosing driver-specific
+    // pipeline failures (e.g. Intel rejecting SPIR-V capabilities silently in release builds).
+    {
+        const uint32_t v = physicalDeviceProperties.apiVersion;
+        const uint32_t d = physicalDeviceProperties.driverVersion;
+        const char *gpuType = "Unknown";
+        switch (physicalDeviceProperties.deviceType)
+        {
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:   gpuType = "Discrete";   break;
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: gpuType = "Integrated"; break;
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:    gpuType = "Virtual";    break;
+        case VK_PHYSICAL_DEVICE_TYPE_CPU:            gpuType = "CPU";        break;
+        default: break;
+        }
+        VX_CORE_INFO_STREAM("[GPU] Name:          " << physicalDeviceProperties.deviceName);
+        VX_CORE_INFO_STREAM("[GPU] Type:          " << gpuType);
+        VX_CORE_INFO_STREAM("[GPU] Vulkan API:    " << VK_VERSION_MAJOR(v) << '.' << VK_VERSION_MINOR(v) << '.' << VK_VERSION_PATCH(v));
+        VX_CORE_INFO_STREAM("[GPU] Driver:        " << VK_VERSION_MAJOR(d) << '.' << VK_VERSION_MINOR(d) << '.' << VK_VERSION_PATCH(d));
+        VX_CORE_INFO_STREAM("[GPU] VendorID:      0x" << std::hex << physicalDeviceProperties.vendorID << std::dec);
+        VX_CORE_INFO_STREAM("[GPU] runtimeDescriptorArray:              " << (supportedV12.runtimeDescriptorArray              ? "YES" : "NO"));
+        VX_CORE_INFO_STREAM("[GPU] shaderSampledImageNonUniformIndexing:" << (supportedV12.shaderSampledImageArrayNonUniformIndexing ? "YES" : "NO"));
+        VX_CORE_INFO_STREAM("[GPU] descriptorBindingPartiallyBound:     " << (supportedV12.descriptorBindingPartiallyBound     ? "YES" : "NO"));
+        VX_CORE_INFO_STREAM("[GPU] shaderDemoteToHelperInvocation:      " << (supportedV13.shaderDemoteToHelperInvocation      ? "YES" : "NO"));
+        VX_CORE_INFO_STREAM("[GPU] dynamicRendering:                    " << (supportedV13.dynamicRendering                    ? "YES" : "NO"));
+    }
+
     const VkSampleCountFlags commonSampleCounts =
         physicalDeviceProperties.limits.framebufferColorSampleCounts &
         physicalDeviceProperties.limits.framebufferDepthSampleCounts;

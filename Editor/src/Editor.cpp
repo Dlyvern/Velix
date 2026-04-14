@@ -128,28 +128,39 @@ namespace
         std::string escaped;
         escaped.reserve(value.size() + 2);
 
-        for (const char character : value)
-        {
 #if defined(_WIN32)
-            if (character == '"')
-#else
-            if (character == '"' || character == '\\')
-#endif
-                escaped.push_back('\\');
+        // CommandLineToArgvW (used by CreateProcess) has a backslash-before-quote rule:
+        // backslashes immediately before a '"' are interpreted as escapes.
+        // To avoid this entirely, normalise all backslashes to forward slashes first —
+        // CreateProcess, cmake, and most Windows tools accept both separators.
+        std::string normalised;
+        normalised.reserve(value.size());
+        for (char c : value)
+            normalised.push_back(c == '\\' ? '/' : c);
 
+        for (const char character : normalised)
+        {
+            if (character == '"')
+                escaped.push_back('\\');
             escaped.push_back(character);
         }
+#else
+        for (const char character : value)
+        {
+            if (character == '"' || character == '\\')
+                escaped.push_back('\\');
+            escaped.push_back(character);
+        }
+#endif
 
         return "\"" + escaped + "\"";
     }
 
     std::string quoteShellArgument(const std::filesystem::path &path)
     {
-        // Use u8string() instead of string() so that paths containing Unicode characters
-        // (e.g. accented letters, Cyrillic) are represented as UTF-8.  On Windows,
-        // path::string() uses the current ANSI code page and throws / garbles characters
-        // outside it.  executeCommand() converts the full UTF-8 command to UTF-16 for
-        // _wpopen, so UTF-8 here is exactly what we need.
+        // Use u8string() so Unicode paths (accented letters, Cyrillic, etc.) are
+        // preserved as UTF-8.  executeCommand() converts the whole UTF-8 command
+        // string to UTF-16 via MultiByteToWideChar(CP_UTF8) before passing to CreateProcessW.
         auto u8 = path.u8string();
         return quoteShellTextArgument(std::string(u8.begin(), u8.end()));
     }
@@ -1946,6 +1957,9 @@ Editor::Editor()
 
 Editor::~Editor()
 {
+    // Persist project config (render settings, camera) on clean exit so that
+    // any settings changed during this session are not lost.
+    saveProjectConfig();
 }
 
 void Editor::releaseRenderGraphBackedImGuiResources()
@@ -3693,6 +3707,7 @@ void Editor::buildCurrentProject()
                                          " -DCMAKE_BUILD_TYPE=Release" +
                                          " -DCMAKE_EXPORT_COMPILE_COMMANDS=ON";
 
+    VX_EDITOR_INFO_STREAM("Running cmake configure: " << configureCommand << '\n');
     const auto [configureResult, configureOutput] = FileHelper::executeCommand(configureCommand);
     if (configureResult != 0)
     {
@@ -6192,8 +6207,12 @@ void Editor::openTextDocument(const std::filesystem::path &path)
     file.close();
 
     m_openDocumentPath = path;
-    m_openDocumentSavedText = stream.str();
-    m_textEditor.SetText(m_openDocumentSavedText);
+    m_textEditor.SetText(stream.str());
+    // Read back after SetText so m_openDocumentSavedText matches the editor's normalised
+    // representation (e.g. trailing newline added by the editor). Without this, GetText()
+    // returns a slightly different string from the raw file bytes and isDirty is true
+    // immediately on open even though nothing was changed.
+    m_openDocumentSavedText = m_textEditor.GetText();
     setDocumentLanguageFromPath(path);
     m_showDocumentWindow = true;
     m_pendingCenterTabFocusId = ImHashStr((path.filename().string() + "###Document").c_str());
