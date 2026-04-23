@@ -11,8 +11,8 @@ void LightmapUVGenerator::generate(CPUMesh &mesh)
     if (mesh.vertexData.empty() || mesh.indices.empty())
         return;
 
-    // xatlas needs positions, normals, and index data.
-    // Vertex3D layout: position(0), uv(12), normal(20), tangent(28), bitangent(40)
+
+
     const uint32_t vertexCount = static_cast<uint32_t>(mesh.vertexData.size() / mesh.vertexStride);
     if (vertexCount == 0)
         return;
@@ -40,7 +40,7 @@ void LightmapUVGenerator::generate(CPUMesh &mesh)
 
     xatlas::ChartOptions chartOptions{};
     xatlas::PackOptions  packOptions{};
-    packOptions.padding  = 2; // texel border to avoid bleeding
+    packOptions.padding  = 2;
     xatlas::Generate(atlas, chartOptions, packOptions);
 
     if (atlas->meshCount == 0 || atlas->meshes == nullptr)
@@ -53,7 +53,7 @@ void LightmapUVGenerator::generate(CPUMesh &mesh)
 
     const xatlas::Mesh &outMesh = atlas->meshes[0];
 
-    // xatlas may re-index the mesh. Rebuild vertex and index arrays.
+
     const uint32_t newVertexCount = outMesh.vertexCount;
     const uint32_t newIndexCount  = outMesh.indexCount;
 
@@ -61,14 +61,14 @@ void LightmapUVGenerator::generate(CPUMesh &mesh)
     std::vector<uint32_t> newIndices(newIndexCount);
     std::vector<glm::vec2> newLightmapUVs(newVertexCount);
 
-    // The atlas normalises UVs to [0, atlasWidth] / [0, atlasHeight].
+
     const float invW = (atlas->width  > 0) ? 1.0f / static_cast<float>(atlas->width)  : 1.0f;
     const float invH = (atlas->height > 0) ? 1.0f / static_cast<float>(atlas->height) : 1.0f;
 
     for (uint32_t i = 0; i < newVertexCount; ++i)
     {
         const xatlas::Vertex &v = outMesh.vertexArray[i];
-        // Copy original vertex data from the source vertex (xref = original index).
+
         std::memcpy(newVertexData.data() + i * mesh.vertexStride,
                     mesh.vertexData.data() + v.xref * mesh.vertexStride,
                     mesh.vertexStride);

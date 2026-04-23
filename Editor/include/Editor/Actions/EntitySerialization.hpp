@@ -26,7 +26,7 @@ namespace actions
                                         std::string &payload,
                                         std::uint64_t pasteCounter,
                                         std::uint32_t *outNewRootEntityId = nullptr);
-} // namespace actions
+}
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_EDITOR_ACTIONS_ENTITY_SERIALIZATION_HPP
+#endif

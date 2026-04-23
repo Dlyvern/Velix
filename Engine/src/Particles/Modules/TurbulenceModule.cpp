@@ -8,8 +8,8 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 namespace
 {
-    // Minimal hash-based value noise, no external dependencies.
-    // Returns a pseudo-random float in [-1, 1] from integer seed.
+
+
     inline float hashFloat(int x, int y, int z)
     {
         int h = x * 1031 + y * 2999 + z * 4801;
@@ -18,7 +18,7 @@ namespace
         return static_cast<float>(h & 0x7fffffff) / static_cast<float>(0x7fffffff) * 2.0f - 1.0f;
     }
 
-    // Trilinear interpolation of hash noise.
+
     inline float valueNoise3D(float x, float y, float z)
     {
         const int ix = static_cast<int>(std::floor(x));
@@ -29,7 +29,7 @@ namespace
         const float fy = y - static_cast<float>(iy);
         const float fz = z - static_cast<float>(iz);
 
-        // Smoothstep
+
         const float ux = fx * fx * (3.0f - 2.0f * fx);
         const float uy = fy * fy * (3.0f - 2.0f * fy);
         const float uz = fz * fz * (3.0f - 2.0f * fz);
@@ -55,9 +55,9 @@ void TurbulenceModule::onParticleUpdate(Particle &particle, float deltaTime)
     if (!m_enabled)
         return;
 
-    // Sample three noise fields with different offsets for X/Y/Z axes.
+
     const glm::vec3 sp = particle.position * frequency;
-    // elapsedTime proxy: use particle.age as a scrolling offset
+
     const float scroll = particle.age * scrollSpeed;
 
     const float nx = valueNoise3D(sp.x + scroll,        sp.y,                sp.z               );

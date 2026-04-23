@@ -73,4 +73,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SWAP_CHAIN_HPP
+#endif

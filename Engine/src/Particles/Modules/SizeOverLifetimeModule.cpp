@@ -3,7 +3,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-void SizeOverLifetimeModule::onParticleUpdate(Particle &particle, float /*deltaTime*/)
+void SizeOverLifetimeModule::onParticleUpdate(Particle &particle, float )
 {
     const float scale = evaluateCurve(curve, particle.getNormalizedAge());
     particle.size = baseSize * scale;

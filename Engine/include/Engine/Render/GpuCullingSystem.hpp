@@ -58,4 +58,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_GPU_CULLING_SYSTEM_HPP
+#endif

@@ -70,4 +70,4 @@ inline size_t hashSceneEnvironmentSettings(const SceneEnvironmentSettings &setti
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ENVIRONMENT_SETTINGS_HPP
+#endif

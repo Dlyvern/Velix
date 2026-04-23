@@ -70,11 +70,11 @@ private:
     core::Sampler::SharedPtr m_sampler{nullptr};
     core::Sampler::SharedPtr m_depthSampler{nullptr};
 
-    // Per-frame instance SSBO (vertex/index addresses + material) for the rchit shader.
+
     std::vector<core::Buffer::SharedPtr> m_giSceneBuffers;
     std::vector<VkDeviceSize>            m_giSceneBufferSizes;
 
-    // Separate 3-set pipeline layout (set 0=camera, set 1=textures, set 2=bindless).
+
     VkPipelineLayout m_rtPipelineLayout{VK_NULL_HANDLE};
 
     core::ShaderHandler m_raygenShader;
@@ -96,4 +96,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RT_INDIRECT_DIFFUSE_RENDER_GRAPH_PASS_HPP
+#endif

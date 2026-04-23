@@ -62,7 +62,7 @@ void CollisionComponent::onOwnerAttached()
 {
     ECS::onOwnerAttached();
 
-    // Store the owning entity so the PhysicsContactListener can route callbacks to it
+
     auto *owner = getOwner<Entity>();
     if (m_actor && owner)
         m_actor->userData = owner;

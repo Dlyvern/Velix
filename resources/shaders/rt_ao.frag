@@ -6,7 +6,7 @@ const float PI = 3.14159265359;
 layout(location = 0) in  vec2 vUV;
 layout(location = 0) out float outAO;
 
-// set 0 = cameraDescriptorSetLayout (binding 0=CameraUBO, 1=LightSpaceUBO, 2=LightSSBO, 3=TLAS)
+
 layout(set = 0, binding = 0) uniform CameraUBO
 {
     mat4 view;

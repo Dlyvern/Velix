@@ -25,4 +25,4 @@ private:
     std::chrono::high_resolution_clock::time_point m_start;
 };
 
-#endif // ELIX_SCOPED_TIMER_HPP
+#endif

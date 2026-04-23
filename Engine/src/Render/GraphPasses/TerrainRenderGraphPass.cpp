@@ -11,21 +11,21 @@ TerrainRenderGraphPass::TerrainRenderGraphPass()
     m_extent = core::VulkanContext::getContext()->getSwapchain()->getExtent();
 }
 
-void TerrainRenderGraphPass::setup(RGPResourcesBuilder & /*builder*/)
+void TerrainRenderGraphPass::setup(RGPResourcesBuilder & )
 {
 }
 
-void TerrainRenderGraphPass::compile(RGPResourcesStorage & /*storage*/)
+void TerrainRenderGraphPass::compile(RGPResourcesStorage & )
 {
 }
 
-void TerrainRenderGraphPass::record(core::CommandBuffer::SharedPtr /*commandBuffer*/,
-                                    const RenderGraphPassPerFrameData & /*data*/,
-                                    const RenderGraphPassContext & /*renderContext*/)
+void TerrainRenderGraphPass::record(core::CommandBuffer::SharedPtr ,
+                                    const RenderGraphPassPerFrameData & ,
+                                    const RenderGraphPassContext & )
 {
 }
 
-std::vector<IRenderGraphPass::RenderPassExecution> TerrainRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext & /*renderContext*/) const
+std::vector<IRenderGraphPass::RenderPassExecution> TerrainRenderGraphPass::getRenderPassExecutions(const RenderGraphPassContext & ) const
 {
     return {};
 }

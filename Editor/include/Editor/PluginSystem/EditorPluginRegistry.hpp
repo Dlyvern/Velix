@@ -7,9 +7,9 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-// Tracks all loaded IEditorPlugin instances and dispatches frame callbacks.
-// Populated from EditorRuntime::init() after plugin loading, by dynamic_cast-ing
-// each loaded IPlugin* to IEditorPlugin*.
+
+
+
 class EditorPluginRegistry
 {
 public:
@@ -18,13 +18,13 @@ public:
     void registerEditorPlugin(elix::sdk::IEditorPlugin *plugin);
     void unregisterAll();
 
-    // Called once per ImGui frame (from Editor::drawFrame) to dispatch
-    // onEditorFrame to every registered plugin.
+
+
     void dispatchFrame(elix::sdk::EditorContext &ctx);
 
     const std::vector<elix::sdk::IEditorPlugin *> &getPlugins() const;
 
-    // True if any plugin set ctx.wantsBrushInput = true during the last dispatchFrame.
+
     bool anyPluginWantsBrush() const { return m_lastFrameWantsBrush; }
 
 private:
@@ -36,4 +36,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_EDITOR_PLUGIN_REGISTRY_HPP
+#endif

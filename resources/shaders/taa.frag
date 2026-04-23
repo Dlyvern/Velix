@@ -8,9 +8,9 @@ layout(set = 0, binding = 1) uniform sampler2D uHistory;
 
 layout(push_constant) uniform PC
 {
-    vec2  texelSize;   // 1.0 / resolution
-    float blendAlpha;  // current-frame weight: 0.1 = smooth, 0.5 = responsive
-    float enabled;     // 0.0 = passthrough, 1.0 = TAA active
+    vec2  texelSize;
+    float blendAlpha;
+    float enabled;
 } pc;
 
 vec3 toYCoCg(vec3 c)
@@ -54,7 +54,7 @@ void main()
 
     vec2 ts = pc.texelSize;
 
-    // 3x3 neighbourhood (tone-mapped for stable AABB)
+
     vec3 c[9];
     c[0] = tonemap(texture(uCurrent, vUV + vec2(-ts.x, -ts.y)).rgb);
     c[1] = tonemap(texture(uCurrent, vUV + vec2( 0.0,  -ts.y)).rgb);
@@ -66,7 +66,7 @@ void main()
     c[7] = tonemap(texture(uCurrent, vUV + vec2( 0.0,   ts.y)).rgb);
     c[8] = tonemap(texture(uCurrent, vUV + vec2( ts.x,  ts.y)).rgb);
 
-    // Build AABB in YCoCg
+
     vec3 y[9];
     for (int i = 0; i < 9; ++i)
         y[i] = toYCoCg(c[i]);
@@ -78,13 +78,13 @@ void main()
         boxMax = max(boxMax, y[i]);
     }
 
-    // Fetch history, clamp, un-compress
+
     vec3 history     = tonemap(texture(uHistory, vUV).rgb);
     vec3 historyY    = toYCoCg(history);
     historyY         = clipAABB(historyY, boxMin, boxMax);
     vec3 histClamped = untonemap(fromYCoCg(historyY));
 
-    // Exponential moving average: current contributes blendAlpha
+
     vec3 result = mix(histClamped, untonemap(fromYCoCg(y[4])), pc.blendAlpha);
 
     outColor = vec4(result, currentSample.a);

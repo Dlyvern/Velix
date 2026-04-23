@@ -27,7 +27,8 @@ layout(std430, set = 2, binding = 0) readonly buffer BonesSSBO
 struct InstanceData
 {
     mat4 model;
-    uvec4 objectInfo; // x = objectId, y = bonesOffset, z = materialIndex, w = reserved
+    uvec4 objectInfo;
+    mat4 prevModel;
 };
 
 layout(std430, set = 2, binding = 1) readonly buffer InstanceDataSSBO

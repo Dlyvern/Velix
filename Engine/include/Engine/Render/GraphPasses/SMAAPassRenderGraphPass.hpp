@@ -14,9 +14,9 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-/// Subpixel Morphological Anti-Aliasing (SMAA) pass.
-/// Single-pass implementation: performs edge-aware blending in the fragment shader.
-/// When AA mode is not SMAA, passes through unmodified.
+
+
+
 class SMAAPassRenderGraphPass : public IRenderGraphPass
 {
 public:
@@ -68,4 +68,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SMAA_PASS_RENDER_GRAPH_PASS_HPP
+#endif

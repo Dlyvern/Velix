@@ -223,7 +223,7 @@ void StaticMeshComponent::setMaterialOverridePath(size_t slot, const std::string
 
 bool StaticMeshComponent::isReady() const
 {
-    // Ready if meshes were set via legacy constructor OR handle resolved.
+
     if (!m_meshes.empty())
         return true;
     return m_modelHandle.ready();
@@ -260,8 +260,8 @@ void StaticMeshComponent::onModelLoaded()
     for (size_t slot = 0; slot < preservedPathCount; ++slot)
         m_perMeshMaterialOverridePaths[slot] = std::move(preservedMaterialOverridePaths[slot]);
 
-    // Keep CPU mesh materials aligned with saved overrides so any fallback path
-    // still resolves the authored material asset instead of stale importer paths.
+
+
     applyMaterialOverrideCpuDataToMeshes();
 }
 

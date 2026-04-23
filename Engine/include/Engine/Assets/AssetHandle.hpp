@@ -56,16 +56,16 @@ public:
     AssetState state() const { return m_state.load(std::memory_order_acquire); }
     bool ready() const { return state() == AssetState::Ready; }
 
-    // Only valid when ready() == true.
+
     const T &get() const { return *m_data; }
     T &get() { return *m_data; }
 
-    // Returns nullptr if not ready.
+
     const std::shared_ptr<T> &dataPtr() const { return m_data; }
 
     void setOnLoaded(std::function<void(AssetHandle<T> &)> cb) { m_onLoaded = std::move(cb); }
 
-    // Transitions Unloaded → Loading.  Returns false if already loading/ready.
+
     bool markLoading()
     {
         AssetState expected = AssetState::Unloaded;
@@ -73,7 +73,7 @@ public:
                                                std::memory_order_acq_rel);
     }
 
-    // Transitions Loading → Ready.  Called from the streaming worker thread.
+
     void resolve(std::shared_ptr<T> data)
     {
         m_data = std::move(data);
@@ -82,14 +82,14 @@ public:
             m_onLoaded(*this);
     }
 
-    // Transitions any state → Failed.
+
     void fail()
     {
         m_data.reset();
         m_state.store(AssetState::Failed, std::memory_order_release);
     }
 
-    // Transitions Ready/Failed → Unloaded (frees CPU data).
+
     void reset()
     {
         m_data.reset();
@@ -105,4 +105,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ASSET_HANDLE_HPP
+#endif

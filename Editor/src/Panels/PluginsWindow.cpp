@@ -45,7 +45,7 @@ void PluginsWindow::refreshInstalledStems()
 {
     m_installedStems.clear();
 
-    // Check which plugin .so files already exist next to the executable.
+
     namespace fs = std::filesystem;
     const fs::path pluginsDir = FileHelper::getExecutablePath() / "resources" / "plugins";
     if (!fs::exists(pluginsDir))
@@ -149,10 +149,10 @@ void PluginsWindow::drawMarketplaceTab()
 
         const bool installed = m_installedStems.count(me.name) > 0;
 
-        // Name + version
+
         ImGui::Text("%s  v%s", me.name.c_str(), me.version.c_str());
 
-        // Description (smaller, grey)
+
         if (!me.description.empty())
         {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.65f, 0.65f, 1.0f));

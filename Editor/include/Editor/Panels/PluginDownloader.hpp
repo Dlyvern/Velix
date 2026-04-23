@@ -17,7 +17,7 @@ struct MarketplaceEntry
     std::string version;
     std::string description;
     std::string category;
-    std::string downloadUrl; // platform-appropriate URL resolved at parse time
+    std::string downloadUrl;
 };
 
 class PluginDownloader
@@ -74,4 +74,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PLUGIN_DOWNLOADER_HPP
+#endif

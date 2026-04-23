@@ -47,4 +47,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_TERMINAL_PANEL_HPP
+#endif

@@ -14,9 +14,9 @@ class Texture;
 
 ELIX_CUSTOM_NAMESPACE_BEGIN(ui)
 
-/// World-space camera-facing quad game object rendered by UIRenderGraphPass.
-/// Typical uses: health bars, nameplates, waypoint markers.
-/// World position must be set explicitly (or updated each frame if following an entity).
+
+
+
 class Billboard
 {
 public:
@@ -57,4 +57,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_UI_BILLBOARD_HPP
+#endif

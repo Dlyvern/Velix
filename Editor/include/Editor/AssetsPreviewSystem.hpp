@@ -26,7 +26,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-// Class that handle thumbnails of materials/textures
+
 class AssetsPreviewSystem
 {
 public:
@@ -983,4 +983,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ASSETS_PREVIEW_SYSTEM
+#endif

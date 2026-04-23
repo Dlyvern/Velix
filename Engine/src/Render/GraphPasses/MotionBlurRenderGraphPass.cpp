@@ -153,7 +153,7 @@ void MotionBlurRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuf
 
     const auto &s = RenderQualitySettings::getInstance();
 
-    // First frame: no previous matrices, use current as prev (no blur)
+
     if (!m_hasPrevFrame)
     {
         m_prevView       = data.view;
@@ -174,7 +174,7 @@ void MotionBlurRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuf
 
     profiling::cmdDraw(commandBuffer, 3, 1, 0, 0);
 
-    // Store current matrices for next frame
+
     m_prevView       = data.view;
     m_prevProjection = data.projection;
 }

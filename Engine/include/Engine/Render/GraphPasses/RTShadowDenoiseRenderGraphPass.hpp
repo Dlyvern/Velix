@@ -43,8 +43,8 @@ private:
     struct RTShadowDenoisePC
     {
         glm::mat4 invProjection{1.0f};
-        glm::vec4 params0{0.0f}; // x=texelSize.x, y=texelSize.y, z=enabled, w=normalSigma
-        glm::vec4 params1{0.0f}; // x=depthSigma, y=unused, z=activeRTShadowLayerCount
+        glm::vec4 params0{0.0f};
+        glm::vec4 params1{0.0f};
     };
 
     static constexpr uint32_t kMaxShadowLights = 16u;
@@ -79,4 +79,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RT_SHADOW_DENOISE_RENDER_GRAPH_PASS_HPP
+#endif

@@ -32,6 +32,7 @@
 
 #include <vector>
 #include <optional>
+#include <chrono>
 #include <string>
 #include <cstdint>
 #include <cstddef>
@@ -71,13 +72,13 @@ public:
 
     void initStyle(bool imguiBackendRecreated = false);
 
-    // Refresh the Plugins window data from the PluginManager.
-    // Call this once after all plugins have been loaded.
+
+
     void refreshPluginsWindow() { m_pluginsWindow.refresh(); }
 
     engine::Camera::SharedPtr getCurrentCamera();
 
-    //! Maybe we can do something better here
+
     void setScene(engine::Scene::SharedPtr scene);
     void setCurrentScenePath(const std::filesystem::path &path);
 
@@ -339,17 +340,17 @@ private:
     bool m_pendingShaderReloadRequest{false};
     bool m_openScenePopupRequested{false};
     bool m_showDevTools{false};
-    // Callback invoked when "Reload Engine Shaders" is pressed.
-    // It should compile all shaders and populate outErrors, returning compiled count.
+
+
     std::function<size_t(std::vector<std::string> *)> m_reloadShadersCallback;
     std::function<std::vector<engine::Scene::SharedPtr>()> m_scriptReloadScenesProvider;
 
-    // Results of the last shader reload, displayed in Dev Tools panel.
+
     int m_devToolsLastCompiledCount{-1};
     std::vector<std::string> m_devToolsShaderErrors;
     NotificationManager m_notificationManager;
 
-    // Pending brush input collected in drawViewport() and forwarded to the EditorContext.
+
     struct PendingBrushInput
     {
         bool      active{false};
@@ -472,7 +473,7 @@ private:
 
     engine::ProjectConfig m_projectConfig;
     std::weak_ptr<Project> m_currentProject;
-    std::filesystem::path m_cachedProjectRootPath; // cached for EditorContext (see setProject)
+    std::filesystem::path m_cachedProjectRootPath;
     engine::ScriptsRegister *m_projectScriptsRegister{nullptr};
     std::string m_loadedGameModulePath;
 
@@ -547,10 +548,13 @@ private:
     std::filesystem::path m_currentScenePath;
     std::string m_savedSceneSnapshot;
     float m_sceneAutosaveElapsedSeconds{0.0f};
+    std::chrono::steady_clock::time_point m_unsavedCheckLastTime{};
+    bool m_unsavedCheckCacheValid{false};
+    bool m_unsavedCheckCachedResult{false};
     engine::Entity *m_selectedEntity{nullptr};
     bool m_gameplayInputReleasedForEditor{false};
     std::optional<uint32_t> m_selectedMeshSlot;
-    std::optional<uint32_t> m_lastScrolledMeshSlot; // tracks last slot we auto-scrolled to
+    std::optional<uint32_t> m_lastScrolledMeshSlot;
     bool m_showSelectedSkeletalBones{false};
     int m_selectedSkeletonBoneId{-1};
 
@@ -650,4 +654,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_EDITOR_HPP
+#endif

@@ -28,5 +28,5 @@ namespace actions
     {
         return m_label.c_str();
     }
-} // namespace actions
+}
 ELIX_NESTED_NAMESPACE_END

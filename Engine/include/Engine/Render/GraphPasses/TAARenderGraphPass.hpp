@@ -49,7 +49,7 @@ private:
 
     std::vector<const RenderTarget *> m_outputTargets;
 
-    // Persistent history – one texture shared across all swapchain images
+
     RenderTarget::SharedPtr m_historyTarget{nullptr};
     bool m_historyInitialized{false};
 
@@ -73,4 +73,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_TAA_RENDER_GRAPH_PASS_HPP
+#endif

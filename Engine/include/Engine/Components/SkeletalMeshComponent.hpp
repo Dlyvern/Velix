@@ -17,10 +17,10 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class SkeletalMeshComponent : public ECS
 {
 public:
-    // Legacy constructor.
+
     SkeletalMeshComponent(const std::vector<CPUMesh> &meshes, const Skeleton &skeleton);
 
-    // Streaming constructor: store path only.
+
     explicit SkeletalMeshComponent(const std::string &assetPath);
     const std::vector<CPUMesh> &getMeshes() const;
     CPUMesh &getMesh(int index);
@@ -77,7 +77,7 @@ public:
     void setVisible(bool visible) { m_visible = visible; }
     [[nodiscard]] bool isVisible() const { return m_visible; }
 
-    // ---- On-demand streaming ----
+
 
     AssetHandle<ModelAsset>       &getModelHandle()       { return m_modelHandle; }
     const AssetHandle<ModelAsset> &getModelHandle() const { return m_modelHandle; }
@@ -86,7 +86,7 @@ public:
     void onModelLoaded();
     void applyMaterialOverrideCpuDataToMeshes();
 
-    // Called on unload — clears CPU mesh data so it can be GC'd.
+
     void clearMeshes() { m_meshes.clear(); m_perMeshMaterialOverrides.clear(); }
 
 private:
@@ -101,4 +101,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SKELETAL_MESH_COMPONENT_HPP
+#endif

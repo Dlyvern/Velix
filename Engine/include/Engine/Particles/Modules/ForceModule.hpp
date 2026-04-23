@@ -7,7 +7,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-/// Applies constant acceleration (gravity, wind, …) and optional linear drag.
+
 class ForceModule final : public IParticleModule
 {
 public:
@@ -15,10 +15,10 @@ public:
 
     void onParticleUpdate(Particle &particle, float deltaTime) override;
 
-    glm::vec3 force{0.0f, -9.81f, 0.0f};  // acceleration in m/s²
-    float     drag{0.0f};                  // linear drag coefficient (0 = none)
+    glm::vec3 force{0.0f, -9.81f, 0.0f};
+    float     drag{0.0f};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_FORCE_MODULE_HPP
+#endif

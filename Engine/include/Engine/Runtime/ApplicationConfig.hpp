@@ -23,4 +23,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_APPLICATION_CONFIG_HPP
+#endif

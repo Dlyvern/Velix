@@ -48,9 +48,9 @@ public:
     LightmapBaker() = default;
     ~LightmapBaker();
 
-    // Bake direct lighting for all static-mesh entities in the scene.
-    // Must be called on the main (GPU) thread with the device idle.
-    // shadowPass must have just rendered so shadow maps are fresh.
+
+
+
     void bake(engine::Scene *scene,
               renderGraph::ShadowRenderGraphPass *shadowPass,
               renderGraph::RenderGraph *renderGraph,
@@ -73,20 +73,20 @@ private:
     BakeTarget createBakeTarget(uint32_t resolution);
     void destroyBakeTarget(BakeTarget &target);
 
-    // Read back image pixels via a staging buffer into a CPU vector (RGBA16F = 8 bytes/pixel).
+
     std::vector<uint8_t> readbackImage(VkImage image, uint32_t width, uint32_t height);
 
-    // Simple CPU-side dilation: fill texels that are (0,0,0,0) with the nearest non-zero neighbour.
+
     void dilate(std::vector<uint8_t> &pixels, uint32_t width, uint32_t height, uint32_t radius);
 
     void createShadowDescriptorSet(VkImageView dirView, VkImageView spotView, VkImageView cubeView,
                                    VkSampler shadowSampler);
 
-    // Persistent GPU objects (created once, reused across all entities)
+
     VkRenderPass             m_bakeRenderPass{VK_NULL_HANDLE};
     VkPipeline               m_bakePipeline{VK_NULL_HANDLE};
     VkPipelineLayout         m_bakePipelineLayout{VK_NULL_HANDLE};
-    VkDescriptorSetLayout    m_bakeSetLayout{VK_NULL_HANDLE};   // set 1 — shadow maps
+    VkDescriptorSetLayout    m_bakeSetLayout{VK_NULL_HANDLE};
     VkDescriptorPool         m_bakeDescriptorPool{VK_NULL_HANDLE};
     VkDescriptorSet          m_shadowDescriptorSet{VK_NULL_HANDLE};
     core::Sampler::SharedPtr m_shadowSampler;

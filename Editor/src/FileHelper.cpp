@@ -30,17 +30,17 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string &comman
     int exitCode = -1;
 
 #ifdef _WIN32
-    // Use CreateProcess + an anonymous pipe to capture stdout+stderr.
-    // This bypasses cmd.exe entirely, so there are no cmd.exe quoting quirks
-    // and Unicode paths (UTF-8 → UTF-16) are handled correctly.
 
-    // Convert UTF-8 command string to UTF-16.
+
+
+
+
     const int wideLen = MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, nullptr, 0);
     std::wstring wideCmd(wideLen > 0 ? static_cast<size_t>(wideLen - 1) : 0u, L'\0');
     if (wideLen > 0)
         MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, wideCmd.data(), wideLen);
 
-    // Create an anonymous pipe; the child inherits the write end for stdout+stderr.
+
     SECURITY_ATTRIBUTES sa{};
     sa.nLength              = sizeof(sa);
     sa.bInheritHandle       = TRUE;
@@ -52,7 +52,7 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string &comman
         VX_EDITOR_ERROR_STREAM("Failed to create pipe for command: " << command);
         return {-1, ""};
     }
-    // Prevent the read end from being inherited by the child.
+
     SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
 
     STARTUPINFOW si{};
@@ -64,16 +64,16 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string &comman
 
     PROCESS_INFORMATION pi{};
     const BOOL created = CreateProcessW(
-        nullptr,           // derive executable from command line
-        wideCmd.data(),    // mutable UTF-16 command line
-        nullptr, nullptr,  // process / thread security attributes
-        TRUE,              // inherit handles (write pipe)
-        CREATE_NO_WINDOW,  // no console window
-        nullptr, nullptr,  // environment / working directory (inherit)
+        nullptr,
+        wideCmd.data(),
+        nullptr, nullptr,
+        TRUE,
+        CREATE_NO_WINDOW,
+        nullptr, nullptr,
         &si, &pi);
 
-    // Close the write end in the parent now that the child has inherited it.
-    // ReadFile will return EOF when the child exits and closes its own copy.
+
+
     CloseHandle(hWritePipe);
 
     if (!created)
@@ -83,7 +83,7 @@ std::pair<int, std::string> FileHelper::executeCommand(const std::string &comman
         return {-1, ""};
     }
 
-    // Drain all output.
+
     DWORD bytesRead = 0;
     while (ReadFile(hReadPipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytesRead, nullptr) && bytesRead > 0)
         result.append(buffer.data(), bytesRead);

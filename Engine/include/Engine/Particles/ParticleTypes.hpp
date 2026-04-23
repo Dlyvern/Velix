@@ -14,7 +14,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 struct CurvePoint
 {
-    float time{0.0f}; // normalised age 0..1
+    float time{0.0f};
     float value{1.0f};
 };
 
@@ -69,14 +69,14 @@ inline glm::vec4 evaluateGradient(const std::vector<GradientPoint> &gradient, fl
 struct Particle
 {
     glm::vec3 position{0.0f};
-    float rotation{0.0f}; // billboard rotation in radians
+    float rotation{0.0f};
 
     glm::vec3 velocity{0.0f};
-    float rotationSpeed{0.0f}; // rad/s
+    float rotationSpeed{0.0f};
 
     glm::vec4 color{1.0f};
 
-    glm::vec2 size{1.0f}; // width / height in world units
+    glm::vec2 size{1.0f};
 
     float age{0.0f};
     float lifetime{1.0f};
@@ -93,10 +93,10 @@ struct Particle
 
 struct ParticleGPUData
 {
-    glm::vec4 positionAndRotation; // xyz = world pos, w = rotation (rad)
-    glm::vec4 color;               // rgba
-    glm::vec2 size;                // width, height
-    uint32_t  textureIndex{0};     // index into the particle texture array (0 = default white)
+    glm::vec4 positionAndRotation;
+    glm::vec4 color;
+    glm::vec2 size;
+    uint32_t  textureIndex{0};
     float     _pad{0.0f};
 };
 
@@ -104,4 +104,4 @@ static_assert(sizeof(ParticleGPUData) == 48, "ParticleGPUData layout changed");
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PARTICLE_TYPES_HPP
+#endif

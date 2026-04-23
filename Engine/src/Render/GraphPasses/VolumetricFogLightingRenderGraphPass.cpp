@@ -36,7 +36,7 @@ namespace
         glm::vec4 fogParams2;
         glm::vec4 extentInfo;
     };
-} // namespace
+}
 
 VolumetricFogLightingRenderGraphPass::VolumetricFogLightingRenderGraphPass(
     RGPResourceHandler &depthTextureHandler,

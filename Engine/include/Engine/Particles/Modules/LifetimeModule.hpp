@@ -7,7 +7,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-/// Sets a random lifetime for each spawned particle in [minLifetime, maxLifetime].
+
 class LifetimeModule final : public IParticleModule
 {
 public:
@@ -24,4 +24,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_LIFETIME_MODULE_HPP
+#endif

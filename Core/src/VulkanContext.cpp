@@ -24,8 +24,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityF
 {
     if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
         VX_CORE_ERROR_STREAM((std::string(pCallbackData->pMessage)) << std::endl);
-    // else if(messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
-    //     VX_CORE_INFO_STREAM((std::string(pCallbackData->pMessage)) << std::endl);
+
+
     else if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
         VX_CORE_INFO_STREAM((std::string(pCallbackData->pMessage)) << std::endl);
     else if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
@@ -83,7 +83,7 @@ VulkanContext::VulkanContext(platform::Window &window)
 #ifdef DEBUG_BUILD
     m_isValidationLayersEnabled = true;
 #else
-    // Allow validation layers in Release when explicitly requested.
+
     m_isValidationLayersEnabled = false;
 #endif
 
@@ -95,7 +95,7 @@ VulkanContext::~VulkanContext()
     if (!m_isCleanedUp)
     {
         VX_CORE_ERROR_STREAM("ERROR: VulkanContext destroyed without calling cleanup()!!!" << std::endl);
-        // DO NOT CALL cleanup here. It is too late...
+
     }
 }
 
@@ -223,8 +223,8 @@ void VulkanContext::createLogicalDevice()
         addExtensionIfMissing(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
         addExtensionIfMissing(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 
-        // Also enable ray query if available — allows inline ray tracing in fragment shaders
-        // alongside the ray tracing pipeline (used for RT reflections).
+
+
         if (hasRQ && supportedRQ.rayQuery)
         {
             m_rayTracingSupport.rayQuery = true;
@@ -278,8 +278,8 @@ void VulkanContext::createLogicalDevice()
 
     const VkPhysicalDeviceProperties &physicalDeviceProperties = properties2.properties;
 
-    // Log GPU identity and driver version — essential for diagnosing driver-specific
-    // pipeline failures (e.g. Intel rejecting SPIR-V capabilities silently in release builds).
+
+
     {
         const uint32_t v = physicalDeviceProperties.apiVersion;
         const uint32_t d = physicalDeviceProperties.driverVersion;
@@ -871,13 +871,13 @@ void VulkanContext::pickPhysicalDevice()
         }
     };
 
-    // Driver properties (Vulkan 1.2 core — gives human-readable driver name/info)
+
     VkPhysicalDeviceDriverProperties driverProps{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
     VkPhysicalDeviceProperties2 props2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
     props2.pNext = &driverProps;
     vkGetPhysicalDeviceProperties2(m_physicalDevice, &props2);
 
-    // VRAM: sum all DEVICE_LOCAL heaps
+
     VkPhysicalDeviceMemoryProperties memProps{};
     vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memProps);
     uint64_t vramBytes = 0;
@@ -887,7 +887,7 @@ void VulkanContext::pickPhysicalDevice()
 
     const uint64_t vramMB = vramBytes / (1024 * 1024);
 
-    // Max MSAA
+
     const VkSampleCountFlags sampleCounts =
         selected.limits.framebufferColorSampleCounts &
         selected.limits.framebufferDepthSampleCounts;

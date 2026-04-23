@@ -50,9 +50,9 @@ class RenderGraph
         IRenderGraphPass::SharedPtr renderGraphPass{nullptr};
         uint32_t id{0};
         RGPPassInfo passInfo;
-        uint32_t indegree{0};           //*How many passes should run before me
-        std::vector<uint32_t> outgoing; //*Which passes depend on me(Their ids)
-        bool enabled{true};             // false = skip draw + compile; VRAM freed via disablePass<T>()
+        uint32_t indegree{0};
+        std::vector<uint32_t> outgoing;
+        bool enabled{true};
     };
 
 public:
@@ -71,7 +71,7 @@ public:
 
         RenderGraphPassData renderGraphPassInfo{};
         renderGraphPassInfo.renderGraphPass = std::move(renderPass);
-        renderGraphPassInfo.id = m_renderGraphPasses.size(); //! For static ok, for dynamic - no
+        renderGraphPassInfo.id = m_renderGraphPasses.size();
 
         m_renderGraphPasses[type] = renderGraphPassInfo;
 
@@ -129,13 +129,14 @@ public:
         bool success() const { return image && cubeImageView != VK_NULL_HANDLE && sampler; }
     };
 
-    /// Renders all static draw batches from the probe world position to a cubemap.
-    /// If scene is provided, rebuilds draw batches without frustum culling so all scene
-    /// objects are captured regardless of editor camera position.
-    /// Blocks the GPU (vkDeviceWaitIdle + vkQueueWaitIdle) during capture.
+
+
+
+
     ProbeCaptureResult captureSceneProbe(const glm::vec3 &probePos, uint32_t faceSize = 256, Scene *scene = nullptr);
 
     void prepareFrame(Camera::SharedPtr camera, Scene *scene, float deltaTime);
+    void prepareFrame(Camera::SharedPtr camera, const RenderSceneSnapshot &snapshot, float deltaTime);
 
     void setCpuFrustumCullingEnabled(bool enabled)
     {
@@ -150,6 +151,9 @@ public:
     void draw();
     void setup();
 
+
+    std::vector<GraphicsPipelineKey> collectPassPipelineKeys() const;
+
     const RenderGraphFrameProfilingData &getLastFrameProfilingData() const
     {
         return m_renderGraphProfiling->getLastFrameProfilingData();
@@ -162,21 +166,26 @@ public:
         return m_imageIndex;
     }
 
-    // Returns the camera descriptor set for a given swapchain image index.
-    // The set contains binding 0=cameraUBO, 1=lightSpaceUBO, 2=lightSSBO.
-    // Used by offline passes (e.g. LightmapBaker) that need light data.
-    VkDescriptorSet getCameraDescriptorSet(uint32_t imageIndex) const
+    uint32_t getCurrentFrameIndex() const
     {
-        if (imageIndex < m_cameraDescriptorSets.size())
-            return m_cameraDescriptorSets[imageIndex];
+        return m_currentFrame;
+    }
+
+
+
+
+    VkDescriptorSet getCameraDescriptorSet(uint32_t frameIndex) const
+    {
+        if (frameIndex < m_cameraDescriptorSets.size())
+            return m_cameraDescriptorSets[frameIndex];
         return VK_NULL_HANDLE;
     }
 
-    // Returns the raw resource storage so external passes can resolve handlers
-    // to RenderTarget pointers (read-only).
+
+
     const RGPResourcesStorage &getStorage() const { return m_renderGraphPassesStorage; }
 
-    // Expose the mesh registry for offline passes (e.g. LightmapBaker).
+
     MeshGeometryRegistry &getMeshGeometryRegistry() { return m_meshGeometryRegistry; }
 
     std::vector<VkImageView> getImageViews(const std::vector<RGPResourceHandler> &handlers) const;
@@ -221,11 +230,18 @@ private:
     void disablePassData(RenderGraphPassData &data);
     void enablePassData(RenderGraphPassData &data);
     void prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling);
+    void prepareFrameDataFromSnapshot(const RenderSceneSnapshot &snapshot, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling);
+
+
+
+
+
+    void stampPrevModelMatricesAndUpdateCache();
 
     void recreateSwapChain();
 
-    /// Scans all passes for needsRecompilation() and recompiles dirty ones.
-    /// Returns true if any pass was recompiled.
+
+
     bool recompileDirtyPasses();
 
     bool begin();
@@ -287,15 +303,33 @@ private:
     rayTracing::RayTracingScene m_rayTracingScene{MAX_FRAMES_IN_FLIGHT};
     rayTracing::SkinnedBlasBuilder m_skinnedBlasBuilder;
 
-    // Unified geometry buffer for static meshes – eliminates per-draw VB/IB rebinds.
+
     UnifiedGeometryBuffer m_staticUnifiedGeometry;
-    static constexpr VkDeviceSize UNIFIED_VERTEX_BUFFER_SIZE = 512ULL * 1024 * 1024; // 512 MB
-    static constexpr uint32_t UNIFIED_INDEX_BUFFER_COUNT = 64 * 1024 * 1024;         // 64 M indices
+    static constexpr VkDeviceSize UNIFIED_VERTEX_BUFFER_SIZE = 512ULL * 1024 * 1024;
+    static constexpr uint32_t UNIFIED_INDEX_BUFFER_COUNT = 64 * 1024 * 1024;
 
     GpuCullingSystem m_gpuCulling;
 
-    std::array<glm::vec4, 6> m_lastFrustumPlanes{}; // stored in prepareFrame, used in begin()
+    std::array<glm::vec4, 6> m_lastFrustumPlanes{};
     bool m_lastFrustumCullingEnabled{false};
+
+
+
+
+
+
+
+    glm::mat4 m_prevView{1.0f};
+    glm::mat4 m_prevProjection{1.0f};
+    glm::vec2 m_jitterOffset{0.0f};
+    glm::vec2 m_prevJitterOffset{0.0f};
+    uint32_t  m_jitterPhaseIndex{0};
+    bool      m_hasPrevCameraState{false};
+
+
+
+
+    std::unordered_map<uint64_t, glm::mat4> m_prevModelCache;
     bool m_enableCpuFrustumCulling{true};
     bool m_enableCpuSmallFeatureCulling{true};
 
@@ -303,8 +337,8 @@ private:
 
     BindlessRegistry m_bindlessRegistry;
 
-    // Per-pass execution and barrier cache to avoid per-frame heap allocations.
-    // Keyed by pass index in m_sortedRenderGraphPasses. Invalidated on recompile.
+
+
     struct CachedPassExecutionData
     {
         uint32_t imageIndex{UINT32_MAX};
@@ -314,8 +348,8 @@ private:
         uint64_t executionCacheKey{UINT64_MAX};
         bool valid{false};
         std::vector<IRenderGraphPass::RenderPassExecution> executions;
-        std::vector<std::vector<VkImageMemoryBarrier2>> preBarriers;  // [executionIdx]
-        std::vector<std::vector<VkImageMemoryBarrier2>> postBarriers; // [executionIdx]
+        std::vector<std::vector<VkImageMemoryBarrier2>> preBarriers;
+        std::vector<std::vector<VkImageMemoryBarrier2>> postBarriers;
     };
 
     std::vector<CachedPassExecutionData> m_passExecutionCache;
@@ -331,4 +365,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RENDER_GRAPH_HPP
+#endif

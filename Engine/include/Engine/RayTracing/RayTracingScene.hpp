@@ -28,8 +28,8 @@ public:
         bool forceOpaque{true};
         bool disableTriangleFacingCull{false};
 
-        // If set, this BLAS is used directly (skips the geometry cache).
-        // Used for skinned meshes whose BLAS is built by SkinnedBlasBuilder.
+
+
         core::rtx::AccelerationStructure::SharedPtr prebuiltBlas{nullptr};
     };
 
@@ -60,4 +60,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RAY_TRACING_SCENE_HPP
+#endif

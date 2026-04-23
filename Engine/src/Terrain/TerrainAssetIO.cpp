@@ -27,7 +27,7 @@ namespace
     {
         return static_cast<uint16_t>(std::clamp<int64_t>(value, 0, std::numeric_limits<uint16_t>::max()));
     }
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 

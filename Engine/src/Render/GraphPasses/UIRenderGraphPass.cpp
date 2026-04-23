@@ -42,7 +42,7 @@ namespace
                             const glm::vec2 &p3,
                             const ui::FontAtlas::GlyphUV &uvRect)
     {
-        // Use V as-is from the atlas rect (v0: top, v1: bottom) to avoid upside-down glyphs.
+
         vertices.push_back({{p0.x, p0.y, 0.0f}, {uvRect.u0, uvRect.v0}});
         vertices.push_back({{p1.x, p1.y, 0.0f}, {uvRect.u1, uvRect.v0}});
         vertices.push_back({{p2.x, p2.y, 0.0f}, {uvRect.u0, uvRect.v1}});
@@ -51,7 +51,7 @@ namespace
         vertices.push_back({{p3.x, p3.y, 0.0f}, {uvRect.u1, uvRect.v1}});
         vertices.push_back({{p2.x, p2.y, 0.0f}, {uvRect.u0, uvRect.v1}});
     }
-} // namespace
+}
 
 UIRenderGraphPass::UIRenderGraphPass(std::vector<RGPResourceHandler> &inputHandlers)
     : m_inputHandlers(inputHandlers)
@@ -132,7 +132,7 @@ void UIRenderGraphPass::compile(RGPResourcesStorage &storage)
     {
         m_outputRenderTargets[i] = storage.getTexture(m_outputHandlers[i]);
 
-        // Build or update passthrough descriptor set for this frame's input texture.
+
         const auto *inputTex = storage.getTexture(m_inputHandlers[i]);
         if (!m_passthroughSetsBuilt)
         {

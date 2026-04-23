@@ -83,7 +83,7 @@ void RTIndirectDiffuseRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &b
     const VkShaderStageFlags rgenStages = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
     const VkShaderStageFlags chitStages = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
-    // Set 1: b0=normal, b1=albedo, b2=depth, b3=output storage image, b4=GI instance SSBO
+
     m_textureSetLayout = core::DescriptorSetLayout::createShared(
         device,
         std::vector<VkDescriptorSetLayoutBinding>{
@@ -106,7 +106,7 @@ void RTIndirectDiffuseRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &b
     m_sampler     = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
     m_depthSampler = core::Sampler::createShared(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 
-    // Pre-create minimum-size GI instance buffers so compile() can bind slot 4 immediately.
+
     const uint32_t giBufferCount = std::max(imageCount, kMinGISceneBufferCount);
     m_giSceneBuffers.resize(giBufferCount);
     m_giSceneBufferSizes.assign(giBufferCount, 0u);
@@ -179,7 +179,7 @@ void RTIndirectDiffuseRenderGraphPass::record(core::CommandBuffer::SharedPtr com
     if (!outputTarget)
         return;
 
-    // Skip if no geometry in scene (empty TLAS)
+
     if (data.drawBatches.empty())
     {
         VkClearColorValue clear{};
@@ -203,7 +203,7 @@ void RTIndirectDiffuseRenderGraphPass::record(core::CommandBuffer::SharedPtr com
     pc.pad         = 0.0f;
     ++m_frameCounter;
 
-    // Populate instance SSBO for the rchit shader and update descriptor binding 4.
+
     updateGISceneBuffer(data, renderContext.currentFrame);
     if (renderContext.currentFrame < m_giSceneBuffers.size() && m_giSceneBuffers[renderContext.currentFrame])
     {
@@ -319,7 +319,7 @@ void RTIndirectDiffuseRenderGraphPass::createRayTracingPipeline()
     if (!context || !context->hasRayTracingPipelineSupport())
         return;
 
-    // Build 3-set layout for the rchit path: set 0=camera, set 1=GI textures, set 2=bindless.
+
     if (m_textureSetLayout && EngineShaderFamilies::bindlessMaterialSetLayout != VK_NULL_HANDLE)
     {
         const VkDescriptorSetLayout setLayouts[3] = {

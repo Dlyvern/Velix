@@ -16,6 +16,7 @@
 #include "Engine/Render/GraphPasses/BloomRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/BloomCompositeRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/FXAARenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/FSR1RenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SSAORenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/TAARenderGraphPass.hpp"
@@ -34,6 +35,7 @@
 #include "Engine/Render/GraphPasses/DepthPrepassRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTReflectionsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SSRRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/SSGIRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/DecalRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/VolumetricFogCompositeRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/VolumetricFogLightingRenderGraphPass.hpp"
@@ -45,6 +47,7 @@
 #include "Engine/Render/GraphPasses/RTAODenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTReflectionDenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTIndirectDiffuseRenderGraphPass.hpp"
+#include "Engine/Render/RenderSceneSnapshot.hpp"
 #include "Engine/Render/GraphPasses/RTGIDenoiseRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/RTTemporalAccumulationRenderGraphPass.hpp"
 
@@ -138,11 +141,13 @@ private:
     engine::renderGraph::TonemapRenderGraphPass *m_tonemapRenderGraphPass{nullptr};
     engine::renderGraph::BloomCompositeRenderGraphPass *m_bloomCompositeRenderGraphPass{nullptr};
     engine::renderGraph::FXAARenderGraphPass *m_fxaaRenderGraphPass{nullptr};
+    engine::renderGraph::FSR1RenderGraphPass *m_fsr1RenderGraphPass{nullptr};
     engine::renderGraph::SSAORenderGraphPass *m_ssaoRenderGraphPass{nullptr};
     engine::renderGraph::SMAAPassRenderGraphPass *m_smaaRenderGraphPass{nullptr};
     engine::renderGraph::TAARenderGraphPass *m_taaRenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
     engine::renderGraph::SSRRenderGraphPass *m_ssrRenderGraphPass{nullptr};
+    engine::renderGraph::SSGIRenderGraphPass *m_ssgiRenderGraphPass{nullptr};
     engine::renderGraph::VolumetricFogLightingRenderGraphPass *m_volumetricFogLightingRenderGraphPass{nullptr};
     engine::renderGraph::VolumetricFogTemporalRenderGraphPass *m_volumetricFogTemporalRenderGraphPass{nullptr};
     engine::renderGraph::VolumetricFogCompositeRenderGraphPass *m_volumetricFogCompositeRenderGraphPass{nullptr};
@@ -181,10 +186,12 @@ private:
     engine::renderGraph::TonemapRenderGraphPass *m_gameTonemapRenderGraphPass{nullptr};
     engine::renderGraph::BloomCompositeRenderGraphPass *m_gameBloomCompositeRenderGraphPass{nullptr};
     engine::renderGraph::FXAARenderGraphPass *m_gameFXAARenderGraphPass{nullptr};
+    engine::renderGraph::FSR1RenderGraphPass *m_gameFSR1RenderGraphPass{nullptr};
     engine::renderGraph::SMAAPassRenderGraphPass *m_gameSMAARenderGraphPass{nullptr};
     engine::renderGraph::TAARenderGraphPass *m_gameTAARenderGraphPass{nullptr};
     engine::renderGraph::ContactShadowRenderGraphPass *m_gameContactShadowRenderGraphPass{nullptr};
     engine::renderGraph::SSRRenderGraphPass *m_gameSSRRenderGraphPass{nullptr};
+    engine::renderGraph::SSGIRenderGraphPass *m_gameSSGIRenderGraphPass{nullptr};
     engine::renderGraph::VolumetricFogLightingRenderGraphPass *m_gameVolumetricFogLightingRenderGraphPass{nullptr};
     engine::renderGraph::VolumetricFogTemporalRenderGraphPass *m_gameVolumetricFogTemporalRenderGraphPass{nullptr};
     engine::renderGraph::VolumetricFogCompositeRenderGraphPass *m_gameVolumetricFogCompositeRenderGraphPass{nullptr};
@@ -214,7 +221,9 @@ private:
     bool m_isPlaySessionActive{false};
     engine::Entity *m_pendingProbeCaptureEntity{nullptr};
 
-    // Lightmap baking
+    engine::RenderSceneSnapshot m_renderSnapshot;
+
+
     std::unique_ptr<engine::LightmapBaker> m_lightmapBaker;
     engine::LightmapBakeProgress           m_lightmapBakeProgress;
     bool                                   m_pendingLightmapBake{false};
@@ -223,4 +232,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_EDITOR_RUNTIME_HPP
+#endif

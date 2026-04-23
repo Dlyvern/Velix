@@ -16,9 +16,9 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-/// Editor-only pass that draws textured icon billboards (camera / light / audio)
-/// at the world position of entities that carry those components.
-/// Never included in a shipping/game build.
+
+
+
 class EditorBillboardRenderGraphPass : public engine::renderGraph::IRenderGraphPass
 {
 public:
@@ -36,7 +36,7 @@ public:
         const engine::RenderGraphPassContext &renderContext) const override;
 
     void setExtent(VkExtent2D extent);
-    // Sets the same icon image for camera/light/audio.
+
     void setIconTexturePath(std::string texturePath);
     void setCameraIconTexturePath(std::string texturePath);
     void setLightIconTexturePath(std::string texturePath);
@@ -48,14 +48,14 @@ public:
 private:
     struct EditorBillboardPC
     {
-        glm::mat4 viewProj;   // 64
-        glm::vec3 right;      // 12
-        float     size;       // 4  -> 80
-        glm::vec3 up;         // 12
-        float     pad0;       // 4  -> 96
-        glm::vec3 worldPos;   // 12
-        int       pad1;       // 4  -> 112
-        glm::vec4 color;      // 16 -> 128
+        glm::mat4 viewProj;
+        glm::vec3 right;
+        float     size;
+        glm::vec3 up;
+        float     pad0;
+        glm::vec3 worldPos;
+        int       pad1;
+        glm::vec4 color;
     };
 
     std::shared_ptr<engine::Scene> m_scene;
@@ -82,12 +82,12 @@ private:
     std::array<VkClearValue, 1> m_clearValues{};
 
     std::array<std::string, 3> m_iconTexturePaths{
-        "", // camera: generated icon by default
-        "", // light: generated icon by default
-        ""  // audio: generated icon by default
+        "",
+        "",
+        ""
     };
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_EDITOR_BILLBOARD_RENDER_GRAPH_PASS_HPP
+#endif

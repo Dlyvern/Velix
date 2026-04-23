@@ -52,7 +52,7 @@ void ParticleSystem::update(float deltaTime, const glm::vec3 &worldPosition)
     for (auto &emitter : m_emitters)
         emitter->update(deltaTime, worldPosition);
 
-    // Transfer collision hit positions to splash emitters.
+
     for (auto &emitter : m_emitters)
     {
         auto *collMod = emitter->getModule<CollisionModule>();
@@ -73,8 +73,8 @@ void ParticleSystem::update(float deltaTime, const glm::vec3 &worldPosition)
         collMod->clearHits();
     }
 
-    // Dispatch sub-emitter bursts: for each emitter with subEmitterOnDeath set,
-    // find the target emitter by name and spawn a burst at each death position.
+
+
     for (auto &emitter : m_emitters)
     {
         auto *spawnMod = emitter->getModule<SpawnModule>();

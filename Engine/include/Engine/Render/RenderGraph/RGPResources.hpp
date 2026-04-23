@@ -130,7 +130,7 @@ public:
     PROPERTY_FULL(RGPTextureUsage, Usage)
     PROPERTY_FULL(VkExtent2D, Extent)
     PROPERTY_FULL_DEFAULT(bool, IsSwapChainTarget, false);
-    PROPERTY_FULL_DEFAULT(std::function<VkExtent2D()>, CustomExtentFunction, nullptr); // If not nullptr, Extent field will be ignored
+    PROPERTY_FULL_DEFAULT(std::function<VkExtent2D()>, CustomExtentFunction, nullptr);
     PROPERTY_FULL_DEFAULT(VkImageLayout, InitialLayout, VK_IMAGE_LAYOUT_UNDEFINED);
     PROPERTY_FULL_DEFAULT(VkImageLayout, FinalLayout, VK_IMAGE_LAYOUT_UNDEFINED);
     PROPERTY_FULL_DEFAULT(VkSampleCountFlagBits, SampleCount, VK_SAMPLE_COUNT_1_BIT);
@@ -156,4 +156,4 @@ namespace std
     };
 }
 
-#endif // ELIX_RGP_RESOURCES_HPP
+#endif

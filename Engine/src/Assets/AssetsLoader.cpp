@@ -30,7 +30,7 @@
 
 namespace
 {
-    constexpr uint32_t DDS_MAGIC = 0x20534444; // "DDS "
+    constexpr uint32_t DDS_MAGIC = 0x20534444;
     constexpr uint32_t DDPF_FOURCC = 0x00000004u;
     constexpr uint32_t DDPF_RGB = 0x00000040u;
 
@@ -98,7 +98,7 @@ namespace
         DDSPixelPacking packing{DDSPixelPacking::None};
         bool compressed{false};
         std::vector<uint8_t> topLevelBytes;
-        // Mip levels 1..N-1 (only populated for compressed DDS with embedded mip chain).
+
         std::vector<std::vector<uint8_t>> mipChain;
     };
 
@@ -538,46 +538,46 @@ namespace
     {
         switch (dxgiFormat)
         {
-        case 28: // DXGI_FORMAT_R8G8B8A8_UNORM
-        case 29: // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+        case 28:
+        case 29:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB);
             return true;
-        case 87: // DXGI_FORMAT_B8G8R8A8_UNORM
-        case 91: // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+        case 87:
+        case 91:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB);
             return true;
-        case 71: // DXGI_FORMAT_BC1_UNORM
-        case 72: // DXGI_FORMAT_BC1_UNORM_SRGB
+        case 71:
+        case 72:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_BC1_RGBA_SRGB_BLOCK);
             return true;
-        case 74: // DXGI_FORMAT_BC2_UNORM
-        case 75: // DXGI_FORMAT_BC2_UNORM_SRGB
+        case 74:
+        case 75:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_BC2_UNORM_BLOCK, VK_FORMAT_BC2_SRGB_BLOCK);
             return true;
-        case 77: // DXGI_FORMAT_BC3_UNORM
-        case 78: // DXGI_FORMAT_BC3_UNORM_SRGB
+        case 77:
+        case 78:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_BC3_SRGB_BLOCK);
             return true;
-        case 80: // DXGI_FORMAT_BC4_UNORM
+        case 80:
             outFormat = VK_FORMAT_BC4_UNORM_BLOCK;
             return true;
-        case 81: // DXGI_FORMAT_BC4_SNORM
+        case 81:
             outFormat = VK_FORMAT_BC4_SNORM_BLOCK;
             return true;
-        case 83: // DXGI_FORMAT_BC5_UNORM
+        case 83:
             outFormat = VK_FORMAT_BC5_UNORM_BLOCK;
             return true;
-        case 84: // DXGI_FORMAT_BC5_SNORM
+        case 84:
             outFormat = VK_FORMAT_BC5_SNORM_BLOCK;
             return true;
-        case 95: // DXGI_FORMAT_BC6H_UF16
+        case 95:
             outFormat = VK_FORMAT_BC6H_UFLOAT_BLOCK;
             return true;
-        case 96: // DXGI_FORMAT_BC6H_SF16
+        case 96:
             outFormat = VK_FORMAT_BC6H_SFLOAT_BLOCK;
             return true;
-        case 98: // DXGI_FORMAT_BC7_UNORM
-        case 99: // DXGI_FORMAT_BC7_UNORM_SRGB
+        case 98:
+        case 99:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_BC7_SRGB_BLOCK);
             return true;
         default:
@@ -751,7 +751,7 @@ namespace
                 const size_t mipSize = static_cast<size_t>(blocksWide) * static_cast<size_t>(blocksHigh) * static_cast<size_t>(blockBytes);
 
                 if (mipOffset + mipSize > fileBytes.size())
-                    break; // truncated file — stop, don't fail
+                    break;
 
                 outResult.mipChain.emplace_back(fileBytes.begin() + static_cast<std::ptrdiff_t>(mipOffset),
                                                 fileBytes.begin() + static_cast<std::ptrdiff_t>(mipOffset + mipSize));
@@ -841,7 +841,7 @@ namespace
         }
     }
 #endif
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -1239,7 +1239,7 @@ std::optional<ModelAsset> AssetsLoader::loadModel(const std::string &path)
 
     AssetsSerializer serializer;
 
-    // Check mounted bundles first (runtime game mode).
+
     if (isElixAssetFile(sourcePath))
     {
         auto &bundleManager = elix::engine::ElixBundleManager::getInstance();
@@ -1314,7 +1314,7 @@ std::optional<TextureAsset> AssetsLoader::loadTexture(const std::string &path)
 
     if (isElixAssetFile(sourcePath))
     {
-        // Check mounted bundles first (runtime game mode).
+
         auto &bundleManager = elix::engine::ElixBundleManager::getInstance();
         if (bundleManager.contains(sourcePath.string()))
         {
@@ -1351,8 +1351,8 @@ std::optional<TextureAsset> AssetsLoader::loadTexture(const std::string &path)
         return std::nullopt;
     }
 
-    // Raw texture loads should not create serialized texture assets as a side effect.
-    // Explicit texture importing is handled by importTextureAsset().
+
+
     importedTexture->assetPath = sourcePath.string();
     return importedTexture;
 }
@@ -1486,7 +1486,7 @@ bool AssetsLoader::exportAnimationsFromModel(const std::string &modelAssetPath, 
     AssetsSerializer serializer;
     for (auto &anim : model->animations)
     {
-        // Build a unique output path: AnimName.anim.elixasset, AnimName (2).anim.elixasset, etc.
+
         std::filesystem::path perClipPath = outputDir / (anim.name + ".anim.elixasset");
         {
             std::error_code ec;

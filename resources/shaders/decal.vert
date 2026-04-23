@@ -6,7 +6,7 @@ layout(push_constant) uniform PC
 {
     mat4 worldViewProj;
     mat4 worldToLocal;
-    vec4 params; // x=opacity, y=invW, z=invH, w=blendMode
+    vec4 params;
 } pc;
 
 void main()

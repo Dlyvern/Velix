@@ -108,8 +108,8 @@ void EngineShaderFamilies::initEngineShaderFamilies()
             cameraBindings.push_back(accelerationStructureBinding);
         }
 
-        // All bindings default to 0 (fully bound); TLAS (binding 3) is partially bound
-        // so it can be legally unset when no TLAS is available (e.g. empty scene, first frame).
+
+
         std::vector<VkDescriptorBindingFlags> cameraBindingFlags(cameraBindings.size(), 0u);
         if (hasAccelerationStructureSupport)
             cameraBindingFlags.back() = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
@@ -199,9 +199,9 @@ void EngineShaderFamilies::initEngineShaderFamilies()
 
     meshShaderFamily.pipelineLayout = core::PipelineLayout::createShared(device, layoutRefs, pushConstantsStatic);
 
-    // ---- Bindless material descriptor set layout ----
-    // binding 0: sampler2D allTextures[MAX_BINDLESS_TEXTURES] — PARTIALLY_BOUND
-    // binding 1: readonly SSBO MaterialParams[]              — PARTIALLY_BOUND
+
+
+
     {
         VkDescriptorSetLayoutBinding texBinding{};
         texBinding.binding = 0;
@@ -240,14 +240,14 @@ void EngineShaderFamilies::initEngineShaderFamilies()
                                     &EngineShaderFamilies::bindlessMaterialSetLayout);
     }
 
-    // ---- Bindless mesh pipeline layout (Set 0=camera, Set 1=bindless, Set 2=object) ----
+
     {
         VkDescriptorSetLayout setLayouts[3] = {
             EngineShaderFamilies::cameraDescriptorSetLayout->vk(),
             EngineShaderFamilies::bindlessMaterialSetLayout,
             EngineShaderFamilies::objectDescriptorSetLayout->vk()};
 
-        // Match the GBufferPC push-constant: 4 uints + 1 float = 20 bytes.
+
         VkPushConstantRange pushRange{};
         pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushRange.offset = 0;

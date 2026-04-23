@@ -23,7 +23,7 @@ public:
     [[nodiscard]] const std::string &getScriptName() const;
     [[nodiscard]] Script *getScript() const;
     [[nodiscard]] bool isAttached() const;
-    // True when the script name is set but no script instance exists (e.g. plugin not loaded).
+
     [[nodiscard]] bool isBroken() const;
     void setSerializedVariables(const Script::ExposedVariablesMap &variables);
     const Script::ExposedVariablesMap &getSerializedVariables() const;
@@ -45,4 +45,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SCRIPT_COMPONENT_HPP
+#endif

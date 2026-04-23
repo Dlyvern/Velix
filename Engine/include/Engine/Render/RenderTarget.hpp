@@ -7,7 +7,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-// VkImage + VkImageView handler
+
 class RenderTarget
 {
 public:
@@ -118,4 +118,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RENDER_TARGET_HPP
+#endif

@@ -1,18 +1,18 @@
 #version 450
 
-// Cinematic Effects: Vignette + Film Grain + Chromatic Aberration
-// Single fullscreen pass operating on LDR input (post-AA).
-//
-// set 0  = input color (combined image sampler, binding 0)
+
+
+
+
 
 layout(set = 0, binding = 0) uniform sampler2D uInput;
 
 layout(push_constant) uniform CinematicPC
 {
-    float vignetteStrength;      // [0, 1]
-    float grainStrength;         // [0, 0.2]
-    float aberrationStrength;    // [0, 0.02]
-    float time;                  // animated grain seed
+    float vignetteStrength;
+    float grainStrength;
+    float aberrationStrength;
+    float time;
     float vignetteEnabled;
     float grainEnabled;
     float aberrationEnabled;
@@ -22,7 +22,7 @@ layout(push_constant) uniform CinematicPC
 layout(location = 0) in  vec2 vUV;
 layout(location = 0) out vec4 outColor;
 
-// Simple hash for film grain noise
+
 float hash(vec2 p)
 {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -34,7 +34,7 @@ void main()
 
     if (pc.aberrationEnabled > 0.5)
     {
-        // Chromatic aberration: offset R and B channels radially from screen center
+
         vec2 offset    = (vUV - 0.5) * pc.aberrationStrength;
         float r        = texture(uInput, vUV + offset).r;
         float g        = texture(uInput, vUV).g;
@@ -48,7 +48,7 @@ void main()
 
     if (pc.vignetteEnabled > 0.5)
     {
-        float dist     = length(vUV - 0.5) * 2.0; // 0 at center, ~1.41 at corner
+        float dist     = length(vUV - 0.5) * 2.0;
         float vignette = 1.0 - smoothstep(0.5, 1.4, dist) * pc.vignetteStrength;
         color         *= vignette;
     }

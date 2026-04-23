@@ -7,7 +7,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 struct Particle;
 
-/// Adds hash-based value noise to particle velocity every frame, creating organic drift.
+
 class TurbulenceModule final : public IParticleModule
 {
 public:
@@ -15,11 +15,11 @@ public:
 
     void onParticleUpdate(Particle &particle, float deltaTime) override;
 
-    float strength{1.0f};     // velocity perturbation magnitude (m/s per second)
-    float frequency{1.0f};    // noise spatial frequency (higher = tighter swirls)
-    float scrollSpeed{0.5f};  // how fast the noise pattern moves over time
+    float strength{1.0f};
+    float frequency{1.0f};
+    float scrollSpeed{0.5f};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_TURBULENCE_MODULE_HPP
+#endif

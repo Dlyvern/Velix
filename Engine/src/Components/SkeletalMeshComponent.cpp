@@ -278,12 +278,12 @@ void SkeletalMeshComponent::onModelLoaded()
     for (size_t slot = 0; slot < preservedPathCount; ++slot)
         m_perMeshMaterialOverridePaths[slot] = std::move(preservedMaterialOverridePaths[slot]);
 
-    // Keep CPU mesh materials aligned with saved overrides so any fallback path
-    // still resolves the authored material asset instead of stale importer paths.
+
+
     applyMaterialOverrideCpuDataToMeshes();
 
-    // Skeleton loaded asynchronously — notify the AnimatorComponent on the same
-    // entity so it can bind the skeleton to its tree clips.
+
+
     if (asset.skeleton.has_value())
     {
         if (auto *owner = getOwner<Entity>())

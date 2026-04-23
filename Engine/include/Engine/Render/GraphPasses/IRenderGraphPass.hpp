@@ -9,6 +9,8 @@
 #include "Engine/Render/RenderGraph/RGPResourcesBuilder.hpp"
 #include "Engine/Render/RenderGraph/RGPResourcesStorage.hpp"
 
+#include "Engine/Builders/GraphicsPipelineKey.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -50,12 +52,12 @@ public:
 
     using SharedPtr = std::shared_ptr<IRenderGraphPass>;
 
-    /// Called at the start of the graph setup phase.
-    /// The pass should use this to declare which resources it requires
-    /// but should NOT create GPU objects yet.
+
+
+
     virtual void setup(renderGraph::RGPResourcesBuilder &builder) = 0;
 
-    /// Called after all proxies have been realized and GPU resources are created.
+
     virtual void compile(RGPResourcesStorage &storage) = 0;
 
     virtual void prepareRecord(const RenderGraphPassPerFrameData &, const RenderGraphPassContext &) {}
@@ -68,23 +70,27 @@ public:
         return 0u;
     }
 
-    /// Dynamic feature toggle for the pass implementation.
-    /// RenderGraph keeps the pass in the execution chain; passes with downstream
-    /// consumers should handle the disabled state internally (typically as a
-    /// passthrough/no-op) instead of relying on graph-level skipping.
+
+
+
+
     virtual bool isEnabled() const { return true; }
 
-    /// Return false for passes that touch thread-unsafe global state during command recording.
+
     virtual bool canRecordInParallel() const { return true; }
 
     virtual std::vector<RenderPassExecution> getRenderPassExecutions(const RenderGraphPassContext &renderContext) const = 0;
 
     virtual void cleanup() {}
 
-    /// Free all GPU resources owned by this pass (VkImages, descriptor sets, etc.).
-    /// Called by RenderGraph::disablePass<T>() before removing the pass from the draw loop.
-    /// Does NOT destroy pipelines — those are format/layout dependent, not image dependent.
-    /// Default no-op so all existing passes compile without changes.
+
+
+    virtual void collectPipelineKeys(std::vector<GraphicsPipelineKey> &outKeys) const {}
+
+
+
+
+
     virtual void freeResources() {}
 
     virtual ~IRenderGraphPass() = default;
@@ -122,4 +128,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_IRENDER_GRAPH_PASS_HPP
+#endif

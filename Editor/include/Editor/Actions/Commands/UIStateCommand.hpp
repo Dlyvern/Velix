@@ -26,7 +26,7 @@ namespace actions
         std::string m_afterState;
         std::string m_label;
     };
-} // namespace actions
+}
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_EDITOR_ACTIONS_COMMANDS_UI_STATE_COMMAND_HPP
+#endif

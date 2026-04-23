@@ -9,7 +9,8 @@ layout(push_constant) uniform LightSpaceMatrixPushConstant
 struct InstanceData
 {
     mat4 model;
-    uvec4 objectInfo; // x = objectId, y = bonesOffset, z/w = reserved
+    uvec4 objectInfo;
+    mat4 prevModel;
 };
 
 layout(std430, set = 0, binding = 1) readonly buffer InstanceDataSSBO

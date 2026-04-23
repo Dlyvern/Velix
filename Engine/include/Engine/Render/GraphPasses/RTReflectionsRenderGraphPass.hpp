@@ -72,7 +72,7 @@ private:
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     core::DescriptorSetLayout::SharedPtr m_textureSetLayout{nullptr};
 
-    // Separate layout for the RT pipeline path: set 0 = camera, set 1 = RT textures, set 2 = bindless.
+
     VkPipelineLayout m_rtPipelineLayout{VK_NULL_HANDLE};
 
     std::vector<VkDescriptorSet> m_descriptorSets;
@@ -109,4 +109,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RT_REFLECTIONS_RENDER_GRAPH_PASS_HPP
+#endif

@@ -1,8 +1,8 @@
 #include "Engine/Texture.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
-// #define STB_IMAGE_STATIC
-// #define STBI_ONLY_HDR
+
+
 #include <stb_image.h>
 
 #include <volk.h>
@@ -40,7 +40,7 @@
 
 namespace
 {
-    constexpr uint32_t DDS_MAGIC = 0x20534444; // "DDS "
+    constexpr uint32_t DDS_MAGIC = 0x20534444;
     constexpr uint32_t DDPF_FOURCC = 0x00000004u;
     constexpr uint32_t DDPF_RGB = 0x00000040u;
 
@@ -259,49 +259,49 @@ namespace
 
     bool mapDxgiToVkFormat(uint32_t dxgiFormat, VkFormat requestedFormat, VkFormat &outFormat)
     {
-        // Values from DXGI_FORMAT enum (subset needed for DDS textures in asset packs like Bistro)
+
         switch (dxgiFormat)
         {
-        case 28: // DXGI_FORMAT_R8G8B8A8_UNORM
-        case 29: // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+        case 28:
+        case 29:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB);
             return true;
-        case 87: // DXGI_FORMAT_B8G8R8A8_UNORM
-        case 91: // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+        case 87:
+        case 91:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB);
             return true;
-        case 71: // DXGI_FORMAT_BC1_UNORM
-        case 72: // DXGI_FORMAT_BC1_UNORM_SRGB
+        case 71:
+        case 72:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_BC1_RGBA_SRGB_BLOCK);
             return true;
-        case 74: // DXGI_FORMAT_BC2_UNORM
-        case 75: // DXGI_FORMAT_BC2_UNORM_SRGB
+        case 74:
+        case 75:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_BC2_UNORM_BLOCK, VK_FORMAT_BC2_SRGB_BLOCK);
             return true;
-        case 77: // DXGI_FORMAT_BC3_UNORM
-        case 78: // DXGI_FORMAT_BC3_UNORM_SRGB
+        case 77:
+        case 78:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_BC3_SRGB_BLOCK);
             return true;
-        case 80: // DXGI_FORMAT_BC4_UNORM
+        case 80:
             outFormat = VK_FORMAT_BC4_UNORM_BLOCK;
             return true;
-        case 81: // DXGI_FORMAT_BC4_SNORM
+        case 81:
             outFormat = VK_FORMAT_BC4_SNORM_BLOCK;
             return true;
-        case 83: // DXGI_FORMAT_BC5_UNORM
+        case 83:
             outFormat = VK_FORMAT_BC5_UNORM_BLOCK;
             return true;
-        case 84: // DXGI_FORMAT_BC5_SNORM
+        case 84:
             outFormat = VK_FORMAT_BC5_SNORM_BLOCK;
             return true;
-        case 95: // DXGI_FORMAT_BC6H_UF16
+        case 95:
             outFormat = VK_FORMAT_BC6H_UFLOAT_BLOCK;
             return true;
-        case 96: // DXGI_FORMAT_BC6H_SF16
+        case 96:
             outFormat = VK_FORMAT_BC6H_SFLOAT_BLOCK;
             return true;
-        case 98: // DXGI_FORMAT_BC7_UNORM
-        case 99: // DXGI_FORMAT_BC7_UNORM_SRGB
+        case 98:
+        case 99:
             outFormat = resolveColorFormat(requestedFormat, VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_BC7_SRGB_BLOCK);
             return true;
         default:
@@ -567,21 +567,21 @@ void Texture::createDefaults()
     s_whiteTexture->createFromPixels(packRGBA8(255, 255, 255, 255), VK_FORMAT_R8G8B8A8_SRGB);
 
     s_normalTexture->createFromPixels(packRGBA8(128, 128, 255, 255), VK_FORMAT_R8G8B8A8_UNORM);
-    // Default ORM must be neutral for multiplicative workflow:
-    // AO=1, Roughness=1, Metallic=1.
-    // This keeps scalar factors (especially metallicFactor) effective
-    // even when no ORM texture is assigned.
+
+
+
+
     s_ormTexture->createFromPixels(packRGBA8(255, 255, 255, 255), VK_FORMAT_R8G8B8A8_UNORM);
     s_blackTexture->createFromPixels(packRGBA8(0, 0, 0, 255), VK_FORMAT_R8G8B8A8_SRGB);
 
     s_blackCubemap = std::make_shared<Texture>();
-    // 4×2 all-zero equirectangular → 4×4×6 black cubemap
+
     std::vector<float> blackEquirect(4 * 2 * 4, 0.0f);
     s_blackCubemap->createCubemapFromEquirectangular(blackEquirect.data(), 4, 2, 4);
 
-    // Default fallback textures can be sampled as soon as the first frame starts.
-    // Finish their uploads here so they never spend a frame visible to validation
-    // as VK_IMAGE_LAYOUT_UNDEFINED.
+
+
+
     if (auto context = core::VulkanContext::getContext())
     {
         utilities::AsyncGpuUpload::batchFlush(context->getGraphicsQueue());
@@ -661,7 +661,7 @@ Texture::SharedPtr Texture::getDefaultBlackCubemap()
 
 uint32_t Texture::packRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
-    // Matches little-endian memory layout used by most desktop CPUs for stb-style RGBA bytes
+
     return (uint32_t(r) << 0) |
            (uint32_t(g) << 8) |
            (uint32_t(b) << 16) |
@@ -809,11 +809,11 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
         m_device = vulkanContext->getDevice();
 
         const bool compressed = isCompressedFormat(uploadFormat);
-        // Never use a pre-built mip chain for BC-compressed textures: many DDS exporters
-        // ship incorrect or low-quality mip data that causes visible
-        // corruption (rainbow block artifacts) when the GPU samples lower mip levels.
-        // Vulkan cannot regenerate mipmaps for compressed formats via vkCmdBlitImage,
-        // so we just use mip 0 only (maxLod=0) for all BC textures.
+
+
+
+
+
         const bool hasMipChain = (!compressed && mipChain != nullptr && !mipChain->empty());
 
         if (hasMipChain)
@@ -840,7 +840,7 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
             .width = uploadWidth,
             .height = uploadHeight};
 
-        // When a pre-built mip chain is provided, pack all mip data into one staging buffer
+
         VkDeviceSize totalStagingSize = static_cast<VkDeviceSize>(uploadByteCount);
         if (hasMipChain)
             for (const auto &mip : *mipChain)
@@ -896,14 +896,14 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
 
         if (hasMipChain)
         {
-            // Upload all mip levels from the staging buffer in one call
+
             std::vector<VkBufferImageCopy> regions;
             regions.reserve(m_mipLevels);
 
             VkDeviceSize bufOffset = 0u;
             uint32_t mipW = uploadWidth;
             uint32_t mipH = uploadHeight;
-            // mip 0
+
             VkBufferImageCopy r0{};
             r0.bufferOffset = bufOffset;
             r0.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
@@ -928,7 +928,7 @@ bool Texture::createFromMemory(const void *pixels, size_t byteCount, uint32_t wi
                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                    static_cast<uint32_t>(regions.size()), regions.data());
 
-            // Transition all mip levels to SHADER_READ_ONLY in one barrier.
+
             auto finalBarrier = utilities::ImageUtilities::insertImageMemoryBarrier(
                 *m_image,
                 VK_ACCESS_2_TRANSFER_WRITE_BIT,
@@ -1069,12 +1069,12 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
     std::vector<std::vector<float>> faces(6);
 
     glm::vec3 faceDirections[6][3] = {
-        {{1, 0, 0}, {0, 0, -1}, {0, -1, 0}}, // +X (right)
-        {{-1, 0, 0}, {0, 0, 1}, {0, -1, 0}}, // -X (left)
-        {{0, 1, 0}, {1, 0, 0}, {0, 0, 1}},   // +Y (top)
-        {{0, -1, 0}, {1, 0, 0}, {0, 0, -1}}, // -Y (bottom)
-        {{0, 0, 1}, {1, 0, 0}, {0, -1, 0}},  // +Z (front)
-        {{0, 0, -1}, {-1, 0, 0}, {0, -1, 0}} // -Z (back)
+        {{1, 0, 0}, {0, 0, -1}, {0, -1, 0}},
+        {{-1, 0, 0}, {0, 0, 1}, {0, -1, 0}},
+        {{0, 1, 0}, {1, 0, 0}, {0, 0, 1}},
+        {{0, -1, 0}, {1, 0, 0}, {0, 0, -1}},
+        {{0, 0, 1}, {1, 0, 0}, {0, -1, 0}},
+        {{0, 0, -1}, {-1, 0, 0}, {0, -1, 0}}
     };
 
     auto commandPool = core::VulkanContext::getContext()->getGraphicsCommandPool();
@@ -1098,17 +1098,17 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
 
     for (int face = 0; face < 6; ++face)
     {
-        faces[face].resize(cubemapSize * cubemapSize * 4); // RGBA
+        faces[face].resize(cubemapSize * cubemapSize * 4);
 
         for (uint32_t y = 0; y < cubemapSize; ++y)
         {
             for (uint32_t x = 0; x < cubemapSize; ++x)
             {
-                // Convert to normalized coordinates [-1, 1]
+
                 float u = (2.0f * (x + 0.5f) / cubemapSize) - 1.0f;
                 float v = (2.0f * (y + 0.5f) / cubemapSize) - 1.0f;
 
-                // Calculate direction vector
+
                 glm::vec3 direction =
                     faceDirections[face][0] +
                     u * faceDirections[face][1] +
@@ -1116,15 +1116,15 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
 
                 direction = glm::normalize(direction);
 
-                // Convert to spherical coordinates
+
                 float phi = atan2(direction.z, direction.x);
                 float theta = acos(glm::clamp(direction.y, -1.0f, 1.0f));
 
-                // Convert to UV coordinates
+
                 float u_hdr = phi / (2.0f * glm::pi<float>()) + 0.5f;
                 float v_hdr = theta / glm::pi<float>();
 
-                // Sample equirectangular map (with bilinear filtering)
+
                 float x_hdr = u_hdr * width;
                 float y_hdr = v_hdr * height;
 
@@ -1136,7 +1136,7 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
                 float tx = x_hdr - x0;
                 float ty = y_hdr - y0;
 
-                // Bilinear interpolation
+
                 glm::vec3 color00, color01, color10, color11;
 
                 for (int c = 0; c < 3; ++c)
@@ -1184,9 +1184,9 @@ bool Texture::createCubemapFromEquirectangular(const float *data, int width, int
     vkCmdPipelineBarrier2(commandBuffer, &secondDependency);
     commandBuffer->end();
 
-    // Cubemaps are sampled immediately by skybox / reflection-probe passes after
-    // creation, so this upload must be submitted right away instead of waiting
-    // for the next frame's batched texture flush.
+
+
+
     if (!utilities::AsyncGpuUpload::submit(commandBuffer, queue, std::move(stagingBuffers)))
     {
         VX_ENGINE_ERROR_STREAM("Failed to submit cubemap upload\n");
@@ -1272,81 +1272,81 @@ void Texture::freePixels()
 bool Texture::loadCubemap(const std::array<std::string, 6> &cubemaps)
 {
     return false;
-    // m_device = core::VulkanContext::getContext()->getDevice();
 
-    // std::array<stbi_uc *, 6> facePixels{};
 
-    // for (int i = 0; i < 6; ++i)
-    // {
-    //     facePixels[i] = stbi_load(cubemaps[i].c_str(), &m_width, &m_height, &m_channels, STBI_rgb_alpha);
 
-    //     if (!facePixels[i])
-    //     {
-    //         for (int j = 0; j < i; ++j)
-    //             stbi_image_free(facePixels[j]);
 
-    //         throw std::runtime_error("failed to load texture image: " + cubemaps[i]);
-    //     }
 
-    //     if (i > 0 && (m_width != m_height))
-    //     {
-    //         for (int j = 0; j <= i; ++j)
-    //             stbi_image_free(facePixels[j]);
 
-    //         throw std::runtime_error("cubemap faces must have same dimensions");
-    //     }
-    // }
 
-    // VkDeviceSize imageSize = m_width * m_height * 4;
-    // VkDeviceSize layerSize = imageSize;
-    // VkDeviceSize totalSize = layerSize * 6;
 
-    // auto buffer = core::Buffer::createShared(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
 
-    // void *data;
 
-    // buffer->map(data);
 
-    // for (int face = 0; face < 6; ++face)
-    // {
-    //     size_t offset = face * layerSize;
 
-    //     memcpy(static_cast<char *>(data) + offset, facePixels[face], layerSize);
 
-    //     if (freePixelsOnLoad)
-    //         stbi_image_free(facePixels[face]);
-    // }
 
-    // buffer->unmap();
 
-    // commandPool = core::VulkanContext::getContext()->getGraphicsCommandPool();
 
-    // m_image = core::Image::createShared(static_cast<uint32_t>(m_width),
-    //                                     static_cast<uint32_t>(m_height), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, core::memory::MemoryUsage::GPU_ONLY, VK_FORMAT_R8G8B8A8_SRGB,
-    //                                     VK_IMAGE_TILING_OPTIMAL, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
 
-    // m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-    //                                commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
-    // m_image->copyBufferToImage(buffer, static_cast<uint32_t>(m_width), static_cast<uint32_t>(m_height), commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
-    // m_image->transitionImageLayout(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    //                                commandPool, core::VulkanContext::getContext()->getGraphicsQueue(), 6);
 
-    // VkImageViewCreateInfo imageViewCI{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    // imageViewCI.image = m_image->vk();
-    // imageViewCI.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-    // imageViewCI.format = VK_FORMAT_R8G8B8A8_SRGB;
-    // imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    // imageViewCI.subresourceRange.baseMipLevel = 0;
-    // imageViewCI.subresourceRange.levelCount = 1;
-    // imageViewCI.subresourceRange.baseArrayLayer = 0;
-    // imageViewCI.subresourceRange.layerCount = 6;
 
-    // if (vkCreateImageView(m_device, &imageViewCI, nullptr, &m_imageView) != VK_SUCCESS)
-    //     throw std::runtime_error("failed to create cubemap image view!");
 
-    // m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 
-    // return true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }
 
 ELIX_NESTED_NAMESPACE_END

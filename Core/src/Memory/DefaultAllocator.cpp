@@ -29,7 +29,7 @@ std::string describeBufferCreateInfo(const VkBufferCreateInfo &createInfo)
            << ", flags=0x" << std::hex << createInfo.flags << std::dec;
     return stream.str();
 }
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 ELIX_CUSTOM_NAMESPACE_BEGIN(allocators)

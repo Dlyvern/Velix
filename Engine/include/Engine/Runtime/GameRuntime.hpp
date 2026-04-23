@@ -24,6 +24,7 @@
 #include "Engine/Render/GraphPasses/RTShadowsRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SMAAPassRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SSRRenderGraphPass.hpp"
+#include "Engine/Render/GraphPasses/SSGIRenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/TAARenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/SSAORenderGraphPass.hpp"
 #include "Engine/Render/GraphPasses/ShadowRenderGraphPass.hpp"
@@ -37,6 +38,7 @@
 #include "Engine/Runtime/ApplicationConfig.hpp"
 #include "Engine/Runtime/IRuntime.hpp"
 #include "Engine/Scene.hpp"
+#include "Engine/Threads/FramePipeline.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -103,6 +105,7 @@ private:
     renderGraph::LightingRenderGraphPass *m_lightingRenderGraphPass{nullptr};
     renderGraph::ContactShadowRenderGraphPass *m_contactShadowRenderGraphPass{nullptr};
     renderGraph::SSRRenderGraphPass *m_ssrRenderGraphPass{nullptr};
+    renderGraph::SSGIRenderGraphPass *m_ssgiRenderGraphPass{nullptr};
     renderGraph::VolumetricFogLightingRenderGraphPass *m_volumetricFogLightingRenderGraphPass{nullptr};
     renderGraph::VolumetricFogTemporalRenderGraphPass *m_volumetricFogTemporalRenderGraphPass{nullptr};
     renderGraph::VolumetricFogCompositeRenderGraphPass *m_volumetricFogCompositeRenderGraphPass{nullptr};
@@ -123,8 +126,13 @@ private:
     size_t m_renderGraphTopologyHash{0u};
     bool m_scriptsAttached{false};
     bool m_initialized{false};
+
+    FramePipeline m_framePipeline{FramePipeline::Mode::Pipelined};
+    RenderSceneSnapshot m_renderSnapshot;
+    glm::vec3 m_lastCameraPosition{0.0f};
+    bool m_hasPreviousCameraPosition{false};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_GAME_RUNTIME_HPP
+#endif

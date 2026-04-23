@@ -314,8 +314,8 @@ void CharacterMovementComponent::syncControllerUserData()
 
 glm::vec3 CharacterMovementComponent::getControllerWorldPositionForTransform(const glm::vec3 &transformWorldPosition) const
 {
-    // PhysX capsule controller foot position includes contact offset. We compensate here
-    // so the editable capsule bottom in the editor matches the runtime grounding point.
+
+
     return transformWorldPosition + glm::vec3(0.0f, m_capsuleCenterOffsetY + m_contactOffset, 0.0f);
 }
 

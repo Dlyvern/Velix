@@ -188,4 +188,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ASSETS_WINDOW_HPP
+#endif

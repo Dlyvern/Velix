@@ -4,8 +4,11 @@
 #include "Core/Macros.hpp"
 #include "Engine/Caches/Hash.hpp"
 
+#include <volk.h>
+
 #include <cstdint>
 #include <string>
+#include <vector>
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -45,6 +48,7 @@ enum class ShaderId : uint8_t
     TAA,
     AnimPreview,
     SSR,
+    SSGI,
     VolumetricFogLighting,
     VolumetricFogTemporal,
     VolumetricFogComposite,
@@ -55,6 +59,8 @@ enum class ShaderId : uint8_t
     MotionBlur,
     Decal,
     Sprite2D,
+    FSR1EASU,
+    FSR1RCAS,
     None
 };
 
@@ -167,4 +173,4 @@ struct GraphicsPipelineKeyHash
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_GRAPHICS_PIPELINE_KEY_HPP
+#endif

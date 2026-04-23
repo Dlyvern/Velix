@@ -16,14 +16,14 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-// VXActor is the standard base class for game logic in Velix.
-// Attach to an entity by registering with REGISTER_SCRIPT(MyActor).
-// Replaces direct Script subclassing with a higher-level, friendlier API.
+
+
+
 class VXActor : public VXObject, public Script
 {
 public:
     void onStart() override {}
-    void onUpdate(float /*dt*/) override {}
+    void onUpdate(float ) override {}
     void onStop() override {}
     void onCollisionEnter(Entity *other, const CollisionInfo &) override {}
     void onCollisionExit(Entity *other) override {}
@@ -71,7 +71,7 @@ public:
 
     static Entity *findEntityByName(const std::string &name);
 
-    // Find the first VXActor-derived script of type T in the active scene.
+
     template <typename T>
     static T *findActor()
     {
@@ -92,7 +92,7 @@ public:
         return nullptr;
     }
 
-    // Find the first VXActor-derived script of type T on an entity with the given name.
+
     template <typename T>
     static T *findActor(const std::string &name)
     {
@@ -108,7 +108,7 @@ public:
         return nullptr;
     }
 
-    // Spawn a new entity named `name` with a T script attached. onStart() is called immediately.
+
     template <typename T>
     static T *spawn(const std::string &name)
     {
@@ -119,11 +119,11 @@ public:
         auto *script = new T();
         auto *comp = entity->addComponent<ScriptComponent>(std::string(typeid(T).name()), script);
         if (comp)
-            comp->onAttach(); // immediately calls script->onStart()
+            comp->onAttach();
         return script;
     }
 
-    // Destroy this actor's owner entity.
+
     void destroy();
 
     VXActor *getParentActor() const;
@@ -135,4 +135,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_VX_ACTOR_HPP
+#endif

@@ -11,9 +11,9 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
-/// Renders DebugDraw lines on top of the scene.
-/// Inserted after SelectionOverlay, before UI.
-/// Editor-only — never created in game builds.
+
+
+
 class DebugOverlayRenderGraphPass : public engine::renderGraph::IRenderGraphPass
 {
 public:
@@ -47,21 +47,21 @@ private:
     VkViewport m_viewport{};
     VkRect2D   m_scissor{};
 
-    // Blit pipeline resources (pass-through input → output)
+
     core::DescriptorSetLayout::SharedPtr m_blitDescriptorSetLayout;
     core::PipelineLayout::SharedPtr      m_blitPipelineLayout;
     std::vector<VkDescriptorSet>         m_blitDescriptorSets;
     core::Sampler::SharedPtr             m_sampler;
     bool m_descriptorSetsBuilt{false};
 
-    // Overlay pipeline resources (camera set 0, no additional descriptors)
+
     core::PipelineLayout::SharedPtr m_overlayPipelineLayout;
 
-    // Per-frame host-visible vertex buffers for debug geometry
+
     std::vector<core::Buffer::SharedPtr> m_lineVertexBuffers;
     std::vector<core::Buffer::SharedPtr> m_triangleVertexBuffers;
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_DEBUG_OVERLAY_RENDER_GRAPH_PASS_HPP
+#endif

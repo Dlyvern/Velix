@@ -112,7 +112,7 @@ namespace
         return readVector<uint8_t>(stream, outBytes, 1ull << 31);
     }
 
-    constexpr uint32_t kAnimationTreeGraphMagic = 0x46524754u; // "TGRF"
+    constexpr uint32_t kAnimationTreeGraphMagic = 0x46524754u;
 
     bool writeAnimationTransitionCondition(std::ostream &stream, const elix::engine::AnimationTransitionCondition &condition)
     {
@@ -353,7 +353,7 @@ namespace
         return true;
     }
 
-    // Returns the path relative to modelDir if it's under modelDir, otherwise returns it unchanged.
+
     std::string makeRelativeTexturePath(const std::string &texturePath, const std::filesystem::path &modelDir)
     {
         if (texturePath.empty() || modelDir.empty())
@@ -361,7 +361,7 @@ namespace
 
         const std::filesystem::path p(texturePath);
         if (!p.is_absolute())
-            return texturePath; // already relative
+            return texturePath;
 
         std::error_code ec;
         const std::filesystem::path rel = std::filesystem::relative(p, modelDir, ec);
@@ -369,7 +369,7 @@ namespace
             return texturePath;
 
         const std::string relStr = rel.lexically_normal().string();
-        // Reject paths that escape the model directory (start with "..")
+
         if (relStr.rfind("..", 0) == 0)
             return texturePath;
 
@@ -394,7 +394,7 @@ namespace
                writePOD(stream, material.alphaCutoff) &&
                writePOD(stream, material.uvScale) &&
                writePOD(stream, material.uvOffset) &&
-               // v3: baked lightmap texture path (empty string = no lightmap)
+
                writeString(stream, makeRelativeTexturePath(material.lightmapTexture, modelDir));
     }
 
@@ -420,7 +420,7 @@ namespace
             !readPOD(stream, outMaterial.uvOffset))
             return false;
 
-        // v3: baked lightmap texture path
+
         if (modelPayloadVersion >= kModelPayloadVersionWithLightmapUVs)
             if (!readString(stream, outMaterial.lightmapTexture))
                 return false;
@@ -679,7 +679,7 @@ namespace
         case elix::engine::TextureAsset::PixelEncoding::RGBA16F:
             if (texelsCount > (std::numeric_limits<uint64_t>::max() / 8u))
                 return std::nullopt;
-            return texelsCount * 8u; // 4 channels × 2 bytes (half-float)
+            return texelsCount * 8u;
         case elix::engine::TextureAsset::PixelEncoding::COMPRESSED_GPU:
         {
             const VkFormat format = static_cast<VkFormat>(textureAsset.vkFormat);
@@ -725,7 +725,7 @@ namespace
             return std::nullopt;
         }
     }
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -752,7 +752,7 @@ bool AssetsSerializer::writeTexture(const TextureAsset &textureAsset, const std:
         std::vector<uint8_t> compressedPixels;
         if (Compressor::compress(textureAsset.pixels, compressedPixels, Compressor::Algorithm::Deflate, 7))
         {
-            // Keep raw data when compression gain is too small.
+
             if (compressedPixels.size() + 32u < textureAsset.pixels.size())
             {
                 storedPixels = std::move(compressedPixels);
@@ -833,7 +833,7 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
             !writePOD(payloadStream, mesh.attachedBoneId))
             return false;
 
-        // v3: lightmap UV1 data (one vec2 per vertex, may be empty)
+
         const uint32_t uvCount = static_cast<uint32_t>(mesh.lightmapUVs.size());
         if (!writePOD(payloadStream, uvCount))
             return false;
@@ -859,7 +859,7 @@ bool AssetsSerializer::writeModel(const ModelAsset &modelAsset, const std::strin
         std::vector<uint8_t> compressedPayload;
         if (Compressor::compress(payloadBytes, compressedPayload, Compressor::Algorithm::Deflate, 7))
         {
-            // Avoid paying decompression cost when compression gain is minimal.
+
             if (compressedPayload.size() + 256u < payloadBytes.size())
             {
                 storedPayload = std::move(compressedPayload);
@@ -974,8 +974,8 @@ std::optional<TextureAsset> AssetsSerializer::readTexture(const std::vector<uint
 {
     std::string str(reinterpret_cast<const char *>(bytes.data()), bytes.size());
     std::istringstream stream(std::move(str), std::ios::binary);
-    // Reuse path-based implementation via a temporary file path for error messages.
-    // The actual parse is identical — just redirect through istringstream.
+
+
     Asset::BinaryHeader header{};
     if (!::readHeader(stream, header))
         return std::nullopt;
@@ -1081,7 +1081,7 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::string &path) c
                 !readPOD(payloadStream, mesh.attachedBoneId))
                 return std::nullopt;
 
-            // v3: lightmap UV1 data
+
             if (modelPayloadVersion >= kModelPayloadVersionWithLightmapUVs)
             {
                 uint32_t uvCount = 0u;
@@ -1206,7 +1206,7 @@ std::optional<ModelAsset> AssetsSerializer::readModel(const std::vector<uint8_t>
                 !readPOD(payloadStream, mesh.attachedBoneId))
                 return std::nullopt;
 
-            // v3: lightmap UV1 data
+
             if (modelPayloadVersion >= kModelPayloadVersionWithLightmapUVs)
             {
                 uint32_t uvCount = 0u;

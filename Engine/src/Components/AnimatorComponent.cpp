@@ -108,7 +108,7 @@ namespace
             usedNames.insert(animation.name);
         }
     }
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -274,7 +274,7 @@ void AnimatorComponent::update(float deltaTime)
         return;
     }
 
-    // Simple mode
+
     if (!m_currentAnimation || m_isAnimationPaused)
         return;
 
@@ -349,8 +349,8 @@ void AnimatorComponent::refreshAnimationBindings()
         animation.gameObject = owner;
     }
 
-    // Also bind tree clips so tree-mode animations work when the skeleton
-    // arrives after loadTree() (async streaming).
+
+
     for (auto &[assetPath, clips] : m_treeClipAssets)
     {
         (void)assetPath;
@@ -595,9 +595,9 @@ void AnimatorComponent::setTree(const AnimationTree &tree)
     cacheTreeAnimations();
     initTreeParams();
     ensureTreeActivePath();
-    // Do NOT apply pose here — bones stay at bind pose (T-pose) until
-    // the game loop calls update(). This prevents the T-pose→idle flash
-    // when assigning a tree in the editor.
+
+
+
 }
 
 void AnimatorComponent::clearTree()

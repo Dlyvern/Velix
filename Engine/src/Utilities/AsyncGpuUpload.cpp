@@ -22,7 +22,7 @@ namespace
         std::vector<core::Buffer::SharedPtr> stagingBuffers;
     };
 
-    // Queued-but-not-yet-submitted uploads (for batchFlush).
+
     struct BatchEntry
     {
         core::CommandBuffer::SharedPtr commandBuffer;
@@ -57,7 +57,7 @@ namespace
 
         return vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &g_timelineSemaphore) == VK_SUCCESS;
     }
-} // namespace
+}
 
 VkFence AsyncGpuUpload::submitAsync(core::CommandBuffer::SharedPtr commandBuffer, VkQueue queue)
 {
@@ -305,8 +305,8 @@ bool AsyncGpuUpload::batchFlush(VkQueue queue)
         }
     }
 
-    // Merge all staging buffers into a single PendingUpload entry so they are
-    // kept alive until the fence signals.
+
+
     std::vector<core::Buffer::SharedPtr> allStagingBuffers;
     std::vector<core::CommandBuffer::SharedPtr> allCommandBuffers;
     for (auto &entry : batch)
@@ -316,8 +316,8 @@ bool AsyncGpuUpload::batchFlush(VkQueue queue)
             allStagingBuffers.push_back(std::move(buf));
     }
 
-    // Store a single PendingUpload that represents the whole batch so every
-    // submitted command buffer stays alive until the fence signals.
+
+
     {
         std::lock_guard<std::mutex> lock(g_pendingUploadsMutex);
         if (completionSemaphore != VK_NULL_HANDLE)
@@ -373,8 +373,8 @@ void AsyncGpuUpload::collectFinished(VkDevice device)
 
         if (status == VK_SUCCESS)
         {
-            // The completion semaphore was already published when the upload was
-            // submitted so same-frame render work can wait on it immediately.
+
+
         }
         else
         {
@@ -422,7 +422,7 @@ void AsyncGpuUpload::releaseSemaphores(VkDevice device, const std::vector<VkSema
 
 void AsyncGpuUpload::flush(VkDevice device)
 {
-    // Drain any enqueued-but-not-yet-submitted batch entries first.
+
     {
         std::lock_guard<std::mutex> lock(g_batchMutex);
         g_batchQueue.clear();

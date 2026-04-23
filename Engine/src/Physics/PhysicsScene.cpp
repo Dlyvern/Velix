@@ -127,7 +127,7 @@ physx::PxRigidStatic *PhysicsScene::createStatic(const physx::PxTransform &trans
 
 physx::PxShape *PhysicsScene::createShape(const physx::PxGeometry &geometry)
 {
-    // Use exclusive shapes so collider geometry can be edited at runtime.
+
     auto shape = m_physics->createShape(geometry, *m_defaultMaterial, true);
 
     physx::PxFilterData filterData;
@@ -135,7 +135,7 @@ physx::PxShape *PhysicsScene::createShape(const physx::PxGeometry &geometry)
 
     shape->setFlag(physx::PxShapeFlag::eSCENE_QUERY_SHAPE, true);
     shape->setFlag(physx::PxShapeFlag::eSIMULATION_SHAPE, true);
-    // shape->setFlag(physx::PxShapeFlag::eVISUALIZATION, true);
+
     shape->setSimulationFilterData(filterData);
     shape->setQueryFilterData(filterData);
 

@@ -338,7 +338,7 @@ void PerFrameDataWorker::pruneRemovedEntities(Scene *scene)
     const std::size_t entitiesSize = sceneEntities.size();
     if (entitiesSize != lastEntitiesSize)
     {
-        VX_ENGINE_INFO_STREAM("Scene entity count changed: " << lastEntitiesSize << " -> " << entitiesSize << '\n');
+
         lastEntitiesSize = entitiesSize;
     }
 
@@ -364,9 +364,9 @@ void PerFrameDataWorker::syncSceneDrawItems(Scene *scene, const glm::vec3 &camer
     if (!scene)
         return;
 
-    // Load radius: entities within this distance are streamed in.
-    // Unload radius adds hysteresis (50 % extra) to avoid load/unload thrashing.
-    constexpr float kLoadRadius   = 200.0f;
+
+
+    constexpr float kLoadRadius = 200.0f;
     constexpr float kUnloadRadius = 300.0f;
 
     for (const auto &entity : scene->getEntities())
@@ -379,14 +379,14 @@ void PerFrameDataWorker::syncSceneDrawItems(Scene *scene, const glm::vec3 &camer
             continue;
         }
 
-        auto staticMeshComponent  = entity->getComponent<StaticMeshComponent>();
+        auto staticMeshComponent = entity->getComponent<StaticMeshComponent>();
         auto skeletalMeshComponent = entity->getComponent<SkeletalMeshComponent>();
-        auto terrainComponent      = entity->getComponent<TerrainComponent>();
+        auto terrainComponent = entity->getComponent<TerrainComponent>();
 
-        // ---- On-demand streaming: trigger load / unload based on camera distance ----
+
         if (staticMeshComponent || skeletalMeshComponent)
         {
-            // World position from transform (translation column of model matrix).
+
             glm::vec3 entityPos(0.0f);
             if (auto *t = entity->getComponent<Transform3DComponent>())
             {
@@ -608,21 +608,12 @@ void PerFrameDataWorker::sortDrawReferences(const glm::vec3 &cameraPosition)
                   if (left.skinned != right.skinned)
                       return left.skinned < right.skinned;
 
-                  if (left.mesh->vertexBuffer.get() != right.mesh->vertexBuffer.get())
-                      return left.mesh->vertexBuffer.get() < right.mesh->vertexBuffer.get();
-
-                  if (left.mesh->indexBuffer.get() != right.mesh->indexBuffer.get())
-                      return left.mesh->indexBuffer.get() < right.mesh->indexBuffer.get();
-
-                  if (left.material.get() != right.material.get())
-                      return left.material.get() < right.material.get();
-
-                  if (left.meshIndex != right.meshIndex)
-                      return left.meshIndex < right.meshIndex;
-
                   const uint32_t leftEntityId = left.entity ? left.entity->getId() : 0u;
                   const uint32_t rightEntityId = right.entity ? right.entity->getId() : 0u;
-                  return leftEntityId < rightEntityId;
+                  if (leftEntityId != rightEntityId)
+                      return leftEntityId < rightEntityId;
+
+                  return left.meshIndex < right.meshIndex;
               });
 }
 
@@ -667,8 +658,8 @@ void PerFrameDataWorker::buildRayTracingInputs()
     std::vector<rayTracing::RayTracingScene::InstanceInput> rtInstances;
     rtInstances.reserve(m_drawReferences.size());
 
-    // Per-instance metadata for RT shading (vertex/index addresses, material params).
-    // Index aligns with instance.customInstanceIndex.
+
+
     struct RTInstanceMeta
     {
         core::Buffer *vertexBuffer{nullptr};
@@ -685,20 +676,20 @@ void PerFrameDataWorker::buildRayTracingInputs()
             continue;
 
         const uint32_t materialFlags = reference.material->params().flags;
-        const bool isAlphaBlend  = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
-        const bool isAlphaMask   = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK) != 0u;
+        const bool isAlphaBlend = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
+        const bool isAlphaMask = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK) != 0u;
         const bool isLegacyGlass = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_LEGACY_GLASS) != 0u;
         const bool isDoubleSided = (materialFlags & Material::MaterialFlags::EMATERIAL_FLAG_DOUBLE_SIDED) != 0u;
 
-        // Legacy glass and pure alpha-blend objects are excluded entirely from the TLAS.
+
         if (isLegacyGlass || isAlphaBlend)
             continue;
 
         rayTracing::RayTracingScene::InstanceInput instance{};
-        instance.transform           = reference.modelMatrix;
+        instance.transform = reference.modelMatrix;
         instance.customInstanceIndex = static_cast<uint32_t>(rtInstances.size());
-        instance.forceOpaque         = !isAlphaMask;
-        instance.mask                = isAlphaMask ? 0x02u : 0x01u;
+        instance.forceOpaque = !isAlphaMask;
+        instance.mask = isAlphaMask ? 0x02u : 0x01u;
         instance.disableTriangleFacingCull = isDoubleSided;
 
         RTInstanceMeta meta{};
@@ -706,10 +697,10 @@ void PerFrameDataWorker::buildRayTracingInputs()
 
         if (reference.skinned && m_dependencies.skinnedBlasBuilder)
         {
-            // Build / update a skinned BLAS using CPU skinning + BLAS update.
+
             auto *skeletal = reference.entity
-                ? reference.entity->getComponent<SkeletalMeshComponent>()
-                : nullptr;
+                                 ? reference.entity->getComponent<SkeletalMeshComponent>()
+                                 : nullptr;
             if (!skeletal)
                 continue;
             const auto &cpuMeshes = skeletal->getMeshes();
@@ -717,9 +708,8 @@ void PerFrameDataWorker::buildRayTracingInputs()
                 continue;
             const CPUMesh &cpuMesh = cpuMeshes[reference.meshIndex];
 
-            // Key: entity ptr ^ (meshIndex * large prime) — unique per (entity, mesh slot)
-            const uint64_t blasKey = reinterpret_cast<uint64_t>(reference.entity)
-                ^ (static_cast<uint64_t>(reference.meshIndex) * 0x9e3779b97f4a7c15ULL);
+
+            const uint64_t blasKey = reinterpret_cast<uint64_t>(reference.entity) ^ (static_cast<uint64_t>(reference.meshIndex) * 0x9e3779b97f4a7c15ULL);
 
             auto blas = m_dependencies.skinnedBlasBuilder->buildOrUpdate(
                 blasKey, cpuMesh, m_frameBones, reference.drawItem ? reference.drawItem->bonesOffset : 0u);
@@ -727,29 +717,29 @@ void PerFrameDataWorker::buildRayTracingInputs()
                 continue;
 
             instance.prebuiltBlas = std::move(blas);
-            // mesh / geometryHash not used when prebuiltBlas is set
 
-            // Shading: use the skinned Vertex3D buffer from the builder entry.
+
+
             const auto *blasEntry = m_dependencies.skinnedBlasBuilder->find(blasKey);
             if (blasEntry && blasEntry->vertexBuffer && blasEntry->indexBuffer)
             {
                 meta.vertexBuffer = blasEntry->vertexBuffer.get();
-                meta.indexBuffer  = blasEntry->indexBuffer.get();
+                meta.indexBuffer = blasEntry->indexBuffer.get();
                 meta.vertexStride = static_cast<uint32_t>(sizeof(vertex::Vertex3D));
             }
         }
         else
         {
-            // Static (non-skinned) mesh path.
+
             if (!reference.meshState->geometryHash.isValid())
                 continue;
 
             instance.geometryHash = reference.meshState->geometryHash;
-            instance.mesh         = reference.mesh;
+            instance.mesh = reference.mesh;
 
-            // Shading buffers come from the geometry cache (filled after TLAS update below).
-            meta.vertexBuffer = nullptr; // resolved below
-            meta.indexBuffer  = nullptr;
+
+            meta.vertexBuffer = nullptr;
+            meta.indexBuffer = nullptr;
             meta.vertexStride = reference.mesh->vertexStride;
         }
 
@@ -765,7 +755,7 @@ void PerFrameDataWorker::buildRayTracingInputs()
         for (size_t i = 0; i < rtInstances.size(); ++i)
         {
             const auto &instance = rtInstances[i];
-            const auto &meta     = instanceMeta[i];
+            const auto &meta = instanceMeta[i];
 
             if (instance.customInstanceIndex >= m_data.rtReflectionShadingInstances.size())
                 continue;
@@ -774,24 +764,24 @@ void PerFrameDataWorker::buildRayTracingInputs()
 
             if (instance.prebuiltBlas)
             {
-                // Skinned mesh: vertex/index buffers already set in meta.
+
                 if (!meta.vertexBuffer || !meta.indexBuffer)
                     continue;
                 shadingInstance.vertexAddress = utilities::BufferUtilities::getBufferDeviceAddress(*meta.vertexBuffer);
-                shadingInstance.indexAddress  = utilities::BufferUtilities::getBufferDeviceAddress(*meta.indexBuffer);
-                shadingInstance.vertexStride  = meta.vertexStride;
+                shadingInstance.indexAddress = utilities::BufferUtilities::getBufferDeviceAddress(*meta.indexBuffer);
+                shadingInstance.vertexStride = meta.vertexStride;
             }
             else
             {
-                // Static mesh: look up in geometry cache.
+
                 if (!instance.mesh)
                     continue;
                 const auto *entry = m_dependencies.rayTracingGeometryCache->find(instance.geometryHash);
                 if (!entry || !entry->rayTracedMesh || !entry->rayTracedMesh->vertexBuffer || !entry->rayTracedMesh->indexBuffer)
                     continue;
                 shadingInstance.vertexAddress = utilities::BufferUtilities::getBufferDeviceAddress(*entry->rayTracedMesh->vertexBuffer);
-                shadingInstance.indexAddress  = utilities::BufferUtilities::getBufferDeviceAddress(*entry->rayTracedMesh->indexBuffer);
-                shadingInstance.vertexStride  = instance.mesh->vertexStride;
+                shadingInstance.indexAddress = utilities::BufferUtilities::getBufferDeviceAddress(*entry->rayTracedMesh->indexBuffer);
+                shadingInstance.vertexStride = instance.mesh->vertexStride;
             }
 
             const GPUMesh *mesh = meta.mesh ? meta.mesh : instance.mesh.get();
@@ -800,9 +790,9 @@ void PerFrameDataWorker::buildRayTracingInputs()
                 shadingInstance.material = mesh->material->params();
                 if (m_dependencies.bindlessRegistry != nullptr)
                 {
-                    shadingInstance.material.albedoTexIdx  = m_dependencies.bindlessRegistry->getOrRegisterTexture(mesh->material->getAlbedoTexture().get());
-                    shadingInstance.material.normalTexIdx  = m_dependencies.bindlessRegistry->getOrRegisterTexture(mesh->material->getNormalTexture().get());
-                    shadingInstance.material.ormTexIdx     = m_dependencies.bindlessRegistry->getOrRegisterTexture(mesh->material->getOrmTexture().get());
+                    shadingInstance.material.albedoTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(mesh->material->getAlbedoTexture().get());
+                    shadingInstance.material.normalTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(mesh->material->getNormalTexture().get());
+                    shadingInstance.material.ormTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(mesh->material->getOrmTexture().get());
                     shadingInstance.material.emissiveTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(mesh->material->getEmissiveTexture().get());
                 }
             }
@@ -849,18 +839,22 @@ void PerFrameDataWorker::buildRasterBatches()
             params.ormTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(reference.material->getOrmTexture().get());
             params.emissiveTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(reference.material->getEmissiveTexture().get());
 
-            // Register baked lightmap texture if the entity has a LightmapComponent.
+
+            params.lightmapTexIdx = 0xFFFFFFFFu;
+
+            m_dependencies.bindlessRegistry->getCpuMaterialParams()[materialIndex] = params;
+        }
+
+
+
+        uint32_t instanceLightmapTexIdx = 0xFFFFFFFFu;
+        if (m_dependencies.bindlessRegistry && m_dependencies.bindlessRegistry->isInitialized())
+        {
             if (const auto *lmc = reference.entity->getComponent<LightmapComponent>();
                 lmc && lmc->lightmapTexture)
             {
-                params.lightmapTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(lmc->lightmapTexture.get());
+                instanceLightmapTexIdx = m_dependencies.bindlessRegistry->getOrRegisterTexture(lmc->lightmapTexture.get());
             }
-            else
-            {
-                params.lightmapTexIdx = 0xFFFFFFFFu;
-            }
-
-            m_dependencies.bindlessRegistry->getCpuMaterialParams()[materialIndex] = params;
         }
 
         PerObjectInstanceData instanceData{};
@@ -869,7 +863,7 @@ void PerFrameDataWorker::buildRasterBatches()
             render::encodeObjectId(reference.entity->getId(), reference.meshIndex),
             reference.drawItem->bonesOffset,
             materialIndex,
-            0u);
+            instanceLightmapTexIdx);
         m_data.perObjectInstances.push_back(instanceData);
 
         if (!m_data.drawBatches.empty())
@@ -1228,6 +1222,230 @@ void PerFrameDataWorker::buildShadowBatchesForTarget(std::vector<DrawBatch> &out
         batch.firstInstance = instanceIndex;
         batch.instanceCount = 1u;
         outBatches.push_back(batch);
+    }
+}
+
+
+
+
+
+void PerFrameDataWorker::pruneRemovedEntities(const RenderSceneSnapshot &snapshot)
+{
+    std::unordered_set<Entity *> snapshotEntitySet;
+    snapshotEntitySet.reserve(snapshot.entities.size());
+    for (const auto &entitySnap : snapshot.entities)
+    {
+        if (entitySnap.entityPtr)
+            snapshotEntitySet.insert(entitySnap.entityPtr);
+    }
+
+    for (auto it = m_data.drawItems.begin(); it != m_data.drawItems.end();)
+    {
+        if (snapshotEntitySet.find(it->first) == snapshotEntitySet.end())
+            it = m_data.drawItems.erase(it);
+        else
+            ++it;
+    }
+}
+
+void PerFrameDataWorker::syncSceneDrawItems(const RenderSceneSnapshot &snapshot, const glm::vec3 &cameraPos)
+{
+    for (const auto &entitySnap : snapshot.entities)
+    {
+        if (!entitySnap.entityPtr || !entitySnap.enabled)
+        {
+            auto drawItemIt = m_data.drawItems.find(entitySnap.entityPtr);
+            if (drawItemIt != m_data.drawItems.end())
+                m_data.drawItems.erase(drawItemIt);
+            continue;
+        }
+
+        const std::vector<CPUMesh> *meshes = nullptr;
+        if (entitySnap.meshSource != SnapshotMeshSource::None && entitySnap.meshes && !entitySnap.meshes->empty())
+            meshes = entitySnap.meshes;
+
+        if (!meshes)
+        {
+            auto drawItemIt = m_data.drawItems.find(entitySnap.entityPtr);
+            if (drawItemIt != m_data.drawItems.end())
+                m_data.drawItems.erase(drawItemIt);
+            continue;
+        }
+
+        auto drawItemIt = m_data.drawItems.find(entitySnap.entityPtr);
+        if (drawItemIt == m_data.drawItems.end())
+            drawItemIt = m_data.drawItems.emplace(entitySnap.entityPtr, DrawItem{}).first;
+
+        auto &drawItem = drawItemIt->second;
+        drawItem.transform = entitySnap.worldTransform;
+        drawItem.bonesOffset = 0u;
+
+
+        if (entitySnap.hasSkeleton && !entitySnap.finalBones.empty())
+            drawItem.finalBones = entitySnap.finalBones;
+        else
+            drawItem.finalBones.clear();
+
+        resizeDrawMeshStates(drawItem, meshes->size());
+
+        for (size_t meshIndex = 0; meshIndex < meshes->size(); ++meshIndex)
+        {
+            const CPUMesh &sourceMesh = (*meshes)[meshIndex];
+            const MeshGeometryInfo &geometryInfo = sourceMesh.getGeometryInfo();
+            auto &meshState = drawItem.meshStates[meshIndex];
+
+            if (!meshState.mesh || meshState.geometryHash != geometryInfo.hash)
+                meshState.mesh = m_dependencies.meshGeometryRegistry != nullptr
+                                     ? m_dependencies.meshGeometryRegistry->createDrawMeshInstance(sourceMesh)
+                                     : nullptr;
+
+            meshState.geometryHash = geometryInfo.hash;
+            meshState.localBoundsCenter = geometryInfo.localBoundsCenter;
+            meshState.localBoundsRadius = geometryInfo.localBoundsRadius;
+            meshState.localTransform = computeMeshLocalTransform(sourceMesh, entitySnap.skeletalMeshComponent);
+
+            if (meshState.mesh)
+            {
+                meshState.mesh->material = resolveMeshMaterial(sourceMesh,
+                                                               entitySnap.staticMeshComponent,
+                                                               entitySnap.skeletalMeshComponent,
+                                                               entitySnap.terrainComponent,
+                                                               meshIndex);
+            }
+        }
+
+        updateWorldBounds(drawItem);
+    }
+}
+
+void PerFrameDataWorker::buildLightData(const RenderSceneSnapshot &snapshot, Camera *camera)
+{
+    resetPerFrameData();
+    m_lightSpaceMatrixUBO = RenderGraphLightSpaceMatrixUBO{};
+    m_lightData.clear();
+
+    m_lightData.resize(snapshot.lights.size());
+
+    const glm::mat4 view = camera ? camera->getViewMatrix() : glm::mat4(1.0f);
+    const glm::mat3 view3 = glm::mat3(view);
+
+    bool directionalShadowAssigned = false;
+    bool directionalDataAssigned = false;
+
+    for (size_t i = 0; i < snapshot.lights.size(); ++i)
+    {
+        const auto &lightSnap = snapshot.lights[i];
+        auto &lightData = m_lightData[i];
+
+        lightData.position = glm::vec4(0.0f);
+        lightData.direction = glm::vec4(0.0f, 0.0f, -1.0f, 0.0f);
+        lightData.parameters = glm::vec4(1.0f);
+        lightData.colorStrength = glm::vec4(lightSnap.color, lightSnap.strength);
+        lightData.shadowInfo = glm::vec4(0.0f);
+
+        if (lightSnap.type == LightComponent::LightType::DIRECTIONAL)
+        {
+            m_data.hasDirectionalLight = true;
+
+            const glm::vec3 dirWorld = glm::normalize(lightSnap.direction);
+            const glm::vec3 dirView = glm::normalize(view3 * dirWorld);
+
+            lightData.direction = glm::vec4(dirView, 0.0f);
+            lightData.parameters.w = 0.0f;
+
+            if (!directionalDataAssigned)
+            {
+                m_data.directionalLightDirection = dirWorld;
+                m_data.skyLightEnabled = lightSnap.skyLightEnabled;
+                m_data.directionalLightStrength = lightSnap.skyLightEnabled ? lightSnap.strength : 0.0f;
+                directionalDataAssigned = true;
+            }
+
+            if (lightSnap.castsShadows && !directionalShadowAssigned)
+            {
+
+                DirectionalLight tempLight;
+                tempLight.color = lightSnap.color;
+                tempLight.position = lightSnap.position;
+                tempLight.strength = lightSnap.strength;
+                tempLight.castsShadows = lightSnap.castsShadows;
+                tempLight.direction = lightSnap.direction;
+                tempLight.skyLightEnabled = lightSnap.skyLightEnabled;
+
+                if (fillDirectionalLight(camera, &tempLight))
+                {
+                    m_lightSpaceMatrixUBO.lightSpaceMatrix = m_data.lightSpaceMatrix;
+                    m_lightSpaceMatrixUBO.directionalLightSpaceMatrices = m_data.directionalLightSpaceMatrices;
+                    for (uint32_t cascadeIndex = 0; cascadeIndex < ShadowConstants::MAX_DIRECTIONAL_CASCADES; ++cascadeIndex)
+                        m_lightSpaceMatrixUBO.directionalCascadeSplits[cascadeIndex] = m_data.directionalCascadeSplits[cascadeIndex];
+
+                    lightData.shadowInfo.x = 1.0f;
+                    m_data.activeRTShadowLayerCount = std::max(m_data.activeRTShadowLayerCount, static_cast<uint32_t>(i + 1u));
+                    directionalShadowAssigned = true;
+                }
+            }
+        }
+        else if (lightSnap.type == LightComponent::LightType::POINT)
+        {
+            const glm::vec3 posView = glm::vec3(view * glm::vec4(lightSnap.position, 1.0f));
+
+            lightData.position = glm::vec4(posView, 1.0f);
+            lightData.parameters.z = lightSnap.radius;
+            lightData.parameters.w = 2.0f;
+
+            if (lightSnap.castsShadows)
+            {
+                PointLight tempLight;
+                tempLight.color = lightSnap.color;
+                tempLight.position = lightSnap.position;
+                tempLight.strength = lightSnap.strength;
+                tempLight.castsShadows = lightSnap.castsShadows;
+                tempLight.radius = lightSnap.radius;
+
+                if (fillPointLight(camera, &tempLight))
+                {
+                    const uint32_t pointShadowIndex = m_data.activePointShadowCount - 1u;
+                    const float nearPlane = 0.1f;
+                    const float farPlane = std::max(lightSnap.radius, nearPlane + 0.1f);
+
+                    lightData.shadowInfo = glm::vec4(1.0f, static_cast<float>(pointShadowIndex), farPlane, nearPlane);
+                    m_data.activeRTShadowLayerCount = std::max(m_data.activeRTShadowLayerCount, static_cast<uint32_t>(i + 1u));
+                }
+            }
+        }
+        else if (lightSnap.type == LightComponent::LightType::SPOT)
+        {
+            const glm::vec3 posView = glm::vec3(view * glm::vec4(lightSnap.position, 1.0f));
+            const glm::vec3 dirView = glm::normalize(view3 * glm::normalize(lightSnap.direction));
+
+            lightData.position = glm::vec4(posView, 1.0f);
+            lightData.direction = glm::vec4(dirView, 0.0f);
+            lightData.parameters.w = 1.0f;
+            lightData.parameters.x = glm::cos(glm::radians(lightSnap.innerAngle));
+            lightData.parameters.y = glm::cos(glm::radians(lightSnap.outerAngle));
+            lightData.parameters.z = std::max(lightSnap.range, 0.1f);
+
+            if (lightSnap.castsShadows)
+            {
+                SpotLight tempLight;
+                tempLight.color = lightSnap.color;
+                tempLight.position = lightSnap.position;
+                tempLight.strength = lightSnap.strength;
+                tempLight.castsShadows = lightSnap.castsShadows;
+                tempLight.direction = lightSnap.direction;
+                tempLight.innerAngle = lightSnap.innerAngle;
+                tempLight.outerAngle = lightSnap.outerAngle;
+                tempLight.range = lightSnap.range;
+
+                if (fillSpotLight(camera, &tempLight))
+                {
+                    const uint32_t spotShadowIndex = m_data.activeSpotShadowCount - 1u;
+                    m_lightSpaceMatrixUBO.spotLightSpaceMatrices[spotShadowIndex] = m_data.spotLightSpaceMatrices[spotShadowIndex];
+                    lightData.shadowInfo = glm::vec4(1.0f, static_cast<float>(spotShadowIndex), std::max(lightSnap.range, 0.1f), 0.0f);
+                    m_data.activeRTShadowLayerCount = std::max(m_data.activeRTShadowLayerCount, static_cast<uint32_t>(i + 1u));
+                }
+            }
+        }
     }
 }
 

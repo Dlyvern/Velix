@@ -29,7 +29,7 @@ private:
     BakeCallback                   m_onBakeRequested;
     engine::LightmapBakeProgress  *m_progress{nullptr};
 
-    // Settings state
+
     int  m_resolution{1024};
     int  m_dilateRadius{2};
     bool m_dilate{true};
@@ -37,4 +37,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_LIGHTMAP_BAKING_PANEL_HPP
+#endif

@@ -10,18 +10,26 @@ const int MAX_POINT_SHADOWS = 1;
 
 struct Light
 {
-    vec4 position;      // xyz in world space (bake uses world-space)
-    vec4 direction;     // xyz in world space
-    vec4 colorStrength; // rgb=color, a=intensity
-    vec4 parameters;    // x=inner, y=outer, z=radius, w=type (unused w)
-    vec4 shadowInfo;    // x=castsShadow, y=shadowIndex, z=far/range, w=near
+    vec4 position;
+    vec4 direction;
+    vec4 colorStrength;
+    vec4 parameters;
+    vec4 shadowInfo;
 };
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inWorldNormal;
 layout(location = 0) out vec4 outIrradiance;
 
-// Set 0 — reuse the engine camera descriptor set (camera UBO not used here).
+
+layout(set = 0, binding = 0) uniform CameraUBO
+{
+    mat4 view;
+    mat4 projection;
+    mat4 invView;
+    mat4 invProjection;
+} camera;
+
 layout(set = 0, binding = 1) uniform LightSpaceUBO
 {
     mat4 lightSpaceMatrix;
@@ -36,40 +44,70 @@ layout(std430, set = 0, binding = 2) readonly buffer LightSSBO
     Light lights[];
 } lightData;
 
-// Set 1 — shadow maps
+
 layout(set = 1, binding = 0) uniform sampler2DArray directionalShadowMaps;
 layout(set = 1, binding = 1) uniform sampler2DArray spotShadowMaps;
 layout(set = 1, binding = 2) uniform samplerCubeArray cubeShadowMaps;
 
-layout(push_constant) uniform BakePC
-{
-    mat4 modelMatrix;
-    mat4 normalMatrix;
-} pc;
 
-// Simple 3x3 PCF for directional shadow maps (world-space lookup)
-float sampleDirectionalShadow(int cascadeIdx, vec3 worldPos, vec3 N, vec3 L)
+float sampleDirectionalShadowCascade(int cascadeIdx, vec3 worldPos, float bias)
 {
-    float bias = max(0.005 * (1.0 - dot(N, L)), 0.001);
     vec4 posLS = lightSpaceData.directionalLightSpaceMatrices[cascadeIdx] * vec4(worldPos, 1.0);
     vec3 proj = posLS.xyz / posLS.w;
-    proj.xy    = proj.xy * 0.5 + 0.5;
+    proj.xy   = proj.xy * 0.5 + 0.5;
 
     if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0)
-        return 0.0; // Outside shadow map — no shadow
+        return -1.0;
 
     float shadow = 0.0;
     vec2 texelSize = 1.0 / vec2(textureSize(directionalShadowMaps, 0).xy);
+    float kernelScale = 1.0 + float(cascadeIdx) * 0.75;
     for (int x = -1; x <= 1; ++x)
     {
         for (int y = -1; y <= 1; ++y)
         {
             float pcfDepth = texture(directionalShadowMaps,
-                                     vec3(proj.xy + vec2(x, y) * texelSize, float(cascadeIdx))).r;
+                                     vec3(proj.xy + vec2(x, y) * texelSize * kernelScale, float(cascadeIdx))).r;
             shadow += (proj.z - bias > pcfDepth) ? 1.0 : 0.0;
         }
     }
     return shadow / 9.0;
+}
+
+
+
+int selectCascade(float viewDepth)
+{
+    if (viewDepth <= lightSpaceData.directionalCascadeSplits.x)
+        return 0;
+    if (viewDepth <= lightSpaceData.directionalCascadeSplits.y)
+        return 1;
+    if (viewDepth <= lightSpaceData.directionalCascadeSplits.z)
+        return 2;
+    return 3;
+}
+
+float sampleDirectionalShadow(int lightIdx, vec3 worldPos, vec3 N, vec3 L)
+{
+    float bias = max(0.005 * (1.0 - dot(N, L)), 0.001);
+
+
+    float viewDepth = -(camera.view * vec4(worldPos, 1.0)).z;
+    int cascade = selectCascade(max(viewDepth, 0.0));
+
+    float s = sampleDirectionalShadowCascade(cascade, worldPos, bias);
+    if (s >= 0.0)
+        return s;
+
+
+    for (int c = 0; c < MAX_DIRECTIONAL_CASCADES; ++c)
+    {
+        if (c == cascade) continue;
+        s = sampleDirectionalShadowCascade(c, worldPos, bias);
+        if (s >= 0.0)
+            return s;
+    }
+    return 0.0;
 }
 
 float sampleSpotShadow(int shadowIdx, vec3 worldPos, vec3 N, vec3 L)
@@ -100,16 +138,20 @@ void main()
         bool castsShadow = light.shadowInfo.x > 0.5;
         int shadowIndex  = int(light.shadowInfo.y);
 
+
+        vec3 lightDirWorld = normalize(mat3(camera.invView) * light.direction.xyz);
+        vec3 lightPosWorld = (camera.invView * vec4(light.position.xyz, 1.0)).xyz;
+
         vec3 L;
         float attenuation = 1.0;
 
         if (lightType == DIRECTIONAL_LIGHT_TYPE)
         {
-            L = normalize(-light.direction.xyz);
+            L = normalize(-lightDirWorld);
         }
         else if (lightType == POINT_LIGHT_TYPE)
         {
-            vec3 toLight = light.position.xyz - inWorldPos;
+            vec3 toLight = lightPosWorld - inWorldPos;
             float dist   = length(toLight);
             L = (dist > 0.0001) ? toLight / dist : vec3(0, 0, 1);
             float radius = max(light.parameters.z, 0.0001);
@@ -118,13 +160,13 @@ void main()
         }
         else if (lightType == SPOT_LIGHT_TYPE)
         {
-            vec3 toLight = light.position.xyz - inWorldPos;
+            vec3 toLight = lightPosWorld - inWorldPos;
             float dist   = length(toLight);
             L = (dist > 0.0001) ? toLight / dist : vec3(0, 0, 1);
             float radius = max(light.parameters.z, 0.0001);
             attenuation  = clamp(1.0 - dist / radius, 0.0, 1.0);
             attenuation *= attenuation;
-            float theta      = dot(L, normalize(-light.direction.xyz));
+            float theta      = dot(L, normalize(-lightDirWorld));
             float innerCut   = light.parameters.x;
             float outerCut   = light.parameters.y;
             float eps        = max(innerCut - outerCut, 0.0001);
@@ -142,10 +184,10 @@ void main()
         if (castsShadow)
         {
             if (lightType == DIRECTIONAL_LIGHT_TYPE)
-                shadow = sampleDirectionalShadow(shadowIndex, inWorldPos, N, L);
+                shadow = sampleDirectionalShadow(i, inWorldPos, N, L);
             else if (lightType == SPOT_LIGHT_TYPE)
                 shadow = sampleSpotShadow(shadowIndex, inWorldPos, N, L);
-            // Point light shadows (cube maps) skipped for simplicity.
+
         }
 
         irradiance += radiance * NdotL * attenuation * (1.0 - shadow);

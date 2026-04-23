@@ -85,4 +85,4 @@ ELIX_NESTED_NAMESPACE_END
          return _vx_vk_result;                                                                                                        \
      }())
 
-#endif // ELIX_VULKAN_ASSERT_HPP
+#endif

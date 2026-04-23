@@ -60,7 +60,7 @@ void ParticleRenderGraphPass::setup(RGPResourcesBuilder &builder)
                   0.f, 1.f};
     m_scissor = {{0, 0}, m_extent};
 
-    m_format = VK_FORMAT_R16G16B16A16_SFLOAT; // default; overridden if needed
+    m_format = VK_FORMAT_R16G16B16A16_SFLOAT;
 
     RGPTextureDescription outDesc{m_format, RGPTextureUsage::COLOR_ATTACHMENT};
     outDesc.setInitialLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -104,7 +104,7 @@ void ParticleRenderGraphPass::setup(RGPResourcesBuilder &builder)
     m_ssboDescriptorSetLayout = core::DescriptorSetLayout::createShared(
         device, std::vector<VkDescriptorSetLayoutBinding>{ssboBinding});
 
-    // Texture array: set 1, binding 0 — up to MAX_PARTICLE_TEXTURES textures per frame
+
     VkDescriptorSetLayoutBinding textureArrayBinding{};
     textureArrayBinding.binding = 0;
     textureArrayBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -209,8 +209,8 @@ void ParticleRenderGraphPass::compile(RGPResourcesStorage &storage)
             }
         }
 
-        // Build texture array descriptor set pre-filled with the default white texture.
-        // The actual textures are written per-frame in recordParticles() before the draw.
+
+
         {
             std::array<VkDescriptorImageInfo, MAX_PARTICLE_TEXTURES> imageInfos{};
             for (uint32_t slot = 0; slot < MAX_PARTICLE_TEXTURES; ++slot)
@@ -240,14 +240,14 @@ void ParticleRenderGraphPass::compile(RGPResourcesStorage &storage)
             vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
         }
 
-        // Depth descriptor set (set 2) — used for soft particles.
-        // Always allocate; fill with the actual depth view if available, otherwise the default.
+
+
         {
             const bool hasDepth = m_depthRenderTargets[i] != nullptr;
             const VkImageView depthView = hasDepth
                 ? m_depthRenderTargets[i]->vkImageView()
                 : m_defaultWhiteTexture->vkImageView();
-            // Depth images are in DEPTH_STENCIL_READ_ONLY when sampled; fallback white uses SHADER_READ_ONLY.
+
             const VkImageLayout depthLayout = hasDepth
                 ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
                 : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -333,7 +333,7 @@ void ParticleRenderGraphPass::prepareRecord(const RenderGraphPassPerFrameData &d
     const VkDeviceSize uploadSize = gpuParticles.size() * sizeof(ParticleGPUData);
     m_particleSSBOs[imageIndex]->upload(gpuParticles.data(), uploadSize);
 
-    // Determine soft particle settings from any emitter that has soft particles enabled.
+
     float softRange = 0.0f;
     float softOn = 0.0f;
     if (m_depthInputHandler && m_scene)
@@ -431,7 +431,7 @@ void ParticleRenderGraphPass::collectParticleData(std::vector<ParticleGPUData> &
     if (!m_scene)
         return;
 
-    // Slot 0 is always the default white texture (untextured particles).
+
     outTextureSlots.clear();
     outTextureSlots.push_back("");
 
@@ -457,7 +457,7 @@ void ParticleRenderGraphPass::collectParticleData(std::vector<ParticleGPUData> &
 
                 const auto *rm = emitter->getModule<RendererModule>();
 
-                // Determine which texture slot this emitter uses.
+
                 uint32_t slot = 0;
                 if (rm && !rm->texturePath.empty())
                 {
@@ -472,7 +472,7 @@ void ParticleRenderGraphPass::collectParticleData(std::vector<ParticleGPUData> &
                         textureToSlot[rm->texturePath] = slot;
                         outTextureSlots.push_back(rm->texturePath);
                     }
-                    // else: too many unique textures → fall back to slot 0
+
                 }
 
                 for (const Particle &p : emitter->getParticles())
@@ -510,7 +510,7 @@ void ParticleRenderGraphPass::recordPassthrough(core::CommandBuffer::SharedPtr c
         return;
 
     GraphicsPipelineKey key{};
-    key.shader = ShaderId::Present; // fullscreen blit
+    key.shader = ShaderId::Present;
     key.blend = BlendMode::None;
     key.cull = CullMode::None;
     key.depthTest = false;

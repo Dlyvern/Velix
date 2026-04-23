@@ -27,7 +27,7 @@ namespace
         VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
 
     static_assert(offsetof(RTReflectionShadingInstanceData, material) == 32u);
-    static_assert(sizeof(Material::GPUParams) == 104u);
+    static_assert(sizeof(Material::GPUParams) == 112u);
 }
 
 struct RTReflectionsPC
@@ -36,9 +36,9 @@ struct RTReflectionsPC
     float rtReflectionSamples;
     float rtRoughnessThreshold;
     float rtReflectionStrength;
-    glm::vec3 sunDirection;    // world-space direction TO sun (for sky fallback)
-    float sunHeight;           // dot(sunDir, up) clamped [-1,1]
-    glm::vec4 environmentInfo; // x = hasEnvironmentMap
+    glm::vec3 sunDirection;
+    float sunHeight;
+    glm::vec4 environmentInfo;
 };
 
 bool RTReflectionsRenderGraphPass::isEnabled() const
@@ -157,14 +157,14 @@ void RTReflectionsRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &build
     const VkShaderStageFlags reflectionInstanceStages =
         VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
     std::vector<VkDescriptorSetLayoutBinding> bindings = {
-        makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // normal
-        makeBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // albedo
-        makeBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // material
-        makeBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // depth
-        makeBinding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),         // lighting
-        makeBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_RAYGEN_BIT_KHR), // output
-        makeBinding(6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, reflectionInstanceStages),      // RT shading instances
-        makeBinding(7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, environmentStages),     // environment cubemap
+        makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),
+        makeBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),
+        makeBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),
+        makeBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),
+        makeBinding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sampledStages),
+        makeBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_RAYGEN_BIT_KHR),
+        makeBinding(6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, reflectionInstanceStages),
+        makeBinding(7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, environmentStages),
     };
 
     m_textureSetLayout = core::DescriptorSetLayout::createShared(device, bindings);
@@ -182,7 +182,7 @@ void RTReflectionsRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &build
     m_reflectionSceneBuffers.resize(reflectionSceneBufferCount);
     m_reflectionSceneBufferSizes.assign(reflectionSceneBufferCount, 0u);
 
-    // Pre-create minimum-size buffers so compile() can bind slot 6 immediately.
+
     for (uint32_t j = 0; j < reflectionSceneBufferCount; ++j)
     {
         m_reflectionSceneBuffers[j] = core::Buffer::createShared(
@@ -294,16 +294,16 @@ void RTReflectionsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
                                           const RenderGraphPassPerFrameData &data,
                                           const RenderGraphPassContext &renderContext)
 {
-    // TLAS is only valid when there are RT instances. Never enable ray tracing without it —
-    // accessing an unbound acceleration structure descriptor causes GPU errors.
+
+
     const bool hasTLAS = !data.rtReflectionShadingInstances.empty();
 
     if (data.drawBatches.empty())
     {
-        // Pipeline path: must clear the storage image manually (no renderpass).
-        // Ray-query path: output is a color attachment cleared by vkCmdBeginRendering.
-        // In both cases, output must be deterministic (not undefined) so the denoise pass
-        // doesn't read garbage on the first frame while the scene is still loading.
+
+
+
+
         const auto *outputTarget = m_outputRenderTargets[renderContext.currentImageIndex];
         if (outputTarget)
         {
@@ -329,8 +329,8 @@ void RTReflectionsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
          (s.rayTracingMode == RenderQualitySettings::RayTracingMode::Pipeline && !shouldUsePipelinePath())) &&
         core::VulkanContext::getContext()->hasRayQuerySupport();
 
-    // directionalLightDirection is the direction the light POINTS (toward scene).
-    // For sky shading we need the direction TOWARD the sun (negated).
+
+
     const glm::vec3 towardSun = data.hasDirectionalLight
                                     ? -glm::normalize(data.directionalLightDirection)
                                     : glm::vec3(0.0f, 1.0f, 0.0f);
@@ -350,7 +350,7 @@ void RTReflectionsRenderGraphPass::record(core::CommandBuffer::SharedPtr command
         data.cameraDescriptorSet,
         m_descriptorSets[renderContext.currentImageIndex]};
 
-    // Always update the instance SSBO (slot 6) — needed by BOTH pipeline and ray-query paths.
+
     updateReflectionSceneBuffer(data, renderContext.currentFrame);
     if (renderContext.currentFrame < m_reflectionSceneBuffers.size() &&
         m_reflectionSceneBuffers[renderContext.currentFrame])
@@ -561,14 +561,14 @@ void RTReflectionsRenderGraphPass::updateEnvironmentSkybox()
 
 void RTReflectionsRenderGraphPass::createRayTracingPipeline()
 {
-    destroyRayTracingPipeline(); // also clears m_rtPipelineLayout
+    destroyRayTracingPipeline();
 
     auto context = core::VulkanContext::getContext();
     if (!context || !context->hasRayTracingPipelineSupport())
         return;
 
-    // Build 3-set layout: set 0 = camera, set 1 = RT textures, set 2 = bindless.
-    // Must be created AFTER destroyRayTracingPipeline() and BEFORE vkCreateRayTracingPipelinesKHR.
+
+
     if (m_textureSetLayout && EngineShaderFamilies::bindlessMaterialSetLayout != VK_NULL_HANDLE)
     {
         const VkDescriptorSetLayout setLayouts[3] = {
@@ -593,7 +593,7 @@ void RTReflectionsRenderGraphPass::createRayTracingPipeline()
     m_closestHitShader.loadFromFile("./resources/shaders/rt_reflections.rchit.spv", core::ShaderStage::CLOSEST_HIT);
     m_anyHitShader.loadFromFile("./resources/shaders/rt_reflections.rahit.spv", core::ShaderStage::ANY_HIT);
 
-    // Stage indices: 0=rgen, 1=rmiss, 2=rchit, 3=rahit
+
     const std::array<VkPipelineShaderStageCreateInfo, 4> shaderStages = {
         m_raygenShader.getInfo(),
         m_missShader.getInfo(),
@@ -616,9 +616,9 @@ void RTReflectionsRenderGraphPass::createRayTracingPipeline()
     shaderGroups[1].anyHitShader = VK_SHADER_UNUSED_KHR;
     shaderGroups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-    // Hit group: rchit (stage 2) + rahit (stage 3).
-    // For FORCE_OPAQUE instances (opaque geometry) the any-hit is skipped automatically.
-    // For non-opaque alpha-masked instances, the any-hit performs the alpha cutoff test.
+
+
+
     shaderGroups[2].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     shaderGroups[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     shaderGroups[2].generalShader = VK_SHADER_UNUSED_KHR;

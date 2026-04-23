@@ -36,4 +36,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ASSETS_SERIALIZER_HPP
+#endif

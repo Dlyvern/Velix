@@ -16,6 +16,9 @@ class GraphicsPipelineManager
 public:
     static core::GraphicsPipeline::SharedPtr getOrCreate(const GraphicsPipelineKey &key);
 
+
+    static bool exists(const GraphicsPipelineKey &key);
+
     static void init();
     static void reloadShaders();
     static void destroy();
@@ -68,6 +71,7 @@ private:
     static inline core::Shader::SharedPtr taaShader{nullptr};
     static inline core::Shader::SharedPtr animPreviewShader{nullptr};
     static inline core::Shader::SharedPtr ssrShader{nullptr};
+    static inline core::Shader::SharedPtr ssgiShader{nullptr};
     static inline core::Shader::SharedPtr volumetricFogLightingShader{nullptr};
     static inline core::Shader::SharedPtr volumetricFogTemporalShader{nullptr};
     static inline core::Shader::SharedPtr volumetricFogCompositeShader{nullptr};
@@ -77,8 +81,10 @@ private:
     static inline core::Shader::SharedPtr motionBlurShader{nullptr};
     static inline core::Shader::SharedPtr decalShader{nullptr};
     static inline core::Shader::SharedPtr sprite2dShader{nullptr};
+    static inline core::Shader::SharedPtr fsr1EasuShader{nullptr};
+    static inline core::Shader::SharedPtr fsr1RcasShader{nullptr};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_GRAPHICS_PIPELINE_MANAGER_HPP
+#endif

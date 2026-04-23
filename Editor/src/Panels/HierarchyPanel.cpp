@@ -1,13 +1,44 @@
 #include "Editor/Panels/HierarchyPanel.hpp"
 
 #include "Core/Logger.hpp"
+#include "Editor/IconsLucide.hpp"
+#include "Engine/Components/AudioComponent.hpp"
+#include "Engine/Components/CameraComponent.hpp"
+#include "Engine/Components/DecalComponent.hpp"
+#include "Engine/Components/LightComponent.hpp"
+#include "Engine/Components/ParticleSystemComponent.hpp"
+#include "Engine/Components/ReflectionProbeComponent.hpp"
+#include "Engine/Components/SkeletalMeshComponent.hpp"
+#include "Engine/Components/SpriteComponent.hpp"
+#include "Engine/Components/StaticMeshComponent.hpp"
+#include "Engine/Components/TerrainComponent.hpp"
 #include "Engine/Components/Transform3DComponent.hpp"
+#include "Engine/Entity.hpp"
 
 #include "imgui.h"
 #include "glm/gtc/type_ptr.hpp"
 #include "ImGuizmo.h"
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
+
+namespace
+{
+    const char *pickEntityIcon(engine::Entity *entity)
+    {
+        if (entity->getComponent<engine::LightComponent>())             return ICON_LC_Sun;
+        if (entity->getComponent<engine::CameraComponent>())            return ICON_LC_Camera;
+        if (entity->getComponent<engine::ParticleSystemComponent>())    return ICON_LC_Flame;
+        if (entity->getComponent<engine::ReflectionProbeComponent>())   return ICON_LC_Sparkles;
+        if (entity->getComponent<engine::SkeletalMeshComponent>())      return ICON_LC_User;
+        if (entity->getComponent<engine::StaticMeshComponent>())        return ICON_LC_Box;
+        if (entity->getComponent<engine::TerrainComponent>())           return ICON_LC_Layers;
+        if (entity->getComponent<engine::DecalComponent>())             return ICON_LC_Droplet;
+        if (entity->getComponent<engine::SpriteComponent>())            return ICON_LC_Image;
+        if (!entity->getComponents<engine::AudioComponent>().empty())   return ICON_LC_Volume2;
+        if (!entity->getChildren().empty())                             return ICON_LC_Folder;
+        return ICON_LC_Circle;
+    }
+}
 
 void HierarchyPanel::setSetSelectedEntityCallback(const std::function<void(engine::Entity *)> &function)
 {
@@ -150,7 +181,7 @@ void HierarchyPanel::drawHierarchyEntityNode(engine::Entity *entity)
 
     ImGui::SameLine();
 
-    std::string nodeLabel = entity->getName();
+    std::string nodeLabel = std::string(pickEntityIcon(entity)) + "  " + entity->getName();
     if (!entity->isEnabled())
         nodeLabel += " (Disabled)";
 

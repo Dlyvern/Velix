@@ -26,4 +26,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_DESCRIPTOR_POOL_HPP
+#endif

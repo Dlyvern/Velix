@@ -16,10 +16,10 @@ namespace
 {
 struct TonemapPC
 {
-    glm::vec4 tonemapParams; // x=exposure, y=gamma, z=saturation, w=contrast
-    glm::vec4 gradeParams;   // x=temperature, y=tint, z=colorGradingEnabled, w=unused
+    glm::vec4 tonemapParams;
+    glm::vec4 gradeParams;
 };
-} // namespace
+}
 
 TonemapRenderGraphPass::TonemapRenderGraphPass(std::vector<RGPResourceHandler> &hdrInputHandlers) : m_hdrInputHandlers(hdrInputHandlers)
 {

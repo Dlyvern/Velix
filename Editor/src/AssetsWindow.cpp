@@ -1,5 +1,6 @@
 #include "Editor/AssetsWindow.hpp"
 #include "Core/Logger.hpp"
+#include "Editor/IconsLucide.hpp"
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/Assets/AssetsSerializer.hpp"
 #include "Engine/Runtime/EngineConfig.hpp"
@@ -19,11 +20,113 @@
 
 namespace
 {
+    bool isSupportedTextureSourceExtension(const std::string &extensionLower);
+    bool isSupportedAudioSourceExtension(const std::string &extensionLower);
+
     enum class BuiltinAssetIcon
     {
         Folder,
-        File
+        File,
+        Texture,
+        Model,
+        ModelSkeletal,
+        Material,
+        Audio,
+        Animation,
+        AnimationTree,
+        ParticleSystem,
+        Scene,
+        Script,
+        TextDoc,
     };
+
+    const char *builtinAssetIconGlyph(BuiltinAssetIcon kind)
+    {
+        switch (kind)
+        {
+            case BuiltinAssetIcon::Folder:         return ICON_LC_Folder;
+            case BuiltinAssetIcon::Texture:        return ICON_LC_Image;
+            case BuiltinAssetIcon::Model:          return ICON_LC_Box;
+            case BuiltinAssetIcon::ModelSkeletal:  return ICON_LC_User;
+            case BuiltinAssetIcon::Material:       return ICON_LC_Palette;
+            case BuiltinAssetIcon::Audio:          return ICON_LC_Music;
+            case BuiltinAssetIcon::Animation:      return ICON_LC_Film;
+            case BuiltinAssetIcon::AnimationTree:  return ICON_LC_Layers;
+            case BuiltinAssetIcon::ParticleSystem: return ICON_LC_Flame;
+            case BuiltinAssetIcon::Scene:          return ICON_LC_Boxes;
+            case BuiltinAssetIcon::Script:         return ICON_LC_FileCode;
+            case BuiltinAssetIcon::TextDoc:        return ICON_LC_FileText;
+            case BuiltinAssetIcon::File:
+            default:                               return ICON_LC_File;
+        }
+    }
+
+    ImU32 builtinAssetIconColor(BuiltinAssetIcon kind)
+    {
+
+        switch (kind)
+        {
+            case BuiltinAssetIcon::Folder:         return IM_COL32(255, 198, 115, 230);
+            case BuiltinAssetIcon::Texture:        return IM_COL32(130, 200, 255, 230);
+            case BuiltinAssetIcon::Model:          return IM_COL32(239, 130, 110, 230);
+            case BuiltinAssetIcon::ModelSkeletal:  return IM_COL32(255, 180, 130, 235);
+            case BuiltinAssetIcon::Material:       return IM_COL32(220, 155, 255, 230);
+            case BuiltinAssetIcon::Audio:          return IM_COL32(150, 220, 160, 230);
+            case BuiltinAssetIcon::Animation:      return IM_COL32(255, 170, 200, 230);
+            case BuiltinAssetIcon::AnimationTree:  return IM_COL32(255, 170, 200, 220);
+            case BuiltinAssetIcon::ParticleSystem: return IM_COL32(255, 160, 90, 235);
+            case BuiltinAssetIcon::Scene:          return IM_COL32(239, 103, 90, 235);
+            case BuiltinAssetIcon::Script:         return IM_COL32(170, 200, 255, 230);
+            case BuiltinAssetIcon::TextDoc:        return IM_COL32(200, 200, 200, 220);
+            case BuiltinAssetIcon::File:
+            default:                               return IM_COL32(175, 175, 175, 210);
+        }
+    }
+
+    BuiltinAssetIcon pickBuiltinIcon(bool isDirectory, elix::engine::Asset::AssetType type, const std::string &extensionLower)
+    {
+        if (isDirectory)
+            return BuiltinAssetIcon::Folder;
+
+        switch (type)
+        {
+            case elix::engine::Asset::AssetType::TEXTURE:         return BuiltinAssetIcon::Texture;
+            case elix::engine::Asset::AssetType::MODEL:           return BuiltinAssetIcon::Model;
+            case elix::engine::Asset::AssetType::MATERIAL:        return BuiltinAssetIcon::Material;
+            case elix::engine::Asset::AssetType::AUDIO:           return BuiltinAssetIcon::Audio;
+            case elix::engine::Asset::AssetType::ANIMATION:       return BuiltinAssetIcon::Animation;
+            case elix::engine::Asset::AssetType::ANIMATION_TREE:  return BuiltinAssetIcon::AnimationTree;
+            case elix::engine::Asset::AssetType::PARTICLE_SYSTEM: return BuiltinAssetIcon::ParticleSystem;
+            default: break;
+        }
+
+        if (extensionLower == ".elixscene" ||
+            extensionLower == ".scene")      return BuiltinAssetIcon::Scene;
+        if (extensionLower == ".elixmat")    return BuiltinAssetIcon::Material;
+
+
+        if (isSupportedTextureSourceExtension(extensionLower))
+            return BuiltinAssetIcon::Texture;
+        if (isSupportedAudioSourceExtension(extensionLower))
+            return BuiltinAssetIcon::Audio;
+        if (extensionLower == ".fbx")        return BuiltinAssetIcon::ModelSkeletal;
+        if (extensionLower == ".obj")        return BuiltinAssetIcon::Model;
+
+        if (extensionLower == ".lua" ||
+            extensionLower == ".cs"  ||
+            extensionLower == ".cpp" ||
+            extensionLower == ".h"   ||
+            extensionLower == ".hpp" ||
+            extensionLower == ".js"  ||
+            extensionLower == ".py")         return BuiltinAssetIcon::Script;
+        if (extensionLower == ".txt" ||
+            extensionLower == ".md"  ||
+            extensionLower == ".json" ||
+            extensionLower == ".yaml" ||
+            extensionLower == ".yml")        return BuiltinAssetIcon::TextDoc;
+
+        return BuiltinAssetIcon::File;
+    }
 
     std::string toLowerCopy(std::string text)
     {
@@ -178,74 +281,19 @@ namespace
         if (!drawList)
             return;
 
-        const ImVec2 min(itemMin.x + 7.0f, itemMin.y + 7.0f);
-        const ImVec2 max(itemMax.x - 7.0f, itemMax.y - 7.0f);
-        const float width = max.x - min.x;
-        const float height = max.y - min.y;
-        const ImU32 outlineColor = IM_COL32(14, 18, 24, 235);
-        const ImU32 accentColor = IM_COL32(102, 156, 220, 230);
+        const char *glyph = builtinAssetIconGlyph(iconKind);
+        const ImU32 color = builtinAssetIconColor(iconKind);
 
-        if (iconKind == BuiltinAssetIcon::Folder)
-        {
-            const ImU32 tabColor = IM_COL32(86, 96, 108, 255);
-            const ImU32 bodyTopColor = IM_COL32(96, 106, 118, 255);
-            const ImU32 bodyBottomColor = IM_COL32(70, 78, 88, 255);
-            const ImU32 innerLineColor = IM_COL32(255, 255, 255, 18);
 
-            const float tabWidth = width * 0.46f;
-            const float tabHeight = height * 0.20f;
-            const float bodyTop = min.y + tabHeight * 0.82f;
 
-            drawList->AddRectFilled(ImVec2(min.x + width * 0.06f, min.y + 1.0f),
-                                    ImVec2(min.x + tabWidth, min.y + tabHeight),
-                                    tabColor, 3.0f, ImDrawFlags_RoundCornersTop);
+        ImFont *font = ImGui::GetIO().Fonts->Fonts[0];
+        const float iconSize = std::min(itemMax.x - itemMin.x, itemMax.y - itemMin.y) * 0.62f;
 
-            drawList->AddRectFilledMultiColor(ImVec2(min.x, bodyTop),
-                                              max,
-                                              bodyTopColor,
-                                              bodyTopColor,
-                                              bodyBottomColor,
-                                              bodyBottomColor);
-            drawList->AddRect(ImVec2(min.x, bodyTop), max, outlineColor, 4.0f, 0, 1.5f);
-            drawList->AddLine(ImVec2(min.x + 1.5f, bodyTop + 1.5f),
-                              ImVec2(max.x - 1.5f, bodyTop + 1.5f),
-                              innerLineColor, 1.0f);
-            drawList->AddRectFilled(ImVec2(min.x + 4.0f, bodyTop + 4.0f),
-                                    ImVec2(max.x - 4.0f, bodyTop + 7.0f),
-                                    accentColor, 1.5f);
-        }
-        else
-        {
-            const ImU32 pageTopColor = IM_COL32(94, 102, 114, 255);
-            const ImU32 pageBottomColor = IM_COL32(72, 79, 89, 255);
-            const ImU32 foldColor = IM_COL32(116, 124, 138, 255);
-            const ImU32 lineColor = IM_COL32(191, 199, 211, 110);
-            const float foldSize = std::min(width, height) * 0.24f;
+        const ImVec2 textSize = font->CalcTextSizeA(iconSize, FLT_MAX, 0.0f, glyph);
+        const ImVec2 center((itemMin.x + itemMax.x) * 0.5f, (itemMin.y + itemMax.y) * 0.5f);
+        const ImVec2 pos(center.x - textSize.x * 0.5f, center.y - textSize.y * 0.5f);
 
-            drawList->AddRectFilledMultiColor(min,
-                                              max,
-                                              pageTopColor,
-                                              pageTopColor,
-                                              pageBottomColor,
-                                              pageBottomColor);
-
-            ImVec2 foldStart(max.x - foldSize, min.y);
-            drawList->AddTriangleFilled(foldStart, ImVec2(max.x, min.y), ImVec2(max.x, min.y + foldSize), foldColor);
-            drawList->AddLine(foldStart, ImVec2(max.x, min.y + foldSize), outlineColor, 1.5f);
-            drawList->AddRect(min, max, outlineColor, 4.0f, 0, 1.5f);
-            drawList->AddRectFilled(ImVec2(min.x + 4.0f, min.y + 4.0f),
-                                    ImVec2(max.x - foldSize - 5.0f, min.y + 7.0f),
-                                    accentColor, 1.5f);
-
-            const float left = min.x + width * 0.18f;
-            const float right = max.x - width * 0.16f;
-            for (int lineIndex = 0; lineIndex < 4; ++lineIndex)
-            {
-                const float y = min.y + height * (0.40f + 0.12f * static_cast<float>(lineIndex));
-                const float lineRight = (lineIndex == 3) ? (right - width * 0.16f) : right;
-                drawList->AddLine(ImVec2(left, y), ImVec2(lineRight, y), lineColor, 1.5f);
-            }
-        }
+        drawList->AddText(font, iconSize, pos, color, glyph);
     }
 
     void drawAssetGridIcon(VkDescriptorSet icon, BuiltinAssetIcon builtinIcon, bool isSelected)
@@ -329,7 +377,7 @@ namespace
             files.push_back(path.lexically_normal());
         };
 
-        // Returns true if any path component starts with '.' (hidden directory/file).
+
         auto isHiddenPath = [](const std::filesystem::path &p) -> bool
         {
             for (const auto &part : p)
@@ -349,7 +397,7 @@ namespace
             {
                 const auto &entry = *iterator;
 
-                // Skip hidden directories entirely (e.g. .velixcache).
+
                 std::error_code fileError;
                 if (entry.is_directory(fileError) && !fileError)
                 {
@@ -986,13 +1034,13 @@ void AssetsWindow::drawAssetGrid()
             ImGui::BeginGroup();
 
             VkDescriptorSet icon = VK_NULL_HANDLE;
-            BuiltinAssetIcon builtinIcon = entry.is_directory() ? BuiltinAssetIcon::Folder : BuiltinAssetIcon::File;
             std::string filename = assetPath.filename().string();
             std::string extension = assetPath.extension().string();
             std::string extensionLower = toLowerCopy(extension);
             const auto serializedAssetType = entry.is_directory()
                                                  ? engine::Asset::AssetType::NONE
                                                  : readSerializedAssetType(assetPath).value_or(engine::Asset::AssetType::NONE);
+            BuiltinAssetIcon builtinIcon = pickBuiltinIcon(entry.is_directory(), serializedAssetType, extensionLower);
 
             if (entry.is_directory())
             {
@@ -1059,7 +1107,7 @@ void AssetsWindow::drawAssetGrid()
                 ImGuiIO &io = ImGui::GetIO();
                 if (io.KeyCtrl)
                 {
-                    // Ctrl+click: toggle this item in multi-selection
+
                     const std::string key = assetPath.string();
                     if (m_multiSelectedPaths.count(key))
                         m_multiSelectedPaths.erase(key);
@@ -1072,7 +1120,7 @@ void AssetsWindow::drawAssetGrid()
                 }
                 else if (io.KeyShift && !m_lastClickedPath.empty())
                 {
-                    // Shift+click: range select between last clicked and current
+
                     m_multiSelectedPaths.clear();
                     bool inRange = false;
                     for (const auto &rangeEntry : entries)
@@ -1094,7 +1142,7 @@ void AssetsWindow::drawAssetGrid()
                 }
                 else
                 {
-                    // Plain click: clear multi-selection
+
                     m_multiSelectedPaths.clear();
                     setSelectedAssetPath(assetPath);
                     m_lastClickedPath = assetPath;
@@ -1103,7 +1151,7 @@ void AssetsWindow::drawAssetGrid()
 
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
             {
-                // If right-clicking on an item not in multi-selection, reset to single
+
                 if (m_multiSelectedPaths.empty() || m_multiSelectedPaths.count(assetPath.string()) == 0)
                 {
                     m_multiSelectedPaths.clear();
@@ -1190,7 +1238,7 @@ void AssetsWindow::drawAssetGrid()
                                                  ? engine::Asset::AssetType::NONE
                                                  : readSerializedAssetType(m_contextAssetPath).value_or(engine::Asset::AssetType::NONE);
 
-            // --- Open actions ---
+
             if (isDirectory)
             {
                 if (ImGui::MenuItem("Open Folder"))
@@ -1231,7 +1279,7 @@ void AssetsWindow::drawAssetGrid()
                 }
             }
 
-            // Show in file manager
+
             if (ImGui::MenuItem("Show in File Manager"))
             {
                 const std::filesystem::path showPath = isDirectory ? m_contextAssetPath : m_contextAssetPath.parent_path();
@@ -1241,7 +1289,7 @@ void AssetsWindow::drawAssetGrid()
 
             ImGui::Separator();
 
-            // --- Create actions ---
+
             if (isDirectory)
             {
                 if (ImGui::BeginMenu("Create"))
@@ -1277,7 +1325,7 @@ void AssetsWindow::drawAssetGrid()
                 ImGui::Separator();
             }
 
-            // --- File management ---
+
             if (ImGui::MenuItem("Rename", "F2"))
                 startRenamingAsset(m_contextAssetPath);
 
@@ -1496,9 +1544,9 @@ void AssetsWindow::drawAssetGrid()
             {
                 std::function<void(const std::filesystem::path &)> drawDirectoryNode = [&](const std::filesystem::path &directory)
                 {
-                    // Use u8string() to safely handle Unicode directory names on Windows.
-                    // path::string() throws std::system_error when the path contains characters
-                    // that cannot be mapped to the current ANSI code page.
+
+
+
                     auto toDisplayName = [](const std::filesystem::path &p) -> std::string {
                         try {
                             auto u8 = p.filename().u8string();
@@ -2082,13 +2130,13 @@ std::vector<std::filesystem::directory_entry> AssetsWindow::getFilteredEntries()
     {
         for (const auto &entry : std::filesystem::directory_iterator(m_currentDirectory))
         {
-            // Skip hidden files/directories
+
             std::string filename = entry.path().filename().string();
 
             if (!filename.empty() && filename[0] == '.')
                 continue;
 
-            // Skip excluded directories
+
             if (entry.is_directory() &&
                 m_excludedDirectories.find(filename) != m_excludedDirectories.end())
                 continue;
@@ -2103,7 +2151,7 @@ std::vector<std::filesystem::directory_entry> AssetsWindow::getFilteredEntries()
 
             const std::string searchableName = entry.is_directory() ? filename : makeDisplayName(entry.path());
 
-            // Apply search filter if query exists
+
             if (!m_searchQuery.empty() && !matchesSearch(searchableName))
                 continue;
 
@@ -2114,7 +2162,7 @@ std::vector<std::filesystem::directory_entry> AssetsWindow::getFilteredEntries()
                   [](const std::filesystem::directory_entry &a, const std::filesystem::directory_entry &b)
                   {
                       if (a.is_directory() != b.is_directory())
-                          return a.is_directory(); // Directories first
+                          return a.is_directory();
                       return a.path().filename() < b.path().filename();
                   });
     }
@@ -2174,16 +2222,16 @@ void AssetsWindow::buildTreeNode(TreeNode *node, const std::filesystem::path &pa
             if (!entry.is_directory())
                 continue;
 
-            // Use u8string() to safely handle Unicode directory names on Windows
-            // (path::string() throws when characters can't be mapped to the current code page).
+
+
             auto u8name = entry.path().filename().u8string();
             std::string dirName(u8name.begin(), u8name.end());
 
-            // Skip excluded directories
+
             if (m_excludedDirectories.find(dirName) != m_excludedDirectories.end())
                 continue;
 
-            // Skip hidden directories
+
             if (!dirName.empty() && dirName[0] == '.')
                 continue;
 
@@ -2191,11 +2239,11 @@ void AssetsWindow::buildTreeNode(TreeNode *node, const std::filesystem::path &pa
             child->parent = node;
             node->children.push_back(child);
 
-            // Recursively build tree (optional - can be done on demand)
-            // buildTreeNode(child.get(), entry.path());
+
+
         }
 
-        // Sort children alphabetically
+
         std::sort(node->children.begin(), node->children.end(),
                   [](const std::shared_ptr<TreeNode> &a,
                      const std::shared_ptr<TreeNode> &b)

@@ -64,6 +64,8 @@ struct MaterialParams
     uint  emissiveTexIdx;
     uint  lightmapTexIdx;
     uint  _lightmapPad;
+    uint  _pad0;
+    uint  _pad1;
 };
 
 struct ReflectionInstance
@@ -106,7 +108,7 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer Ver
 uint      loadIndex (uint64_t base, uint i)             { return IndexRef (base + uint64_t(i) * 4ul).index; }
 VertexRef loadVertex(uint64_t base, uint stride, uint i) { return VertexRef(base + uint64_t(i) * uint64_t(stride)); }
 
-// ---------- GGX PBR ----------
+
 float D_GGX(float NdotH, float a2)
 {
     float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
@@ -149,7 +151,7 @@ vec3 evaluateBRDF(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float rou
     return (diffuse + specular) * NdotL;
 }
 
-// ---------- Sky ----------
+
 vec3 getSkyFallback(vec3 dir)
 {
     float sunH = pc.sunHeight;
@@ -173,7 +175,7 @@ vec3 sampleEnvironment(vec3 dir)
                                       : getSkyFallback(normalize(dir));
 }
 
-// ---------- Shade a ray-query hit (mirrors rchit logic) ----------
+
 vec3 shadeHit(int instanceIdx, int primitiveIdx, vec2 bary, mat4x3 worldToObj,
               vec3 hitPosWorld, vec3 rayDir)
 {
@@ -207,7 +209,7 @@ vec3 shadeHit(int instanceIdx, int primitiveIdx, vec2 bary, mat4x3 worldToObj,
     float roughness = clamp(instance.material.roughnessFactor, 0.04, 1.0);
     float metallic  = clamp(instance.material.metallicFactor,  0.0,  1.0);
 
-    // Direct lighting with GGX BRDF
+
     vec3 Lo    = vec3(0.0);
     int  count = min(lightData.lightCount, MAX_LIGHT_COUNT);
     for (int i = 0; i < count; ++i)
@@ -249,7 +251,7 @@ vec3 shadeHit(int instanceIdx, int primitiveIdx, vec2 bary, mat4x3 worldToObj,
         Lo += evaluateBRDF(N_view, V_view, L, albedo, metallic, roughness) * radiance;
     }
 
-    // Environment ambient
+
     vec3  F0      = mix(vec3(0.04), albedo, metallic);
     float NdotV   = max(dot(N_world, V_world), 0.0);
     vec3  F       = fresnelSchlick(NdotV, F0);

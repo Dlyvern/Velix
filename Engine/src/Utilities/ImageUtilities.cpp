@@ -8,16 +8,16 @@ ImageUtilities::LayoutTransitionInfo ImageUtilities::getSrcLayoutInfo(VkImageLay
     switch (layout)
     {
     case VK_IMAGE_LAYOUT_UNDEFINED:
-        // Nothing to wait for - transition happens at the beginning
+
         return {0, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT};
 
     case VK_IMAGE_LAYOUT_GENERAL:
-        // Could be used by any stage
+
         return {VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
 
     case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-        // Was used as color attachment
+
         return {VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT};
 
@@ -26,17 +26,17 @@ ImageUtilities::LayoutTransitionInfo ImageUtilities::getSrcLayoutInfo(VkImageLay
                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT};
 
     case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-        // Was read by shaders
+
         return {VK_ACCESS_2_SHADER_READ_BIT,
                 VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
 
     case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-        // Was used as transfer source
+
         return {VK_ACCESS_2_TRANSFER_READ_BIT,
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT};
 
     case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-        // Was used as transfer destination
+
         return {VK_ACCESS_2_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT};
 
@@ -53,17 +53,17 @@ ImageUtilities::LayoutTransitionInfo ImageUtilities::getDstLayoutInfo(VkImageLay
 {
     switch (layout)
     {
-        // Not a valid destination layout (except for discard)
+
     case VK_IMAGE_LAYOUT_UNDEFINED:
         return {0, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT};
 
     case VK_IMAGE_LAYOUT_GENERAL:
-        // Will be used by any stage
+
         return {VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
 
     case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-        // Will be used as color attachment
+
         return {VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT};
 
@@ -72,17 +72,17 @@ ImageUtilities::LayoutTransitionInfo ImageUtilities::getDstLayoutInfo(VkImageLay
                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT};
 
     case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-        // Will be read by shaders
+
         return {VK_ACCESS_2_SHADER_READ_BIT,
                 VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
 
     case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-        // Will be used as transfer source
+
         return {VK_ACCESS_2_TRANSFER_READ_BIT,
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT};
 
     case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-        // Will be used as transfer destination
+
         return {VK_ACCESS_2_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT};
 

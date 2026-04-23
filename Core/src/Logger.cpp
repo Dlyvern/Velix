@@ -44,7 +44,7 @@ namespace terminalColors
         std::cout << color << message << "\033[0m" << '\n';
     }
 #endif
-} // namespace terminalColors
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 

@@ -46,8 +46,8 @@ namespace PluginLoader
         void* rawFunc = getFunction(functionName, library);
         return reinterpret_cast<T>(rawFunc);
     }
-} //namespace PluginLoader
+}
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_PLUGIN_LOADER_HPP
+#endif

@@ -34,7 +34,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-// ---- helpers ----------------------------------------------------------------
+
 
 namespace
 {
@@ -69,9 +69,9 @@ namespace
         vkCreateShaderModule(device, &ci, nullptr, &mod);
         return mod;
     }
-} // namespace
+}
 
-// ---- LightmapBaker ----------------------------------------------------------
+
 
 LightmapBaker::~LightmapBaker()
 {
@@ -89,22 +89,22 @@ void LightmapBaker::createPipeline(uint32_t resolution)
     auto ctx     = core::VulkanContext::getContext();
     VkDevice dev = ctx->getDevice();
 
-    // Shadow sampler — plain linear sampler, no comparison.
-    // The bake shader uses sampler2DArray and does manual depth comparison,
-    // so compareEnable must be VK_FALSE to get raw depth values from texture().
+
+
+
     m_shadowSampler = core::Sampler::createShared(
-        VK_FILTER_LINEAR,                        // magFilter
-        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, // addressModeU
-        VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,      // borderColor
-        VK_COMPARE_OP_NEVER,                     // compareOp (unused)
-        VK_SAMPLER_MIPMAP_MODE_LINEAR,           // mipmapMode
-        VK_FALSE,                                // anisotropyEnable
-        1.0f,                                    // maxAnisotropy
-        VK_FALSE,                                // unnormalizedCoordinates
-        VK_FALSE                                 // compareEnable — raw depth readback
+        VK_FILTER_LINEAR,
+        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+        VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+        VK_COMPARE_OP_NEVER,
+        VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        VK_FALSE,
+        1.0f,
+        VK_FALSE,
+        VK_FALSE
     );
 
-    // Render pass — single R16G16B16A16_SFLOAT color attachment, no depth.
+
     VkAttachmentDescription colorAtt{};
     colorAtt.format         = VK_FORMAT_R16G16B16A16_SFLOAT;
     colorAtt.samples        = VK_SAMPLE_COUNT_1_BIT;
@@ -139,7 +139,7 @@ void LightmapBaker::createPipeline(uint32_t resolution)
     rpCI.pDependencies   = &dep;
     vkCreateRenderPass(dev, &rpCI, nullptr, &m_bakeRenderPass);
 
-    // Descriptor set layout for set 1 (shadow maps)
+
     const std::array<VkDescriptorSetLayoutBinding, 3> bindings{{
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
@@ -150,7 +150,7 @@ void LightmapBaker::createPipeline(uint32_t resolution)
     dslCI.pBindings    = bindings.data();
     vkCreateDescriptorSetLayout(dev, &dslCI, nullptr, &m_bakeSetLayout);
 
-    // Descriptor pool (1 set per baker lifetime)
+
     const std::array<VkDescriptorPoolSize, 1> poolSizes{{{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3}}};
     VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolCI.maxSets       = 1;
@@ -158,11 +158,11 @@ void LightmapBaker::createPipeline(uint32_t resolution)
     poolCI.pPoolSizes    = poolSizes.data();
     vkCreateDescriptorPool(dev, &poolCI, nullptr, &m_bakeDescriptorPool);
 
-    // Push constant: model mat4 + normalMatrix mat4 = 128 bytes
+
     VkPushConstantRange pcRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4) * 2};
 
-    // We need set 0 layout from the engine (camera descriptor layout).
-    // Retrieve it from EngineShaderFamilies.
+
+
     VkDescriptorSetLayout set0Layout = EngineShaderFamilies::cameraDescriptorSetLayout;
 
     const std::array<VkDescriptorSetLayout, 2> layouts{set0Layout, m_bakeSetLayout};
@@ -173,7 +173,7 @@ void LightmapBaker::createPipeline(uint32_t resolution)
     layoutCI.pPushConstantRanges    = &pcRange;
     vkCreatePipelineLayout(dev, &layoutCI, nullptr, &m_bakePipelineLayout);
 
-    // Load shaders
+
     VkShaderModule vertMod = loadShader(dev, "resources/shaders/lightmap_bake.vert.spv");
     VkShaderModule fragMod = loadShader(dev, "resources/shaders/lightmap_bake.frag.spv");
     if (vertMod == VK_NULL_HANDLE || fragMod == VK_NULL_HANDLE)
@@ -189,7 +189,7 @@ void LightmapBaker::createPipeline(uint32_t resolution)
          VK_SHADER_STAGE_FRAGMENT_BIT, fragMod, "main", nullptr},
     }};
 
-    // Vertex input: binding 0 = Vertex3D, binding 1 = lightmapUV (vec2)
+
     const std::array<VkVertexInputBindingDescription, 2> bindings2{{
         {0, sizeof(vertex::Vertex3D), VK_VERTEX_INPUT_RATE_VERTEX},
         {1, sizeof(float) * 2,        VK_VERTEX_INPUT_RATE_VERTEX},
@@ -219,7 +219,7 @@ void LightmapBaker::createPipeline(uint32_t resolution)
 
     VkPipelineRasterizationStateCreateInfo rCI{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     rCI.polygonMode = VK_POLYGON_MODE_FILL;
-    rCI.cullMode    = VK_CULL_MODE_NONE; // bake both faces
+    rCI.cullMode    = VK_CULL_MODE_NONE;
     rCI.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rCI.lineWidth   = 1.0f;
 
@@ -261,7 +261,7 @@ void LightmapBaker::destroyPipeline()
     vkDeviceWaitIdle(dev);
 
     if (m_shadowDescriptorSet != VK_NULL_HANDLE)
-        m_shadowDescriptorSet = VK_NULL_HANDLE; // freed by pool
+        m_shadowDescriptorSet = VK_NULL_HANDLE;
 
     if (m_bakeDescriptorPool != VK_NULL_HANDLE)
     {
@@ -350,7 +350,7 @@ void LightmapBaker::destroyBakeTarget(BakeTarget &t)
 
 std::vector<uint8_t> LightmapBaker::readbackImage(VkImage image, uint32_t width, uint32_t height)
 {
-    // R16G16B16A16_SFLOAT = 8 bytes per pixel
+
     const VkDeviceSize dataSize = static_cast<VkDeviceSize>(width) * height * 8;
 
     auto staging = core::Buffer::createShared(dataSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -359,7 +359,7 @@ std::vector<uint8_t> LightmapBaker::readbackImage(VkImage image, uint32_t width,
     auto cmd = core::CommandBuffer::createShared(*core::VulkanContext::getContext()->getGraphicsCommandPool());
     cmd->begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
-    // Transition from TRANSFER_SRC_OPTIMAL (set by render pass finalLayout) → copy → back
+
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.srcAccessMask               = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barrier.dstAccessMask               = VK_ACCESS_TRANSFER_READ_BIT;
@@ -396,13 +396,13 @@ void LightmapBaker::dilate(std::vector<uint8_t> &pixels, uint32_t width, uint32_
     if (radius == 0)
         return;
 
-    // Each pixel is 8 bytes (R16G16B16A16_SFLOAT, stored as half-floats).
+
     const uint32_t stride = 8u;
     std::vector<uint8_t> result = pixels;
 
     auto isBlack = [&](uint32_t x, uint32_t y) -> bool {
         const uint8_t *p = pixels.data() + (y * width + x) * stride;
-        // Check alpha channel (bytes 6-7) — non-zero alpha means the texel was written.
+
         return p[6] == 0 && p[7] == 0;
     };
 
@@ -411,9 +411,9 @@ void LightmapBaker::dilate(std::vector<uint8_t> &pixels, uint32_t width, uint32_
         for (uint32_t x = 0; x < width; ++x)
         {
             if (!isBlack(x, y))
-                continue; // already has data
+                continue;
 
-            // Find nearest non-black neighbour within radius.
+
             for (uint32_t r = 1; r <= radius; ++r)
             {
                 bool found = false;
@@ -482,7 +482,7 @@ void LightmapBaker::createShadowDescriptorSet(VkImageView dirView, VkImageView s
     vkUpdateDescriptorSets(dev, 3, writes.data(), 0, nullptr);
 }
 
-// ---- main bake entry --------------------------------------------------------
+
 
 void LightmapBaker::bake(engine::Scene *scene,
                           renderGraph::ShadowRenderGraphPass *shadowPass,
@@ -507,28 +507,34 @@ void LightmapBaker::bake(engine::Scene *scene,
         return;
     }
 
-    // Build shadow descriptor set from the shadow pass' compiled views.
+
     VkImageView dirView  = shadowPass->getDirectionalShadowImageView();
     VkImageView spotView = shadowPass->getSpotShadowImageView();
     VkImageView cubeView = shadowPass->getCubeShadowImageView();
 
-    // Ensure we have valid views — fall back to tiny placeholder if not available.
-    // (The baker won't crash; it just won't produce shadows for missing maps.)
+
+
     if (!dirView || !spotView || !cubeView)
     {
         VX_ENGINE_WARNING_STREAM("[LightmapBaker] One or more shadow map views are null — shadows may be missing in the lightmap.\n");
     }
 
-    // Use the shadow sampler we created during pipeline init.
+
     VkSampler rawSampler = m_shadowSampler ? static_cast<VkSampler>(*m_shadowSampler) : VK_NULL_HANDLE;
     createShadowDescriptorSet(dirView  ? dirView  : VK_NULL_HANDLE,
                               spotView ? spotView : VK_NULL_HANDLE,
                               cubeView ? cubeView : VK_NULL_HANDLE,
                               rawSampler);
 
-    // Camera descriptor set (set 0) — contains light SSBO + lightSpace UBO.
-    const uint32_t imgIdx = renderGraph->getCurrentImageIndex();
-    const VkDescriptorSet cameraSet = renderGraph->getCameraDescriptorSet(imgIdx);
+
+
+
+
+    const uint32_t currentIdx = renderGraph->getCurrentFrameIndex();
+    const uint32_t renderedFrame = (currentIdx + 1) % 2;
+    VkDescriptorSet cameraSet = renderGraph->getCameraDescriptorSet(renderedFrame);
+    if (cameraSet == VK_NULL_HANDLE)
+        cameraSet = renderGraph->getCameraDescriptorSet(currentIdx);
 
     const auto &entities = scene->getEntities();
     progress.totalEntities.store(static_cast<uint32_t>(entities.size()));
@@ -548,7 +554,7 @@ void LightmapBaker::bake(engine::Scene *scene,
         if (!smc || smc->getMeshes().empty())
             continue;
 
-        // Use the first mesh — each entity typically has one mesh for lightmapping.
+
         const CPUMesh &cpuMesh = smc->getMeshes().front();
         VX_ENGINE_INFO_STREAM("[LightmapBaker] Entity \"" << entity->getName()
                               << "\" mesh \"" << cpuMesh.name
@@ -557,7 +563,7 @@ void LightmapBaker::bake(engine::Scene *scene,
         {
             VX_ENGINE_WARNING_STREAM("[LightmapBaker] Skipping \"" << entity->getName()
                                      << "\" — no lightmap UVs. Re-import the FBX asset.\n");
-            continue; // no lightmap UVs
+            continue;
         }
 
         auto gpuMesh = meshRegistry.getOrCreateSharedGeometryMesh(cpuMesh);
@@ -572,10 +578,10 @@ void LightmapBaker::bake(engine::Scene *scene,
 
         const std::string assetPath = outputDir + "/" + entityName + ".texture.elixasset";
 
-        // Build target and bake
+
         BakeTarget target = createBakeTarget(settings.resolution);
 
-        // Record bake command buffer
+
         auto cmd = core::CommandBuffer::createShared(*ctx->getGraphicsCommandPool());
         cmd->begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
@@ -591,17 +597,25 @@ void LightmapBaker::bake(engine::Scene *scene,
 
         vkCmdBindPipeline(*cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_bakePipeline);
 
-        // Set 0 = camera descriptor (lightSpace + lightSSBO)
-        if (cameraSet != VK_NULL_HANDLE)
-            vkCmdBindDescriptorSets(*cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_bakePipelineLayout,
-                                    0, 1, &cameraSet, 0, nullptr);
 
-        // Set 1 = shadow maps
+        if (cameraSet == VK_NULL_HANDLE)
+        {
+            VX_ENGINE_ERROR_STREAM("[LightmapBaker] Camera descriptor set is null — cannot bake.\n");
+            vkCmdEndRenderPass(*cmd);
+            cmd->end();
+            destroyBakeTarget(target);
+            progress.completedEntities.fetch_add(1);
+            continue;
+        }
+        vkCmdBindDescriptorSets(*cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_bakePipelineLayout,
+                                0, 1, &cameraSet, 0, nullptr);
+
+
         if (m_shadowDescriptorSet != VK_NULL_HANDLE)
             vkCmdBindDescriptorSets(*cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_bakePipelineLayout,
                                     1, 1, &m_shadowDescriptorSet, 0, nullptr);
 
-        // Push constants: model + normal matrix
+
         struct BakePC { glm::mat4 model; glm::mat4 normal; };
         auto *tc = entity->getComponent<Transform3DComponent>();
         const glm::mat4 model = tc ? tc->getMatrix() : glm::mat4(1.0f);
@@ -610,7 +624,7 @@ void LightmapBaker::bake(engine::Scene *scene,
         vkCmdPushConstants(*cmd, m_bakePipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(BakePC), &pc);
 
-        // Bind vertex buffers: binding 0 = main VBO, binding 1 = lightmap UV VBO
+
         const std::array<VkBuffer, 2> vbs{
             gpuMesh->vertexBuffer,
             static_cast<VkBuffer>(*gpuMesh->lightmapUVBuffer),
@@ -630,12 +644,32 @@ void LightmapBaker::bake(engine::Scene *scene,
             vkQueueWaitIdle(gfxQueue);
         }
 
-        // Read back and optionally dilate
+
         std::vector<uint8_t> pixels = readbackImage(target.image, settings.resolution, settings.resolution);
+
+
+        {
+            const uint32_t pixelCount = settings.resolution * settings.resolution;
+            uint32_t nonZeroCount = 0;
+            const uint16_t *halfPixels = reinterpret_cast<const uint16_t *>(pixels.data());
+            for (uint32_t p = 0; p < pixelCount; ++p)
+            {
+
+                const uint16_t r = halfPixels[p * 4 + 0];
+                const uint16_t g = halfPixels[p * 4 + 1];
+                const uint16_t b = halfPixels[p * 4 + 2];
+                if (r != 0 || g != 0 || b != 0)
+                    ++nonZeroCount;
+            }
+            VX_ENGINE_INFO_STREAM("[LightmapBaker] " << entityName
+                                  << ": " << nonZeroCount << " / " << pixelCount
+                                  << " non-zero pixels after bake\n");
+        }
+
         if (settings.dilate)
             dilate(pixels, settings.resolution, settings.resolution, settings.dilateRadius);
 
-        // Build TextureAsset and save
+
         TextureAsset ta;
         ta.name       = entityName + "_lightmap";
         ta.assetPath  = assetPath;
@@ -654,7 +688,7 @@ void LightmapBaker::bake(engine::Scene *scene,
         {
             VX_ENGINE_INFO_STREAM("[LightmapBaker] Baked: " << entityName << " → " << assetPath << '\n');
 
-            // Assign LightmapComponent to entity
+
             auto *lmc = entity->getComponent<LightmapComponent>();
             if (!lmc)
                 lmc = entity->addComponent<LightmapComponent>();
@@ -666,9 +700,9 @@ void LightmapBaker::bake(engine::Scene *scene,
         progress.completedEntities.fetch_add(1);
     }
 
-    // Reset shadow descriptor set — it was allocated from the pool and will be freed when pool resets.
+
     m_shadowDescriptorSet = VK_NULL_HANDLE;
-    // Reset pool to allow re-baking without leaking descriptors.
+
     if (m_bakeDescriptorPool != VK_NULL_HANDLE)
         vkResetDescriptorPool(dev, m_bakeDescriptorPool, 0);
 

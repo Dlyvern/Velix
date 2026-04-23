@@ -19,6 +19,8 @@ public:
     Material::SharedPtr resolveMaterialOverrideFromPath(const std::string &materialPath);
     Material::SharedPtr resolveRuntimeMeshMaterial(const CPUMesh &mesh);
 
+    static std::string ensureCustomMaterialShaderPath(const CPUMaterial &materialCPU);
+
 private:
     bool looksLikeWindowsAbsolutePath(const std::string &path) const;
     std::filesystem::path makeAbsoluteNormalized(const std::filesystem::path &path) const;
@@ -26,7 +28,6 @@ private:
     std::string resolveTexturePathForMaterial(const std::string &texturePath, const std::filesystem::path &materialAssetPath) const;
     Texture::SharedPtr loadTextureForMaterial(const std::string &texturePath, VkFormat format, const std::filesystem::path &materialAssetPath);
     std::string buildMaterialCacheKey(const CPUMaterial &materialCPU) const;
-    std::string ensureCustomMaterialShaderPath(const CPUMaterial &materialCPU) const;
     Material::SharedPtr createMaterialFromCpuData(const CPUMaterial &materialCPU, const std::filesystem::path &materialAssetFilePath);
     bool consumeLoadBudget();
 
@@ -39,8 +40,9 @@ private:
     std::unordered_set<std::string> m_failedRuntimeMaterialKeys;
     std::unordered_map<std::string, Material::SharedPtr> m_materialsByAssetPath;
     std::unordered_set<std::string> m_failedMaterialAssetPaths;
+    std::unordered_map<std::string, std::filesystem::file_time_type> m_materialFileMtimes;
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SCENE_MATERIAL_RESOLVER_HPP
+#endif

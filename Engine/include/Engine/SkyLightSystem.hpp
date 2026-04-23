@@ -52,4 +52,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SKY_LIGHT_SYSTEM_HPP
+#endif

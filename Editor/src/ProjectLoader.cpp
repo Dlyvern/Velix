@@ -176,15 +176,15 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
         return nullptr;
     }
 
-    // void* projectLibrary;
-    // std::string assetsDir;
-    // std::string entryScene;
-    // std::string scenesDir;
-    // std::string name;
-    // std::string fullPath;
-    // std::string buildDir;
-    // std::string sourceDir;
-    // std::string exportDir;
+
+
+
+
+
+
+
+
+
 
     auto project = std::make_shared<Project>();
     const std::filesystem::path configDirectory = projectConfigPath.parent_path();
@@ -321,7 +321,7 @@ std::shared_ptr<Project> ProjectLoader::loadProject(const std::string &projectPa
             continue;
 
         const std::string relativeTexturePath = std::filesystem::relative(entry.path(), project->fullPath).lexically_normal().string();
-        // VX_EDITOR_INFO_STREAM("Found texture asset: " << relativeTexturePath);
+
 
         TextureAssetRecord texture;
         texture.path = relativeTexturePath;

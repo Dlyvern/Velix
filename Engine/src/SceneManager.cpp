@@ -64,19 +64,19 @@ void SceneManager::processRequests(std::shared_ptr<Scene> &activeScene,
             if (!activeScene)
                 break;
 
-            // Preserve DontDestroyOnLoad entities before the new scene is created.
+
             auto preserved = activeScene->extractEntitiesWithTag(k_dontDestroyTag);
 
             auto newScene = std::make_shared<Scene>();
             if (!newScene->loadSceneFromFile(request.payload))
             {
                 VX_ENGINE_ERROR_STREAM("SceneManager: failed to load scene: " << request.payload << '\n');
-                // Roll back: re-inject preserved entities into the original scene.
+
                 activeScene->injectEntities(std::move(preserved));
                 break;
             }
 
-            // Re-inject preserved entities into the new scene.
+
             newScene->injectEntities(std::move(preserved));
 
             activeScene = newScene;

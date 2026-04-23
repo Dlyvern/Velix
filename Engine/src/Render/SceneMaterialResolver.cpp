@@ -55,6 +55,21 @@ Material::SharedPtr SceneMaterialResolver::resolveMaterialOverrideFromPath(const
     if (normalizedMaterialPath.empty())
         return nullptr;
 
+
+
+    std::error_code ec;
+    const auto currentMtime = std::filesystem::last_write_time(normalizedMaterialPath, ec);
+    if (!ec)
+    {
+        auto mtimeIt = m_materialFileMtimes.find(normalizedMaterialPath);
+        if (mtimeIt != m_materialFileMtimes.end() && mtimeIt->second != currentMtime)
+        {
+            m_materialsByAssetPath.erase(normalizedMaterialPath);
+            m_failedMaterialAssetPaths.erase(normalizedMaterialPath);
+            VX_ENGINE_INFO_STREAM("Material file changed, reloading: " << normalizedMaterialPath << '\n');
+        }
+    }
+
     if (auto cachedMaterialIt = m_materialsByAssetPath.find(normalizedMaterialPath); cachedMaterialIt != m_materialsByAssetPath.end())
         return cachedMaterialIt->second;
 
@@ -89,6 +104,8 @@ Material::SharedPtr SceneMaterialResolver::resolveMaterialOverrideFromPath(const
 
     m_failedMaterialAssetPaths.erase(normalizedMaterialPath);
     m_materialsByAssetPath[normalizedMaterialPath] = material;
+    if (!ec)
+        m_materialFileMtimes[normalizedMaterialPath] = currentMtime;
     return material;
 }
 
@@ -367,7 +384,7 @@ std::string SceneMaterialResolver::buildMaterialCacheKey(const CPUMaterial &mate
     return std::to_string(seed);
 }
 
-std::string SceneMaterialResolver::ensureCustomMaterialShaderPath(const CPUMaterial &materialCPU) const
+std::string SceneMaterialResolver::ensureCustomMaterialShaderPath(const CPUMaterial &materialCPU)
 {
     if (!materialCPU.customShaderHash.empty())
     {

@@ -52,12 +52,12 @@ public:
         std::size_t                   syncedTreeHash{0u};
         engine::AnimatorComponent     previewAnimator{};
         engine::Skeleton              previewSkeleton{};
-        // Orbit camera
+
         float yaw{0.0f}, pitch{20.0f}, distance{3.0f};
         glm::vec3 target{0.0f};
         bool isFirstActivation{true};
         glm::mat4 modelMatrix{1.0f};
-        // Cached preview meshes and their per-mesh transform metadata.
+
         std::vector<PreviewMeshEntry> previewMeshes;
     };
 
@@ -87,7 +87,7 @@ public:
     ~AnimationTreePanel();
 
 private:
-    // ---- Node Editor ID helpers ----
+
     static int entryNodeId(int machineNodeId)      { return 1000000 + machineNodeId * 10 + 1; }
     static int entryOutPin(int machineNodeId)      { return 1000000 + machineNodeId * 10 + 2; }
     static int anyNodeId(int machineNodeId)        { return 2000000 + machineNodeId * 10 + 1; }
@@ -104,32 +104,32 @@ private:
         engine::AnimationTree tree;
         bool dirty{false};
 
-        // Selection
+
         int currentMachineNodeId{-1};
         int selectedNodeId{-1};
         int selectedTransitionIndex{-1};
         int selectedTransitionMachineNodeId{-1};
 
-        // "Add Node" popup
+
         bool addNodePopupOpen{false};
-        int  newNodeType{1}; // 0=Machine,1=Clip,2=BlendSpace1D
+        int  newNodeType{1};
         char newNodeName[128]{};
         char newNodeClipPath[512]{};
 
-        // "Rename Node" popup
+
         bool renamePopupOpen{false};
         int  renameNodeId{-1};
         char renameBuffer[128]{};
 
-        // "Add Parameter" popup
+
         bool addParamPopupOpen{false};
         char newParamName[128]{};
-        int  newParamType{0}; // 0=Float,1=Bool,2=Int,3=Trigger
+        int  newParamType{0};
 
-        // Live preview
+
         AnimPreviewContext preview{};
 
-        // Cached list of .anim.elixasset paths found in the project
+
         std::vector<std::string> availableAnimAssets;
     };
 
@@ -174,4 +174,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ANIMATION_TREE_PANEL_HPP
+#endif

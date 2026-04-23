@@ -89,13 +89,13 @@ void LightingRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffe
     struct LightingPC
     {
         float shadowAmbientStrength;
-        float shadowMode;               // 0.0 = shadow maps, 1.0 = ray query, 2.0 = RT pipeline texture
-        float rtShadowSamples;          // rays per light (1=hard, 4-16=soft)
-        float rtShadowPenumbraSize;     // virtual light radius → penumbra width
-        glm::vec4 probeWorldPos_radius; // xyz=probe world pos, w=radius (0=inactive)
+        float shadowMode;
+        float rtShadowSamples;
+        float rtShadowPenumbraSize;
+        glm::vec4 probeWorldPos_radius;
         float probeIntensity;
-        float giEnabled;                // 1.0 when RT GI irradiance buffer is bound
-        float giStrength;               // indirect diffuse intensity multiplier
+        float giEnabled;
+        float giStrength;
         float _pad2;
     };
 
@@ -193,7 +193,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
     auto device = core::VulkanContext::getContext()->getDevice();
     auto pool = core::VulkanContext::getContext()->getPersistentDescriptorPool();
 
-    // Ensure we have a valid probe view (fallback to black cubemap)
+
     if (!m_probeImageView || !m_probeSampler)
     {
         auto *blackCube = Texture::getDefaultBlackCubemap().get();
@@ -220,7 +220,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
         if (!rtShadowTexture)
             rtShadowTexture = arrayTexture;
 
-        // AO texture: use SSAO/RTAO output when available, otherwise fall back to a white texture.
+
         const RenderTarget *aoTexture = nullptr;
         VkImageView aoImageView = VK_NULL_HANDLE;
         VkSampler aoSampler = m_defaultSampler;
@@ -237,7 +237,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
             aoSampler = m_defaultWhiteTexture->vkSampler();
         }
 
-        // GI irradiance texture: use GI output when available, otherwise white texture.
+
         VkImageView giImageView = VK_NULL_HANDLE;
         VkSampler   giSampler   = m_defaultSampler;
         if (m_giTextureHandlers && i < static_cast<uint32_t>(m_giTextureHandlers->size()))
@@ -252,7 +252,7 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
             giSampler   = m_defaultWhiteTexture->vkSampler();
         }
 
-        // Baked irradiance GBuffer attachment (binding 13) — black texture when not available.
+
         VkImageView bakedIrrImageView = VK_NULL_HANDLE;
         VkSampler   bakedIrrSampler   = m_defaultSampler;
         if (m_bakedIrradianceHandlers && i < static_cast<uint32_t>(m_bakedIrradianceHandlers->size()))
@@ -263,8 +263,8 @@ void LightingRenderGraphPass::compile(RGPResourcesStorage &storage)
         }
         if (bakedIrrImageView == VK_NULL_HANDLE)
         {
-            // Fall back to black texture — lighting.frag checks dot(irr,irr) > threshold;
-            // black = 0 = no bake = use dynamic lighting (correct fallback).
+
+
             auto *black2D = Texture::getDefaultBlackTexture().get();
             if (black2D)
             {

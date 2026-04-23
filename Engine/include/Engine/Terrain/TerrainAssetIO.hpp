@@ -14,4 +14,4 @@ std::optional<TerrainAsset> loadTerrainAssetFromFile(const std::string &filePath
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_TERRAIN_ASSET_IO_HPP
+#endif

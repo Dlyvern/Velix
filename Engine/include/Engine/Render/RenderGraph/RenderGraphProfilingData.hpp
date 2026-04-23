@@ -26,11 +26,11 @@ struct RenderGraphFrameProfilingData
     uint32_t totalDrawCalls{0};
     uint64_t renderGraphVramBytes{0};
 
-    double cpuPrepareFrameMs{0.0}; // fence wait + pool reset + acquire + recompile + resolve profiling
-    double cpuActualFrameMs{0.0};  // all pass recording + primary CB end + submit + present
-    double gpuActualFrameMs{0.0};  // GPU timestamp: frame start → end
+    double cpuPrepareFrameMs{0.0};
+    double cpuActualFrameMs{0.0};
+    double gpuActualFrameMs{0.0};
 
-    // Detailed breakdown (kept for the per-pass table / debugging)
+
     double cpuFrameTimeMs{0.0};
     double cpuTotalTimeMs{0.0};
     double cpuWaitForFenceMs{0.0};
@@ -53,4 +53,4 @@ struct RenderGraphFrameProfilingData
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RENDER_GRAPH_PROFILING_DATA_HPP
+#endif

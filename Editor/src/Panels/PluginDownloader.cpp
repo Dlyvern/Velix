@@ -7,11 +7,11 @@
 #include <sstream>
 #include <stdexcept>
 
-// ── Simple JSON helpers (no external dependency) ─────────────────────────────
+
 
 static std::string jsonStringValue(const std::string &json, const std::string &key)
 {
-    // Finds  "key": "value"  in a flat JSON object.
+
     const std::string needle = "\"" + key + "\"";
     auto pos = json.find(needle);
     if (pos == std::string::npos)
@@ -19,14 +19,14 @@ static std::string jsonStringValue(const std::string &json, const std::string &k
     pos = json.find('"', pos + needle.size());
     if (pos == std::string::npos)
         return {};
-    ++pos; // skip opening quote
+    ++pos;
     auto end = json.find('"', pos);
     if (end == std::string::npos)
         return {};
     return json.substr(pos, end - pos);
 }
 
-// ── libcurl write callbacks ───────────────────────────────────────────────────
+
 
 static size_t writeToString(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
@@ -48,17 +48,17 @@ struct DownloadProgressCtx
 };
 
 static int progressCallback(void *userdata, curl_off_t dltotal, curl_off_t dlnow,
-                             curl_off_t /*ultotal*/, curl_off_t /*ulnow*/)
+                             curl_off_t , curl_off_t )
 {
     if (dltotal > 0)
     {
         auto *ctx = static_cast<DownloadProgressCtx *>(userdata);
         ctx->progress->store(static_cast<float>(dlnow) / static_cast<float>(dltotal));
     }
-    return 0; // non-zero would abort
+    return 0;
 }
 
-// ── Static helpers ────────────────────────────────────────────────────────────
+
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -113,7 +113,7 @@ bool PluginDownloader::httpDownloadFile(const std::string &url,
 
     if (res != CURLE_OK)
     {
-        std::filesystem::remove(destPath); // clean up partial download
+        std::filesystem::remove(destPath);
         return false;
     }
 
@@ -125,7 +125,7 @@ std::vector<MarketplaceEntry> PluginDownloader::parseManifest(const std::string 
 {
     std::vector<MarketplaceEntry> entries;
 
-    // Walk through each { ... } object in the "plugins" array.
+
     std::size_t pos = 0;
     while ((pos = json.find('{', pos)) != std::string::npos)
     {
@@ -138,7 +138,7 @@ std::vector<MarketplaceEntry> PluginDownloader::parseManifest(const std::string 
 
         const std::string name = jsonStringValue(obj, "name");
         if (name.empty())
-            continue; // skip the outer "{" wrapper
+            continue;
 
         MarketplaceEntry entry;
         entry.name        = name;
@@ -158,7 +158,7 @@ std::vector<MarketplaceEntry> PluginDownloader::parseManifest(const std::string 
     return entries;
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+
 
 void PluginDownloader::fetchManifest()
 {
@@ -178,7 +178,7 @@ void PluginDownloader::fetchManifest()
 
 void PluginDownloader::poll()
 {
-    // ── Manifest future ──────────────────────────────────────────────────────
+
     if (m_fetching && m_fetchFuture.valid())
     {
         if (m_fetchFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
@@ -198,7 +198,7 @@ void PluginDownloader::poll()
         }
     }
 
-    // ── Download future ──────────────────────────────────────────────────────
+
     if (m_downloading && m_downloadFuture.valid())
     {
         if (m_downloadFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)

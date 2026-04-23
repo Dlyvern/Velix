@@ -18,7 +18,7 @@ layout(set = 1, binding = 2) uniform sampler2D uDepth;
 layout(push_constant) uniform FogTemporalPC
 {
     mat4 prevViewProj;
-    vec4 params0; // x=blendAlpha, y=historyValid
+    vec4 params0;
 } pc;
 
 vec3 reconstructViewPosition(vec2 uv, float depth)

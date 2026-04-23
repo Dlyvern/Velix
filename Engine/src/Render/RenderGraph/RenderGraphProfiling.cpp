@@ -69,7 +69,7 @@ void RenderGraphProfiling::initTimestampQueryPool()
 
     const uint32_t passCount = std::max<uint32_t>(1u, m_renderGraphPassesSize);
     const uint32_t maxExecutions = MAX_RENDER_JOBS + passCount + 16u;
-    // Two timestamps per pass execution, plus frame start/end timestamps.
+
     m_timestampQueriesPerFrame = maxExecutions * 2u + 2u;
     m_timestampQueryCapacity = m_timestampQueriesPerFrame * MAX_FRAMES_IN_FLIGHT;
 
@@ -351,7 +351,7 @@ void RenderGraphProfiling::beginFrameGpuProfiling(VkCommandBuffer primaryCommand
 void RenderGraphProfiling::beginPassProfiling(VkCommandBuffer primaryCommandBuffer, uint32_t,
                                               PassExecutionProfilingData &executionProfilingData, std::string_view passName)
 {
-    // Preserve draw calls counted during parallel secondary-CB recording before resetting.
+
     const uint32_t savedDrawCalls = executionProfilingData.drawCalls;
     executionProfilingData = {};
     executionProfilingData.drawCalls = savedDrawCalls;

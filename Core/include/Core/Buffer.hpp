@@ -49,4 +49,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_BUFFER_HPP
+#endif

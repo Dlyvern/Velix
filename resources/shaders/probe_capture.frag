@@ -32,6 +32,8 @@ struct MaterialGPUParams
     uint  emissiveTexIdx;
     uint  lightmapTexIdx;
     uint  _lightmapPad;
+    uint  _pad0;
+    uint  _pad1;
 };
 
 layout(std430, set = 1, binding = 1) readonly buffer MaterialBuffer
@@ -71,7 +73,7 @@ void main()
     if (mat.emissiveTexIdx > 0u)
         emissive *= texture(allTextures[nonuniformEXT(mat.emissiveTexIdx)], uv).rgb;
 
-    // Flat ambient — probe captures scene color without view-dependent shading
-    // so all faces show consistent brightness for environment reflections.
+
+
     outColor = vec4(albedo + emissive, 1.0);
 }

@@ -166,14 +166,14 @@ public:
     virtual void onStart() {}
     virtual void onStop() {}
 
-    // Physics collision callbacks (fired when this entity's rigid body contacts another)
-    virtual void onCollisionEnter(Entity * /*other*/, const CollisionInfo & /*info*/) {}
-    virtual void onCollisionStay(Entity * /*other*/, const CollisionInfo & /*info*/) {}
-    virtual void onCollisionExit(Entity * /*other*/) {}
 
-    // Trigger callbacks (fired when this entity's trigger volume overlaps another)
-    virtual void onTriggerEnter(Entity * /*other*/) {}
-    virtual void onTriggerExit(Entity * /*other*/) {}
+    virtual void onCollisionEnter(Entity * , const CollisionInfo & ) {}
+    virtual void onCollisionStay(Entity * , const CollisionInfo & ) {}
+    virtual void onCollisionExit(Entity * ) {}
+
+
+    virtual void onTriggerEnter(Entity * ) {}
+    virtual void onTriggerExit(Entity * ) {}
 
     static Script *getCurrentConstructingScript()
     {
@@ -404,4 +404,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SCRIPT_HPP
+#endif

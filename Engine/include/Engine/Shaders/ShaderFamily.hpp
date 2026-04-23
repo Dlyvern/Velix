@@ -23,8 +23,8 @@ public:
     static inline core::DescriptorSetLayout::SharedPtr cameraDescriptorSetLayout{nullptr};
     static inline core::DescriptorSetLayout::SharedPtr materialDescriptorSetLayout{nullptr};
 
-    // Bindless material set: binding 0 = sampler2D allTextures[], binding 1 = MaterialParams SSBO.
-    // Used by the GBuffer pass to eliminate all per-batch descriptor-set binds.
+
+
     static inline VkDescriptorSetLayout bindlessMaterialSetLayout{VK_NULL_HANDLE};
     static inline VkPipelineLayout      bindlessMeshPipelineLayout{VK_NULL_HANDLE};
 
@@ -44,4 +44,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SHADER_FAMILY_HPP
+#endif

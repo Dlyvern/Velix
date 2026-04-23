@@ -8,8 +8,8 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 class Scene;
 
-// Base class for all VelixSDK game objects.
-// Provides static shortcuts to core engine services.
+
+
 class VXObject
 {
 public:
@@ -22,4 +22,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_VX_OBJECT_HPP
+#endif

@@ -32,12 +32,12 @@ void AssetManager::postLoad(AssetHandle<T> &handle, Asset::AssetType type)
     if (handle.empty())
         return;
 
-    // Fast path: already loading or done.
+
     const AssetState current = handle.state();
     if (current == AssetState::Loading || current == AssetState::Ready)
         return;
 
-    // Check deduplication map: another handle might already have the data.
+
     {
         std::lock_guard lock(m_mutex);
         auto it = m_liveAssets.find(handle.path());
@@ -48,13 +48,13 @@ void AssetManager::postLoad(AssetHandle<T> &handle, Asset::AssetType type)
                 handle.resolve(sp);
                 return;
             }
-            // Weak ref expired — remove stale entry and reload.
+
             m_liveAssets.erase(it);
         }
 
-        // Mark loading and insert entry.
+
         if (!handle.markLoading())
-            return; // race: another thread already claimed this handle
+            return;
 
         LiveEntry entry;
         entry.state = AssetState::Loading;
@@ -64,14 +64,14 @@ void AssetManager::postLoad(AssetHandle<T> &handle, Asset::AssetType type)
 
     const std::string path = handle.path();
 
-    // Post job to background thread.
+
     AssetStreamingWorker::LoadJob job;
     job.path = path;
     job.execute = [this, &handle, path, type]()
     {
         std::shared_ptr<T> data;
 
-        // Load from disk (blocking, but on worker thread).
+
         if constexpr (std::is_same_v<T, ModelAsset>)
         {
             auto opt = AssetsLoader::loadModel(path);
@@ -93,14 +93,14 @@ void AssetManager::postLoad(AssetHandle<T> &handle, Asset::AssetType type)
 
         if (data)
         {
-            // Update deduplication map.
+
             std::lock_guard lock(m_mutex);
             auto it = m_liveAssets.find(path);
             if (it != m_liveAssets.end())
             {
                 it->second.data = data;
                 it->second.state = AssetState::Ready;
-                it->second.sizeBytes = sizeof(T); // approximate
+                it->second.sizeBytes = sizeof(T);
             }
 
             handle.resolve(data);
@@ -116,7 +116,7 @@ void AssetManager::postLoad(AssetHandle<T> &handle, Asset::AssetType type)
     m_worker.enqueue(std::move(job));
 }
 
-// Explicit template instantiations so the linker can find them.
+
 template void AssetManager::postLoad<ModelAsset>(AssetHandle<ModelAsset> &, Asset::AssetType);
 template void AssetManager::postLoad<TextureAsset>(AssetHandle<TextureAsset> &, Asset::AssetType);
 template void AssetManager::postLoad<MaterialAsset>(AssetHandle<MaterialAsset> &, Asset::AssetType);

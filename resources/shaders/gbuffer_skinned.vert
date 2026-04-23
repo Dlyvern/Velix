@@ -2,9 +2,9 @@
 
 const int MAX_BONE_INFLUENCE = 4;
 
-// Must match the GBufferPC / bindlessMeshPipelineLayout push-constant range (20 bytes).
-// Intel Windows drivers reject pipelines where the vertex shader's push-constant block
-// is smaller than the range declared in the pipeline layout.
+
+
+
 layout(push_constant) uniform ModelPushConstant
 {
     uint  baseInstance;
@@ -20,6 +20,9 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
     mat4 projection;
     mat4 invView;
     mat4 invProjection;
+    mat4 prevView;
+    mat4 prevProjection;
+    vec4 jitter;
 } cameraUniformObject;
 
 layout(std430, set = 2, binding = 0) readonly buffer BonesSSBO
@@ -30,7 +33,8 @@ layout(std430, set = 2, binding = 0) readonly buffer BonesSSBO
 struct InstanceData
 {
     mat4 model;
-    uvec4 objectInfo; // x = objectId, y = bonesOffset, z = materialIndex, w = reserved
+    uvec4 objectInfo;
+    mat4 prevModel;
 };
 
 layout(std430, set = 2, binding = 1) readonly buffer InstanceDataSSBO
@@ -53,6 +57,10 @@ layout(location = 3) out vec3 fragTangentView;
 layout(location = 4) out vec3 fragBitangentView;
 layout(location = 5) out flat uint fragObjectId;
 layout(location = 6) out flat uint fragMaterialIndex;
+layout(location = 7) out vec2 fragLightmapUV;
+layout(location = 8) out flat uint fragLightmapTexIdx;
+layout(location = 9)  out vec4 fragCurrClipPos;
+layout(location = 10) out vec4 fragPrevClipPos;
 
 void main()
 {
@@ -70,7 +78,7 @@ void main()
     for (int i = 0; i < MAX_BONE_INFLUENCE; i++)
     {
         int id = inBoneIds[i];
-        
+
         if (id >= 0)
         {
             boneTransform += bonesData.boneMatrices[bonesOffset + uint(id)] * inWeights[i];
@@ -96,5 +104,22 @@ void main()
     fragTangentView = normalize(view3 * worldTangent);
     fragBitangentView = normalize(view3 * worldBitangent);
 
-    gl_Position = cameraUniformObject.projection * viewPos;
+
+    fragLightmapUV = vec2(0.0);
+    fragLightmapTexIdx = 0xFFFFFFFFu;
+
+    vec4 clipPos = cameraUniformObject.projection * viewPos;
+
+
+
+
+
+    fragCurrClipPos = clipPos;
+    vec4 prevWorldPos = instanceData.prevModel * boneTransform * vec4(inPosition, 1.0);
+    fragPrevClipPos  = cameraUniformObject.prevProjection * cameraUniformObject.prevView * prevWorldPos;
+
+
+    clipPos.xy += cameraUniformObject.jitter.xy * clipPos.w;
+
+    gl_Position = clipPos;
 }

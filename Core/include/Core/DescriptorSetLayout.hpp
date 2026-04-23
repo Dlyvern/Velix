@@ -29,4 +29,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_DESCRIPTOR_SET_LAYOUT_HPP
+#endif

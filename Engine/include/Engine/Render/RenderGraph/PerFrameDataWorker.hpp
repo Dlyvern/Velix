@@ -4,6 +4,7 @@
 #include "Core/Macros.hpp"
 
 #include "Engine/Render/RenderGraphPassPerFrameData.hpp"
+#include "Engine/Render/RenderSceneSnapshot.hpp"
 #include "Engine/Camera.hpp"
 #include "Engine/Components/LightComponent.hpp"
 
@@ -54,6 +55,12 @@ public:
 
     void pruneRemovedEntities(Scene *scene);
     void syncSceneDrawItems(Scene *scene, const glm::vec3 &cameraPos = glm::vec3(0.0f));
+
+
+
+    void pruneRemovedEntities(const RenderSceneSnapshot &snapshot);
+    void syncSceneDrawItems(const RenderSceneSnapshot &snapshot, const glm::vec3 &cameraPos = glm::vec3(0.0f));
+    void buildLightData(const RenderSceneSnapshot &snapshot, Camera *camera);
     void buildFrameBones();
     void buildDrawReferences(const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling);
     void sortDrawReferences(const glm::vec3 &cameraPosition);
@@ -133,4 +140,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PER_FRAME_DATA_WORKER_HPP
+#endif

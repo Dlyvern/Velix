@@ -8,6 +8,7 @@
 #include "Engine/Lights.hpp"
 
 #include "Engine/Physics/PhysicsScene.hpp"
+#include "Engine/Render/RenderSceneSnapshot.hpp"
 
 #include "Engine/UI/UIText.hpp"
 #include "Engine/UI/UIButton.hpp"
@@ -34,6 +35,9 @@ public:
 
     const std::vector<Entity::SharedPtr> &getEntities() const;
 
+
+    std::vector<std::string> collectCustomMaterialFragPaths() const;
+
     std::vector<std::shared_ptr<BaseLight>> getLights();
 
     bool doesEntityNameExist(const std::string &name) const;
@@ -49,16 +53,16 @@ public:
 
     bool loadSceneFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback = {}, bool additive = false);
     bool loadEntitiesFromFile(const std::string &filePath, const LoadStatusCallback &statusCallback = {});
-    void saveSceneToFile(const std::string &filePath);
+    void saveSceneToFile(const std::string &filePath, bool quiet = false);
     bool serializeEntityHierarchy(uint32_t rootEntityId, std::string &outPayload) const;
     Entity *restoreEntityHierarchy(const std::string &payload, uint32_t *outRootEntityId = nullptr);
     void serializeUIState(std::string &outPayload) const;
     bool restoreUIState(const std::string &payload);
 
-    // Extract all entities that have a specific tag, removing them from this scene.
+
     std::vector<Entity::SharedPtr> extractEntitiesWithTag(const std::string &tag);
 
-    // Inject pre-existing entity shared_ptrs directly (used by SceneManager for DontDestroyOnLoad).
+
     void injectEntities(std::vector<Entity::SharedPtr> entities);
 
     void setSkyboxHDRPath(const std::string &path);
@@ -75,9 +79,11 @@ public:
     void update(float deltaTime);
     void fixedUpdate(float fixedDelta);
 
+    void captureRenderSnapshot(RenderSceneSnapshot &snapshot, const glm::vec3 &cameraPosition = glm::vec3(0.0f));
+
     PhysicsScene &getPhysicsScene();
 
-    // --- UI game objects ---
+
     ui::UIText   *addUIText();
     ui::UIButton *addUIButton();
     ui::Billboard *addBillboard();
@@ -104,4 +110,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SCENE_HPP
+#endif

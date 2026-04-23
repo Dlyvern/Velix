@@ -9,10 +9,10 @@ const float PI = 3.14159265359;
 
 struct Light
 {
-    vec4 position;        // xyz in view space
-    vec4 direction;       // xyz in view space
-    vec4 colorStrength;   // rgb=color, a=intensity
-    vec4 parameters;      // x=innerCutoff, y=outerCutoff, z=radius, w=lightType
+    vec4 position;
+    vec4 direction;
+    vec4 colorStrength;
+    vec4 parameters;
 };
 
 layout(location = 0) in vec2 fragUV;
@@ -48,14 +48,14 @@ layout(std430, set = 0, binding = 3) readonly buffer LightSSBO
 
 layout(set = 1, binding = 0) uniform sampler2D uAlbedoTex;
 layout(set = 1, binding = 1) uniform sampler2D uNormalTex;
-layout(set = 1, binding = 2) uniform sampler2D uOrmTex;      // R=AO G=Roughness B=Metallic
+layout(set = 1, binding = 2) uniform sampler2D uOrmTex;
 layout(set = 1, binding = 3) uniform sampler2D uEmissiveTex;
 
 layout(set = 1, binding = 4) uniform MaterialParams
 {
     vec4 baseColorFactor;
     vec4 emissiveFactor;
-    vec4 uvTransform; // xy scale, zw offset
+    vec4 uvTransform;
 
     float metallicFactor;
     float roughnessFactor;
@@ -64,7 +64,7 @@ layout(set = 1, binding = 4) uniform MaterialParams
 
     uint flags;
     float alphaCutoff;
-    float uvRotation; // degrees
+    float uvRotation;
     float ior;
 } material;
 

@@ -1,6 +1,7 @@
 #include "Editor/Panels/DetailsViews/EntityDetailsView.hpp"
 
 #include "Editor/Editor.hpp"
+#include "Editor/IconsLucide.hpp"
 
 #include "Engine/Assets/AssetsLoader.hpp"
 #include "Engine/PluginSystem/ComponentRegistry.hpp"
@@ -64,10 +65,86 @@ namespace
 
     ComponentClipboardEntry g_componentClipboard;
 
-    bool drawVec3Control(const char *id, glm::vec3 &v, float resetValue = 0.0f, float speed = 0.01f)
+
+
+    bool toggleSwitch(const char *label, bool *v)
     {
+        if (!v)
+            return false;
+
+        ImGui::PushID(label);
+
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float trackW = 32.0f;
+        const float trackH = 18.0f;
+        const float thumbR = 7.0f;
+
+        const ImVec2 cursor = ImGui::GetCursorScreenPos();
+        const char *displayLabel = (label[0] == '#' && label[1] == '#') ? "" : label;
+        const float labelW = displayLabel[0] ? ImGui::CalcTextSize(displayLabel, nullptr, true).x : 0.0f;
+
+        const ImVec2 totalSize(trackW + (labelW > 0.0f ? style.ItemInnerSpacing.x + labelW : 0.0f),
+                               std::max(trackH, ImGui::GetTextLineHeightWithSpacing()));
+
+
+        const float trackY = cursor.y + (totalSize.y - trackH) * 0.5f;
+        const ImVec2 trackMin(cursor.x, trackY);
+        const ImVec2 trackMax(cursor.x + trackW, trackY + trackH);
+
+        ImGui::InvisibleButton("##tg", totalSize);
+        const bool hovered = ImGui::IsItemHovered();
+        const bool pressed = ImGui::IsItemClicked();
         bool changed = false;
 
+        if (pressed)
+        {
+            *v = !*v;
+            changed = true;
+        }
+
+
+        const ImU32 offCol = ImGui::GetColorU32(ImGuiCol_FrameBg);
+        const ImU32 offColH = ImGui::GetColorU32(ImGuiCol_FrameBgHovered);
+        const ImU32 onCol  = IM_COL32(239, 103, 90, 255);
+        const ImU32 onColH = IM_COL32(255, 135, 120, 255);
+        const ImU32 trackCol = *v
+                                   ? (hovered ? onColH : onCol)
+                                   : (hovered ? offColH : offCol);
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(trackMin, trackMax, trackCol, trackH * 0.5f);
+
+
+        const float thumbOnX  = trackMax.x - thumbR - 2.0f;
+        const float thumbOffX = trackMin.x + thumbR + 2.0f;
+        const ImVec2 thumbCenter(*v ? thumbOnX : thumbOffX, (trackMin.y + trackMax.y) * 0.5f);
+        const ImU32 thumbCol = *v ? IM_COL32(24, 18, 12, 255)
+                                  : IM_COL32(168, 164, 161, 255);
+        dl->AddCircleFilled(thumbCenter, thumbR, thumbCol, 20);
+
+
+        if (displayLabel[0])
+        {
+            const ImVec2 labelPos(trackMax.x + style.ItemInnerSpacing.x,
+                                  cursor.y + (totalSize.y - ImGui::GetTextLineHeight()) * 0.5f);
+            dl->AddText(labelPos, ImGui::GetColorU32(ImGuiCol_Text), displayLabel);
+        }
+
+        ImGui::PopID();
+        return changed;
+    }
+
+    bool drawVec3Control(const char *id, glm::vec3 &v, float resetValue = 0.0f, float speed = 0.01f)
+    {
+
+        const ImVec4 axX    = ImVec4(0.975f, 0.253f, 0.266f, 1.0f);
+        const ImVec4 axY    = ImVec4(0.455f, 0.856f, 0.363f, 1.0f);
+        const ImVec4 axZ    = ImVec4(0.000f, 0.649f, 0.944f, 1.0f);
+        const ImVec4 hoverX = ImVec4(axX.x, axX.y, axX.z, 0.20f);
+        const ImVec4 hoverY = ImVec4(axY.x, axY.y, axY.z, 0.20f);
+        const ImVec4 hoverZ = ImVec4(axZ.x, axZ.y, axZ.z, 0.20f);
+        const ImVec4 transparent = ImVec4(0, 0, 0, 0);
+
+        bool changed = false;
         const float lineHeight = ImGui::GetTextLineHeight();
         const ImVec2 btnSize = {lineHeight + 6.0f, lineHeight + 4.0f};
         const float totalBtnW = 3.0f * btnSize.x + 2.0f * 2.0f;
@@ -75,49 +152,42 @@ namespace
 
         ImGui::PushID(id);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, ImGui::GetStyle().ItemSpacing.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.72f, 0.14f, 0.14f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.88f, 0.24f, 0.24f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.08f, 0.08f, 1.0f));
-        if (ImGui::Button("X", btnSize))
+        auto axisBtn = [&](const char *label, const ImVec4 &col, const ImVec4 &hover, float &axisVal) -> bool
         {
-            v.x = resetValue;
-            changed = true;
-        }
-        ImGui::PopStyleColor(3);
+            ImGui::PushStyleColor(ImGuiCol_Button,        transparent);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  hover);
+            ImGui::PushStyleColor(ImGuiCol_Text,          col);
+            const bool pressed = ImGui::Button(label, btnSize);
+            ImGui::PopStyleColor(4);
+            if (pressed)
+            {
+                axisVal = resetValue;
+                return true;
+            }
+            return false;
+        };
+
+        changed |= axisBtn("X", axX, hoverX, v.x);
         ImGui::SameLine(0, 1);
         ImGui::SetNextItemWidth(fieldW);
         changed |= ImGui::DragFloat("##X", &v.x, speed, 0.0f, 0.0f, "%.3f");
         ImGui::SameLine(0, 4);
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.58f, 0.16f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.74f, 0.24f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.42f, 0.10f, 1.0f));
-        if (ImGui::Button("Y", btnSize))
-        {
-            v.y = resetValue;
-            changed = true;
-        }
-        ImGui::PopStyleColor(3);
+        changed |= axisBtn("Y", axY, hoverY, v.y);
         ImGui::SameLine(0, 1);
         ImGui::SetNextItemWidth(fieldW);
         changed |= ImGui::DragFloat("##Y", &v.y, speed, 0.0f, 0.0f, "%.3f");
         ImGui::SameLine(0, 4);
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.26f, 0.72f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.36f, 0.88f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.16f, 0.55f, 1.0f));
-        if (ImGui::Button("Z", btnSize))
-        {
-            v.z = resetValue;
-            changed = true;
-        }
-        ImGui::PopStyleColor(3);
+        changed |= axisBtn("Z", axZ, hoverZ, v.z);
         ImGui::SameLine(0, 1);
         ImGui::SetNextItemWidth(-1);
         changed |= ImGui::DragFloat("##Z", &v.z, speed, 0.0f, 0.0f, "%.3f");
 
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(2);
         ImGui::PopID();
         return changed;
     }
@@ -985,14 +1055,14 @@ namespace
         return false;
     }
 
-    // Helper: add a component by type to an entity, with no-op lambda for single-line use.
-    // Using engine:: prefix everywhere in lambdas avoids GCC template-argument-list
-    // parse ambiguity that occurs with `using namespace` + `<Type>` inside lambda bodies.
+
+
+
     void registerBuiltinComponents()
     {
         auto &reg = elix::engine::ComponentRegistry::instance();
 
-        // ── Common ───────────────────────────────────────────────────────────
+
         reg.registerComponent("Camera", "Common",
             [](elix::engine::Entity *e, elix::engine::Scene *, elix::engine::ComponentAddContext &)
             { e->addComponent<elix::engine::CameraComponent>(); });
@@ -1083,7 +1153,7 @@ namespace
                 e->addComponent<elix::engine::SpriteComponent>();
             });
 
-        // ── Physics ──────────────────────────────────────────────────────────
+
         reg.registerComponent("RigidBody", "Physics",
             [](elix::engine::Entity *e, elix::engine::Scene *s, elix::engine::ComponentAddContext &ctx)
             {
@@ -1205,7 +1275,7 @@ bool EntityDetailsView::canDraw(const Editor &editor) const
 
 void EntityDetailsView::draw(Editor &editor)
 {
-    // Register built-in components once on first draw.
+
     static bool s_componentsRegistered = []
     {
         registerBuiltinComponents();
@@ -1242,7 +1312,7 @@ void EntityDetailsView::draw(Editor &editor)
     ImGui::SameLine();
 
     bool isEntityEnabled = m_selectedEntity->isEnabled();
-    if (ImGui::Checkbox("Enabled", &isEntityEnabled))
+    if (toggleSwitch("Enabled", &isEntityEnabled))
         m_selectedEntity->setEnabled(isEntityEnabled);
 
     ImGui::SameLine();
@@ -1463,7 +1533,7 @@ void EntityDetailsView::draw(Editor &editor)
             ImGui::PopID();
         }
 
-        // ── Engine components from registry (grouped by category) ────────────
+
         {
             engine::ComponentAddContext ctx;
             ctx.showSuccess = [&m_notificationManager](const std::string &msg) { m_notificationManager.showSuccess(msg); };
@@ -1503,7 +1573,7 @@ void EntityDetailsView::draw(Editor &editor)
     {
         if (auto transformComponent = dynamic_cast<engine::Transform3DComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Axis3D "  Transform", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, transformComponent, "Transform");
                 constexpr float kLabelW = 68.0f;
@@ -1541,7 +1611,7 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto lightComponent = dynamic_cast<engine::LightComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Sun "  Light", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, lightComponent, "Light");
                 auto lightType = lightComponent->getLightType();
@@ -1596,9 +1666,11 @@ void EntityDetailsView::draw(Editor &editor)
                     const glm::vec3 worldPosition = transformComponent->getWorldPosition();
                     ImGui::Text("Light position: %.2f %.2f %.2f", worldPosition.x, worldPosition.y, worldPosition.z);
                 }
-                ImGui::ColorEdit3("Light color", &light->color.x);
+                ImGui::ColorEdit3("Light color", &light->color.x,
+                    ImGuiColorEditFlags_DisplayHex | ImGuiColorEditFlags_PickerHueBar |
+                    ImGuiColorEditFlags_AlphaBar);
                 ImGui::DragFloat("Light strength", &light->strength, 0.1f, 0.0f, 150.0f);
-                ImGui::Checkbox("Cast Shadows", &light->castsShadows);
+                toggleSwitch("Cast Shadows", &light->castsShadows);
 
                 if (lightType == engine::LightComponent::LightType::POINT)
                 {
@@ -1612,7 +1684,7 @@ void EntityDetailsView::draw(Editor &editor)
                                 directionalLight->direction.x,
                                 directionalLight->direction.y,
                                 directionalLight->direction.z);
-                    ImGui::Checkbox("Enable Sky Light", &directionalLight->skyLightEnabled);
+                    toggleSwitch("Enable Sky Light", &directionalLight->skyLightEnabled);
                 }
                 else if (lightType == engine::LightComponent::LightType::SPOT)
                 {
@@ -1628,10 +1700,10 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto staticComponent = dynamic_cast<engine::StaticMeshComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Static mesh", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Box "  Static mesh", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 bool renderMesh = staticComponent->isVisible();
-                if (ImGui::Checkbox("Render Mesh##StaticMeshVisible", &renderMesh))
+                if (toggleSwitch("Render Mesh##StaticMeshVisible", &renderMesh))
                     staticComponent->setVisible(renderMesh);
 
                 ImGui::Separator();
@@ -1769,14 +1841,14 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto skeletalMeshComponent = dynamic_cast<engine::SkeletalMeshComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Skeletal mesh", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_User "  Skeletal mesh", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 bool renderMesh = skeletalMeshComponent->isVisible();
-                if (ImGui::Checkbox("Render Mesh##SkeletalMeshVisible", &renderMesh))
+                if (toggleSwitch("Render Mesh##SkeletalMeshVisible", &renderMesh))
                     skeletalMeshComponent->setVisible(renderMesh);
 
                 bool showBones = editor.m_showSelectedSkeletalBones;
-                if (ImGui::Checkbox("Show Bones", &showBones))
+                if (toggleSwitch("Show Bones", &showBones))
                 {
                     editor.m_showSelectedSkeletalBones = showBones;
                     if (!showBones)
@@ -1930,10 +2002,10 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto terrainComponent = dynamic_cast<engine::TerrainComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Layers "  Terrain", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 bool renderMesh = terrainComponent->isVisible();
-                if (ImGui::Checkbox("Render Mesh##TerrainVisible", &renderMesh))
+                if (toggleSwitch("Render Mesh##TerrainVisible", &renderMesh))
                     terrainComponent->setVisible(renderMesh);
 
                 ImGui::TextDisabled("Asset: %s",
@@ -1948,11 +2020,11 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto animatorComponent = dynamic_cast<engine::AnimatorComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Animator", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Film "  Animator", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 const auto &animations = animatorComponent->getAnimations();
 
-                // Always-visible drop zone for adding animation clips
+
                 {
                     const ImVec2 dropSize(-1.0f, animations.empty() ? 48.0f : 28.0f);
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.4f));
@@ -1988,7 +2060,7 @@ void EntityDetailsView::draw(Editor &editor)
                                     auto *skelComp = m_selectedEntity->getComponent<engine::SkeletalMeshComponent>();
                                     engine::Skeleton *skel = skelComp ? &skelComp->getSkeleton() : nullptr;
 
-                                    // Append new clips to existing ones
+
                                     std::vector<engine::Animation> merged = animatorComponent->getAnimations();
                                     merged.insert(merged.end(), animAsset->animations.begin(), animAsset->animations.end());
                                     animatorComponent->setAnimations(merged, skel);
@@ -2037,11 +2109,11 @@ void EntityDetailsView::draw(Editor &editor)
                     }
 
                     bool isLooped = animatorComponent->isAnimationLooped();
-                    if (ImGui::Checkbox("Loop", &isLooped))
+                    if (toggleSwitch("Loop", &isLooped))
                         animatorComponent->setAnimationLooped(isLooped);
 
                     bool isPaused = animatorComponent->isAnimationPaused();
-                    if (ImGui::Checkbox("Paused", &isPaused))
+                    if (toggleSwitch("Paused", &isPaused))
                         animatorComponent->setAnimationPaused(isPaused);
 
                     float animationSpeed = animatorComponent->getAnimationSpeed();
@@ -2099,10 +2171,10 @@ void EntityDetailsView::draw(Editor &editor)
                     if (ImGui::SmallButton("Clear"))
                     {
                         animatorComponent->clearTree();
-                        tree = animatorComponent->getTree(); // now null — prevents dangling access below
+                        tree = animatorComponent->getTree();
                     }
 
-                    // Runtime state info
+
                     const std::string curState = animatorComponent->getCurrentStateName();
                     const std::string statePath = animatorComponent->getCurrentStatePath();
                     const std::string machinePath = animatorComponent->getActiveMachinePath();
@@ -2113,12 +2185,12 @@ void EntityDetailsView::draw(Editor &editor)
                         ImGui::TextDisabled("  (transitioning %.0f%%)", animatorComponent->getCurrentStateNormalizedTime() * 100.0f);
 
                     bool ignoreRootBoneY = animatorComponent->getIgnoreRootBoneY();
-                    if (ImGui::Checkbox("Ignore Root Bone Y", &ignoreRootBoneY))
+                    if (toggleSwitch("Ignore Root Bone Y", &ignoreRootBoneY))
                         animatorComponent->setIgnoreRootBoneY(ignoreRootBoneY);
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("Locks the root bone vertical translation to the bind pose. Useful for controller-driven characters.");
 
-                    // Parameter live controls
+
                     if (tree && !tree->parameters.empty())
                     {
                         ImGui::Spacing();
@@ -2138,7 +2210,7 @@ void EntityDetailsView::draw(Editor &editor)
                             case engine::AnimationTreeParameter::Type::Bool:
                             {
                                 bool v = animatorComponent->getBool(param.name);
-                                if (ImGui::Checkbox(param.name.c_str(), &v))
+                                if (toggleSwitch(param.name.c_str(), &v))
                                     animatorComponent->setBool(param.name, v);
                                 break;
                             }
@@ -2162,7 +2234,7 @@ void EntityDetailsView::draw(Editor &editor)
                 }
                 else
                 {
-                    // Drop zone for .animtree.elixasset
+
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.4f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.6f));
                     ImGui::Button("Drop .animtree.elixasset here", ImVec2(-1.0f, 32.0f));
@@ -2201,7 +2273,7 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto ragdollComponent = dynamic_cast<engine::RagdollComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Ragdoll", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Users "  Ragdoll", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 auto *skeletalMeshComponent = m_selectedEntity->getComponent<engine::SkeletalMeshComponent>();
                 engine::Skeleton *skeleton = skeletalMeshComponent ? &skeletalMeshComponent->getSkeleton() : nullptr;
@@ -2234,10 +2306,10 @@ void EntityDetailsView::draw(Editor &editor)
                     ragdollComponent->buildFromProfile();
 
                 bool debugDrawBodies = ragdollComponent->getDebugDrawBodies();
-                if (ImGui::Checkbox("Debug Draw Bodies", &debugDrawBodies))
+                if (toggleSwitch("Debug Draw Bodies", &debugDrawBodies))
                     ragdollComponent->setDebugDrawBodies(debugDrawBodies);
                 bool debugDrawJoints = ragdollComponent->getDebugDrawJoints();
-                if (ImGui::Checkbox("Debug Draw Joints", &debugDrawJoints))
+                if (toggleSwitch("Debug Draw Joints", &debugDrawJoints))
                     ragdollComponent->setDebugDrawJoints(debugDrawJoints);
 
                 drawBoneCombo("Reference Bone", skeleton, profile.referenceBoneName);
@@ -2356,7 +2428,7 @@ void EntityDetailsView::draw(Editor &editor)
                         ImGui::DragFloat("Swing Z Limit", &joint.swingZLimitDeg, 0.5f, 0.0f, 179.0f, "%.1f");
                         ImGui::DragFloat("Twist Lower", &joint.twistLowerLimitDeg, 0.5f, -179.0f, 179.0f, "%.1f");
                         ImGui::DragFloat("Twist Upper", &joint.twistUpperLimitDeg, 0.5f, -179.0f, 179.0f, "%.1f");
-                        ImGui::Checkbox("Enable Collision", &joint.collisionEnabled);
+                        toggleSwitch("Enable Collision", &joint.collisionEnabled);
 
                         if (ImGui::Button("Remove Joint"))
                             jointIndexToRemove = static_cast<int>(jointIndex);
@@ -2382,7 +2454,7 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto cameraComponent = dynamic_cast<engine::CameraComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Camera "  Camera", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, cameraComponent, "Camera");
                 auto camera = cameraComponent->getCamera();
@@ -2415,11 +2487,11 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto rigidBodyComponent = dynamic_cast<engine::RigidBodyComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("RigidBody", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Package "  RigidBody", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 bool isKinematic = true;
 
-                if (ImGui::Checkbox("Kinematic", &isKinematic))
+                if (toggleSwitch("Kinematic", &isKinematic))
                 {
                     rigidBodyComponent->setKinematic(isKinematic);
                 }
@@ -2427,7 +2499,7 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto characterMovement = dynamic_cast<engine::CharacterMovementComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Character Movement", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_User "  Character Movement", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, characterMovement, "Character Movement");
                 float radius = characterMovement->getCapsuleRadius();
@@ -2474,14 +2546,14 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto collisionComponent = dynamic_cast<engine::CollisionComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Collision", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Shield "  Collision", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 drawComponentClipboardToolbar(m_notificationManager, m_scene.get(), m_selectedEntity, collisionComponent, "Collision");
                 const bool isBox = collisionComponent->getShapeType() == engine::CollisionComponent::ShapeType::BOX;
                 ImGui::Text("Type: %s", isBox ? "Box" : "Capsule");
 
-                ImGui::Checkbox("Show Bounds", &m_showCollisionBounds);
-                ImGui::Checkbox("Editable Bounds", &m_enableCollisionBoundsEditing);
+                toggleSwitch("Show Bounds", &m_showCollisionBounds);
+                toggleSwitch("Editable Bounds", &m_enableCollisionBoundsEditing);
 
                 if (isBox)
                 {
@@ -2511,7 +2583,7 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto audioComponent = dynamic_cast<engine::AudioComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Audio Source", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Volume2 "  Audio Source", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 const std::string &assetPath = audioComponent->getAssetPath();
                 const bool hasAudio = !assetPath.empty();
@@ -2557,19 +2629,19 @@ void EntityDetailsView::draw(Editor &editor)
                 ImGui::Separator();
 
                 bool playOnStart = audioComponent->isPlayOnStart();
-                if (ImGui::Checkbox("Play On Start", &playOnStart))
+                if (toggleSwitch("Play On Start", &playOnStart))
                     audioComponent->setPlayOnStart(playOnStart);
 
                 bool loop = audioComponent->isLooping();
-                if (ImGui::Checkbox("Loop", &loop))
+                if (toggleSwitch("Loop", &loop))
                     audioComponent->setLooping(loop);
 
                 bool muted = audioComponent->isMuted();
-                if (ImGui::Checkbox("Mute", &muted))
+                if (toggleSwitch("Mute", &muted))
                     audioComponent->setMuted(muted);
 
                 bool spatial = audioComponent->isSpatial();
-                if (ImGui::Checkbox("Spatial (3D)", &spatial))
+                if (toggleSwitch("Spatial (3D)", &spatial))
                     audioComponent->setSpatial(spatial);
 
                 float volume = audioComponent->getVolume();
@@ -2633,7 +2705,7 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto *probeComponent = dynamic_cast<engine::ReflectionProbeComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Reflection Probe", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Sparkles "  Reflection Probe", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 ImGui::PushID("ReflectionProbeComp");
 
@@ -2706,13 +2778,40 @@ void EntityDetailsView::draw(Editor &editor)
                 ImGui::PopID();
             }
         }
+        else if (auto *lmcComponent = dynamic_cast<engine::LightmapComponent *>(component.get()))
+        {
+            if (ImGui::CollapsingHeader(ICON_LC_Grid3x3 "  Lightmap", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                ImGui::PushID("LightmapComp");
+
+                const bool loaded = lmcComponent->isLoaded();
+                const std::string pathLabel = lmcComponent->lightmapAssetPath.empty()
+                    ? std::string("<None>")
+                    : std::filesystem::path(lmcComponent->lightmapAssetPath).filename().string();
+
+                ImGui::TextUnformatted("Asset:");
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", pathLabel.c_str());
+                ImGui::TextDisabled("Status: %s", loaded ? "Loaded" : "Not loaded");
+
+                ImGui::Separator();
+                if (ImGui::Button("Remove Lightmap"))
+                {
+                    m_selectedEntity->removeComponent<engine::LightmapComponent>();
+                    ImGui::PopID();
+                    return;
+                }
+
+                ImGui::PopID();
+            }
+        }
         else if (auto *spriteComponent = dynamic_cast<engine::SpriteComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Sprite", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Image "  Sprite", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 ImGui::PushID("SpriteComp");
 
-                // Texture slot
+
                 const std::string texLabel = spriteComponent->texturePath.empty()
                     ? std::string("<None>")
                     : std::filesystem::path(spriteComponent->texturePath).filename().string();
@@ -2735,7 +2834,9 @@ void EntityDetailsView::draw(Editor &editor)
 
                 ImGui::Separator();
 
-                ImGui::ColorEdit4("Color##SpriteColor", &spriteComponent->color.x);
+                ImGui::ColorEdit4("Color##SpriteColor", &spriteComponent->color.x,
+                    ImGuiColorEditFlags_DisplayHex | ImGuiColorEditFlags_PickerHueBar |
+                    ImGuiColorEditFlags_AlphaBar);
                 ImGui::DragFloat2("Size##SpriteSize", &spriteComponent->size.x, 0.01f, 0.001f, 1000.f, "%.3f");
                 ImGui::DragFloat("Rotation##SpriteRot", &spriteComponent->rotation, 0.01f, -6.2832f, 6.2832f, "%.3f rad");
                 ImGui::DragInt("Sort Layer##SpriteSortLayer", &spriteComponent->sortLayer);
@@ -2745,10 +2846,10 @@ void EntityDetailsView::draw(Editor &editor)
                 ImGui::TextUnformatted("UV Rect (u0, v0, u1, v1):");
                 ImGui::DragFloat4("##SpriteUVRect", &spriteComponent->uvRect.x, 0.005f, 0.f, 1.f, "%.3f");
 
-                ImGui::Checkbox("Flip X##SpriteFlipX", &spriteComponent->flipX);
+                toggleSwitch("Flip X##SpriteFlipX", &spriteComponent->flipX);
                 ImGui::SameLine();
-                ImGui::Checkbox("Flip Y##SpriteFlipY", &spriteComponent->flipY);
-                ImGui::Checkbox("Visible##SpriteVisible", &spriteComponent->visible);
+                toggleSwitch("Flip Y##SpriteFlipY", &spriteComponent->flipY);
+                toggleSwitch("Visible##SpriteVisible", &spriteComponent->visible);
 
                 ImGui::Separator();
 
@@ -2764,7 +2865,7 @@ void EntityDetailsView::draw(Editor &editor)
         }
         else if (auto *decalComponent = dynamic_cast<engine::DecalComponent *>(component.get()))
         {
-            if (ImGui::CollapsingHeader("Decal", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::CollapsingHeader(ICON_LC_Droplet "  Decal", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 ImGui::PushID("DecalComp");
 
@@ -2840,7 +2941,7 @@ void EntityDetailsView::draw(Editor &editor)
 
     const auto scriptComponents = m_selectedEntity->getComponents<engine::ScriptComponent>();
 
-    if (!scriptComponents.empty() && ImGui::CollapsingHeader("Scripts", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!scriptComponents.empty() && ImGui::CollapsingHeader(ICON_LC_FileCode "  Scripts", ImGuiTreeNodeFlags_DefaultOpen))
     {
         for (size_t scriptIndex = 0; scriptIndex < scriptComponents.size(); ++scriptIndex)
         {
@@ -2899,7 +3000,7 @@ void EntityDetailsView::draw(Editor &editor)
                             case ExposedVariableType::Bool:
                             {
                                 bool value = std::get<bool>(variable.value);
-                                if (ImGui::Checkbox(variableName.c_str(), &value))
+                                if (toggleSwitch(variableName.c_str(), &value))
                                     scriptInstance->setExposedVariable(variableName, value);
                                 break;
                             }
@@ -3022,12 +3123,12 @@ void EntityDetailsView::draw(Editor &editor)
 
         ImGui::PushID(static_cast<int>(psIdx));
 
-        const std::string psHeader = std::string("Particle System: ") + (ps ? ps->name : "<No System>");
+        const std::string psHeader = std::string(ICON_LC_Flame "  Particle System: ") + (ps ? ps->name : "<No System>");
         if (ImGui::CollapsingHeader(psHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::Checkbox("Play On Start", &psComp->playOnStart);
+            toggleSwitch("Play On Start", &psComp->playOnStart);
 
-            // Drag-drop zone: drop .vfx.elixasset to load particle system from asset
+
             ImGui::Button(psComp->vfxAssetPath.empty() ? "Drop .vfx.elixasset here##VFXDrop" : (std::string("VFX Asset: ") + std::filesystem::path(psComp->vfxAssetPath).filename().string()).c_str());
             if (ImGui::BeginDragDropTarget())
             {
@@ -3131,7 +3232,7 @@ void EntityDetailsView::draw(Editor &editor)
                     auto *em = emitters[emIdx].get();
                     ImGui::PushID(static_cast<int>(emIdx));
 
-                    const std::string emHeader = std::string("Emitter: ") + em->name;
+                    const std::string emHeader = std::string(ICON_LC_Sparkles "  Emitter: ") + em->name;
                     if (ImGui::CollapsingHeader(emHeader.c_str()))
                     {
                         char emNameBuf[128];
@@ -3139,17 +3240,17 @@ void EntityDetailsView::draw(Editor &editor)
                         if (ImGui::InputText("##EmName", emNameBuf, sizeof(emNameBuf)))
                             em->name = emNameBuf;
                         ImGui::SameLine();
-                        ImGui::Checkbox("Enabled##Em", &em->enabled);
+                        toggleSwitch("Enabled##Em", &em->enabled);
                         ImGui::TextDisabled("Alive: %u / %u", em->getAliveCount(), engine::ParticleEmitter::MAX_PARTICLES);
 
-                        // SpawnModule
+
                         if (auto *spawn = em->getModule<engine::SpawnModule>())
                         {
                             if (ImGui::TreeNodeEx("Spawn##SpawnMod", ImGuiTreeNodeFlags_DefaultOpen))
                             {
                                 ImGui::DragFloat("Rate (p/s)", &spawn->spawnRate, 1.0f, 0.0f, 100000.0f);
                                 ImGui::DragFloat("Burst Count", &spawn->burstCount, 1.0f, 0.0f, 100000.0f);
-                                ImGui::Checkbox("Loop", &spawn->loop);
+                                toggleSwitch("Loop", &spawn->loop);
                                 if (!spawn->loop)
                                     ImGui::DragFloat("Duration (s)", &spawn->duration, 0.01f, 0.01f, 1000.0f);
 
@@ -3172,10 +3273,10 @@ void EntityDetailsView::draw(Editor &editor)
                                         if (spawn->shape.shape == ES::Cone)
                                             ImGui::DragFloat("Half Angle (deg)", &spawn->shape.angle, 0.5f, 0.0f, 90.0f);
                                     }
-                                    ImGui::Checkbox("Surface Only", &spawn->shape.surfaceOnly);
+                                    toggleSwitch("Surface Only", &spawn->shape.surfaceOnly);
                                 }
 
-                                // Sub-emitter on death
+
                                 ImGui::Separator();
                                 ImGui::TextUnformatted("Sub-Emitter on Death:");
                                 char subEmitterBuf[128] = {};
@@ -3190,7 +3291,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Spawn"))
                             em->addModule<engine::SpawnModule>();
 
-                        // LifetimeModule
+
                         if (auto *lt = em->getModule<engine::LifetimeModule>())
                         {
                             if (ImGui::TreeNodeEx("Lifetime##LTMod", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3203,7 +3304,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Lifetime"))
                             em->addModule<engine::LifetimeModule>();
 
-                        // InitialVelocityModule
+
                         if (auto *vel = em->getModule<engine::InitialVelocityModule>())
                         {
                             if (ImGui::TreeNodeEx("Initial Velocity##VelMod", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3216,7 +3317,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Velocity"))
                             em->addModule<engine::InitialVelocityModule>();
 
-                        // ForceModule
+
                         if (auto *force = em->getModule<engine::ForceModule>())
                         {
                             if (ImGui::TreeNodeEx("Force##ForceMod", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3229,7 +3330,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Force"))
                             em->addModule<engine::ForceModule>();
 
-                        // SizeOverLifetimeModule
+
                         if (auto *sz = em->getModule<engine::SizeOverLifetimeModule>())
                         {
                             if (ImGui::TreeNodeEx("Size##SizeMod", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3241,7 +3342,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Size"))
                             em->addModule<engine::SizeOverLifetimeModule>();
 
-                        // ColorOverLifetimeModule
+
                         if (auto *col = em->getModule<engine::ColorOverLifetimeModule>())
                         {
                             if (ImGui::TreeNodeEx("Color Over Lifetime##ColMod", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3262,7 +3363,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Color"))
                             em->addModule<engine::ColorOverLifetimeModule>();
 
-                        // RendererModule
+
                         if (auto *rend = em->getModule<engine::RendererModule>())
                         {
                             if (ImGui::TreeNodeEx("Renderer##RendMod", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3275,7 +3376,7 @@ void EntityDetailsView::draw(Editor &editor)
                                     rend->blendMode = static_cast<engine::ParticleBlendMode>(blendIdx);
                                 if (ImGui::Combo("Facing Mode", &facingIdx, facingModes, 3))
                                     rend->facingMode = static_cast<engine::ParticleFacingMode>(facingIdx);
-                                ImGui::Checkbox("Soft Particles", &rend->softParticles);
+                                toggleSwitch("Soft Particles", &rend->softParticles);
                                 if (rend->softParticles)
                                     ImGui::DragFloat("Soft Range", &rend->softParticleRange, 0.1f, 0.0f, 100.0f);
 
@@ -3353,7 +3454,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Renderer"))
                             em->addModule<engine::RendererModule>();
 
-                        // VelocityOverLifetimeModule
+
                         if (auto *volm = em->getModule<engine::VelocityOverLifetimeModule>())
                         {
                             if (ImGui::TreeNodeEx("Velocity Over Lifetime##VOLMod", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3375,7 +3476,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Velocity Over Lifetime"))
                             em->addModule<engine::VelocityOverLifetimeModule>();
 
-                        // RotationOverLifetimeModule
+
                         if (auto *rolm = em->getModule<engine::RotationOverLifetimeModule>())
                         {
                             if (ImGui::TreeNodeEx("Rotation Over Lifetime##ROLMod", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3388,7 +3489,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Rotation Over Lifetime"))
                             em->addModule<engine::RotationOverLifetimeModule>();
 
-                        // TurbulenceModule
+
                         if (auto *turb = em->getModule<engine::TurbulenceModule>())
                         {
                             if (ImGui::TreeNodeEx("Turbulence##TurbMod", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3402,7 +3503,7 @@ void EntityDetailsView::draw(Editor &editor)
                         else if (ImGui::SmallButton("+ Turbulence"))
                             em->addModule<engine::TurbulenceModule>();
 
-                        // Remove emitter
+
                         ImGui::Spacing();
                         ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(160, 40, 40, 255));
                         if (ImGui::Button("Remove Emitter"))

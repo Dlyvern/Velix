@@ -9,7 +9,7 @@
 
 #include "Core/Macros.hpp"
 
-// #include <GLFW/glfw3.h>
+
 
 struct GLFWwindow;
 struct GLFWmonitor;
@@ -18,7 +18,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(platform)
 
 class Window
 {
-    // DECLARE_VK_SMART_PTRS(Window, GLFWWindow)
+
 public:
     using SharedPtr = std::shared_ptr<Window>;
 
@@ -54,9 +54,9 @@ public:
     void maximize();
     void restore();
     bool isMaximized() const;
-    /*
-        will be called on about to close callback. If returns false -> window will not close, true -> window will be closed
-    */
+
+
+
     void setOnWindowAboutToCloseCallback(const std::function<bool(Window *window)> &callback);
 
     void getSize(int *width, int *height) const;
@@ -79,7 +79,7 @@ private:
 
     bool m_isFullscreen = false;
 
-    // Saved windowed placement (so we can restore)
+
     int m_windowedX = 100;
     int m_windowedY = 100;
     int m_windowedW = 1280;
@@ -88,4 +88,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // WINDOW_HPP
+#endif

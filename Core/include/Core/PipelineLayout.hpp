@@ -28,4 +28,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PIPELINE_LAYOUT_HPP
+#endif

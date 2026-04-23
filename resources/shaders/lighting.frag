@@ -10,11 +10,11 @@ const float PI = 3.14159265359;
 
 struct Light
 {
-    vec4 position;      // xyz in view space
-    vec4 direction;     // xyz in view space
-    vec4 colorStrength; // rgb=color, a=intensity
-    vec4 parameters;    // x=inner, y=outer, z=radius, w=type
-    vec4 shadowInfo;    // x=castsShadow, y=shadowIndex, z=far/range, w=near
+    vec4 position;
+    vec4 direction;
+    vec4 colorStrength;
+    vec4 parameters;
+    vec4 shadowInfo;
 };
 
 layout(location = 0) in vec2 vUV;
@@ -59,13 +59,13 @@ layout(set = 1, binding = 13) uniform sampler2D  uBakedIrradiance;
 layout(push_constant) uniform LightingPC
 {
     float shadowAmbientStrength;
-    float shadowMode;             // 0.0 = shadow maps, 2.0 = RT pipeline texture
+    float shadowMode;
     float rtShadowSamples;
-    float rtShadowPenumbraSize;   // offset 12 — next vec4 starts at offset 16
-    vec4  probeWorldPos_radius;   // xyz=probe world pos, w=radius (0=inactive)
+    float rtShadowPenumbraSize;
+    vec4  probeWorldPos_radius;
     float probeIntensity;
-    float giEnabled;    // 1.0 when RT GI irradiance buffer is bound
-    float giStrength;   // indirect diffuse intensity multiplier
+    float giEnabled;
+    float giStrength;
     float _pad2;
 } pc;
 
@@ -243,6 +243,18 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(1.0 - clamp(cosTheta, 0.0, 1.0), 5.0);
 }
 
+
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - clamp(cosTheta, 0.0, 1.0), 5.0);
+}
+
+
+float specularOcclusion(float NdotV, float ao, float roughness)
+{
+    return clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+}
+
 vec3 evaluateBRDF(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughness)
 {
     float NdotL = max(dot(N, L), 0.0);
@@ -265,6 +277,14 @@ vec3 evaluateBRDF(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float rou
     vec3 kD = (1.0 - F) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
     vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
+
+
+
+
+    float Ess = 0.04 + (1.0 - 0.04) * (1.0 - roughness);
+    vec3 Favg = F0 + (1.0 - F0) * 0.047619;
+    vec3 Fms = Favg * Favg * (1.0 - Ess) / (1.0 - Favg * (1.0 - Ess));
+    specular *= (1.0 + Fms);
 
     return (diffuse + specular) * NdotL;
 }
@@ -365,13 +385,15 @@ void main()
     vec3 P_world = (camera.invView * vec4(P_view, 1.0)).xyz;
     vec3 N_world = normalize((camera.invView * vec4(N_view, 0.0)).xyz);
 
-    // Baked irradiance: if non-zero, skip dynamic shadow + direct-light computation.
+
     vec3 bakedIrradiance = texture(uBakedIrradiance, vUV).rgb;
     const bool hasBakedIrradiance = dot(bakedIrradiance, bakedIrradiance) > 0.0001;
 
     vec3 lighting = vec3(0.0);
     float directionalShadowMax = 0.0;
     bool hasDirectionalLight = false;
+    vec3 sunDirWorld = vec3(0.0, 1.0, 0.0);
+    vec3 sunColorIntensity = vec3(1.0);
     const bool usePipelineRTShadows = pc.shadowMode > 1.5;
 
     int count = min(lightData.lightCount, MAX_LIGHT_COUNT);
@@ -394,6 +416,8 @@ void main()
         if (lightType == DIRECTIONAL_LIGHT_TYPE)
         {
             L = normalize(-light.direction.xyz);
+            sunDirWorld = normalize((camera.invView * vec4(L, 0.0)).xyz);
+            sunColorIntensity = light.colorStrength.rgb * light.colorStrength.a;
 
             if (castsShadow)
             {
@@ -403,7 +427,7 @@ void main()
                 }
                 else
                 {
-                    vec3 L_world = normalize((camera.invView * vec4(L, 0.0)).xyz);
+                    vec3 L_world = sunDirWorld;
                     shadow = getDirectionalShadowBlended(max(-P_view.z, 0.0), P_world, L_world, N_world);
                 }
                 directionalShadowMax = max(directionalShadowMax, shadow);
@@ -416,7 +440,11 @@ void main()
             L = (distance > 0.0) ? toLight / distance : vec3(0.0, 0.0, 1.0);
 
             float radius = max(light.parameters.z, 0.0001);
-            float attenuation = clamp(1.0 - (distance / radius), 0.0, 1.0);
+
+            float distRatio = distance / radius;
+            float distRatio2 = distRatio * distRatio;
+            float distRatio4 = distRatio2 * distRatio2;
+            float attenuation = clamp(1.0 - distRatio4, 0.0, 1.0);
             attenuation *= attenuation;
             radiance *= attenuation;
 
@@ -440,7 +468,11 @@ void main()
             L = (distance > 0.0) ? toLight / distance : vec3(0.0, 0.0, 1.0);
 
             float radius = max(light.parameters.z, 0.0001);
-            float attenuation = clamp(1.0 - (distance / radius), 0.0, 1.0);
+
+            float distRatio = distance / radius;
+            float distRatio2 = distRatio * distRatio;
+            float distRatio4 = distRatio2 * distRatio2;
+            float attenuation = clamp(1.0 - distRatio4, 0.0, 1.0);
             attenuation *= attenuation;
 
             float theta = dot(L, normalize(-light.direction.xyz));
@@ -471,22 +503,47 @@ void main()
         if (NdotL <= 0.0)
             continue;
 
-        // When baked irradiance is present skip dynamic shadow sampling (shadow already baked).
+
         float effectiveShadow = hasBakedIrradiance ? 0.0 : shadow;
         lighting += evaluateBRDF(N_view, V, L, albedo, metallic, roughness) * radiance * (1.0 - effectiveShadow);
     }
 
-    float ambientFactor = hasDirectionalLight ? 0.03 : 0.0;
-    vec3 ambient = albedo * ambientFactor * ao;
-    ambient *= (1.0 - clamp(pc.shadowAmbientStrength, 0.0, 1.0) * directionalShadowMax);
 
-    // Replace the dynamic direct-light term with the baked irradiance when available.
+    float sunHeight = clamp(sunDirWorld.y, -1.0, 1.0);
+    float dayFactor = smoothstep(-0.1, 0.25, sunHeight);
+    float sunsetFactor = (1.0 - smoothstep(0.0, 0.40, sunHeight)) * smoothstep(-0.15, 0.02, sunHeight);
+    float nightFactor = 1.0 - smoothstep(-0.15, 0.0, sunHeight);
+
+
+    vec3 skyDay     = vec3(0.55, 0.70, 1.00);
+    vec3 skySunset  = vec3(0.95, 0.55, 0.45);
+    vec3 skyNight   = vec3(0.05, 0.07, 0.15);
+
+    vec3 skyAmbient = mix(skyNight, skyDay, dayFactor);
+    skyAmbient = mix(skyAmbient, skySunset, sunsetFactor);
+
+
+    vec3 sunLuminance = sunColorIntensity * max(dayFactor + sunsetFactor * 0.7, 0.05);
+    vec3 groundAmbient = mix(vec3(0.05, 0.05, 0.08), sunLuminance * vec3(0.35, 0.28, 0.22), dayFactor + sunsetFactor * 0.6);
+
+
+    float ambientBrightness = 0.50 * dayFactor + 0.35 * sunsetFactor + 0.12;
+
+    float hemiFactor = N_world.y * 0.5 + 0.5;
+    vec3 hemiColor = mix(groundAmbient, skyAmbient, hemiFactor) * ambientBrightness;
+
+    float ambientScale = hasDirectionalLight ? 1.0 : 0.7;
+    vec3 ambient = albedo * hemiColor * ambientScale * ao;
+
+    ambient *= (1.0 - clamp(pc.shadowAmbientStrength, 0.0, 1.0) * directionalShadowMax * 0.3);
+
+
     if (hasBakedIrradiance)
     {
         lighting = bakedIrradiance * albedo * ao;
     }
 
-    // RT Global Illumination: replace flat ambient with sky-occlusion-based indirect diffuse.
+
     if (pc.giEnabled > 0.5)
     {
         vec3 giIrradiance = texture(uGIIrradiance, vUV).rgb;
@@ -495,7 +552,7 @@ void main()
 
     vec3 color = ambient + lighting + emissive;
 
-    // Reflection probe: local environment specular contribution
+
     if (pc.probeWorldPos_radius.w > 0.001)
     {
         float distToProbe = length(P_world - pc.probeWorldPos_radius.xyz);
@@ -508,10 +565,17 @@ void main()
             vec3 probeColor = textureLod(uProbeEnv, R_world, mipLevel).rgb;
 
             float NdotV = max(dot(N_world, V_world), 0.0);
-            vec3 F = fresnelSchlick(NdotV, mix(vec3(0.04), albedo, metallic));
-            float specMask = (1.0 - roughness * roughness);
+            vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
-            color += probeColor * F * specMask * pc.probeIntensity * probeInfluence * ao;
+            vec3 F = fresnelSchlickRoughness(NdotV, F0, roughness);
+
+            vec2 envBRDF = vec2(max(1.0 - roughness, F0.r), roughness);
+            vec3 specWeight = F * envBRDF.x + envBRDF.y * 0.08;
+
+
+            float specAO = specularOcclusion(NdotV, ao, roughness);
+
+            color += probeColor * specWeight * pc.probeIntensity * probeInfluence * specAO;
         }
     }
 

@@ -17,8 +17,8 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-/// A single particle emitter: owns a fixed-size particle pool and a module stack.
-/// Multiple emitters live inside one ParticleSystem.
+
+
 class ParticleEmitter
 {
 public:
@@ -62,11 +62,11 @@ public:
 
     void update(float deltaTime, const glm::vec3 &worldPosition);
 
-    /// Propagates the physics scene pointer to all modules that support collision.
+
     void setPhysicsScene(PhysicsScene *scene);
 
-    /// Spawns a burst of particles at an explicit world position, bypassing the emitter's
-    /// shape module. Used for splash effects driven by CollisionModule hit positions.
+
+
     void spawnParticleAt(const glm::vec3 &worldPos, uint32_t count = 1);
 
     void play();
@@ -81,15 +81,15 @@ public:
     bool isDirty() const { return m_dirty; }
     void clearDirty() { m_dirty = false; }
 
-    /// Returns positions where particles died this frame (cleared at the start of each update).
+
     const std::vector<glm::vec3> &getDeathPositions() const { return m_deathPositions; }
 
 private:
     std::unordered_map<std::type_index, std::shared_ptr<IParticleModule>> m_modules;
 
-    std::vector<Particle> m_particles;       // pre-allocated pool
-    std::vector<uint32_t> m_freeList;        // indices of dead particles
-    std::vector<glm::vec3> m_deathPositions; // positions of particles that died this frame
+    std::vector<Particle> m_particles;
+    std::vector<uint32_t> m_freeList;
+    std::vector<glm::vec3> m_deathPositions;
     uint32_t m_aliveCount{0};
 
     float m_spawnAccumulator{0.0f};
@@ -107,4 +107,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PARTICLE_EMITTER_HPP
+#endif

@@ -181,7 +181,7 @@ namespace actions
 
             return true;
         }
-    } // namespace
+    }
 
     EditorCommandHistory::EditorCommandHistory(std::size_t maxEntries)
         : m_maxEntries(std::max<std::size_t>(maxEntries, 1u))
@@ -333,5 +333,5 @@ namespace actions
 
         return true;
     }
-} // namespace actions
+}
 ELIX_NESTED_NAMESPACE_END

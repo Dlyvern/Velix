@@ -46,7 +46,7 @@ namespace
         const glm::mat4 invView = glm::inverse(view);
         return glm::normalize(-glm::vec3(invView[2]));
     }
-} // namespace
+}
 
 VolumetricFogTemporalRenderGraphPass::VolumetricFogTemporalRenderGraphPass(
     std::vector<RGPResourceHandler> &inputHandlers,

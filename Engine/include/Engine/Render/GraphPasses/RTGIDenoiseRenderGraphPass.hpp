@@ -59,11 +59,11 @@ private:
     void createComputePipeline();
     void destroyComputePipeline();
 
-    // Allocate/free the internal ping-pong images (not tracked by the render graph).
+
     void createPingPongImages();
     void destroyPingPongImages();
 
-    // Transition a ping-pong image to GENERAL or SHADER_READ_ONLY_OPTIMAL.
+
     void transitionPingPong(VkCommandBuffer cmd, VkImage image,
                             VkImageLayout from, VkImageLayout to);
 
@@ -80,12 +80,12 @@ private:
     core::PipelineLayout::SharedPtr      m_pipelineLayout{nullptr};
     core::DescriptorSetLayout::SharedPtr m_descriptorSetLayout{nullptr};
 
-    // Descriptor sets for three dispatches:
-    //   pass0: raw GI → pingImage
-    //   pass1: pingImage → pongImage
-    //   pass2: pongImage → output (graph resource)
-    // Each frame index gets 3 descriptor sets.
-    std::vector<std::array<VkDescriptorSet, 3>> m_descriptorSets; // [imageIndex][passIdx]
+
+
+
+
+
+    std::vector<std::array<VkDescriptorSet, 3>> m_descriptorSets;
     bool m_descriptorSetsInitialized{false};
 
     core::Sampler::SharedPtr m_sampler{nullptr};
@@ -94,7 +94,7 @@ private:
     core::ShaderHandler m_computeShader;
     VkPipeline          m_computePipeline{VK_NULL_HANDLE};
 
-    // Per-swapchain-image internal ping-pong buffers.
+
     struct PingPong
     {
         std::shared_ptr<core::Image> pingImage;
@@ -108,4 +108,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RT_GI_DENOISE_RENDER_GRAPH_PASS_HPP
+#endif

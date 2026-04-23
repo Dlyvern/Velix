@@ -87,8 +87,8 @@ Skybox::Skybox(const std::string &hdrPath, VkDescriptorPool descriptorPool)
                          !asset.sourcePath.empty() &&
                          std::filesystem::exists(asset.sourcePath))
                 {
-                    // Compressed texture assets are not CPU-decodable in this path.
-                    // Fall back to the original source HDR/EXR path.
+
+
                     cubemapCreated = m_skyboxTexture->createCubemapFromHDR(asset.sourcePath, SKYBOX_CUBEMAP_SIZE);
                 }
             }

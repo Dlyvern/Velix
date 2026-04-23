@@ -42,7 +42,7 @@ void RenderPassBuilder::buildReferences()
         m_colorAttachmentReferences.push_back(colorReference);
     }
 
-    // Build depth attachment reference if it exists
+
     if (!m_depthAttachments.empty())
     {
         m_depthAttachmentReference.attachment = static_cast<uint32_t>(m_colorAttachments.size());

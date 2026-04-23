@@ -13,9 +13,9 @@ struct AllocatedBuffer
     VkBuffer buffer{VK_NULL_HANDLE};
     void* allocation{nullptr};
 
-    operator VkBuffer() const 
+    operator VkBuffer() const
     {
-        return buffer; 
+        return buffer;
     }
 };
 
@@ -24,13 +24,13 @@ struct AllocatedImage
     VkImage image{VK_NULL_HANDLE};
     void* allocation{nullptr};
 
-    operator VkImage() const 
+    operator VkImage() const
     {
-        return image; 
+        return image;
     }
 };
 
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_ALLOCATORS_HPP
+#endif

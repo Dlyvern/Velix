@@ -76,4 +76,4 @@ glm::vec3 getUpVector(Entity *entity);
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_VELIX_API_HPP
+#endif

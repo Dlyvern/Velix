@@ -14,4 +14,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_OBJ_ASSET_LOADER_HPP
+#endif

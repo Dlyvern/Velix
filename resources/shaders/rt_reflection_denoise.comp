@@ -2,7 +2,7 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-const int KERNEL_RADIUS = 2; // 5x5 bilateral filter
+const int KERNEL_RADIUS = 2;
 
 layout(set = 0, binding = 0) uniform sampler2D       uReflectionInput;
 layout(set = 0, binding = 1) uniform sampler2D       uGBufferNormal;
@@ -12,8 +12,8 @@ layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D uReflectionOutpu
 layout(push_constant) uniform RTReflectionDenoisePC
 {
     mat4 invProjection;
-    vec4 params0; // x=texelSize.x, y=texelSize.y, z=enabled, w=normalSigma
-    vec4 params1; // x=depthSigma
+    vec4 params0;
+    vec4 params1;
 } pc;
 
 vec3 decodeNormal(vec3 enc)
@@ -41,7 +41,7 @@ void main()
     vec2  centerUV    = (vec2(pixelCoord) + 0.5) * pc.params0.xy;
     float centerDepth = texture(uDepth, centerUV).r;
 
-    // Pass-through: disabled or sky pixel.
+
     if (pc.params0.z < 0.5 || centerDepth >= 1.0)
     {
         vec4 raw = texelFetch(uReflectionInput, pixelCoord, 0);

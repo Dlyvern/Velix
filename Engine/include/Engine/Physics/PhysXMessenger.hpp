@@ -25,4 +25,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PHYSX_MESSENGER
+#endif

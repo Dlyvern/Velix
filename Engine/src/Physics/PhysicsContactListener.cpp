@@ -6,7 +6,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-// Helper: dispatch a callback to every Script on an entity
+
 namespace
 {
     Entity *entityFromActor(const physx::PxActor *actor)
@@ -68,13 +68,13 @@ namespace
                 sc->getScript()->onTriggerExit(other);
         }
     }
-} // namespace
+}
 
 void PhysicsContactListener::onContact(const physx::PxContactPairHeader &pairHeader,
                                        const physx::PxContactPair *pairs,
                                        physx::PxU32 nbPairs)
 {
-    // Actors may be deleted — PhysX marks them with eREMOVED_ACTOR flags
+
     if (pairHeader.flags & (physx::PxContactPairHeaderFlag::eREMOVED_ACTOR_0 |
                             physx::PxContactPairHeaderFlag::eREMOVED_ACTOR_1))
         return;
@@ -86,7 +86,7 @@ void PhysicsContactListener::onContact(const physx::PxContactPairHeader &pairHea
     {
         const physx::PxContactPair &cp = pairs[i];
 
-        // Build a CollisionInfo from the first contact point (if available)
+
         CollisionInfo info;
         if (cp.contactCount > 0)
         {
@@ -125,7 +125,7 @@ void PhysicsContactListener::onTrigger(physx::PxTriggerPair *pairs, physx::PxU32
     {
         const physx::PxTriggerPair &tp = pairs[i];
 
-        // Skip pairs involving deleted actors/shapes
+
         if (tp.flags & (physx::PxTriggerPairFlag::eREMOVED_SHAPE_TRIGGER |
                         physx::PxTriggerPairFlag::eREMOVED_SHAPE_OTHER))
             continue;
@@ -150,7 +150,7 @@ physx::PxFilterFlags contactNotifyFilterShader(
     physx::PxFilterObjectAttributes attributes0, physx::PxFilterData filterData0,
     physx::PxFilterObjectAttributes attributes1, physx::PxFilterData filterData1,
     physx::PxPairFlags &pairFlags,
-    const void * /*constantBlock*/, physx::PxU32 /*constantBlockSize*/)
+    const void * , physx::PxU32 )
 {
     constexpr physx::PxU32 kRagdollPhysicsCategory = 2u;
 
@@ -163,14 +163,14 @@ physx::PxFilterFlags contactNotifyFilterShader(
         return physx::PxFilterFlag::eSUPPRESS;
     }
 
-    // Let triggers through
+
     if (physx::PxFilterObjectIsTrigger(attributes0) || physx::PxFilterObjectIsTrigger(attributes1))
     {
         pairFlags = physx::PxPairFlag::eTRIGGER_DEFAULT;
         return physx::PxFilterFlags();
     }
 
-    // Standard collision + all contact notification events + contact points
+
     pairFlags = physx::PxPairFlag::eCONTACT_DEFAULT
               | physx::PxPairFlag::eNOTIFY_TOUCH_FOUND
               | physx::PxPairFlag::eNOTIFY_TOUCH_PERSISTS

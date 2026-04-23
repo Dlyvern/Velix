@@ -12,10 +12,10 @@ class GBufferRenderGraphPass : public IRenderGraphPass
 public:
     explicit GBufferRenderGraphPass(bool enableObjectId = false);
 
-    /// Call before setup() to tell GBuffer to reuse an already-written depth buffer
-    /// (e.g. from a DepthPrepassRenderGraphPass) instead of creating its own.
-    /// A pointer is stored so that GBuffer's setup() dereferences the live ID
-    /// after the prepass has already assigned it via builder.createTexture().
+
+
+
+
     void setExternalDepthHandler(RGPResourceHandler &handler, RGPResourceHandler *resolvedHandler = nullptr)
     {
         m_externalDepthHandlerPtr = &handler;
@@ -40,7 +40,14 @@ public:
     std::vector<RGPResourceHandler> &getMaterialTextureHandlers() { return m_materialTextureHandlers; }
     std::vector<RGPResourceHandler> &getEmissiveTextureHandlers() { return m_emissiveTextureHandlers; }
     std::vector<RGPResourceHandler> &getBakedIrradianceHandlers() { return m_bakedIrradianceTextureHandlers; }
+    std::vector<RGPResourceHandler> &getMotionVectorHandlers() { return m_motionVectorTextureHandlers; }
     bool usesObjectIdResolvePath() const { return m_msaaObjectIdTextureHandler.isValid(); }
+
+    void collectPipelineKeys(std::vector<GraphicsPipelineKey> &outKeys) const override;
+
+
+    void collectCustomMaterialPipelineKeys(const std::vector<std::string> &customFragPaths,
+                                           std::vector<GraphicsPipelineKey> &outKeys) const;
 
     struct Outputs
     {
@@ -49,12 +56,13 @@ public:
         RGPOutputSlot<MultiHandle>  material;
         RGPOutputSlot<MultiHandle>  emissive;
         RGPOutputSlot<MultiHandle>  bakedIrradiance;
+        RGPOutputSlot<MultiHandle>  motionVector;
         RGPOutputSlot<SingleHandle> depth;
         RGPOutputSlot<SingleHandle> objectId;
     } outputs;
 
 private:
-    std::array<VkClearValue, 7> m_clearValues{};
+    std::array<VkClearValue, 8> m_clearValues{};
 
     std::vector<const RenderTarget *> m_normalRenderTargets;
     std::vector<const RenderTarget *> m_msaaNormalRenderTargets;
@@ -65,6 +73,8 @@ private:
     std::vector<const RenderTarget *> m_emissiveRenderTargets;
     std::vector<const RenderTarget *> m_msaaEmissiveRenderTargets;
     std::vector<const RenderTarget *> m_bakedIrradianceRenderTargets;
+    std::vector<const RenderTarget *> m_motionVectorRenderTargets;
+    std::vector<const RenderTarget *> m_msaaMotionVectorRenderTargets;
     const RenderTarget *m_depthRenderTarget{nullptr};
     const RenderTarget *m_msaaDepthRenderTarget{nullptr};
     const RenderTarget *m_objectIdRenderTarget{nullptr};
@@ -86,8 +96,10 @@ private:
     std::vector<RGPResourceHandler> m_emissiveTextureHandlers;
     std::vector<RGPResourceHandler> m_msaaEmissiveTextureHandlers;
     std::vector<RGPResourceHandler> m_bakedIrradianceTextureHandlers;
+    std::vector<RGPResourceHandler> m_motionVectorTextureHandlers;
+    std::vector<RGPResourceHandler> m_msaaMotionVectorTextureHandlers;
 
-    // One-element vec2(0,0) VBO bound at vertex binding 1 for meshes without lightmap UVs.
+
     core::Buffer::SharedPtr m_dummyLightmapUVBuffer;
 
     RGPResourceHandler m_depthTextureHandler;
@@ -98,7 +110,7 @@ private:
     bool m_enableObjectId{false};
     VkSampleCountFlagBits m_rasterizationSamples{VK_SAMPLE_COUNT_1_BIT};
 
-    // External depth prepass support
+
     bool                m_hasExternalDepth{false};
     RGPResourceHandler *m_externalDepthHandlerPtr{nullptr};
     RGPResourceHandler *m_externalResolvedDepthHandlerPtr{nullptr};
@@ -107,4 +119,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_GBUFFER_RENDER_GRAPH_PASS_HPP
+#endif

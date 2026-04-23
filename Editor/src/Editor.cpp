@@ -21,6 +21,7 @@
 #include "Engine/Assets/LightmapUVGenerator.hpp"
 #include "Engine/Render/ObjectIdEncoding.hpp"
 #include "Engine/Shaders/ShaderCompiler.hpp"
+#include "Engine/Render/SceneMaterialResolver.hpp"
 
 #include "Engine/Primitives.hpp"
 #include "Engine/Components/CollisionComponent.hpp"
@@ -33,6 +34,7 @@
 #include "Engine/Assets/ElixBundle.hpp"
 
 #include "Editor/FileHelper.hpp"
+#include "Editor/IconsLucide.hpp"
 #include "Editor/Actions/Commands/CreateEntityCommand.hpp"
 #include "Editor/Actions/Commands/DeleteEntityCommand.hpp"
 #include "Editor/Actions/Commands/UIStateCommand.hpp"
@@ -129,10 +131,10 @@ namespace
         escaped.reserve(value.size() + 2);
 
 #if defined(_WIN32)
-        // CommandLineToArgvW (used by CreateProcess) has a backslash-before-quote rule:
-        // backslashes immediately before a '"' are interpreted as escapes.
-        // To avoid this entirely, normalise all backslashes to forward slashes first —
-        // CreateProcess, cmake, and most Windows tools accept both separators.
+
+
+
+
         std::string normalised;
         normalised.reserve(value.size());
         for (char c : value)
@@ -158,9 +160,9 @@ namespace
 
     std::string quoteShellArgument(const std::filesystem::path &path)
     {
-        // Use u8string() so Unicode paths (accented letters, Cyrillic, etc.) are
-        // preserved as UTF-8.  executeCommand() converts the whole UTF-8 command
-        // string to UTF-16 via MultiByteToWideChar(CP_UTF8) before passing to CreateProcessW.
+
+
+
         auto u8 = path.u8string();
         return quoteShellTextArgument(std::string(u8.begin(), u8.end()));
     }
@@ -235,9 +237,16 @@ namespace
         hashCombine(seed, settings.bloomKnee);
         hashCombine(seed, settings.bloomStrength);
         hashCombine(seed, settings.renderScale);
+        hashCombine(seed, static_cast<uint32_t>(settings.upscalerMode));
+        hashCombine(seed, static_cast<uint32_t>(settings.upscaleQuality));
+        hashCombine(seed, settings.fsrSharpness);
         hashCombine(seed, static_cast<uint32_t>(settings.anisotropyMode));
         hashCombine(seed, settings.enableSmallFeatureCulling);
         hashCombine(seed, settings.smallFeatureCullingThreshold);
+        hashCombine(seed, settings.enableSSGI);
+        hashCombine(seed, settings.ssgiRadius);
+        hashCombine(seed, settings.ssgiStrength);
+        hashCombine(seed, settings.ssgiSamples);
         hashCombine(seed, settings.enableSSR);
         hashCombine(seed, settings.ssrMaxDistance);
         hashCombine(seed, settings.ssrThickness);
@@ -372,7 +381,7 @@ namespace
                 return 4;
         }
 
-        // Unknown/mixed folders (including single-config builds).
+
         return 3;
     }
 
@@ -1911,7 +1920,7 @@ namespace
 
         return projectedBones;
     }
-} // namespace
+}
 
 Editor::Editor()
 {
@@ -1957,8 +1966,8 @@ Editor::Editor()
 
 Editor::~Editor()
 {
-    // Persist project config (render settings, camera) on clean exit so that
-    // any settings changed during this session are not lost.
+
+
     saveProjectConfig();
 }
 
@@ -2449,20 +2458,20 @@ void Editor::initStyle(bool imguiBackendRecreated)
     ImVec4 *colors = style.Colors;
 
     style.WindowRounding = 8.0f;
-    style.FrameRounding = 6.0f;
-    style.GrabRounding = 6.0f;
-    style.PopupRounding = 8.0f;
-    style.ScrollbarRounding = 8.0f;
+    style.FrameRounding = 4.0f;
+    style.GrabRounding = 4.0f;
+    style.PopupRounding = 6.0f;
+    style.ScrollbarRounding = 5.0f;
     style.TabRounding = 6.0f;
-    style.ChildRounding = 4.0f;
+    style.ChildRounding = 6.0f;
 
     style.WindowBorderSize = 1.0f;
-    style.FrameBorderSize = 0.8f;
+    style.FrameBorderSize = 1.0f;
     style.PopupBorderSize = 1.0f;
     style.TabBorderSize = 0.0f;
     style.DockingSeparatorSize = 1.0f;
 
-    style.FramePadding = ImVec2(9, 6);
+    style.FramePadding = ImVec2(10, 6);
     style.ItemSpacing = ImVec2(8, 6);
     style.ItemInnerSpacing = ImVec2(6, 4);
     style.WindowPadding = ImVec2(12, 10);
@@ -2471,94 +2480,114 @@ void Editor::initStyle(bool imguiBackendRecreated)
     style.ScrollbarSize = 10.0f;
     style.GrabMinSize = 8.0f;
 
-    const ImVec4 bg0 = ImVec4(0.060f, 0.062f, 0.068f, 1.000f); // window base
-    const ImVec4 bg1 = ImVec4(0.090f, 0.094f, 0.102f, 1.000f); // panel / sidebar
-    const ImVec4 bg2 = ImVec4(0.140f, 0.146f, 0.158f, 1.000f); // input / frame
-    const ImVec4 bg3 = ImVec4(0.200f, 0.210f, 0.228f, 1.000f); // hover surface
 
-    const ImVec4 accentBlue = ImVec4(0.140f, 0.470f, 0.980f, 1.000f);
-    const ImVec4 accentBlueHover = ImVec4(0.220f, 0.540f, 1.000f, 1.000f);
-    const ImVec4 accentBlueActive = ImVec4(0.100f, 0.380f, 0.820f, 1.000f);
-    const ImVec4 accentOrange = ImVec4(0.960f, 0.530f, 0.120f, 1.000f);
+    const ImVec4 bg0       = ImVec4(0.019f, 0.011f, 0.008f, 1.000f);
+    const ImVec4 bg1       = ImVec4(0.038f, 0.026f, 0.020f, 1.000f);
+    const ImVec4 bg2       = ImVec4(0.072f, 0.057f, 0.048f, 1.000f);
+    const ImVec4 bg3       = ImVec4(0.116f, 0.101f, 0.091f, 1.000f);
+    const ImVec4 bg4       = ImVec4(0.173f, 0.156f, 0.146f, 1.000f);
 
-    colors[ImGuiCol_Text] = ImVec4(0.900f, 0.915f, 0.940f, 1.000f);
-    colors[ImGuiCol_TextDisabled] = ImVec4(0.480f, 0.510f, 0.570f, 1.000f);
+    const ImVec4 line      = ImVec4(0.189f, 0.177f, 0.168f, 0.600f);
+    const ImVec4 lineSoft  = ImVec4(0.189f, 0.177f, 0.168f, 0.300f);
 
-    colors[ImGuiCol_WindowBg] = bg0;
-    colors[ImGuiCol_ChildBg] = bg1;
-    colors[ImGuiCol_PopupBg] = ImVec4(0.082f, 0.086f, 0.094f, 0.980f);
 
-    colors[ImGuiCol_Border] = ImVec4(0.200f, 0.210f, 0.230f, 0.700f);
-    colors[ImGuiCol_BorderShadow] = ImVec4(0.000f, 0.000f, 0.000f, 0.000f);
+    const ImVec4 accent    = ImVec4(0.936f, 0.405f, 0.353f, 1.000f);
+    const ImVec4 accentHi  = ImVec4(1.000f, 0.531f, 0.471f, 1.000f);
+    const ImVec4 accentLo  = ImVec4(0.741f, 0.259f, 0.221f, 1.000f);
+    const auto   accentA   = [&](float a) { return ImVec4(accent.x, accent.y, accent.z, a); };
 
-    colors[ImGuiCol_FrameBg] = bg2;
-    colors[ImGuiCol_FrameBgHovered] = bg3;
-    colors[ImGuiCol_FrameBgActive] = accentBlueActive;
+    colors[ImGuiCol_Text]                   = ImVec4(0.931f, 0.919f, 0.912f, 1.000f);
+    colors[ImGuiCol_TextDisabled]           = ImVec4(0.445f, 0.430f, 0.421f, 1.000f);
 
-    colors[ImGuiCol_TitleBg] = bg0;
-    colors[ImGuiCol_TitleBgActive] = bg1;
-    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(bg0.x, bg0.y, bg0.z, 0.700f);
-    colors[ImGuiCol_MenuBarBg] = bg1;
+    colors[ImGuiCol_WindowBg]               = bg0;
+    colors[ImGuiCol_ChildBg]                = bg1;
+    colors[ImGuiCol_PopupBg]                = ImVec4(0.072f, 0.057f, 0.048f, 0.980f);
 
-    colors[ImGuiCol_ScrollbarBg] = ImVec4(bg0.x, bg0.y, bg0.z, 0.600f);
-    colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.220f, 0.232f, 0.255f, 1.000f);
-    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.280f, 0.295f, 0.320f, 1.000f);
-    colors[ImGuiCol_ScrollbarGrabActive] = accentBlue;
+    colors[ImGuiCol_Border]                 = line;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.000f, 0.000f, 0.000f, 0.000f);
 
-    colors[ImGuiCol_CheckMark] = accentBlueHover;
-    colors[ImGuiCol_SliderGrab] = accentBlue;
-    colors[ImGuiCol_SliderGrabActive] = accentBlueHover;
+    colors[ImGuiCol_FrameBg]                = bg1;
+    colors[ImGuiCol_FrameBgHovered]         = bg2;
+    colors[ImGuiCol_FrameBgActive]          = bg3;
 
-    colors[ImGuiCol_Button] = bg2;
-    colors[ImGuiCol_ButtonHovered] = bg3;
-    colors[ImGuiCol_ButtonActive] = accentBlueActive;
+    colors[ImGuiCol_TitleBg]                = bg1;
+    colors[ImGuiCol_TitleBgActive]          = bg2;
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg0.x, bg0.y, bg0.z, 0.700f);
+    colors[ImGuiCol_MenuBarBg]              = bg1;
 
-    colors[ImGuiCol_Header] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.180f);
-    colors[ImGuiCol_HeaderHovered] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.280f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.400f);
+    colors[ImGuiCol_ScrollbarBg]            = ImVec4(bg0.x, bg0.y, bg0.z, 0.000f);
+    colors[ImGuiCol_ScrollbarGrab]          = bg3;
+    colors[ImGuiCol_ScrollbarGrabHovered]   = bg4;
+    colors[ImGuiCol_ScrollbarGrabActive]    = accentLo;
 
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.200f, 0.210f, 0.230f, 0.400f);
-    colors[ImGuiCol_ResizeGripHovered] = accentBlue;
-    colors[ImGuiCol_ResizeGripActive] = accentBlueHover;
+    colors[ImGuiCol_CheckMark]              = accentHi;
+    colors[ImGuiCol_SliderGrab]             = accent;
+    colors[ImGuiCol_SliderGrabActive]       = accentHi;
 
-    colors[ImGuiCol_Tab] = bg1;
-    colors[ImGuiCol_TabHovered] = ImVec4(0.180f, 0.196f, 0.224f, 1.000f);
-    colors[ImGuiCol_TabActive] = ImVec4(0.155f, 0.168f, 0.192f, 1.000f);
-    colors[ImGuiCol_TabUnfocused] = bg1;
-    colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.135f, 0.146f, 0.164f, 1.000f);
-    colors[ImGuiCol_TabSelectedOverline] = accentBlue;
-    colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.350f);
+    colors[ImGuiCol_Button]                 = bg2;
+    colors[ImGuiCol_ButtonHovered]          = bg3;
+    colors[ImGuiCol_ButtonActive]           = accentA(0.40f);
 
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(accentBlue.x, accentBlue.y, accentBlue.z, 0.350f);
-    colors[ImGuiCol_DragDropTarget] = accentOrange;
-    colors[ImGuiCol_NavHighlight] = accentBlue;
-    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.000f, 1.000f, 1.000f, 0.600f);
-    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.040f, 0.044f, 0.050f, 0.300f);
-    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.040f, 0.044f, 0.050f, 0.700f);
+    colors[ImGuiCol_Header]                 = accentA(0.18f);
+    colors[ImGuiCol_HeaderHovered]          = accentA(0.28f);
+    colors[ImGuiCol_HeaderActive]           = accentA(0.40f);
 
-    colors[ImGuiCol_Separator] = ImVec4(0.220f, 0.230f, 0.250f, 0.350f);
-    colors[ImGuiCol_SeparatorHovered] = accentBlue;
-    colors[ImGuiCol_SeparatorActive] = accentBlueHover;
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(line.x, line.y, line.z, 0.400f);
+    colors[ImGuiCol_ResizeGripHovered]      = accent;
+    colors[ImGuiCol_ResizeGripActive]       = accentHi;
 
-    colors[ImGuiCol_TableHeaderBg] = bg2;
-    colors[ImGuiCol_TableBorderStrong] = ImVec4(0.240f, 0.252f, 0.276f, 1.000f);
-    colors[ImGuiCol_TableBorderLight] = ImVec4(0.160f, 0.168f, 0.184f, 0.500f);
-    colors[ImGuiCol_TableRowBg] = bg1;
-    colors[ImGuiCol_TableRowBgAlt] = bg2;
+    colors[ImGuiCol_Tab]                    = bg1;
+    colors[ImGuiCol_TabHovered]             = bg2;
+    colors[ImGuiCol_TabActive]              = bg2;
+    colors[ImGuiCol_TabUnfocused]           = bg1;
+    colors[ImGuiCol_TabUnfocusedActive]     = bg1;
+    colors[ImGuiCol_TabSelectedOverline]    = accent;
+    colors[ImGuiCol_TabDimmedSelectedOverline] = accentA(0.35f);
 
-    colors[ImGuiCol_PlotLines] = accentBlue;
-    colors[ImGuiCol_PlotLinesHovered] = accentBlueHover;
-    colors[ImGuiCol_PlotHistogram] = accentBlue;
-    colors[ImGuiCol_PlotHistogramHovered] = accentBlueHover;
+    colors[ImGuiCol_TextSelectedBg]         = accentA(0.35f);
+    colors[ImGuiCol_DragDropTarget]         = accent;
+    colors[ImGuiCol_NavHighlight]           = accent;
+    colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(1.000f, 1.000f, 1.000f, 0.600f);
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.019f, 0.011f, 0.008f, 0.500f);
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.019f, 0.011f, 0.008f, 0.700f);
+
+    colors[ImGuiCol_Separator]              = lineSoft;
+    colors[ImGuiCol_SeparatorHovered]       = accent;
+    colors[ImGuiCol_SeparatorActive]        = accentHi;
+
+    colors[ImGuiCol_TableHeaderBg]          = bg2;
+    colors[ImGuiCol_TableBorderStrong]      = line;
+    colors[ImGuiCol_TableBorderLight]       = lineSoft;
+    colors[ImGuiCol_TableRowBg]             = bg1;
+    colors[ImGuiCol_TableRowBgAlt]          = bg2;
+
+    colors[ImGuiCol_PlotLines]              = accent;
+    colors[ImGuiCol_PlotLinesHovered]       = accentHi;
+    colors[ImGuiCol_PlotHistogram]          = accent;
+    colors[ImGuiCol_PlotHistogramHovered]   = accentHi;
 
     ImGuiIO &io = ImGui::GetIO();
-    // Index 0 — default: Roboto-Regular for all UI labels, buttons, panels
+
+    static const ImWchar kLucideRange[] = { ICON_MIN_LC, ICON_MAX_LC, 0 };
+    auto mergeLucide = [&](float pixelSize, float yOffset) {
+        ImFontConfig cfg;
+        cfg.MergeMode = true;
+        cfg.PixelSnapH = true;
+        cfg.GlyphMinAdvanceX = pixelSize;
+        cfg.GlyphOffset = ImVec2(0.0f, yOffset);
+        io.Fonts->AddFontFromFileTTF("./resources/fonts/Lucide.ttf", pixelSize, &cfg, kLucideRange);
+    };
+
+
     io.Fonts->AddFontFromFileTTF("./resources/fonts/Roboto/Roboto-Regular.ttf", 15.0f);
-    // Index 1 — Roboto-Medium for section headers (PushFont / PopFont)
+    mergeLucide(14.0f, 2.0f);
+
     io.Fonts->AddFontFromFileTTF("./resources/fonts/Roboto/Roboto-Medium.ttf", 15.0f);
-    // Index 2 — Roboto-Bold for emphasis
+    mergeLucide(14.0f, 2.0f);
+
     io.Fonts->AddFontFromFileTTF("./resources/fonts/Roboto/Roboto-Bold.ttf", 15.0f);
-    // Index 3 — JetBrainsMono for code / numeric value fields
+    mergeLucide(14.0f, 2.0f);
+
     io.Fonts->AddFontFromFileTTF("./resources/fonts/JetBrainsMono-Regular.ttf", 14.0f);
 
     m_resourceStorage.loadNeededResources(imguiBackendRecreated);
@@ -2594,7 +2623,7 @@ void Editor::initStyle(bool imguiBackendRecreated)
                                           if (m_materialEditor)
                                               m_materialEditor->closeMaterialEditor(deletedPath);
 
-                                          // Clear material overrides on mesh components that reference the deleted asset
+
                                           if (!m_scene)
                                               return;
                                           for (const auto &entity : m_scene->getEntities())
@@ -2661,8 +2690,8 @@ void Editor::showDockSpace()
     if (m_isDockingWindowFullscreen)
     {
         ImGuiViewport *viewport = ImGui::GetMainViewport();
-        // This dockspace owns the custom title bar / toolbar chrome itself, so it must
-        // match the full main viewport instead of a reduced work area.
+
+
         ImGui::SetNextWindowPos(viewport->Pos);
         ImGui::SetNextWindowSize(viewport->Size);
         ImGui::SetNextWindowViewport(viewport->ID);
@@ -2877,20 +2906,48 @@ void Editor::drawCustomTitleBar()
 
     const ImVec2 logoSize = ImVec2(50.0f, 30.0f);
     const float buttonSize = ImGui::GetFrameHeight();
-    const float logoY = std::max(0.0f, (ImGui::GetWindowHeight() - logoSize.y) * 0.5f);
     const float controlsY = std::max(0.0f, (ImGui::GetWindowHeight() - buttonSize) * 0.5f);
 
     const float leftStartX = style.WindowPadding.x;
     const float menuStartX = leftStartX + logoSize.x + 10.0f;
 
-    //!!!Imgui decsriptor sets broken for now...
-    // const VkDescriptorSet logoDescriptorSet = m_resourceStorage.getTextureDescriptorSet("./resources/textures/VelixFire.tex.elixasset");
 
-    // ImGui::SetCursorPos(ImVec2(leftStartX, logoY));
-    // if (logoDescriptorSet != VK_NULL_HANDLE)
-    //     ImGui::Image(logoDescriptorSet, logoSize);
-    // else
-    //     ImGui::Dummy(logoSize);
+    {
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        const float logoMarkSize = 22.0f;
+        const float logoMarkY = std::max(0.0f, (ImGui::GetWindowHeight() - logoMarkSize) * 0.5f);
+        const ImVec2 logoPMin(ImGui::GetWindowPos().x + leftStartX + 4.0f, ImGui::GetWindowPos().y + logoMarkY);
+        const ImVec2 logoPMax(logoPMin.x + logoMarkSize, logoPMin.y + logoMarkSize);
+
+        const ImU32 accentHi = IM_COL32(255, 135, 120, 255);
+        const ImU32 accent   = IM_COL32(239, 103, 90,  255);
+        const ImU32 accentLo = IM_COL32(189,  66, 56,  255);
+
+
+        dl->AddRectFilled(logoPMin, logoPMax, accent, 5.0f);
+
+        dl->AddRectFilledMultiColor(
+            logoPMin,
+            ImVec2(logoPMax.x, logoPMin.y + logoMarkSize * 0.45f),
+            accentHi, accentHi, accent, accent);
+
+        dl->AddRectFilledMultiColor(
+            ImVec2(logoPMin.x, logoPMax.y - logoMarkSize * 0.35f),
+            logoPMax,
+            accent, accent, accentLo, accentLo);
+
+        dl->AddRect(logoPMin, logoPMax, IM_COL32(255, 200, 180, 60), 5.0f, 0, 1.5f);
+
+
+        ImFont *bold = io.Fonts->Fonts[2];
+        const float glyphSize = 14.0f;
+        const char *glyph = "V";
+        const ImVec2 ts = bold->CalcTextSizeA(glyphSize, FLT_MAX, 0.0f, glyph);
+        const ImVec2 gp(
+            logoPMin.x + (logoMarkSize - ts.x) * 0.5f,
+            logoPMin.y + (logoMarkSize - ts.y) * 0.5f - 1.0f);
+        dl->AddText(bold, glyphSize, gp, IM_COL32(24, 18, 12, 255), glyph);
+    }
 
     ImGui::SetCursorPos(ImVec2(menuStartX, controlsY));
 
@@ -2921,11 +2978,11 @@ void Editor::drawCustomTitleBar()
     ImGui::PopStyleColor(1);
     ImGui::PopStyleVar();
 
-    // ImGui::SetNextWindowPos(ImVec2(ImGui::GetItemRectMin().x, ImGui:s:GetItemRectMin().y + ImGui::GetItemRectSize().y));
+
 
     if (ImGui::BeginPopup("CreateNewClassPopup"))
     {
-        // ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+
 
         if (ImGui::Button("Create new C++ class"))
         {
@@ -2997,7 +3054,7 @@ void Editor::drawCustomTitleBar()
             if (ImGui::Button("Cancel"))
                 ImGui::CloseCurrentPopup();
 
-            // ImGui::PopStyleColor(1);
+
             ImGui::EndPopup();
         }
 
@@ -3100,7 +3157,7 @@ void Editor::drawCustomTitleBar()
 
         ImGui::EndPopup();
 
-        // ImGui::PopStyleColor(1);
+
     }
 
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y + ImGui::GetItemRectSize().y));
@@ -3120,7 +3177,7 @@ void Editor::drawCustomTitleBar()
 
         if (ImGui::BeginPopup("CreateNewScene"))
         {
-            // ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+
             static char sceneBuffer[256];
             ImGui::InputTextWithHint("##NewScene", "New scene name...", sceneBuffer, sizeof(sceneBuffer));
             ImGui::Separator();
@@ -3158,7 +3215,7 @@ void Editor::drawCustomTitleBar()
 
                     std::memset(sceneBuffer, 0, sizeof(sceneBuffer));
                     ImGui::CloseCurrentPopup();
-                    ImGui::CloseCurrentPopup(); // close FilePopup too
+                    ImGui::CloseCurrentPopup();
                 }
             }
 
@@ -3167,7 +3224,7 @@ void Editor::drawCustomTitleBar()
             if (ImGui::Button("Cancel"))
                 ImGui::CloseCurrentPopup();
 
-            // ImGui::PopStyleColor(1);
+
             ImGui::EndPopup();
         }
 
@@ -3187,7 +3244,7 @@ void Editor::drawCustomTitleBar()
 
         ImGui::Separator();
         if (ImGui::Button("Exit"))
-            window.close(); // Ha-ha-ha-ha Kill it slower dumbass
+            window.close();
         ImGui::PopStyleColor(1);
 
         ImGui::EndPopup();
@@ -3400,33 +3457,82 @@ void Editor::drawCustomTitleBar()
         if (ImGui::IsItemDeactivated())
             m_isNativeWindowDragActive = false;
 
+
         ImDrawList *drawList = ImGui::GetWindowDrawList();
-        const ImVec2 dragZoneMin = ImGui::GetItemRectMin();
-        const ImVec2 dragZoneMax = ImGui::GetItemRectMax();
-        const ImU32 dragZoneColor = ImGui::GetColorU32(dragZoneHovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
-        drawList->AddRectFilled(dragZoneMin, dragZoneMax, dragZoneColor, 4.0f);
+        const ImVec2 winPos = ImGui::GetWindowPos();
+        const float winWidth = ImGui::GetWindowWidth();
+        const float winHeight = ImGui::GetWindowHeight();
 
-        std::string windowLabel = "Velix";
+        std::string projectName = "Velix";
         if (auto project = m_currentProject.lock(); project && !project->name.empty())
-            windowLabel = project->name;
+            projectName = project->name;
 
-        const ImVec2 textSize = ImGui::CalcTextSize(windowLabel.c_str());
-        const ImVec2 textPos(
-            dragZoneMin.x + std::max(0.0f, (dragZoneWidth - textSize.x) * 0.5f),
-            dragZoneMin.y + std::max(0.0f, (buttonSize - textSize.y) * 0.5f));
-        drawList->AddText(textPos, ImGui::GetColorU32(ImGuiCol_TextDisabled), windowLabel.c_str());
+        std::string sceneName = "Untitled";
+        if (!m_currentScenePath.empty())
+            sceneName = m_currentScenePath.filename().string();
+
+        const bool dirty = hasUnsavedSceneChanges();
+        const char *sep = "  ·  ";
+
+        const ImU32 colFg        = ImGui::GetColorU32(ImGuiCol_Text);
+        const ImU32 colFgMute    = IM_COL32(168, 164, 161, 255);
+        const ImU32 colFgDim     = IM_COL32(114, 110, 107, 255);
+        const ImU32 colAccent    = IM_COL32(239, 103, 90,  255);
+        const ImU32 colPillBg    = IM_COL32(5,   3,   2,   255);
+        const ImU32 colPillLine  = IM_COL32(77,  72,  69,  180);
+
+        ImFont *font = io.Fonts->Fonts[0];
+        ImFont *mediumFont = io.Fonts->Fonts[1];
+        const float fontSize = ImGui::GetFontSize();
+
+        const ImVec2 projSize  = mediumFont->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, projectName.c_str());
+        const ImVec2 sepSize   = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, sep);
+        const ImVec2 sceneSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, sceneName.c_str());
+        const float dirtyW = dirty ? (sepSize.x + font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, "\xe2\x80\xa2").x) : 0.0f;
+
+        const float contentW = projSize.x + sepSize.x + sceneSize.x + dirtyW;
+        const float pillPadX = 12.0f;
+        const float pillPadY = 4.0f;
+        const float pillWidth = std::min(520.0f, std::max(320.0f, contentW + pillPadX * 2.0f));
+        const float pillHeight = fontSize + pillPadY * 2.0f;
+
+        const ImVec2 pillMin(winPos.x + (winWidth - pillWidth) * 0.5f, winPos.y + (winHeight - pillHeight) * 0.5f);
+        const ImVec2 pillMax(pillMin.x + pillWidth, pillMin.y + pillHeight);
+
+        drawList->AddRectFilled(pillMin, pillMax, colPillBg, 6.0f);
+        drawList->AddRect(pillMin, pillMax, colPillLine, 6.0f, 0, 1.0f);
+
+
+        float textX = pillMin.x + (pillWidth - contentW) * 0.5f;
+        const float textY = pillMin.y + pillPadY;
+
+        drawList->AddText(mediumFont, fontSize, ImVec2(textX, textY), colFg, projectName.c_str());
+        textX += projSize.x;
+        drawList->AddText(font, fontSize, ImVec2(textX, textY), colFgDim, sep);
+        textX += sepSize.x;
+        drawList->AddText(font, fontSize, ImVec2(textX, textY), colFgMute, sceneName.c_str());
+        textX += sceneSize.x;
+        if (dirty)
+        {
+            drawList->AddText(font, fontSize, ImVec2(textX, textY), colFgDim, sep);
+            textX += sepSize.x;
+            drawList->AddText(font, fontSize, ImVec2(textX, textY), colAccent, "\xe2\x80\xa2");
+        }
     }
 
     ImGui::SameLine(rightControlsStartX);
     ImGui::SetCursorPosY(controlsY);
 
-    if (ImGui::Button("_", ImVec2(buttonSize, buttonSize * 0.9f)))
+    const ImVec2 winBtnSize(buttonSize, buttonSize * 0.9f);
+
+    if (ImGui::Button(ICON_LC_Minus, winBtnSize))
         window.iconify();
 
     ImGui::SameLine();
     ImGui::SetCursorPosY(controlsY);
 
-    if (ImGui::Button("[]", ImVec2(buttonSize, buttonSize * 0.9f)))
+    const char *maxIcon = window.isMaximized() ? ICON_LC_Copy : ICON_LC_Square;
+    if (ImGui::Button(maxIcon, winBtnSize))
     {
         if (window.isMaximized())
             window.restore();
@@ -3439,8 +3545,12 @@ void Editor::drawCustomTitleBar()
     ImGui::SameLine();
     ImGui::SetCursorPosY(controlsY);
 
-    if (ImGui::Button("X", ImVec2(buttonSize, buttonSize * 0.9f)))
+
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.987f, 0.345f, 0.334f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.800f, 0.230f, 0.220f, 1.0f));
+    if (ImGui::Button(ICON_LC_X, winBtnSize))
         window.close();
+    ImGui::PopStyleColor(2);
 
     drawExportProjectDialog();
 
@@ -3619,7 +3729,7 @@ bool Editor::captureSceneSnapshot(std::string &outSnapshot)
 
     try
     {
-        m_scene->saveSceneToFile(tempScenePath.string());
+        m_scene->saveSceneToFile(tempScenePath.string(), true);
         success = readFileContents(tempScenePath, outSnapshot);
     }
     catch (const std::exception &exception)
@@ -3644,29 +3754,57 @@ void Editor::refreshSavedSceneSnapshot()
     std::string snapshot;
     if (captureSceneSnapshot(snapshot))
         m_savedSceneSnapshot = std::move(snapshot);
+    m_unsavedCheckCacheValid = false;
 }
 
 bool Editor::hasUnsavedSceneChanges()
 {
+    const auto now = std::chrono::steady_clock::now();
+    if (m_unsavedCheckCacheValid &&
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - m_unsavedCheckLastTime).count() < 500)
+    {
+        return m_unsavedCheckCachedResult;
+    }
+
     auto project = m_currentProject.lock();
+    bool result = false;
     if (!m_scene || !project)
-        return false;
+    {
+        result = false;
+    }
+    else
+    {
+        const std::filesystem::path scenePath = resolveCurrentScenePath();
+        if (scenePath.empty() || !std::filesystem::exists(scenePath))
+        {
+            result = true;
+        }
+        else
+        {
+            std::string currentSnapshot;
+            if (!captureSceneSnapshot(currentSnapshot))
+            {
+                result = true;
+            }
+            else
+            {
+                if (m_savedSceneSnapshot.empty())
+                {
+                    m_savedSceneSnapshot = currentSnapshot;
+                    result = false;
+                }
+                else
+                {
+                    result = (currentSnapshot != m_savedSceneSnapshot);
+                }
+            }
+        }
+    }
 
-    const std::filesystem::path scenePath = resolveCurrentScenePath();
-    if (scenePath.empty() || !std::filesystem::exists(scenePath))
-        return true;
-
-    std::string currentSnapshot;
-    if (!captureSceneSnapshot(currentSnapshot))
-        return true;
-
-    if (m_savedSceneSnapshot.empty())
-        refreshSavedSceneSnapshot();
-
-    if (m_savedSceneSnapshot.empty())
-        return true;
-
-    return currentSnapshot != m_savedSceneSnapshot;
+    m_unsavedCheckCachedResult = result;
+    m_unsavedCheckLastTime = now;
+    m_unsavedCheckCacheValid = true;
+    return result;
 }
 
 void Editor::buildCurrentProject()
@@ -3888,7 +4026,12 @@ bool Editor::exportCurrentProjectPacketForTarget(Project &project,
                                                  ExportPlatform targetPlatform,
                                                  std::vector<std::filesystem::path> &outExportDirectories)
 {
-    const std::filesystem::path projectRoot = resolveProjectRootPath(project);
+
+
+    std::string projectRootStr = resolveProjectRootPath(project).lexically_normal().string();
+    while (projectRootStr.size() > 1 && (projectRootStr.back() == '/' || projectRootStr.back() == '\\'))
+        projectRootStr.pop_back();
+    const std::filesystem::path projectRoot(projectRootStr);
     const std::filesystem::path entryScenePath = makeAbsoluteNormalized(project.entryScene);
     const ExportPlatform hostPlatform = getHostExportPlatform();
     const ExportPlatformSettings &platformSettings = exportSettingsForPlatform(project, targetPlatform);
@@ -4712,71 +4855,49 @@ void Editor::drawToolBar()
     ImGui::Begin("Toolbar", nullptr, windowFlags);
     ImGui::SetCursorPosY(std::max(0.0f, (ImGui::GetWindowHeight() - ImGui::GetFrameHeight()) * 0.5f));
 
-    // TODO make it better
-    const std::vector<std::string> selectionModes = {"Translate", "Rotate", "Scale"};
-    static int guizmoMode = 0;
 
-    switch (m_currentGuizmoOperation)
-    {
-    case GuizmoOperation::TRANSLATE:
-        guizmoMode = 0;
-        break;
-    case GuizmoOperation::ROTATE:
-        guizmoMode = 1;
-        break;
-    case GuizmoOperation::SCALE:
-        guizmoMode = 2;
-        break;
-    }
+    const ImVec4 accent   = ImVec4(0.936f, 0.405f, 0.353f, 1.000f);
+    const ImVec4 accentHi = ImVec4(1.000f, 0.531f, 0.471f, 1.000f);
+    const ImVec4 accentDim18 = ImVec4(accent.x, accent.y, accent.z, 0.18f);
+    const ImVec4 accentDim28 = ImVec4(accent.x, accent.y, accent.z, 0.28f);
 
-    ImGui::PushItemWidth(120.0f);
-    if (ImGui::BeginCombo("##Selection mode", selectionModes[guizmoMode].c_str()))
-    {
-        for (int i = 0; i < selectionModes.size(); ++i)
+    auto toolBtn = [&](const char *icon, const char *tip, GuizmoOperation op) {
+        const bool active = m_currentGuizmoOperation == op;
+        if (active)
         {
-            const bool isSelected = (guizmoMode == i);
-
-            if (ImGui::Selectable(selectionModes[i].c_str(), isSelected))
-            {
-                guizmoMode = i;
-
-                if (guizmoMode == 0)
-                    m_currentGuizmoOperation = GuizmoOperation::TRANSLATE;
-                else if (guizmoMode == 1)
-                    m_currentGuizmoOperation = GuizmoOperation::ROTATE;
-                else if (guizmoMode == 2)
-                    m_currentGuizmoOperation = GuizmoOperation::SCALE;
-            }
-            if (isSelected)
-                ImGui::SetItemDefaultFocus();
+            ImGui::PushStyleColor(ImGuiCol_Button,        accentDim18);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, accentDim28);
+            ImGui::PushStyleColor(ImGuiCol_Text,          accentHi);
         }
+        if (ImGui::Button(icon, ImVec2(28.0f, 0.0f)))
+            m_currentGuizmoOperation = op;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", tip);
+        if (active)
+            ImGui::PopStyleColor(3);
+    };
 
-        ImGui::EndCombo();
-    }
-    ImGui::PopItemWidth();
-
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1.0f, 0.0f));
+    toolBtn(ICON_LC_Move3D,   "Translate (W)", GuizmoOperation::TRANSLATE);
     ImGui::SameLine();
+    toolBtn(ICON_LC_Rotate3D, "Rotate (E)",    GuizmoOperation::ROTATE);
+    ImGui::SameLine();
+    toolBtn(ICON_LC_Scale3D,  "Scale (R)",     GuizmoOperation::SCALE);
+    ImGui::PopStyleVar();
+
+    ImGui::SameLine(0.0f, 12.0f);
 
     const bool isPlaying = m_currentMode == EditorMode::PLAY;
     const bool isPaused = m_currentMode == EditorMode::PAUSE;
     const bool isEditing = m_currentMode == EditorMode::EDIT;
 
-    // Play / Pause button — green when in edit/pause, yellow when playing
-    if (isPlaying)
-    {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.55f, 0.00f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.68f, 0.00f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.60f, 0.45f, 0.00f, 1.00f));
-    }
-    else
-    {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.20f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.68f, 0.25f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.42f, 0.15f, 1.00f));
-    }
 
-    const char *playText = isPlaying ? "Pause" : "Play";
-    if (ImGui::Button(playText))
+    ImGui::PushStyleColor(ImGuiCol_Button,        accent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, accentHi);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.741f, 0.259f, 0.221f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.094f, 0.071f, 0.047f, 1.0f));
+    const char *playIcon = isPlaying ? ICON_LC_Pause : ICON_LC_Play;
+    if (ImGui::Button(playIcon, ImVec2(32.0f, 0.0f)))
     {
         if (isEditing || isPaused)
         {
@@ -4795,48 +4916,48 @@ void Editor::drawToolBar()
             changeMode(EditorMode::PAUSE);
         }
     }
-    ImGui::PopStyleColor(3);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", isPlaying ? "Pause" : "Play");
+    ImGui::PopStyleColor(4);
 
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, 2.0f);
 
-    // Stop button — only colored red when not already in edit mode
+
     if (!isEditing)
     {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.12f, 0.10f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.15f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.48f, 0.08f, 0.07f, 1.00f));
     }
-    if (ImGui::Button("Stop"))
+    if (ImGui::Button(ICON_LC_Square, ImVec2(28.0f, 0.0f)))
         changeMode(EditorMode::EDIT);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Stop");
     if (!isEditing)
         ImGui::PopStyleColor(3);
 
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, 12.0f);
 
-    if (ImGui::Button("Render Settings"))
+    if (ImGui::Button(ICON_LC_Sparkles " Render"))
         m_showRenderSettings = !m_showRenderSettings;
 
     ImGui::SameLine();
-
-    if (ImGui::Button("Environment"))
+    if (ImGui::Button(ICON_LC_Sun " Environment"))
         m_showEnvironmentSettings = !m_showEnvironmentSettings;
 
     ImGui::SameLine();
-
-    if (ImGui::Button("Camera Settings"))
+    if (ImGui::Button(ICON_LC_Camera " Camera"))
         m_showEditorCameraSettings = !m_showEditorCameraSettings;
 
     ImGui::SameLine();
-
-    if (ImGui::Button("Benchmark"))
+    if (ImGui::Button(ICON_LC_BarChart2 " Benchmark"))
         m_showBenchmark = !m_showBenchmark;
 
     ImGui::SameLine();
-
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.45f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.25f, 0.25f, 0.45f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.60f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.18f, 0.35f, 1.00f));
-    if (ImGui::Button("Dev Tools"))
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.18f, 0.18f, 0.35f, 1.00f));
+    if (ImGui::Button(ICON_LC_Wrench " Dev Tools"))
         m_showDevTools = !m_showDevTools;
     ImGui::PopStyleColor(3);
 
@@ -4869,6 +4990,40 @@ void Editor::drawRenderSettings()
 
     ImGui::DragFloat("Render Scale", &settings.renderScale, 0.01f, 0.25f, 2.0f, "%.2f");
     ImGui::SetItemTooltip("1.0 = native resolution. Values below 1 reduce quality but improve performance.");
+
+    ImGui::SeparatorText("Upscaler");
+    {
+        using UpscalerMode = engine::RenderQualitySettings::UpscalerMode;
+        using UpscaleQuality = engine::RenderQualitySettings::UpscaleQuality;
+
+        const char *modeLabels[] = {"None", "FSR 1 (spatial)", "FSR 2 (temporal, not yet impl.)", "FSR 3 (temporal+FG, not yet impl.)"};
+        int modeIndex = static_cast<int>(settings.upscalerMode);
+        if (ImGui::Combo("Upscaler", &modeIndex, modeLabels, IM_ARRAYSIZE(modeLabels)))
+        {
+
+            auto selected = static_cast<UpscalerMode>(modeIndex);
+            if (selected == UpscalerMode::FSR2 || selected == UpscalerMode::FSR3)
+                selected = UpscalerMode::None;
+            settings.upscalerMode = selected;
+        }
+        ImGui::SetItemTooltip("Upscales the rendered image from a lower internal resolution to the viewport size.\n"
+                              "FSR 1 is a spatial upscaler (edge-aware sharpening).\n"
+                              "FSR 2/3 require motion vectors + FFX SDK (not yet implemented).");
+
+        const bool upscalerActive = settings.upscalerMode != UpscalerMode::None;
+        ImGui::BeginDisabled(!upscalerActive);
+
+        const char *qualityLabels[] = {"Native (1.0x)", "Ultra Quality (1.3x)", "Quality (1.5x)", "Balanced (1.7x)", "Performance (2.0x)", "Ultra Performance (3.0x)"};
+        int qualityIndex = static_cast<int>(settings.upscaleQuality);
+        if (ImGui::Combo("Upscale Quality", &qualityIndex, qualityLabels, IM_ARRAYSIZE(qualityLabels)))
+            settings.upscaleQuality = static_cast<UpscaleQuality>(qualityIndex);
+        ImGui::SetItemTooltip("Ratio of display resolution to internal render resolution. Higher = faster, lower quality.");
+
+        ImGui::DragFloat("FSR Sharpness", &settings.fsrSharpness, 0.01f, 0.0f, 2.0f, "%.2f");
+        ImGui::SetItemTooltip("RCAS sharpening. 0 = max sharp, 2 = no sharpening. Default 0.2.");
+
+        ImGui::EndDisabled();
+    }
 
     ImGui::DragFloat("Texture Mip Bias", &settings.textureMipBias, 0.05f, -4.0f, 0.0f, "%.2f");
     ImGui::SetItemTooltip("Negative = sharper textures at distance (higher-res mips, more bandwidth).\nPositive = blurrier (lower-res mips, less bandwidth).\nRange: [-4, 0]. Default: -1.5.");
@@ -5101,6 +5256,17 @@ void Editor::drawRenderSettings()
         ImGui::DragFloat("Strength##ssr", &settings.ssrStrength, 0.01f, 0.0f, 1.0f, "%.2f");
         ImGui::DragFloat("Roughness Cutoff##ssr", &settings.ssrRoughnessCutoff, 0.01f, 0.05f, 0.8f, "%.2f");
         ImGui::DragInt("Steps##ssr", &settings.ssrSteps, 1, 8, 256);
+        ImGui::Unindent();
+    }
+
+    ImGui::SeparatorText("Screen Space Global Illumination");
+    ImGui::Checkbox("SSGI##toggle", &settings.enableSSGI);
+    if (settings.enableSSGI)
+    {
+        ImGui::Indent();
+        ImGui::DragFloat("Radius##ssgi", &settings.ssgiRadius, 0.1f, 0.5f, 10.0f, "%.1f");
+        ImGui::DragFloat("Strength##ssgi", &settings.ssgiStrength, 0.01f, 0.0f, 3.0f, "%.2f");
+        ImGui::DragInt("Samples##ssgi", &settings.ssgiSamples, 1, 2, 16);
         ImGui::Unindent();
     }
 
@@ -5537,7 +5703,7 @@ void Editor::drawBottomPanel()
 
     ImGui::SameLine();
 
-    // Plugin toolbar buttons.
+
     for (auto *ep : editor::EditorPluginRegistry::instance().getPlugins())
     {
         if (const char *label = ep->getToolbarButtonLabel())
@@ -5907,7 +6073,7 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
     if (m_showLightmapBakingPanel)
         m_lightmapBakingPanel.draw(&m_showLightmapBakingPanel);
 
-    // Dispatch per-frame callback to all registered editor plugins.
+
     {
         sdk::EditorContext ctx;
         ctx.scene            = m_scene.get();
@@ -5915,7 +6081,7 @@ void Editor::drawFrame(VkDescriptorSet viewportDescriptorSet,
         ctx.selectedEntity   = m_selectedEntity;
         ctx.editorCamera     = m_editorCamera.get();
         ctx.deltaTime        = ImGui::GetIO().DeltaTime;
-        // Forward brush stroke data collected in drawViewport() this frame.
+
         ctx.brushStrokeActive = m_pendingBrushInput.active;
         ctx.brushStrokeStart  = m_pendingBrushInput.strokeStart;
         ctx.brushNdcPosition  = m_pendingBrushInput.ndcPosition;
@@ -5962,8 +6128,8 @@ void Editor::updateAnimationPreview(float deltaTime)
         if (!animatorComponent)
             continue;
 
-        // Keep edit-mode preview for direct clip playback, but don't advance
-        // scene animation trees until the editor enters Play mode.
+
+
         if (animatorComponent->hasTree())
             continue;
 
@@ -6138,7 +6304,7 @@ void Editor::drawDocument()
     if (!keepOpen && isDirty)
     {
         m_documentConfirmCloseRequested = true;
-        // keep the window alive until user decides
+
     }
     else if (!keepOpen)
     {
@@ -6208,10 +6374,10 @@ void Editor::openTextDocument(const std::filesystem::path &path)
 
     m_openDocumentPath = path;
     m_textEditor.SetText(stream.str());
-    // Read back after SetText so m_openDocumentSavedText matches the editor's normalised
-    // representation (e.g. trailing newline added by the editor). Without this, GetText()
-    // returns a slightly different string from the raw file bytes and isDirty is true
-    // immediately on open even though nothing was changed.
+
+
+
+
     m_openDocumentSavedText = m_textEditor.GetText();
     setDocumentLanguageFromPath(path);
     m_showDocumentWindow = true;
@@ -6536,19 +6702,18 @@ void Editor::handleInput()
     if (ImGui::IsKeyPressed(ImGuiKey_Escape) && ImGui::GetIO().KeyShift && m_currentMode != EditorMode::EDIT)
         changeMode(EditorMode::EDIT);
 
-    if (ImGui::IsKeyPressed(ImGuiKey_W))
-    {
-        m_currentGuizmoOperation = GuizmoOperation::TRANSLATE;
-    }
 
-    if (ImGui::IsKeyPressed(ImGuiKey_E))
-    {
-        m_currentGuizmoOperation = GuizmoOperation::ROTATE;
-    }
 
-    if (ImGui::IsKeyPressed(ImGuiKey_R))
+
+    const bool guizmoShortcutsAllowed = !m_isViewportMouseCaptured && !ImGui::GetIO().WantTextInput;
+    if (guizmoShortcutsAllowed)
     {
-        m_currentGuizmoOperation = GuizmoOperation::SCALE;
+        if (ImGui::IsKeyPressed(ImGuiKey_W))
+            m_currentGuizmoOperation = GuizmoOperation::TRANSLATE;
+        if (ImGui::IsKeyPressed(ImGuiKey_E))
+            m_currentGuizmoOperation = GuizmoOperation::ROTATE;
+        if (ImGui::IsKeyPressed(ImGuiKey_R))
+            m_currentGuizmoOperation = GuizmoOperation::SCALE;
     }
 }
 
@@ -7198,18 +7363,8 @@ engine::Material::SharedPtr Editor::ensureMaterialLoaded(const std::string &mate
             if (!material)
                 return;
 
-            if (!cpuMaterial.customShaderHash.empty())
-            {
-                const std::string customShaderPath = "./resources/shaders/material_cache/" + cpuMaterial.customShaderHash + ".spv";
-                std::error_code existsError;
-                if (std::filesystem::exists(customShaderPath, existsError) && !existsError)
-                {
-                    material->setCustomFragPath(customShaderPath);
-                    return;
-                }
-            }
-
-            material->setCustomFragPath("");
+            const std::string customFragPath = engine::SceneMaterialResolver::ensureCustomMaterialShaderPath(cpuMaterial);
+            material->setCustomFragPath(customFragPath);
         };
 
         if (!record.gpu)
@@ -7852,8 +8007,8 @@ bool Editor::spawnEntityFromModelAsset(const std::string &assetPath)
 
     auto entity = m_scene->addEntity(entityName);
     std::vector<engine::CPUMesh> spawnedMeshes = model->meshes;
-    // Imported mesh materials are kept in the asset for export workflows, but
-    // editor-spawned entities start without bound materials until explicitly applied.
+
+
     for (auto &mesh : spawnedMeshes)
         mesh.material = {};
 
@@ -8295,7 +8450,7 @@ bool Editor::trySelectEditorBillboardAtViewportPosition(const ImVec2 &pixelPos, 
     const glm::mat4 projection = m_editorCamera->getProjectionMatrix();
     const glm::vec3 right = glm::vec3(view[0][0], view[1][0], view[2][0]);
     const glm::vec3 up = glm::vec3(view[0][1], view[1][1], view[2][1]);
-    constexpr float kEditorBillboardWorldSize = 0.4f; // Keep in sync with EditorBillboardRenderGraphPass.
+    constexpr float kEditorBillboardWorldSize = 0.4f;
     const float halfSize = kEditorBillboardWorldSize * 0.5f;
 
     engine::Entity *bestEntity = nullptr;
@@ -8486,7 +8641,7 @@ void Editor::drawBenchmark()
     }
     ImGui::SetItemTooltip("OFF: minimal benchmark (FPS + frame time). ON: full render-graph CPU/GPU timings.");
 
-    // --- Summary (always shown when profiling is enabled) ---
+
     ImGui::Separator();
     ImGui::Text("VRAM: %ld MB   RAM: %ld MB", core::VulkanContext::getContext()->getDevice()->getTotalAllocatedVRAM(),
                 core::VulkanContext::getContext()->getDevice()->getTotalUsedRAM());
@@ -9200,34 +9355,40 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
 
     if (ImGui::BeginPopup("ViewportContextMenu"))
     {
-        ImGui::TextUnformatted("Create");
+
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(114, 110, 107, 255));
+        ImGui::TextUnformatted("CREATE");
+        ImGui::PopStyleColor();
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Cube"))
+        if (ImGui::MenuItem(ICON_LC_Box "  Cube"))
         {
             addPrimitiveEntity("Cube");
             ImGui::CloseCurrentPopup();
         }
 
-        if (ImGui::MenuItem("Sphere"))
+        if (ImGui::MenuItem(ICON_LC_Circle "  Sphere"))
         {
             addPrimitiveEntity("Sphere");
             ImGui::CloseCurrentPopup();
         }
 
-        if (ImGui::MenuItem("Default Character"))
+        if (ImGui::MenuItem(ICON_LC_User "  Default Character"))
         {
             addDefaultCharacterEntity("Character");
             ImGui::CloseCurrentPopup();
         }
 
         ImGui::Separator();
-        ImGui::TextUnformatted("Environment");
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(114, 110, 107, 255));
+        ImGui::TextUnformatted("ENVIRONMENT");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
 
         if (m_scene && m_scene->hasSkyboxHDR())
         {
-            ImGui::TextWrapped("Skybox: %s", m_scene->getSkyboxHDRPath().c_str());
-            if (ImGui::MenuItem("Clear Skybox HDR"))
+            ImGui::TextWrapped(ICON_LC_Sun "  Skybox: %s", m_scene->getSkyboxHDRPath().c_str());
+            if (ImGui::MenuItem(ICON_LC_X "  Clear Skybox HDR"))
             {
                 m_scene->clearSkyboxHDR();
                 m_notificationManager.showInfo("Cleared scene skybox HDR");
@@ -9236,7 +9397,7 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
             }
         }
         else
-            ImGui::TextDisabled("Skybox: <None>");
+            ImGui::TextDisabled(ICON_LC_Sun "  Skybox: <None>");
 
         ImGui::EndPopup();
     }
@@ -9264,12 +9425,12 @@ void Editor::drawViewport(VkDescriptorSet viewportDescriptorSet)
     const bool viewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     ImGuiIO &io = ImGui::GetIO();
 
-    // Brush stroke protocol: collect input for plugins that set wantsBrushInput.
-    // We check whether any plugin wanted brush input last frame (already set in ctx.wantsBrushInput
-    // by the plugin during the previous dispatchFrame). To avoid a one-frame delay we check the
-    // registry directly — any plugin currently alive that returns wantsBrushInput = true will have
-    // set the flag on the previous context. We use a simple heuristic: collect whenever any
-    // IEditorPlugin is registered and the conditions match; the plugin decides whether to consume.
+
+
+
+
+
+
     bool terrainBrushConsumed = false;
     const bool anyPluginWantsBrush = editor::EditorPluginRegistry::instance().anyPluginWantsBrush();
     const bool canUseBrush = anyPluginWantsBrush &&

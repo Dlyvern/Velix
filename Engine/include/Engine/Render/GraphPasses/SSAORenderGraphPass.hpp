@@ -15,8 +15,8 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-/// Screen-Space Ambient Occlusion pass.
-/// Reads GBuffer depth + normals and outputs scalar AO in a single-channel target.
+
+
 class SSAORenderGraphPass : public IRenderGraphPass
 {
 public:
@@ -36,7 +36,7 @@ public:
     void setup(renderGraph::RGPResourcesBuilder &builder) override;
     void freeResources() override;
 
-    /// Returns per-image AO output handlers so the Lighting pass can read them.
+
     std::vector<RGPResourceHandler> &getAOHandlers() { return m_outputHandlers; }
 
     struct Outputs
@@ -59,7 +59,7 @@ private:
     std::vector<VkDescriptorSet> m_descriptorSets;
     bool m_descriptorSetsInitialized{false};
 
-    // Kernel + noise UBO
+
     core::Buffer::SharedPtr m_kernelBuffer{nullptr};
     void *m_kernelMapped{nullptr};
 
@@ -74,4 +74,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SSAO_RENDER_GRAPH_PASS_HPP
+#endif

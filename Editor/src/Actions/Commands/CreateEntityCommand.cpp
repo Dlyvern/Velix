@@ -65,5 +65,5 @@ namespace actions
     {
         return m_rootEntityId;
     }
-} // namespace actions
+}
 ELIX_NESTED_NAMESPACE_END

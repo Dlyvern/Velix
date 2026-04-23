@@ -20,7 +20,7 @@ public:
     struct LoadJob
     {
         std::string path;
-        std::function<void()> execute; // deserializes and resolves the handle
+        std::function<void()> execute;
     };
 
     AssetStreamingWorker();
@@ -29,10 +29,10 @@ public:
     AssetStreamingWorker(const AssetStreamingWorker &) = delete;
     AssetStreamingWorker &operator=(const AssetStreamingWorker &) = delete;
 
-    // Post a job. Thread-safe. Returns immediately.
+
     void enqueue(LoadJob job);
 
-    // Number of jobs currently queued or executing.
+
     uint32_t pendingCount() const;
 
     void shutdown();
@@ -50,4 +50,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ASSET_STREAMING_WORKER_HPP
+#endif

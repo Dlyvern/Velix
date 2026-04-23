@@ -9,7 +9,7 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
-    // UV is [0,1] over the quad.  borderWidth is in UV units.
+
     float bw = vBorderWidth;
     bool  border = (vUV.x < bw || vUV.x > 1.0 - bw ||
                     vUV.y < bw || vUV.y > 1.0 - bw);

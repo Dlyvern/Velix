@@ -22,7 +22,7 @@ namespace
         float padding0;
         glm::vec4 outlineColor;
     };
-} // namespace
+}
 
 SelectionOverlayRenderGraphPass::SelectionOverlayRenderGraphPass(std::shared_ptr<Editor> editor,
                                                                  std::vector<engine::renderGraph::RGPResourceHandler> &sceneColorHandlers,

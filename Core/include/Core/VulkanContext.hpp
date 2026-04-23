@@ -145,8 +145,8 @@ private:
 
     struct RayTracingSupport
     {
-        bool rayTracingPipeline{false}; // full RT pipelines
-        bool rayQuery{false};           // inline ray queries in shaders
+        bool rayTracingPipeline{false};
+        bool rayQuery{false};
     };
 
     enum class RayTracingMode : uint8_t
@@ -179,4 +179,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // VULKAN_CONTEXT_HPP
+#endif

@@ -13,8 +13,8 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(ui)
 
-/// Screen-space button game object with an optional text label.
-/// Position/size are in NDC space: (-1,-1) = bottom-left, (1,1) = top-right.
+
+
 class UIButton
 {
 public:
@@ -87,4 +87,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_UI_BUTTON_HPP
+#endif

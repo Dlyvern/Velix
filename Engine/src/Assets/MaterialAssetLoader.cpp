@@ -47,7 +47,7 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
     {
         material.albedoTexture = json["texture_path"];
 
-        // material.name = std::filesystem::path(material.albedoTexture).filename();
+
     }
 
     if (json.contains("normal_texture") && json["normal_texture"].is_string())
@@ -250,7 +250,7 @@ std::shared_ptr<IAsset> MaterialAssetLoader::load(const std::string &filePath)
         engine::Material::MaterialFlags::EMATERIAL_FLAG_CLAMP_UV;
     material.flags &= supportedFlags;
 
-    // Keep non-ORM materials dielectric unless author explicitly set values.
+
     if (material.ormTexture.empty() && !hasMetallic)
         material.metallicFactor = 0.0f;
     if (material.ormTexture.empty() && !hasRoughness)

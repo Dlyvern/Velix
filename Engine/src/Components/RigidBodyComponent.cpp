@@ -42,7 +42,7 @@ void RigidBodyComponent::setPosition(const glm::vec3 &vec)
 void RigidBodyComponent::setPosition(const physx::PxVec3 &vec)
 {
     physx::PxTransform transform = m_rigidActor->getGlobalPose();
-    // transform.p = physx::PxVec3(position.x, position.y, position.z);
+
     transform.p = vec;
 
     m_rigidActor->setGlobalPose(transform);

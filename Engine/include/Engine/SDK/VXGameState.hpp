@@ -181,4 +181,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_VX_GAME_STATE_HPP
+#endif

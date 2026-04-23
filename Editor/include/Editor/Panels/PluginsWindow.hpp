@@ -18,7 +18,7 @@ public:
     void draw(bool *open);
 
 private:
-    // ── Installed tab ─────────────────────────────────────────────────────────
+
     struct PluginDisplayEntry
     {
         std::string name;
@@ -31,10 +31,10 @@ private:
     std::vector<PluginDisplayEntry> m_entries;
     bool m_restartNeeded{false};
 
-    // ── Marketplace tab ───────────────────────────────────────────────────────
+
     PluginDownloader m_downloader;
 
-    // Stems of plugins whose .so is already present in the plugins directory
+
     std::unordered_set<std::string> m_installedStems;
 
     void refreshInstalledStems();
@@ -43,4 +43,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PLUGINS_WINDOW_HPP
+#endif

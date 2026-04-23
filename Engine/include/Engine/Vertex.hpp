@@ -15,16 +15,16 @@
 #include "glm/glm.hpp"
 #include <glm/gtx/hash.hpp>
 
-//*Formats
-// float: VK_FORMAT_R32_SFLOAT
-// vec2: VK_FORMAT_R32G32_SFLOAT
-// vec3: VK_FORMAT_R32G32B32_SFLOAT
-// vec4: VK_FORMAT_R32G32B32A32_SFLOAT
-// ivec2: VK_FORMAT_R32G32_SINT, a 2-component vector of 32-bit signed
-// integers
-// uvec4: VK_FORMAT_R32G32B32A32_UINT, a 4-component vector of 32-bit
-// unsigned integers
-// double: VK_FORMAT_R64_SFLOAT, a double-precision (64-bit) float
+
+
+
+
+
+
+
+
+
+
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -394,4 +394,4 @@ namespace std
         }
     };
 }
-#endif // VERTEX_HPP
+#endif

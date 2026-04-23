@@ -86,10 +86,10 @@ private:
         };
 
         bool openTexturePopup = false;
-        std::string texturePopupSlot; // "Albedo", "Normal", "ORM", "Emissive"
+        std::string texturePopupSlot;
         char textureFilter[128] = "";
         bool openColorPopup = false;
-        int colorPopupSlot = 0; // 0-none, 1-baseColor, 2-emissive
+        int colorPopupSlot = 0;
 
         bool nodeEditorInitialized = false;
         ax::NodeEditor::EditorContext *nodeEditorContext = nullptr;
@@ -167,4 +167,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_MATERIAL_EDITOR_HPP
+#endif

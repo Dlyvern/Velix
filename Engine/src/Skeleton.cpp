@@ -33,7 +33,7 @@ Skeleton::Skeleton()
 
 unsigned int Skeleton::addBone(const BoneInfo &bone)
 {
-    // If bone already exist
+
     if (auto it = m_boneMap.find(bone.name); it != m_boneMap.end())
         return it->second;
 

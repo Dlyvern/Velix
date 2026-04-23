@@ -23,12 +23,12 @@ glm::vec3 SpawnModule::samplePosition(const glm::vec3 &emitterWorldPos) const
 
     case EmitterShape::Sphere:
     {
-        // Uniform sphere / shell sampling
+
         const float u = dist01(m_rng);
         const float v = dist01(m_rng);
         const float phi = distAngle(m_rng);
         const float theta = std::acos(1.0f - 2.0f * u);
-        const float r = shape.surfaceOnly ? 1.0f : std::cbrt(v); // cube-root for volume
+        const float r = shape.surfaceOnly ? 1.0f : std::cbrt(v);
         return emitterWorldPos + shape.radius * r * glm::vec3(std::sin(theta) * std::cos(phi), std::cos(theta), std::sin(theta) * std::sin(phi));
     }
 
@@ -43,7 +43,7 @@ glm::vec3 SpawnModule::samplePosition(const glm::vec3 &emitterWorldPos) const
     case EmitterShape::Cone:
     {
         const float angleRad = glm::radians(shape.angle);
-        const float t = dist01(m_rng); // along height
+        const float t = dist01(m_rng);
         const float rAtT = t * shape.height * std::tan(angleRad);
         const float phi = distAngle(m_rng);
         const float r2 = shape.surfaceOnly ? rAtT : rAtT * std::sqrt(dist01(m_rng));
@@ -70,7 +70,7 @@ glm::vec3 SpawnModule::samplePosition(const glm::vec3 &emitterWorldPos) const
 
 glm::vec3 SpawnModule::sampleDirection() const
 {
-    // Cone-shaped direction spread (useful when InitialVelocityModule is absent)
+
     std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
     std::uniform_real_distribution<float> distAngle(0.0f, glm::two_pi<float>());
 

@@ -22,8 +22,8 @@ public:
     void setHDRPath(const std::string &path, VkDescriptorPool descriptorPool);
     void reload(VkDescriptorPool descriptorPool);
 
-    /// Stores the result of a scene capture (from RenderGraph::captureSceneProbe).
-    /// Takes ownership of the image and sampler; caller provides the cube VkImageView.
+
+
     void setCapturedCubemap(std::shared_ptr<core::Image> image,
                             VkImageView                  cubeView,
                             std::shared_ptr<core::Sampler> sampler);
@@ -42,7 +42,7 @@ private:
 
     std::unique_ptr<Skybox> m_skybox;
 
-    // Scene-captured cubemap (set by captureSceneProbe)
+
     std::shared_ptr<core::Image>   m_capturedImage;
     VkImageView                    m_capturedImageView{VK_NULL_HANDLE};
     std::shared_ptr<core::Sampler> m_capturedSampler;
@@ -50,4 +50,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_REFLECTION_PROBE_COMPONENT_HPP
+#endif

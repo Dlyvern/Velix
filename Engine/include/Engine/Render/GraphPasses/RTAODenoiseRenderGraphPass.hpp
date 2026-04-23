@@ -43,8 +43,8 @@ private:
     struct RTAODenoisePC
     {
         glm::mat4 invProjection{1.0f};
-        glm::vec4 params0{0.0f}; // x=texelSize.x, y=texelSize.y, z=enabled, w=normalSigma
-        glm::vec4 params1{0.0f}; // x=depthSigma
+        glm::vec4 params0{0.0f};
+        glm::vec4 params1{0.0f};
     };
 
     bool shouldDenoise() const;
@@ -77,4 +77,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RTAO_DENOISE_RENDER_GRAPH_PASS_HPP
+#endif

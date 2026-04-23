@@ -14,7 +14,7 @@ struct BundleFileHeader
 {
     char magic[4];
     uint32_t version;
-    uint32_t flags; // bit 0 = encrypted, bit 1 = default-compressed
+    uint32_t flags;
     uint32_t entryCount;
     uint64_t tocOffset;
     uint64_t tocSize;
@@ -33,7 +33,7 @@ struct BundleDiskChunk
 static_assert(sizeof(BundleDiskChunk) == 16);
 #pragma pack(pop)
 
-// ---- Helpers ----
+
 
 static void writeU32(std::ostream &os, uint32_t v)
 {
@@ -86,7 +86,7 @@ void ElixBundleWriter::addFile(std::string_view path, std::vector<uint8_t> data,
 
 bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyId) const
 {
-    // Two-pass: first collect all chunk data, then write header + TOC + chunks.
+
     const uint32_t chunkSize = BUNDLE_DEFAULT_CHUNK_SIZE;
 
     struct StagedEntry
@@ -94,7 +94,7 @@ bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyI
         std::string path;
         uint64_t uncompressedSize{0};
         uint8_t flags{0};
-        std::vector<std::vector<uint8_t>> chunks; // compressed/encrypted payloads
+        std::vector<std::vector<uint8_t>> chunks;
         std::vector<uint32_t> originalSizes;
     };
 
@@ -125,7 +125,7 @@ bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyI
                 {
                     e.originalSizes.push_back(static_cast<uint32_t>(raw.size()));
                     e.chunks.push_back(std::move(compressed));
-                    e.flags |= 0x01; // compressed
+                    e.flags |= 0x01;
                 }
                 else
                 {
@@ -151,7 +151,7 @@ bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyI
     if (!out)
         return false;
 
-    // Reserve header space (filled in later).
+
     BundleFileHeader hdr{};
     std::memcpy(hdr.magic, BUNDLE_MAGIC.data(), 4);
     hdr.version = BUNDLE_VERSION;
@@ -161,15 +161,15 @@ bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyI
     hdr.chunkSize = chunkSize;
     out.write(reinterpret_cast<const char *>(&hdr), sizeof(hdr));
 
-    // ---- TOC ----
-    // Layout: [per-entry metadata] [string pool] [chunk index]
-    // We build the TOC in a buffer so we can calculate its size before placing chunks.
+
+
+
 
     std::ostringstream tocBuf;
 
-    // Per-entry metadata (fixed-size fields only, paths via string pool)
-    // We'll write string pool separately; store path offsets after we know them.
-    // Simpler: write TOC as: for each entry: pathLen(u32) + path + dataOffset(u64) + uncompressedSize(u64) + storedSize(u64) + chunkCount(u32) + firstChunkIndex(u32) + flags(u8) + pad(3)
+
+
+
 
     uint32_t totalChunks = 0;
     for (const auto &e : staged)
@@ -178,26 +178,26 @@ bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyI
     for (const auto &e : staged)
     {
         writeStr(tocBuf, e.path);
-        writeU64(tocBuf, 0ull); // dataOffset — placeholder, filled below
+        writeU64(tocBuf, 0ull);
         writeU64(tocBuf, e.uncompressedSize);
         uint64_t storedSize = 0;
         for (const auto &ch : e.chunks)
             storedSize += ch.size();
         writeU64(tocBuf, storedSize);
         writeU32(tocBuf, static_cast<uint32_t>(e.chunks.size()));
-        writeU32(tocBuf, 0u); // firstChunkIndex — filled below
+        writeU32(tocBuf, 0u);
         tocBuf.put(static_cast<char>(e.flags));
         tocBuf.put(0);
         tocBuf.put(0);
-        tocBuf.put(0); // pad
+        tocBuf.put(0);
     }
 
-    // Chunk index entries
+
     for (const auto &e : staged)
     {
         for (size_t ci = 0; ci < e.chunks.size(); ++ci)
         {
-            writeU64(tocBuf, 0ull); // offset placeholder
+            writeU64(tocBuf, 0ull);
             writeU32(tocBuf, static_cast<uint32_t>(e.chunks[ci].size()));
             writeU32(tocBuf, e.originalSizes[ci]);
         }
@@ -208,7 +208,7 @@ bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyI
 
     const uint64_t dataStart = tocOffset + tocStr.size();
 
-    // Recompute TOC with correct offsets.
+
     std::ostringstream tocFinal;
     uint64_t currentOffset = dataStart;
     uint32_t chunkIndexBase = 0;
@@ -216,7 +216,7 @@ bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyI
     for (const auto &e : staged)
     {
         writeStr(tocFinal, e.path);
-        writeU64(tocFinal, currentOffset); // dataOffset
+        writeU64(tocFinal, currentOffset);
         writeU64(tocFinal, e.uncompressedSize);
         uint64_t storedSize = 0;
         for (const auto &ch : e.chunks)
@@ -234,7 +234,7 @@ bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyI
         chunkIndexBase += static_cast<uint32_t>(e.chunks.size());
     }
 
-    // Chunk index with real offsets
+
     currentOffset = dataStart;
     for (const auto &e : staged)
     {
@@ -249,16 +249,16 @@ bool ElixBundleWriter::write(const std::filesystem::path &outPath, uint32_t keyI
 
     const std::string finalToc = tocFinal.str();
 
-    // Patch header with correct TOC offset + size
+
     hdr.tocOffset = tocOffset;
     hdr.tocSize = static_cast<uint64_t>(finalToc.size());
     out.seekp(0);
     out.write(reinterpret_cast<const char *>(&hdr), sizeof(hdr));
 
-    // Write TOC
+
     out.write(finalToc.data(), static_cast<std::streamsize>(finalToc.size()));
 
-    // Write chunk data
+
     for (const auto &e : staged)
         for (const auto &ch : e.chunks)
             out.write(reinterpret_cast<const char *>(ch.data()), static_cast<std::streamsize>(ch.size()));
@@ -288,12 +288,12 @@ bool ElixBundleWriter::writeProject(const std::filesystem::path &projectRoot,
     if (ec)
         return setErr("Entry scene not found: " + entryScenePath.string());
 
-    // Compute relative entry scene path.
+
     const auto relScene = std::filesystem::relative(normScene, normRoot, ec);
     if (ec)
         return setErr("Entry scene is not inside project root.");
 
-    // Normalise excluded directories.
+
     std::vector<std::filesystem::path> excluded;
     for (const auto &d : options.excludedDirectories)
     {
@@ -305,11 +305,11 @@ bool ElixBundleWriter::writeProject(const std::filesystem::path &projectRoot,
             excluded.push_back(norm);
     }
 
-    // Add a tiny manifest entry so the runtime can find the entry scene without extraction.
+
     const std::string manifestContent = relScene.string();
     addFile("__manifest__", std::vector<uint8_t>(manifestContent.begin(), manifestContent.end()), false);
 
-    // Traverse project directory.
+
     std::filesystem::recursive_directory_iterator iter(normRoot,
                                                        std::filesystem::directory_options::skip_permission_denied, ec);
     if (ec)
@@ -335,7 +335,7 @@ bool ElixBundleWriter::writeProject(const std::filesystem::path &projectRoot,
         if (skip)
             continue;
 
-        // Read file bytes.
+
         std::ifstream f(abs, std::ios::binary);
         if (!f)
             continue;
@@ -375,7 +375,7 @@ bool ElixBundleReader::mount(const std::filesystem::path &path)
     m_keyId = hdr.keyId;
     m_chunkSize = hdr.chunkSize ? hdr.chunkSize : BUNDLE_DEFAULT_CHUNK_SIZE;
 
-    // Read TOC
+
     in.seekg(static_cast<std::streamoff>(hdr.tocOffset));
     if (!in)
         return false;
@@ -383,7 +383,7 @@ bool ElixBundleReader::mount(const std::filesystem::path &path)
     const uint32_t entryCount = hdr.entryCount;
     m_toc.resize(entryCount);
 
-    // Also count total chunks (read entries first to know firstChunkIndex ranges)
+
     uint32_t totalChunks = 0;
     struct RawEntry
     {
@@ -405,11 +405,11 @@ bool ElixBundleReader::mount(const std::filesystem::path &path)
         raw[i].flags = static_cast<uint8_t>(in.get());
         in.get();
         in.get();
-        in.get(); // pad
+        in.get();
         totalChunks = std::max(totalChunks, raw[i].firstChunkIndex + raw[i].chunkCount);
     }
 
-    // Read chunk index
+
     m_chunks.resize(totalChunks);
     for (uint32_t c = 0; c < totalChunks; ++c)
     {
@@ -418,7 +418,7 @@ bool ElixBundleReader::mount(const std::filesystem::path &path)
         m_chunks[c].originalSize = readU32(in);
     }
 
-    // Populate TOC
+
     for (uint32_t i = 0; i < entryCount; ++i)
     {
         auto &e = m_toc[i];
@@ -470,8 +470,8 @@ void ElixBundleReader::readFileAsync(std::string_view path,
                                      std::function<void(std::vector<uint8_t>)> callback) const
 {
     std::string pathStr(path);
-    // Post to streaming worker via AssetManager's worker (reuse same thread).
-    // For simplicity, use a detached thread. A full impl would use AssetStreamingWorker.
+
+
     std::thread([this, pathStr, cb = std::move(callback)]()
                 {
         std::vector<uint8_t> data;
@@ -535,7 +535,7 @@ void ElixBundleManager::mountBundle(const std::filesystem::path &path, int prior
         return;
 
     m_readers.push_back(std::move(reader));
-    // Sort descending by priority so highest priority is searched first.
+
     std::sort(m_readers.begin(), m_readers.end(),
               [](const auto &a, const auto &b)
               { return a->priority > b->priority; });
@@ -565,7 +565,7 @@ bool ElixBundleManager::readFile(std::string_view path, std::vector<uint8_t> &ou
 void ElixBundleManager::readFileAsync(std::string_view path,
                                       std::function<void(std::vector<uint8_t>)> callback) const
 {
-    // Try each bundle in priority order on a detached thread.
+
     std::string pathStr(path);
     std::thread([this, pathStr, cb = std::move(callback)]()
                 {

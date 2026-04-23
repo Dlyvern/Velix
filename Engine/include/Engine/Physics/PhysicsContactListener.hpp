@@ -29,4 +29,4 @@ physx::PxFilterFlags contactNotifyFilterShader(
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PHYSICS_CONTACT_LISTENER_HPP
+#endif

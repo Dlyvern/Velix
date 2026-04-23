@@ -1,8 +1,8 @@
 #version 450
 
-// Must match the GBufferPC / bindlessMeshPipelineLayout push-constant range (20 bytes).
-// Intel Windows drivers reject pipelines where the vertex shader's push-constant block
-// is smaller than the range declared in the pipeline layout.
+
+
+
 layout(push_constant) uniform ModelPushConstant
 {
     uint  baseInstance;
@@ -18,12 +18,16 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
     mat4 projection;
     mat4 invView;
     mat4 invProjection;
+    mat4 prevView;
+    mat4 prevProjection;
+    vec4 jitter;
 } cameraUniformObject;
 
 struct InstanceData
 {
     mat4 model;
-    uvec4 objectInfo; // x = objectId, y = bonesOffset, z = materialIndex, w = reserved
+    uvec4 objectInfo;
+    mat4 prevModel;
 };
 
 layout(std430, set = 2, binding = 1) readonly buffer InstanceDataSSBO
@@ -36,7 +40,7 @@ layout(location = 1) in vec2 inTextures;
 layout(location = 2) in vec3 inNormal;
 layout(location = 3) in vec3 inBitangent;
 layout(location = 4) in vec3 inTangent;
-layout(location = 5) in vec2 inLightmapUV; // binding 1 — lightmap UV1
+layout(location = 5) in vec2 inLightmapUV;
 
 layout(location = 0) out vec2 fragUV;
 layout(location = 1) out vec3 fragNormalView;
@@ -46,6 +50,9 @@ layout(location = 4) out vec3 fragBitangentView;
 layout(location = 5) out flat uint fragObjectId;
 layout(location = 6) out flat uint fragMaterialIndex;
 layout(location = 7) out vec2 fragLightmapUV;
+layout(location = 8) out flat uint fragLightmapTexIdx;
+layout(location = 9)  out vec4 fragCurrClipPos;
+layout(location = 10) out vec4 fragPrevClipPos;
 
 void main()
 {
@@ -53,8 +60,9 @@ void main()
     InstanceData instanceData = instanceDataBuffer.instances[instanceIndex];
 
     mat4 modelMatrix = instanceData.model;
-    fragObjectId      = instanceData.objectInfo.x;
-    fragMaterialIndex = instanceData.objectInfo.z;
+    fragObjectId       = instanceData.objectInfo.x;
+    fragMaterialIndex  = instanceData.objectInfo.z;
+    fragLightmapTexIdx = instanceData.objectInfo.w;
 
     fragUV = inTextures;
 
@@ -76,5 +84,15 @@ void main()
     fragPositionView = viewPos.xyz;
     fragLightmapUV = inLightmapUV;
 
-    gl_Position = cameraUniformObject.projection * viewPos;
+    vec4 clipPos = cameraUniformObject.projection * viewPos;
+
+
+    fragCurrClipPos = clipPos;
+    vec4 prevWorldPos = instanceData.prevModel * vec4(inPosition, 1.0);
+    fragPrevClipPos  = cameraUniformObject.prevProjection * cameraUniformObject.prevView * prevWorldPos;
+
+
+    clipPos.xy += cameraUniformObject.jitter.xy * clipPos.w;
+
+    gl_Position = clipPos;
 }

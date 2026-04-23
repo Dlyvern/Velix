@@ -189,7 +189,7 @@ Texture::SharedPtr Material::getNormalTexture()   const { return m_normalTexture
 Texture::SharedPtr Material::getOrmTexture()      const { return m_ormTexture; }
 Texture::SharedPtr Material::getEmissiveTexture() const { return m_emissiveTexture; }
 
-// ---------------- Params ----------------
+
 
 void Material::setBaseColorFactor(const glm::vec4 &color)
 {

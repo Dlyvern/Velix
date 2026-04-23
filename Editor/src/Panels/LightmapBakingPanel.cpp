@@ -18,12 +18,12 @@ void LightmapBakingPanel::draw(bool *open)
         return;
     }
 
-    // ---- Settings -------------------------------------------------------
+
     ImGui::SeparatorText("Settings");
 
     const char *resItems[] = {"256", "512", "1024", "2048", "4096"};
     const int   resValues[] = {256, 512, 1024, 2048, 4096};
-    int currentResIdx = 2; // default 1024
+    int currentResIdx = 2;
     for (int i = 0; i < 5; ++i)
         if (resValues[i] == m_resolution)
         { currentResIdx = i; break; }
@@ -49,7 +49,7 @@ void LightmapBakingPanel::draw(bool *open)
         ImGui::DragInt("Radius", &m_dilateRadius, 1, 1, 16);
     }
 
-    // ---- Actions --------------------------------------------------------
+
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -73,7 +73,7 @@ void LightmapBakingPanel::draw(bool *open)
     if (baking)
         ImGui::EndDisabled();
 
-    // ---- Progress -------------------------------------------------------
+
     if (m_progress)
     {
         ImGui::Spacing();

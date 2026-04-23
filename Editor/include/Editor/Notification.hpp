@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "Editor/IconsLucide.hpp"
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -26,11 +27,12 @@ struct Notification
     std::string message;
     NotificationType type;
     std::chrono::steady_clock::time_point startTime;
-    float duration; // in seconds
+    float duration;
+    float totalDuration;
     bool fadeOut;
 
     Notification(const std::string &msg, NotificationType t, float dur = 3.0f, bool fade = true)
-        : message(msg), type(t), duration(dur), fadeOut(fade)
+        : message(msg), type(t), duration(dur), totalDuration(dur), fadeOut(fade)
     {
         startTime = std::chrono::steady_clock::now();
     }
@@ -40,6 +42,13 @@ struct Notification
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration<float>(now - startTime).count();
         return std::max(0.0f, duration - elapsed);
+    }
+
+    float getProgress() const
+    {
+        if (totalDuration <= 0.0f)
+            return 0.0f;
+        return std::clamp(getRemainingTime() / totalDuration, 0.0f, 1.0f);
     }
 
     bool isExpired() const
@@ -55,7 +64,7 @@ struct Notification
         float remaining = getRemainingTime();
 
         if (remaining <= 0.5f)
-            return remaining / 0.5f; // Fade out over last 0.5 seconds
+            return remaining / 0.5f;
 
         return 1.0f;
     }
@@ -132,11 +141,13 @@ public:
         {
             Notification &notification = *it;
 
+
+
             ImVec2 notificationPos(
                 rightEdge - m_width,
                 bottomEdge - m_padding);
 
-            ImGui::SetNextWindowPos(notificationPos, ImGuiCond_Always);
+            ImGui::SetNextWindowPos(notificationPos, ImGuiCond_Always, ImVec2(0.0f, 1.0f));
             ImGui::SetNextWindowSize(ImVec2(m_width, 0), ImGuiCond_Always);
             ImGui::SetNextWindowViewport(viewport->ID);
 
@@ -174,25 +185,31 @@ public:
             std::string windowName = "##notification_" + std::to_string(reinterpret_cast<uintptr_t>(&notification));
             ImGui::Begin(windowName.c_str(), nullptr, flags);
 
+            const char *icon = ICON_LC_Info;
+            ImVec4 iconColor(0.247f, 0.692f, 0.917f, 1.0f);
             switch (notification.type)
             {
             case NotificationType::Info:
-                ImGui::Text("I");
-                ImGui::SameLine();
+                icon = ICON_LC_Info;
+                iconColor = ImVec4(0.247f, 0.692f, 0.917f, 1.0f);
                 break;
             case NotificationType::Success:
-                ImGui::Text("@");
-                ImGui::SameLine();
+                icon = ICON_LC_Check;
+                iconColor = ImVec4(0.357f, 0.740f, 0.456f, 1.0f);
                 break;
             case NotificationType::Warning:
-                ImGui::Text("^");
-                ImGui::SameLine();
+                icon = ICON_LC_AlertTriangle;
+                iconColor = ImVec4(0.916f, 0.709f, 0.195f, 1.0f);
                 break;
             case NotificationType::Error:
-                ImGui::Text("X");
-                ImGui::SameLine();
+                icon = ICON_LC_AlertOctagon;
+                iconColor = ImVec4(0.987f, 0.345f, 0.334f, 1.0f);
                 break;
             }
+            ImGui::PushStyleColor(ImGuiCol_Text, iconColor);
+            ImGui::TextUnformatted(icon);
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
 
             ImGui::PushTextWrapPos(m_width - 40.0f);
             ImGui::Text("%s", notification.message.c_str());
@@ -200,8 +217,23 @@ public:
 
             ImGui::SameLine(ImGui::GetWindowWidth() - 25.0f);
 
-            if (ImGui::SmallButton("x"))
+            if (ImGui::SmallButton(ICON_LC_X))
                 notification.duration = 0.0f;
+
+
+
+
+            const ImVec2 winPos = ImGui::GetWindowPos();
+            const ImVec2 winSize = ImGui::GetWindowSize();
+            const float progress = notification.getProgress();
+            const float barH = 3.0f;
+            const float barWidth = winSize.x * progress;
+            const float barY = winPos.y + winSize.y - barH;
+            const ImU32 barCol = IM_COL32(239, 103, 90, 160);
+            ImGui::GetForegroundDrawList()->AddRectFilled(
+                ImVec2(winPos.x, barY),
+                ImVec2(winPos.x + barWidth, barY + barH),
+                barCol);
 
             const float notificationHeight = ImGui::GetWindowSize().y;
             ImGui::End();
@@ -217,4 +249,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_NOTIFICATION_HPP
+#endif

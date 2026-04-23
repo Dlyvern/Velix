@@ -31,11 +31,11 @@ public:
 
     void setExtent(VkExtent2D extent);
 
-    // Set the active reflection probe for this pass. Pass VK_NULL_HANDLE view to disable.
+
     void setProbeData(VkImageView view, VkSampler sampler,
                       const glm::vec3 &worldPos, float radius, float intensity);
 
-    // Optionally wire baked irradiance GBuffer attachment (binding 13).
+
     void setBakedIrradianceHandlers(std::vector<RGPResourceHandler> &handlers)
     {
         m_bakedIrradianceHandlers = &handlers;
@@ -78,16 +78,16 @@ private:
     std::vector<RGPResourceHandler> &m_materialTextureHandlers;
     std::vector<RGPResourceHandler> &m_emissiveTextureHandlers;
 
-    std::vector<RGPResourceHandler> *m_rtShadowTextureHandlers{nullptr};        // optional, binding 10
-    std::vector<RGPResourceHandler> *m_aoTextureHandlers{nullptr};             // optional, binding 9
-    std::vector<RGPResourceHandler> *m_giTextureHandlers{nullptr};             // optional, binding 12
-    std::vector<RGPResourceHandler> *m_bakedIrradianceHandlers{nullptr};       // optional, binding 13
+    std::vector<RGPResourceHandler> *m_rtShadowTextureHandlers{nullptr};
+    std::vector<RGPResourceHandler> *m_aoTextureHandlers{nullptr};
+    std::vector<RGPResourceHandler> *m_giTextureHandlers{nullptr};
+    std::vector<RGPResourceHandler> *m_bakedIrradianceHandlers{nullptr};
 
     core::Sampler::SharedPtr m_defaultSampler{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};
     Texture::SharedPtr m_defaultWhiteTexture{nullptr};
 
-    // Reflection probe state (updated per-frame by EditorRuntime)
+
     VkImageView m_probeImageView{VK_NULL_HANDLE};
     VkSampler   m_probeSampler{VK_NULL_HANDLE};
     glm::vec3   m_probeWorldPos{0.0f};
@@ -105,4 +105,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_LIGHTING_RENDER_GRAPH_PASS_HPP
+#endif

@@ -80,7 +80,7 @@ void DebugDraw::polygonFilled(const std::vector<glm::vec3> &points, glm::vec4 co
 
 void DebugDraw::box(glm::mat4 transform, glm::vec3 e, glm::vec4 color, float lifetime, bool depthTest)
 {
-    // 8 corners in local space (±e)
+
     glm::vec4 corners[8] = {
         {-e.x, -e.y, -e.z, 1},
         {e.x, -e.y, -e.z, 1},
@@ -95,20 +95,20 @@ void DebugDraw::box(glm::mat4 transform, glm::vec3 e, glm::vec4 color, float lif
     for (int i = 0; i < 8; ++i)
         w[i] = glm::vec3(transform * corners[i]);
 
-    // 12 edges
+
     const int edges[12][2] = {
         {0, 1},
         {1, 2},
         {2, 3},
-        {3, 0}, // back face
+        {3, 0},
         {4, 5},
         {5, 6},
         {6, 7},
-        {7, 4}, // front face
+        {7, 4},
         {0, 4},
         {1, 5},
         {2, 6},
-        {3, 7}, // connecting edges
+        {3, 7},
     };
 
     std::vector<Vertex> v;
@@ -135,27 +135,27 @@ void DebugDraw::sphere(glm::vec3 center, float radius, glm::vec4 color, float li
     };
 
     circle([](float a) -> glm::vec3
-           { return {std::cos(a), 0.0f, std::sin(a)}; }); // XZ
+           { return {std::cos(a), 0.0f, std::sin(a)}; });
     circle([](float a) -> glm::vec3
-           { return {std::cos(a), std::sin(a), 0.0f}; }); // XY
+           { return {std::cos(a), std::sin(a), 0.0f}; });
     circle([](float a) -> glm::vec3
-           { return {0.0f, std::sin(a), std::cos(a)}; }); // YZ
+           { return {0.0f, std::sin(a), std::cos(a)}; });
 
     pushShape(std::move(v), lifetime, depthTest, Shape::Primitive::LineList);
 }
 
 void DebugDraw::frustum(glm::mat4 invViewProj, glm::vec4 color, float lifetime)
 {
-    // 8 NDC corners → world space
+
     glm::vec4 ndc[8] = {
         {-1, -1, 0, 1},
         {1, -1, 0, 1},
         {1, 1, 0, 1},
-        {-1, 1, 0, 1}, // near
+        {-1, 1, 0, 1},
         {-1, -1, 1, 1},
         {1, -1, 1, 1},
         {1, 1, 1, 1},
-        {-1, 1, 1, 1}, // far
+        {-1, 1, 1, 1},
     };
     glm::vec3 w[8];
     for (int i = 0; i < 8; ++i)
@@ -166,17 +166,17 @@ void DebugDraw::frustum(glm::mat4 invViewProj, glm::vec4 color, float lifetime)
 
     std::vector<Vertex> v;
     v.reserve(24);
-    // near quad
+
     addLine(v, w[0], w[1], color);
     addLine(v, w[1], w[2], color);
     addLine(v, w[2], w[3], color);
     addLine(v, w[3], w[0], color);
-    // far quad
+
     addLine(v, w[4], w[5], color);
     addLine(v, w[5], w[6], color);
     addLine(v, w[6], w[7], color);
     addLine(v, w[7], w[4], color);
-    // connecting edges
+
     addLine(v, w[0], w[4], color);
     addLine(v, w[1], w[5], color);
     addLine(v, w[2], w[6], color);
@@ -191,7 +191,7 @@ void DebugDraw::raycast(glm::vec3 origin, glm::vec3 direction, float length, glm
     std::vector<Vertex> v;
     v.reserve(2);
     addLine(v, origin, end, color);
-    // small cross at the hit end
+
     float cs = length * 0.03f;
     glm::vec3 rx = {cs, 0, 0}, ry = {0, cs, 0}, rz = {0, 0, cs};
     addLine(v, end - rx, end + rx, color);
@@ -202,12 +202,12 @@ void DebugDraw::raycast(glm::vec3 origin, glm::vec3 direction, float length, glm
 
 void DebugDraw::capsule(glm::vec3 base, glm::vec3 tip, float radius, glm::vec4 color, float lifetime)
 {
-    // Draw as sphere at base, sphere at tip, and 4 connecting lines
+
     sphere(base, radius, color, lifetime, true, 12);
     sphere(tip, radius, color, lifetime, true, 12);
 
     glm::vec3 axis = glm::normalize(tip - base);
-    // Build a perpendicular basis
+
     glm::vec3 perp = std::abs(axis.y) < 0.9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
     glm::vec3 r1 = glm::normalize(glm::cross(axis, perp)) * radius;
     glm::vec3 r2 = glm::normalize(glm::cross(axis, r1)) * radius;
@@ -241,9 +241,9 @@ void DebugDraw::cone(glm::vec3 apex, glm::vec3 direction, float length,
         float a1 = glm::two_pi<float>() * float(i + 1) / float(segments);
         glm::vec3 p0 = base + (u * std::cos(a0) + v2 * std::sin(a0)) * r;
         glm::vec3 p1 = base + (u * std::cos(a1) + v2 * std::sin(a1)) * r;
-        addLine(v, p0, p1, color); // circle at base
+        addLine(v, p0, p1, color);
         if (i % (segments / 4) == 0)
-            addLine(v, apex, p0, color); // 4 lines from apex
+            addLine(v, apex, p0, color);
     }
 
     pushShape(std::move(v), lifetime, true, Shape::Primitive::LineList);
@@ -260,9 +260,9 @@ void DebugDraw::cross(glm::vec3 center, float size, float lifetime)
 {
     std::vector<Vertex> v;
     v.reserve(6);
-    addLine(v, center - glm::vec3(size, 0, 0), center + glm::vec3(size, 0, 0), {1, 0, 0, 1}); // X red
-    addLine(v, center - glm::vec3(0, size, 0), center + glm::vec3(0, size, 0), {0, 1, 0, 1}); // Y green
-    addLine(v, center - glm::vec3(0, 0, size), center + glm::vec3(0, 0, size), {0, 0, 1, 1}); // Z blue
+    addLine(v, center - glm::vec3(size, 0, 0), center + glm::vec3(size, 0, 0), {1, 0, 0, 1});
+    addLine(v, center - glm::vec3(0, size, 0), center + glm::vec3(0, size, 0), {0, 1, 0, 1});
+    addLine(v, center - glm::vec3(0, 0, size), center + glm::vec3(0, 0, size), {0, 0, 1, 1});
     pushShape(std::move(v), lifetime, true, Shape::Primitive::LineList);
 }
 

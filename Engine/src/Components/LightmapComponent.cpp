@@ -4,7 +4,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-void LightmapComponent::loadFromPath(const std::string &path, VkDescriptorPool /*descriptorPool*/)
+void LightmapComponent::loadFromPath(const std::string &path, VkDescriptorPool )
 {
     if (path.empty())
         return;

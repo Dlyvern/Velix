@@ -122,7 +122,7 @@ void BloomCompositeRenderGraphPass::compile(renderGraph::RGPResourcesStorage &st
 }
 
 void BloomCompositeRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
-                                           const RenderGraphPassPerFrameData & /*data*/,
+                                           const RenderGraphPassPerFrameData & ,
                                            const RenderGraphPassContext &renderContext)
 {
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);

@@ -48,7 +48,7 @@ CharacterMovementComponent &VXCharacter::getMovement()
 {
     if (!m_movement)
     {
-        // Lazy init in case caller invokes getMovement() before onStart()
+
         auto *scene = VXGameState::get().getActiveScene();
         m_movement = addComponent<CharacterMovementComponent>(scene);
     }

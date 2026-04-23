@@ -122,7 +122,7 @@ bool CommandBuffer::submit2(VkQueue queue,
     submitInfo.signalSemaphoreInfoCount = static_cast<uint32_t>(signalSemaphoreInfos.size());
     submitInfo.pSignalSemaphoreInfos = signalSemaphoreInfos.empty() ? nullptr : signalSemaphoreInfos.data();
 
-    // Queue operations on the same VkQueue require external host synchronization.
+
     std::lock_guard<std::mutex> submitLock(helpers::queueHostSyncMutex());
     if (VX_VK_TRY(vkQueueSubmit2(queue, 1, &submitInfo, fence)) != VK_SUCCESS)
         return false;

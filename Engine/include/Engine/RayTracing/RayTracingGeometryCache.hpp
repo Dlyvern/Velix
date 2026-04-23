@@ -26,12 +26,12 @@ public:
         uint64_t version{0u};
         bool dirty{false};
 
-        // Async RT mesh upload tracking.
+
         VkFence pendingMeshUploadFence{VK_NULL_HANDLE};
         core::CommandBuffer::SharedPtr pendingMeshUploadCommandBuffer{nullptr};
         bool meshUploadPending{false};
 
-        // Async BLAS build tracking: fence is non-null while the GPU is still building.
+
         VkFence pendingBlasFence{VK_NULL_HANDLE};
         core::CommandBuffer::SharedPtr pendingBlasCommandBuffer{nullptr};
         core::Buffer::SharedPtr pendingScratchBuffer{nullptr};
@@ -64,4 +64,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RAY_TRACING_GEOMETRY_CACHE_HPP
+#endif

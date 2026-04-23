@@ -72,6 +72,24 @@ public:
         High = 2
     };
 
+    enum class UpscalerMode : uint8_t
+    {
+        None = 0,
+        FSR1 = 1,
+        FSR2 = 2,
+        FSR3 = 3
+    };
+
+    enum class UpscaleQuality : uint8_t
+    {
+        Native = 0,
+        UltraQuality = 1,
+        Quality = 2,
+        Balanced = 3,
+        Performance = 4,
+        UltraPerformance = 5
+    };
+
     ShadowQuality shadowQuality{ShadowQuality::High};
     ShadowCascadeCount shadowCascadeCount{ShadowCascadeCount::X4};
     float shadowMaxDistance{180.0f};
@@ -85,11 +103,11 @@ public:
     float rtaoRadius{1.5f};
     int rtaoSamples{4};
     RayTracingMode rayTracingMode{RayTracingMode::RayQuery};
-    int rtShadowSamples{4};            // rays per light: 1=hard, 4=default soft, 16=high quality
-    float rtShadowPenumbraSize{0.05f}; // virtual light radius in world units → penumbra width
-    int rtReflectionSamples{1};        // rays per pixel: 1=mirror, 4-8=glossy
-    float rtRoughnessThreshold{0.4f};  // skip surfaces rougher than this (0=only perfect mirrors, 1=all)
-    float rtReflectionStrength{1.0f};  // overall reflection intensity multiplier
+    int rtShadowSamples{4};
+    float rtShadowPenumbraSize{0.05f};
+    int rtReflectionSamples{1};
+    float rtRoughnessThreshold{0.4f};
+    float rtReflectionStrength{1.0f};
     AntiAliasingMode antiAliasingMode{AntiAliasingMode::FXAA};
     MsaaMode msaaMode{MsaaMode::Off};
     bool enableBloom{true};
@@ -101,10 +119,42 @@ public:
     float renderScale{1.0f};
     AnisotropyMode anisotropyMode{AnisotropyMode::X16};
 
-    // Negative values prefer higher-resolution mip levels (sharper at distance, more bandwidth).
-    // Positive values prefer lower-resolution mip levels (blurrier, less bandwidth).
-    // Range : [ -4, 0 ].
+
+
+
+
+    UpscalerMode upscalerMode{UpscalerMode::None};
+    UpscaleQuality upscaleQuality{UpscaleQuality::Quality};
+    float fsrSharpness{0.2f};
+
+    float getUpscaleRatio() const
+    {
+        switch (upscaleQuality)
+        {
+        case UpscaleQuality::Native:           return 1.0f;
+        case UpscaleQuality::UltraQuality:     return 1.3f;
+        case UpscaleQuality::Quality:          return 1.5f;
+        case UpscaleQuality::Balanced:         return 1.7f;
+        case UpscaleQuality::Performance:      return 2.0f;
+        case UpscaleQuality::UltraPerformance: return 3.0f;
+        }
+        return 1.0f;
+    }
+
+    bool isUpscalerActive() const
+    {
+        return upscalerMode != UpscalerMode::None;
+    }
+
+
+
+
     float textureMipBias{-1.5f};
+
+    bool  enableSSGI{false};
+    float ssgiRadius{2.0f};
+    float ssgiStrength{1.0f};
+    int   ssgiSamples{8};
 
     bool  enableSSR{false};
     float ssrMaxDistance{15.0f};
@@ -134,8 +184,8 @@ public:
     float colorGradingTemperature{0.0f};
     float colorGradingTint{0.0f};
 
-    // Screen-space size culling: skip meshes whose projected bounding sphere
-    // is smaller than this radius (in pixels).  2 px = nearly invisible detail.
+
+
     bool enableSmallFeatureCulling{true};
     float smallFeatureCullingThreshold{2.0f};
 
@@ -150,18 +200,18 @@ public:
 
     bool enableDecals{true};
 
-    // RT Global Illumination (indirect diffuse)
-    bool  enableRTGI{false};
-    int   giSamples{1};           // hemisphere rays per pixel: 1=preview, 4=default, 16=high
-    bool  enableRTGIDenoiser{true};
-    float giStrength{1.0f};       // indirect diffuse intensity multiplier
 
-    // Auto exposure (eye adaptation)
+    bool  enableRTGI{false};
+    int   giSamples{1};
+    bool  enableRTGIDenoiser{true};
+    float giStrength{1.0f};
+
+
     bool  enableAutoExposure{false};
-    float autoExposureSpeedUp{3.0f};    // s⁻¹ — adaptation speed when going darker→brighter
-    float autoExposureSpeedDown{1.5f};  // s⁻¹ — adaptation speed when going brighter→darker
-    float autoExposureLowPercent{0.10f};  // fraction of darkest pixels to exclude
-    float autoExposureHighPercent{0.10f}; // fraction of brightest pixels to exclude
+    float autoExposureSpeedUp{3.0f};
+    float autoExposureSpeedDown{1.5f};
+    float autoExposureLowPercent{0.10f};
+    float autoExposureHighPercent{0.10f};
 
     bool  enableVignette{false};
     float vignetteStrength{0.4f};
@@ -235,4 +285,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RENDER_QUALITY_SETTINGS_HPP
+#endif

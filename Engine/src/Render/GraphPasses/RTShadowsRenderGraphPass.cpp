@@ -106,7 +106,7 @@ void RTShadowsRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         std::vector<VkPushConstantRange>{
             PushConstant<RTShadowsPC>::getRange(VK_SHADER_STAGE_RAYGEN_BIT_KHR)});
 
-    // Separate compute pipeline layout (push constants declared with COMPUTE stage)
+
     {
         VkPushConstantRange computePCRange = PushConstant<RTShadowsPC>::getRange(VK_SHADER_STAGE_COMPUTE_BIT);
         std::vector<VkDescriptorSetLayout> setLayouts = {
@@ -192,8 +192,8 @@ void RTShadowsRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuff
         return;
     }
 
-    // No geometry → no shadows. Clear to 0 (unlit shadow mask = no shadow) and skip the
-    // expensive RT/compute dispatch to avoid wasting GPU time on an empty TLAS.
+
+
     if (data.drawBatches.empty())
     {
         VkClearColorValue clearColor{};
@@ -269,7 +269,7 @@ void RTShadowsRenderGraphPass::cleanup()
     destroyRayTracingPipeline();
     destroyComputePipeline();
 
-    // Destroy the compute pipeline layout (created once in setup(), valid for the pass lifetime)
+
     auto context = core::VulkanContext::getContext();
     if (context && m_computePipelineLayout != VK_NULL_HANDLE)
     {

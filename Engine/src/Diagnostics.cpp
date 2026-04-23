@@ -584,6 +584,6 @@ namespace diagnostics
     {
         return writeCrashReportInternal(reason, details, false);
     }
-} // namespace diagnostics
+}
 
 ELIX_NESTED_NAMESPACE_END

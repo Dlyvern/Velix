@@ -9,7 +9,7 @@ layout(push_constant) uniform PC
     uint  pad0;
     uint  pad1;
     uint  pad2;
-    vec4  planes[6];    // normalised Gribb-Hartmann frustum planes
+    vec4  planes[6];
 } u;
 
 layout(set = 0, binding = 0) readonly buffer BatchBoundsBuffer
@@ -30,18 +30,18 @@ void main()
 
     vec4 b = bounds[batchIdx];
 
-    // Radius <= 0 means no bounds data – always draw.
+
     if (b.w <= 0.0)
         return;
 
-    // Sphere-frustum intersection: centre must be no further than -radius behind any plane.
+
     for (int i = 0; i < 6; ++i)
     {
         float dist = dot(u.planes[i].xyz, b.xyz) + u.planes[i].w;
         if (dist < -b.w)
         {
-            // Entirely outside this plane → cull.
-            cmds[batchIdx * 5u + 1u] = 0u;   // zero instanceCount
+
+            cmds[batchIdx * 5u + 1u] = 0u;
             return;
         }
     }

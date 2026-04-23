@@ -21,4 +21,4 @@ namespace diagnostics
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ENGINE_DIAGNOSTICS_HPP
+#endif

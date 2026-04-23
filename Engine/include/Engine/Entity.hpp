@@ -93,7 +93,7 @@ public:
         auto comp = std::make_shared<T>(std::forward<Args>(args)...);
         T *ptr = comp.get();
         comp->setOwner(this);
-        // comp->onAttach();
+
 
         if constexpr (IsMultiComponent<T>::value)
             m_multiComponents[type].emplace_back(std::move(comp));
@@ -221,4 +221,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ENTITY_HPP
+#endif

@@ -64,11 +64,11 @@ struct AnimationTransitionCondition
 
 struct AnimationTransition
 {
-    int fromStateIndex{0};  // -1 = Any State
+    int fromStateIndex{0};
     int toStateIndex{0};
     float blendDuration{0.3f};
     bool hasExitTime{false};
-    float exitTime{1.0f};  // normalized [0,1]
+    float exitTime{1.0f};
     std::vector<AnimationTransitionCondition> conditions;
 };
 
@@ -81,11 +81,11 @@ struct AnimationBlendSpace1DSample
 
 struct AnimationGraphTransition
 {
-    int fromNodeId{0};  // -1 = Any child in the owning machine
+    int fromNodeId{0};
     int toNodeId{0};
     float blendDuration{0.3f};
     bool hasExitTime{false};
-    float exitTime{1.0f};  // normalized [0,1]
+    float exitTime{1.0f};
     std::vector<AnimationTransitionCondition> conditions;
 };
 
@@ -104,19 +104,19 @@ struct AnimationTreeNode
     std::string name;
     glm::vec2 editorPosition{0.0f};
 
-    // State machine data
+
     int entryNodeId{-1};
     std::vector<int> childNodeIds;
     std::vector<AnimationGraphTransition> transitions;
 
-    // Leaf playback data
+
     std::string animationAssetPath;
     int clipIndex{0};
     bool loop{true};
     float speed{1.0f};
     float startNormalizedTime{0.0f};
 
-    // Blend space data
+
     std::string blendParameterName;
     std::vector<AnimationBlendSpace1DSample> blendSamples;
 
@@ -133,14 +133,14 @@ public:
     std::string name;
     std::string assetPath;
 
-    // Legacy flat-tree payload kept for migration compatibility with old assets.
+
     int entryStateIndex{-1};
     std::vector<AnimationTreeState> states;
     std::vector<AnimationTransition> transitions;
     std::vector<AnimationTreeParameter> parameters;
-    std::vector<glm::vec2> stateNodePositions;  // editor layout only
+    std::vector<glm::vec2> stateNodePositions;
 
-    // Hierarchical graph payload.
+
     uint32_t graphVersion{0u};
     int nextNodeId{1};
     int rootMachineNodeId{-1};
@@ -326,4 +326,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ANIMATION_TREE_HPP
+#endif

@@ -116,7 +116,7 @@ bool RayTracedMesh::fillGeometryDesc(const GPUMesh &mesh,
     geometryDesc.triangleCount = triangleCount;
     geometryDesc.vertexFormat = triangles.vertexFormat;
     geometryDesc.indexType = triangles.indexType;
-    // Leave geometry flags at 0 so TLAS instance flags still control opacity behavior.
+
     geometryDesc.geometryFlags = 0u;
 
     return true;

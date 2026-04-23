@@ -66,7 +66,7 @@ namespace actions
         std::string m_serializedEntityHierarchy;
         std::uint64_t m_pasteCounter{0u};
     };
-} // namespace actions
+}
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_EDITOR_ACTIONS_EDITOR_ACTION_HISTORY_HPP
+#endif

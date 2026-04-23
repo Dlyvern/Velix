@@ -1,4 +1,5 @@
 #include "Engine/Builders/GraphicsPipelineManager.hpp"
+#include "Engine/Builders/PipelinePreWarmer.hpp"
 
 #include "Core/VulkanContext.hpp"
 #include "Core/Logger.hpp"
@@ -52,6 +53,7 @@ namespace
         case ShaderId::TAA: return "TAA";
         case ShaderId::AnimPreview: return "AnimPreview";
         case ShaderId::SSR: return "SSR";
+        case ShaderId::SSGI: return "SSGI";
         case ShaderId::VolumetricFogLighting: return "VolumetricFogLighting";
         case ShaderId::VolumetricFogTemporal: return "VolumetricFogTemporal";
         case ShaderId::VolumetricFogComposite: return "VolumetricFogComposite";
@@ -61,11 +63,20 @@ namespace
         case ShaderId::MotionBlur: return "MotionBlur";
         case ShaderId::Decal: return "Decal";
         case ShaderId::Sprite2D: return "Sprite2D";
+        case ShaderId::FSR1EASU: return "FSR1EASU";
+        case ShaderId::FSR1RCAS: return "FSR1RCAS";
         case ShaderId::None: return "None";
         }
 
         return "Unknown";
     }
+}
+
+bool GraphicsPipelineManager::exists(const GraphicsPipelineKey &key)
+{
+    std::shared_lock lock(m_pipelinesMutex);
+    auto it = m_pipelines.find(key);
+    return it != m_pipelines.end() && it->second != nullptr;
 }
 
 core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(const GraphicsPipelineKey &key)
@@ -94,7 +105,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::getOrCreate(const Gra
                                << shaderIdToString(key.shader)
                                << "): " << e.what()
                                << " — draw calls using this pipeline type will be skipped");
-        m_pipelines[key] = nullptr; // cache null so we do not retry every frame
+        m_pipelines[key] = nullptr;
         return nullptr;
     }
 
@@ -120,6 +131,7 @@ void GraphicsPipelineManager::init()
 
 void GraphicsPipelineManager::reloadShaders()
 {
+    PipelinePreWarmer::waitAll();
     destroyPipelines();
     destroyShaderModules();
     loadShaderModules();
@@ -178,6 +190,7 @@ void GraphicsPipelineManager::loadShaderModules()
     animPreviewShader = std::make_shared<core::Shader>("./resources/shaders/anim_preview.vert.spv",
                                                         "./resources/shaders/shader_simple_textured_mesh.frag.spv");
     ssrShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssr.frag.spv");
+    ssgiShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/ssgi.frag.spv");
     volumetricFogLightingShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/volumetric_fog_lighting.frag.spv");
     volumetricFogTemporalShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/volumetric_fog_temporal.frag.spv");
     volumetricFogCompositeShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv", "./resources/shaders/volumetric_fog_composite.frag.spv");
@@ -187,6 +200,8 @@ void GraphicsPipelineManager::loadShaderModules()
     motionBlurShader = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv",  "./resources/shaders/motion_blur.frag.spv");
     decalShader      = std::make_shared<core::Shader>("./resources/shaders/decal.vert.spv",       "./resources/shaders/decal.frag.spv");
     sprite2dShader   = std::make_shared<core::Shader>("./resources/shaders/sprite.vert.spv",      "./resources/shaders/sprite.frag.spv");
+    fsr1EasuShader   = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv",  "./resources/shaders/fsr1_easu.frag.spv");
+    fsr1RcasShader   = std::make_shared<core::Shader>("./resources/shaders/fullscreen.vert.spv",  "./resources/shaders/fsr1_rcas.frag.spv");
 }
 
 void GraphicsPipelineManager::destroyShaderModules()
@@ -234,6 +249,7 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(taaShader);
     destroyShader(animPreviewShader);
     destroyShader(ssrShader);
+    destroyShader(ssgiShader);
     destroyShader(volumetricFogLightingShader);
     destroyShader(volumetricFogTemporalShader);
     destroyShader(volumetricFogCompositeShader);
@@ -243,6 +259,8 @@ void GraphicsPipelineManager::destroyShaderModules()
     destroyShader(motionBlurShader);
     destroyShader(decalShader);
     destroyShader(sprite2dShader);
+    destroyShader(fsr1EasuShader);
+    destroyShader(fsr1RcasShader);
 }
 
 void GraphicsPipelineManager::destroyPipelines()
@@ -378,6 +396,9 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::SSR:
         stages = ssrShader->getShaderStages();
         break;
+    case ShaderId::SSGI:
+        stages = ssgiShader->getShaderStages();
+        break;
     case ShaderId::VolumetricFogLighting:
         stages = volumetricFogLightingShader->getShaderStages();
         break;
@@ -405,11 +426,17 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     case ShaderId::Sprite2D:
         stages = sprite2dShader->getShaderStages();
         break;
+    case ShaderId::FSR1EASU:
+        stages = fsr1EasuShader->getShaderStages();
+        break;
+    case ShaderId::FSR1RCAS:
+        stages = fsr1RcasShader->getShaderStages();
+        break;
     default:
         throw std::runtime_error("Unknown ShaderId");
     }
 
-    // viewport/scissor dynamically during record(). (values can be dummy)
+
     VkViewport dummyVp{0, 0, 1, 1, 0, 1};
     VkRect2D dummySc{{0, 0}, {1, 1}};
     std::vector<VkDynamicState> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -449,7 +476,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
 
     if (key.shader == ShaderId::GBufferStatic)
     {
-        // Binding 0: main Vertex3D data; binding 1: lightmap UV (vec2, per-vertex).
+
         VkVertexInputBindingDescription lmBinding{};
         lmBinding.binding = 1;
         lmBinding.stride = sizeof(float) * 2;
@@ -457,7 +484,7 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
 
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex3D)), lmBinding};
         vertexAttributeDescriptions = vertex::Vertex3D::getAttributeDescriptions();
-        // location 5 = lightmapUV from binding 1
+
         vertexAttributeDescriptions.push_back({5, 1, VK_FORMAT_R32G32_SFLOAT, 0});
     }
     else if (key.shader == ShaderId::GBufferSkinned || key.shader == ShaderId::SkinnedShadow ||
@@ -498,16 +525,19 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
              key.shader == ShaderId::EditorBillboard || key.shader == ShaderId::Billboard ||
              key.shader == ShaderId::Particle || key.shader == ShaderId::Sprite2D ||
              key.shader == ShaderId::RTReflections ||
-             key.shader == ShaderId::RTAO || key.shader == ShaderId::DebugBlit ||
-             key.shader == ShaderId::MotionBlur)
+             key.shader == ShaderId::RTAO || key.shader == ShaderId::SSGI ||
+             key.shader == ShaderId::DebugBlit ||
+             key.shader == ShaderId::MotionBlur ||
+             key.shader == ShaderId::FSR1EASU ||
+             key.shader == ShaderId::FSR1RCAS)
     {
-        // Fullscreen / billboard passes generate vertices procedurally in the vertex shader
+
         vertexBindingDescriptions = {};
         vertexAttributeDescriptions = {};
     }
     else if (key.shader == ShaderId::UIText || key.shader == ShaderId::UIQuad)
     {
-        // UI passes use Vertex2D (vec3 pos + vec2 uv)
+
         vertexBindingDescriptions = {vertex::getBindingDescription(sizeof(vertex::Vertex2D))};
         vertexAttributeDescriptions = vertex::Vertex2D::getAttributeDescriptions();
     }
@@ -518,16 +548,16 @@ core::GraphicsPipeline::SharedPtr GraphicsPipelineManager::createPipeline(const 
     }
     else if (key.shader == ShaderId::DebugLines)
     {
-        // DebugDraw::Vertex: vec3 position (offset 0) + vec4 color (offset 12)
+
         VkVertexInputBindingDescription binding{};
         binding.binding   = 0;
-        binding.stride    = 7 * sizeof(float); // 28 bytes
+        binding.stride    = 7 * sizeof(float);
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
         vertexBindingDescriptions = {binding};
         vertexAttributeDescriptions = {
-            {0, 0, VK_FORMAT_R32G32B32_SFLOAT,       0},   // position
-            {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT,    12},  // color
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT,       0},
+            {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT,    12},
         };
     }
     else

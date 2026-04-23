@@ -33,4 +33,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_CAMERA_COMPONENT_HPP
+#endif

@@ -90,4 +90,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_EVENT_BUS_HPP
+#endif

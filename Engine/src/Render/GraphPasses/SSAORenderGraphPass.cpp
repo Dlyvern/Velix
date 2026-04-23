@@ -21,7 +21,7 @@ bool SSAORenderGraphPass::isEnabled() const
     const auto &s = RenderQualitySettings::getInstance();
     if (!s.enablePostProcessing)
         return false;
-    // RTAO supersedes SSAO when ray tracing is active
+
     auto ctx = core::VulkanContext::getContext();
     if (s.enableRayTracing && s.enableRTAO && ctx && ctx->hasRayQuerySupport())
         return false;
@@ -34,9 +34,9 @@ namespace
     {
         glm::mat4 projection;
         glm::mat4 invProjection;
-        glm::vec4 params0; // x=texelSize.x, y=texelSize.y, z=radius, w=bias
-        glm::vec4 params1; // x=strength, y=enabled, z=samples, w=gtaoEnabled
-        glm::vec4 params2; // x=gtaoDirections, y=gtaoSteps, z=useBentNormals, w=reserved
+        glm::vec4 params0;
+        glm::vec4 params1;
+        glm::vec4 params2;
     };
 
     constexpr int MAX_SSAO_KERNEL = 64;
@@ -61,7 +61,7 @@ namespace
             sample = glm::normalize(sample);
             sample *= randomFloats(generator);
 
-            // Accelerating interpolation — more samples closer to origin
+
             float scale = static_cast<float>(i) / static_cast<float>(count);
             scale = glm::mix(0.1f, 1.0f, scale * scale);
             sample *= scale;

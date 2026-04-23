@@ -2,10 +2,10 @@
 
 struct ParticleData
 {
-    vec4 positionAndRotation; // xyz = world pos,  w = rotation (radians)
-    vec4 color;               // rgba
-    vec2 size;                // width, height  (world units)
-    uint textureIndex;        // index into the texture array (0 = default white)
+    vec4 positionAndRotation;
+    vec4 color;
+    vec2 size;
+    uint textureIndex;
     float _pad;
 };
 
@@ -16,25 +16,25 @@ layout(set = 0, binding = 0, std430) readonly buffer ParticleBuffer
 
 layout(push_constant) uniform PC
 {
-    mat4  viewProj;   // 64 bytes
-    vec3  right;      // 12 bytes  – camera right vector (world space)
-    float _pad0;      //  4 bytes
-    vec3  up;         // 12 bytes  – camera up vector (world space)
-    float _pad1;      //  4 bytes
-} pc;               // 96 bytes total
+    mat4  viewProj;
+    vec3  right;
+    float _pad0;
+    vec3  up;
+    float _pad1;
+} pc;
 
 layout(location = 0) out vec2      vUV;
 layout(location = 1) out flat vec4 vColor;
 layout(location = 2) out flat uint vTextureIndex;
 
 const vec2 kOffsets[6] = vec2[](
-    vec2(-0.5,  0.5),   // top-left
-    vec2( 0.5,  0.5),   // top-right
-    vec2(-0.5, -0.5),   // bottom-left
+    vec2(-0.5,  0.5),
+    vec2( 0.5,  0.5),
+    vec2(-0.5, -0.5),
 
-    vec2( 0.5,  0.5),   // top-right
-    vec2( 0.5, -0.5),   // bottom-right
-    vec2(-0.5, -0.5)    // bottom-left
+    vec2( 0.5,  0.5),
+    vec2( 0.5, -0.5),
+    vec2(-0.5, -0.5)
 );
 
 const vec2 kUVs[6] = vec2[](

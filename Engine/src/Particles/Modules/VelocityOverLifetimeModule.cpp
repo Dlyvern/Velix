@@ -3,7 +3,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-void VelocityOverLifetimeModule::onParticleUpdate(Particle &particle, float /*deltaTime*/)
+void VelocityOverLifetimeModule::onParticleUpdate(Particle &particle, float )
 {
     if (!m_enabled)
         return;

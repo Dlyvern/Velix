@@ -170,8 +170,8 @@ void DepthPrepassRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
         if (!batch.mesh || !batch.material)
             continue;
 
-        // Skip transparent and alpha-masked objects — they can't go through a depth-only prepass
-        // (alpha-masked needs fragment alpha test, alpha-blend has no opaque depth contribution).
+
+
         const uint32_t flags = batch.material->params().flags;
         const bool alphaBlend = (flags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_BLEND) != 0u;
         const bool alphaMask  = (flags & Material::MaterialFlags::EMATERIAL_FLAG_ALPHA_MASK)  != 0u;
@@ -190,7 +190,7 @@ void DepthPrepassRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
         key.polygonMode   = VK_POLYGON_MODE_FILL;
         key.topology      = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         key.rasterizationSamples = m_rasterizationSamples;
-        key.colorFormats  = {};               // no color output
+        key.colorFormats  = {};
         key.depthFormat   = m_depthFormat;
         key.pipelineLayout = pipelineLayout;
 

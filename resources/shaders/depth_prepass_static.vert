@@ -20,7 +20,8 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
 struct InstanceData
 {
     mat4 model;
-    uvec4 objectInfo; // x = objectId, y = bonesOffset, z = materialIndex, w = reserved
+    uvec4 objectInfo;
+    mat4 prevModel;
 };
 
 layout(std430, set = 2, binding = 1) readonly buffer InstanceDataSSBO

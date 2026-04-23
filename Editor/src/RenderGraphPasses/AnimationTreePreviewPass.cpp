@@ -67,9 +67,9 @@ void AnimationTreePreviewPass::setup(engine::renderGraph::RGPResourcesBuilder &b
     depthDesc.setDebugName("__ELIX_ANIMTREE_PREVIEW_DEPTH__");
     m_depthHandler = builder.createTexture(depthDesc);
 
-    // Minimal camera descriptor set layout — only binding 0 (camera UBO).
-    // The preview shader (shader_simple_textured_mesh) only reads binding 0,
-    // so we don't need the light-space and light SSBO bindings.
+
+
+
     {
         VkDescriptorSetLayoutBinding cameraBinding{};
         cameraBinding.binding         = 0;
@@ -110,7 +110,7 @@ void AnimationTreePreviewPass::compile(engine::renderGraph::RGPResourcesStorage 
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             core::memory::MemoryUsage::CPU_TO_GPU);
 
-        // Initialize with a sensible default
+
         PreviewCameraUBO defaultUBO{};
         defaultUBO.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
         defaultUBO.projection = glm::perspective(glm::radians(45.0f), 1.0f, 0.05f, 100.0f);
@@ -148,7 +148,7 @@ void AnimationTreePreviewPass::record(core::CommandBuffer::SharedPtr commandBuff
     if (!m_pendingData.hasData || m_pendingData.meshes.empty())
         return;
 
-    // Upload this frame's orbit view/projection to the per-frame UBO
+
     const uint32_t imageIndex = renderContext.currentImageIndex;
     if (imageIndex < m_cameraUBOs.size() && m_cameraUBOs[imageIndex])
     {

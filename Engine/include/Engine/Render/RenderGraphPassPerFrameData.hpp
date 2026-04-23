@@ -50,21 +50,22 @@ struct RenderGraphLightData
     glm::vec4 direction{0.0f, 0.0f, -1.0f, 0.0f};
     glm::vec4 colorStrength{1.0f};
     glm::vec4 parameters{1.0f};
-    glm::vec4 shadowInfo{0.0f}; // x = casts shadow, y = shadow index, z = far/range, w = near
+    glm::vec4 shadowInfo{0.0f};
 };
 
 struct PerObjectInstanceData
 {
     glm::mat4 model{1.0f};
-    glm::uvec4 objectInfo{0u}; // x = objectId, y = bonesOffset, z = materialIndex, w = reserved
+    glm::uvec4 objectInfo{0u};
+    glm::mat4 prevModel{1.0f};
 };
 
-// World-space bounding sphere for a draw batch (aggregate of all instances).
-// Uploaded to GPU for compute-shader frustum culling.
+
+
 struct GPUBatchBounds
 {
     glm::vec3 center{0.0f};
-    float radius{0.0f}; // <= 0 means "always visible" (no bounds data)
+    float radius{0.0f};
 };
 
 struct DrawBatch
@@ -166,25 +167,25 @@ public:
     FogSettings fogSettings{};
     size_t fogSettingsHash{0u};
 
-    // Per-batch bounding spheres for GPU frustum culling (parallel to drawBatches).
+
     std::vector<GPUBatchBounds> batchBounds;
 
-    // GPU indirect draw buffer (VkDrawIndexedIndirectCommand[]), one entry per drawBatch.
-    // Written by CPU each frame, then optionally modified by the GPU culling compute pass.
-    // VK_NULL_HANDLE when not yet initialised.
+
+
+
     VkBuffer indirectDrawBuffer{VK_NULL_HANDLE};
 
-    // Unified geometry buffer handles (VK_NULL_HANDLE when not available).
-    // GBuffer binds these once instead of rebinding per-batch when all static
-    // batches use the unified layout.
+
+
+
     VkBuffer unifiedStaticVertexBuffer{VK_NULL_HANDLE};
     VkBuffer unifiedStaticIndexBuffer{VK_NULL_HANDLE};
 
-    // Bindless material descriptor set — holds all textures (binding 0) and
-    // the MaterialParams SSBO (binding 1). Bound once at Set 1 in GBuffer.
+
+
     VkDescriptorSet bindlessDescriptorSet{VK_NULL_HANDLE};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RENDER_GRAPH_PASS_PER_FRAME_DATA_HPP
+#endif

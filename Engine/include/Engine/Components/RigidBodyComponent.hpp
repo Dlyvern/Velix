@@ -28,7 +28,7 @@ public:
     void setPosition(const physx::PxVec3 &vec);
     void setPosition(const glm::vec3 &vec);
 
-    // Forces & velocity (dynamic bodies only; silently ignored on static/kinematic)
+
     void applyImpulse(const glm::vec3 &impulse);
     void addForce(const glm::vec3 &force);
     void addTorque(const glm::vec3 &torque);
@@ -54,4 +54,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RIGID_BODY_COMPONENT_HPP
+#endif

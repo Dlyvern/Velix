@@ -38,8 +38,8 @@
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 enum class AssertAction
 {
-    Break,  // break into debugger / abort
-    LogOnly // log and continue
+    Break,
+    LogOnly
 };
 
 inline void AssertReport(
@@ -117,7 +117,7 @@ inline void AssertReportFmt(
 
 #elif VX_ENABLE_FATAL_ASSERTS_IN_RELEASE
 
-// Optional mode: keep fatal asserts in release too
+
 #define VX_ASSERT(expr)                                                                                                     \
     do                                                                                                                      \
     {                                                                                                                       \
@@ -187,4 +187,4 @@ inline void AssertReportFmt(
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ASSERT_HPP
+#endif

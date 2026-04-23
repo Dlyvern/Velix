@@ -19,10 +19,10 @@ struct PushConstantView
 
 struct UBO
 {
-    glm::vec4 sunDirection_time;  // xyz dir, w time
-    glm::vec4 sunColor_intensity; // rgb color, w intensity
-    glm::vec4 skyParams;          // x cloudSpeed, y cloudCoverage, z cloudDensity, w exposure
-    glm::vec4 lightParams;        // x dirLightStrength, y starIntensity, z starDensity, w reserved
+    glm::vec4 sunDirection_time;
+    glm::vec4 sunColor_intensity;
+    glm::vec4 skyParams;
+    glm::vec4 lightParams;
 };
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
@@ -91,7 +91,7 @@ SkyLightSystem::SkyLightSystem()
 
     if (!utilities::AsyncGpuUpload::submit(commandBuffer, core::VulkanContext::getContext()->getGraphicsQueue(), {vertexStaging}))
         VX_ENGINE_ERROR_STREAM("Failed to submit sky light vertex upload\n");
-    ///
+
 
     VkDescriptorSetLayoutBinding uboBinding{};
     uboBinding.binding = 0;
@@ -126,7 +126,7 @@ SkyLightSystem::SkyLightSystem()
 
 void SkyLightSystem::setTimeOfDay(float hour)
 {
-    // Simple day arc: sunrise ~6, noon ~12, sunset ~18
+
     float t = hour / 24.0f;
 
     float elevation = sin((t - 0.25f) * glm::two_pi<float>()) * 80.0f;

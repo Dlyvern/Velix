@@ -42,7 +42,7 @@ void BloomRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     for (auto &h : m_hdrInputHandlers)
         builder.read(h, RGPTextureUsage::SAMPLED);
 
-    // Half-resolution output
+
     RGPTextureDescription bloomDesc{m_bloomFormat, RGPTextureUsage::COLOR_ATTACHMENT};
     bloomDesc.setInitialLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     bloomDesc.setFinalLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -108,7 +108,7 @@ void BloomRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 }
 
 void BloomRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
-                                  const RenderGraphPassPerFrameData & /*data*/,
+                                  const RenderGraphPassPerFrameData & ,
                                   const RenderGraphPassContext &renderContext)
 {
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);

@@ -1,4 +1,5 @@
 #include "Engine/Render/RenderGraph/RenderGraph.hpp"
+#include "Engine/Builders/PipelinePreWarmer.hpp"
 #include "Core/VulkanContext.hpp"
 #include "Core/ShaderHandler.hpp"
 #include "Core/VulkanHelpers.hpp"
@@ -46,10 +47,15 @@
 
 struct CameraUBO
 {
-    glm::mat4 view;
-    glm::mat4 projection;
-    glm::mat4 invView;
-    glm::mat4 invProjection;
+    glm::mat4 view{1.0f};
+    glm::mat4 projection{1.0f};
+    glm::mat4 invView{1.0f};
+    glm::mat4 invProjection{1.0f};
+    glm::mat4 prevView{1.0f};
+    glm::mat4 prevProjection{1.0f};
+
+
+    glm::vec4 jitter{0.0f};
 };
 
 struct LightSSBO
@@ -61,6 +67,37 @@ struct LightSSBO
 
 namespace
 {
+
+
+    float halton(uint32_t index, uint32_t base)
+    {
+        float result = 0.0f;
+        float f = 1.0f;
+        while (index > 0)
+        {
+            f /= static_cast<float>(base);
+            result += f * static_cast<float>(index % base);
+            index /= base;
+        }
+        return result;
+    }
+
+
+
+
+
+
+    glm::vec2 computeJitterOffset(uint32_t phaseIndex, uint32_t renderWidth, uint32_t renderHeight)
+    {
+        constexpr uint32_t kJitterPhaseCount = 16;
+        const uint32_t i = (phaseIndex % kJitterPhaseCount) + 1u;
+        const float hx = halton(i, 2u) - 0.5f;
+        const float hy = halton(i, 3u) - 0.5f;
+        return glm::vec2(
+            2.0f * hx / static_cast<float>(std::max(1u, renderWidth)),
+            2.0f * hy / static_cast<float>(std::max(1u, renderHeight)));
+    }
+
     struct TextureAliasSignature
     {
         VkExtent2D extent{0u, 0u};
@@ -219,8 +256,8 @@ namespace
         if (execution.useDepth)
             accumulateExtent(findTargetByImageView(execution.targets, execution.depthRenderingItem.imageView));
 
-        // Fall back to any declared target if a pass forgot to map its attachment
-        // view back into execution.targets.
+
+
         if (!hasAttachmentExtent)
         {
             for (const auto &[_, target] : execution.targets)
@@ -317,7 +354,7 @@ RenderGraph::RenderGraph(bool presentToSwapchain) : m_presentToSwapchain(present
     VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
 
     VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // Start signaled
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     fenceInfo.pNext = nullptr;
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -402,9 +439,20 @@ std::vector<VkImageView> RenderGraph::getImageViews(const std::vector<RGPResourc
     return imageViews;
 }
 
+void RenderGraph::stampPrevModelMatricesAndUpdateCache()
+{
+    for (auto &inst : m_perFrameData.perObjectInstances)
+    {
+        const uint64_t key = static_cast<uint64_t>(inst.objectInfo.x);
+        auto it = m_prevModelCache.find(key);
+        inst.prevModel = (it == m_prevModelCache.end()) ? inst.model : it->second;
+        m_prevModelCache[key] = inst.model;
+    }
+}
+
 void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling)
 {
-    m_sceneMaterialResolver.beginFrame();
+    m_sceneMaterialResolver.beginFrame(std::numeric_limits<int>::max());
 
     auto perFrameWorker = PerFrameDataWorker::begin(
         m_perFrameData,
@@ -433,6 +481,9 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     perFrameWorker.buildRayTracingInputs();
     perFrameWorker.buildRasterBatches();
     perFrameWorker.buildShadowBatches();
+
+
+    stampPrevModelMatricesAndUpdateCache();
 
     const auto &frameBones = perFrameWorker.getFrameBones();
     const auto &shadowPerObjectInstances = perFrameWorker.getShadowPerObjectInstances();
@@ -477,7 +528,7 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
     {
         const uint32_t batchCount = static_cast<uint32_t>(m_perFrameData.drawBatches.size());
 
-        // Upload batch bounding spheres.
+
         if (batchCount > 0)
         {
             glm::vec4 *boundsMapped = nullptr;
@@ -490,8 +541,8 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
             m_gpuCulling.getBatchBoundsSSBO(m_currentFrame)->unmap();
         }
 
-        // Write VkDrawIndexedIndirectCommand[] from current draw batches.
-        // The compute shader may zero out instanceCount for culled batches.
+
+
         {
             uint8_t *cmdMapped = nullptr;
             m_gpuCulling.getIndirectDrawBuffer(m_currentFrame)->map(reinterpret_cast<void *&>(cmdMapped));
@@ -503,7 +554,118 @@ void RenderGraph::prepareFrameDataFromScene(Scene *scene, const glm::mat4 &view,
                 cmd.instanceCount = batch.instanceCount;
                 cmd.firstIndex = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedFirstIndex : 0u;
                 cmd.vertexOffset = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedVertexOffset : 0;
-                cmd.firstInstance = 0u; // baseInstance comes from push constant
+                cmd.firstInstance = 0u;
+                std::memcpy(cmdMapped + i * sizeof(VkDrawIndexedIndirectCommand), &cmd, sizeof(cmd));
+            }
+            m_gpuCulling.getIndirectDrawBuffer(m_currentFrame)->unmap();
+        }
+
+        m_perFrameData.indirectDrawBuffer = m_gpuCulling.getIndirectDrawBuffer(m_currentFrame)->vk();
+    }
+}
+
+void RenderGraph::prepareFrameDataFromSnapshot(const RenderSceneSnapshot &snapshot, const glm::mat4 &view, const glm::mat4 &projection, bool enableFrustumCulling)
+{
+    m_sceneMaterialResolver.beginFrame(std::numeric_limits<int>::max());
+
+    auto perFrameWorker = PerFrameDataWorker::begin(
+        m_perFrameData,
+        PerFrameDataWorker::Dependencies{
+            .meshGeometryRegistry = &m_meshGeometryRegistry,
+            .materialResolver = &m_sceneMaterialResolver,
+            .bindlessRegistry = &m_bindlessRegistry,
+            .rayTracingScene = &m_rayTracingScene,
+            .rayTracingGeometryCache = &m_rayTracingGeometryCache,
+            .skinnedBlasBuilder = &m_skinnedBlasBuilder,
+            .lastFrustumPlanes = &m_lastFrustumPlanes,
+            .lastFrustumCullingEnabled = &m_lastFrustumCullingEnabled,
+            .currentFrame = m_currentFrame,
+            .enableCpuSmallFeatureCulling = m_enableCpuSmallFeatureCulling});
+
+    const glm::vec3 cameraWorldPos = glm::vec3(glm::inverse(view)[3]);
+
+    perFrameWorker.pruneRemovedEntities(snapshot);
+    perFrameWorker.syncSceneDrawItems(snapshot, cameraWorldPos);
+
+    utilities::AsyncGpuUpload::batchFlush(core::VulkanContext::getContext()->getGraphicsQueue());
+
+    perFrameWorker.buildFrameBones();
+    perFrameWorker.buildDrawReferences(view, projection, enableFrustumCulling);
+    perFrameWorker.sortDrawReferences(cameraWorldPos);
+    perFrameWorker.buildRayTracingInputs();
+    perFrameWorker.buildRasterBatches();
+    perFrameWorker.buildShadowBatches();
+
+
+    stampPrevModelMatricesAndUpdateCache();
+
+    const auto &frameBones = perFrameWorker.getFrameBones();
+    const auto &shadowPerObjectInstances = perFrameWorker.getShadowPerObjectInstances();
+
+    const VkDeviceSize requiredBonesSize = static_cast<VkDeviceSize>(frameBones.size() * sizeof(glm::mat4));
+    const VkDeviceSize availableBonesSize = m_bonesSSBOs[m_currentFrame]->getSize();
+    if (requiredBonesSize > availableBonesSize)
+        throw std::runtime_error("Bones SSBO size is too small for current frame. Increase initial bones buffer size.");
+
+    const VkDeviceSize requiredInstanceSize = static_cast<VkDeviceSize>(m_perFrameData.perObjectInstances.size() * sizeof(PerObjectInstanceData));
+    const VkDeviceSize availableInstanceSize = m_instanceSSBOs[m_currentFrame]->getSize();
+    if (requiredInstanceSize > availableInstanceSize)
+        throw std::runtime_error("Instance SSBO size is too small for current frame. Increase initial instance buffer size.");
+
+    const VkDeviceSize requiredShadowInstanceSize = static_cast<VkDeviceSize>(shadowPerObjectInstances.size() * sizeof(PerObjectInstanceData));
+    const VkDeviceSize availableShadowInstanceSize = m_shadowInstanceSSBOs[m_currentFrame]->getSize();
+    if (requiredShadowInstanceSize > availableShadowInstanceSize)
+        throw std::runtime_error("Shadow instance SSBO size is too small for current frame. Increase initial shadow instance buffer size.");
+
+    glm::mat4 *bonesMapped = nullptr;
+    m_bonesSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(bonesMapped));
+    if (!frameBones.empty())
+        std::memcpy(bonesMapped, frameBones.data(), frameBones.size() * sizeof(glm::mat4));
+    m_bonesSSBOs[m_currentFrame]->unmap();
+
+    PerObjectInstanceData *instancesMapped = nullptr;
+    m_instanceSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(instancesMapped));
+    if (!m_perFrameData.perObjectInstances.empty())
+        std::memcpy(instancesMapped, m_perFrameData.perObjectInstances.data(), requiredInstanceSize);
+    m_instanceSSBOs[m_currentFrame]->unmap();
+
+    PerObjectInstanceData *shadowInstancesMapped = nullptr;
+    m_shadowInstanceSSBOs[m_currentFrame]->map(reinterpret_cast<void *&>(shadowInstancesMapped));
+    if (!shadowPerObjectInstances.empty())
+        std::memcpy(shadowInstancesMapped, shadowPerObjectInstances.data(), requiredShadowInstanceSize);
+    m_shadowInstanceSSBOs[m_currentFrame]->unmap();
+
+    m_perFrameData.perObjectDescriptorSet = m_perObjectDescriptorSets[m_currentFrame];
+    m_perFrameData.shadowPerObjectDescriptorSet = m_shadowPerObjectDescriptorSets[m_currentFrame];
+
+    if (m_gpuCulling.isInitialized())
+    {
+        const uint32_t batchCount = static_cast<uint32_t>(m_perFrameData.drawBatches.size());
+
+        if (batchCount > 0)
+        {
+            glm::vec4 *boundsMapped = nullptr;
+            m_gpuCulling.getBatchBoundsSSBO(m_currentFrame)->map(reinterpret_cast<void *&>(boundsMapped));
+            for (uint32_t i = 0; i < batchCount; ++i)
+            {
+                const GPUBatchBounds &b = m_perFrameData.batchBounds[i];
+                boundsMapped[i] = glm::vec4(b.center, b.radius);
+            }
+            m_gpuCulling.getBatchBoundsSSBO(m_currentFrame)->unmap();
+        }
+
+        {
+            uint8_t *cmdMapped = nullptr;
+            m_gpuCulling.getIndirectDrawBuffer(m_currentFrame)->map(reinterpret_cast<void *&>(cmdMapped));
+            for (uint32_t i = 0; i < batchCount; ++i)
+            {
+                const DrawBatch &batch = m_perFrameData.drawBatches[i];
+                VkDrawIndexedIndirectCommand cmd{};
+                cmd.indexCount = batch.mesh ? batch.mesh->indicesCount : 0u;
+                cmd.instanceCount = batch.instanceCount;
+                cmd.firstIndex = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedFirstIndex : 0u;
+                cmd.vertexOffset = (batch.mesh && batch.mesh->inUnifiedBuffer) ? batch.mesh->unifiedVertexOffset : 0;
+                cmd.firstInstance = 0u;
                 std::memcpy(cmdMapped + i * sizeof(VkDrawIndexedIndirectCommand), &cmd, sizeof(cmd));
             }
             m_gpuCulling.getIndirectDrawBuffer(m_currentFrame)->unmap();
@@ -522,7 +684,7 @@ RenderGraph::ProbeCaptureResult RenderGraph::captureSceneProbe(const glm::vec3 &
     {
         prepareFrameDataFromScene(scene, glm::mat4(1.0f), glm::mat4(1.0f), false);
 
-        // Re-upload per-object instance data so the capture uses the new (complete) batches.
+
         const VkDeviceSize requiredSize = static_cast<VkDeviceSize>(
             m_perFrameData.perObjectInstances.size() * sizeof(PerObjectInstanceData));
         if (requiredSize > 0)
@@ -547,7 +709,7 @@ RenderGraph::ProbeCaptureResult RenderGraph::captureSceneProbe(const glm::vec3 &
 
     vkDeviceWaitIdle(m_device);
 
-    // Six cube-face look directions and corresponding up vectors
+
     static const glm::vec3 kFaceDirs[6] = {
         {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
     static const glm::vec3 kFaceUps[6] = {
@@ -667,7 +829,14 @@ RenderGraph::ProbeCaptureResult RenderGraph::captureSceneProbe(const glm::vec3 &
     for (uint32_t face = 0; face < 6; ++face)
     {
         const glm::mat4 view = glm::lookAt(probePos, probePos + kFaceDirs[face], kFaceUps[face]);
-        CameraUBO ubo{view, proj, glm::inverse(view), glm::inverse(proj)};
+        CameraUBO ubo{};
+        ubo.view = view;
+        ubo.projection = proj;
+        ubo.invView = glm::inverse(view);
+        ubo.invProjection = glm::inverse(proj);
+        ubo.prevView = view;
+        ubo.prevProjection = proj;
+
         std::memcpy(m_cameraMapped[m_currentFrame], &ubo, sizeof(CameraUBO));
 
         VkRenderingAttachmentInfo colorAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
@@ -766,7 +935,7 @@ RenderGraph::ProbeCaptureResult RenderGraph::captureSceneProbe(const glm::vec3 &
         vkCmdEndRendering(cmdBuf);
     }
 
-    // Transition cubemap → SHADER_READ_ONLY_OPTIMAL
+
     {
         auto barrier = utilities::ImageUtilities::insertImageMemoryBarrier(
             *captureImage,
@@ -786,7 +955,7 @@ RenderGraph::ProbeCaptureResult RenderGraph::captureSceneProbe(const glm::vec3 &
 
     cleanup();
 
-    // ── Final cube image view ─────────────────────────────────────────────────
+
     VkImageView cubeView = VK_NULL_HANDLE;
     {
         VkImageViewCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -832,6 +1001,41 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     cameraUBO.invProjection = glm::inverse(cameraUBO.projection);
     cameraUBO.invView = glm::inverse(cameraUBO.view);
 
+
+
+
+    {
+        const auto &qs = RenderQualitySettings::getInstance();
+        const bool wantTemporalJitter = qs.upscalerMode == RenderQualitySettings::UpscalerMode::FSR2 ||
+                                        qs.upscalerMode == RenderQualitySettings::UpscalerMode::FSR3;
+
+        cameraUBO.prevView = m_hasPrevCameraState ? m_prevView : cameraUBO.view;
+        cameraUBO.prevProjection = m_hasPrevCameraState ? m_prevProjection : cameraUBO.projection;
+
+        glm::vec2 newJitter(0.0f);
+        if (wantTemporalJitter)
+        {
+            const auto swapExtent = m_swapchain->getExtent();
+            const float renderScale = std::clamp(qs.renderScale, 0.25f, 2.0f);
+            const uint32_t renderW = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(swapExtent.width)  * renderScale)));
+            const uint32_t renderH = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(swapExtent.height) * renderScale)));
+            newJitter = computeJitterOffset(m_jitterPhaseIndex, renderW, renderH);
+            ++m_jitterPhaseIndex;
+        }
+        else
+        {
+            m_jitterPhaseIndex = 0;
+        }
+
+        cameraUBO.jitter = glm::vec4(newJitter.x, newJitter.y, m_prevJitterOffset.x, m_prevJitterOffset.y);
+
+
+        m_prevView = cameraUBO.view;
+        m_prevProjection = cameraUBO.projection;
+        m_prevJitterOffset = newJitter;
+        m_hasPrevCameraState = true;
+    }
+
     m_perFrameData.projection = cameraUBO.projection;
     m_perFrameData.view = cameraUBO.view;
 
@@ -847,6 +1051,8 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     previewCameraUBO.projection[1][1] *= -1;
     previewCameraUBO.invProjection = glm::inverse(previewCameraUBO.projection);
     previewCameraUBO.invView = glm::inverse(previewCameraUBO.view);
+    previewCameraUBO.prevView = previewCameraUBO.view;
+    previewCameraUBO.prevProjection = previewCameraUBO.projection;
 
     m_perFrameData.previewProjection = previewCameraUBO.projection;
     m_perFrameData.previewView = previewCameraUBO.view;
@@ -885,9 +1091,128 @@ void RenderGraph::prepareFrame(Camera::SharedPtr camera, Scene *scene, float del
     const bool enableCpuFrustumCulling = (camera != nullptr) && m_enableCpuFrustumCulling;
     prepareFrameDataFromScene(scene, cameraUBO.view, cameraUBO.projection, enableCpuFrustumCulling);
 
-    // New textures/materials are discovered while walking the scene, so sync the
-    // current frame's bindless descriptor set only after that work is complete
-    // and after its fence has been waited.
+
+
+
+    m_bindlessRegistry.syncFrame(m_currentFrame);
+    m_bindlessRegistry.uploadMaterialParams(m_currentFrame, m_bindlessRegistry.getRegisteredMaterialCount());
+    m_perFrameData.bindlessDescriptorSet = m_bindlessRegistry.getBindlessSet(m_currentFrame);
+}
+
+void RenderGraph::prepareFrame(Camera::SharedPtr camera, const RenderSceneSnapshot &snapshot, float deltaTime)
+{
+    if (const VkResult waitResult = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+        waitResult != VK_SUCCESS)
+    {
+        VX_ENGINE_ERROR_STREAM("Failed to wait for frame fence before CPU-side frame preparation: "
+                               << core::helpers::vulkanResultToString(waitResult) << '\n');
+        return;
+    }
+
+    m_perFrameData.swapChainViewport = m_swapchain->getViewport();
+    m_perFrameData.swapChainScissor = m_swapchain->getScissor();
+    m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
+    m_perFrameData.previewCameraDescriptorSet = m_previewCameraDescriptorSets[m_currentFrame];
+    m_perFrameData.deltaTime = deltaTime;
+    m_perFrameData.elapsedTime += deltaTime;
+    m_perFrameData.unifiedStaticVertexBuffer = m_staticUnifiedGeometry.getVertexBuffer();
+    m_perFrameData.unifiedStaticIndexBuffer = m_staticUnifiedGeometry.getIndexBuffer();
+
+    CameraUBO cameraUBO{};
+
+    cameraUBO.view = camera ? camera->getViewMatrix() : glm::mat4(1.0f);
+    cameraUBO.projection = camera ? camera->getProjectionMatrix() : glm::mat4(1.0f);
+    cameraUBO.projection[1][1] *= -1;
+    cameraUBO.invProjection = glm::inverse(cameraUBO.projection);
+    cameraUBO.invView = glm::inverse(cameraUBO.view);
+
+
+    {
+        const auto &qs = RenderQualitySettings::getInstance();
+        const bool wantTemporalJitter = qs.upscalerMode == RenderQualitySettings::UpscalerMode::FSR2 ||
+                                        qs.upscalerMode == RenderQualitySettings::UpscalerMode::FSR3;
+
+        cameraUBO.prevView = m_hasPrevCameraState ? m_prevView : cameraUBO.view;
+        cameraUBO.prevProjection = m_hasPrevCameraState ? m_prevProjection : cameraUBO.projection;
+
+        glm::vec2 newJitter(0.0f);
+        if (wantTemporalJitter)
+        {
+            const auto swapExtent = m_swapchain->getExtent();
+            const float renderScale = std::clamp(qs.renderScale, 0.25f, 2.0f);
+            const uint32_t renderW = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(swapExtent.width)  * renderScale)));
+            const uint32_t renderH = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(swapExtent.height) * renderScale)));
+            newJitter = computeJitterOffset(m_jitterPhaseIndex, renderW, renderH);
+            ++m_jitterPhaseIndex;
+        }
+        else
+        {
+            m_jitterPhaseIndex = 0;
+        }
+
+        cameraUBO.jitter = glm::vec4(newJitter.x, newJitter.y, m_prevJitterOffset.x, m_prevJitterOffset.y);
+
+        m_prevView = cameraUBO.view;
+        m_prevProjection = cameraUBO.projection;
+        m_prevJitterOffset = newJitter;
+        m_hasPrevCameraState = true;
+    }
+
+    m_perFrameData.projection = cameraUBO.projection;
+    m_perFrameData.view = cameraUBO.view;
+
+    std::memcpy(m_cameraMapped[m_currentFrame], &cameraUBO, sizeof(CameraUBO));
+
+    CameraUBO previewCameraUBO{};
+    previewCameraUBO.view = glm::lookAt(
+        glm::vec3(0, 0, 3),
+        glm::vec3(0, 0, 0),
+        glm::vec3(0, 1, 0));
+
+    previewCameraUBO.projection = glm::perspective(glm::radians(45.0f), 1.0f, 0.1f, 10.0f);
+    previewCameraUBO.projection[1][1] *= -1;
+    previewCameraUBO.invProjection = glm::inverse(previewCameraUBO.projection);
+    previewCameraUBO.invView = glm::inverse(previewCameraUBO.view);
+    previewCameraUBO.prevView = previewCameraUBO.view;
+    previewCameraUBO.prevProjection = previewCameraUBO.projection;
+
+    m_perFrameData.previewProjection = previewCameraUBO.projection;
+    m_perFrameData.previewView = previewCameraUBO.view;
+    m_perFrameData.skyboxHDRPath = snapshot.skyboxHDRPath;
+    m_perFrameData.fogSettings = snapshot.fogSettings;
+    m_perFrameData.fogSettingsHash = hashFogSettings(m_perFrameData.fogSettings);
+
+    std::memcpy(m_previewCameraMapped[m_currentFrame], &previewCameraUBO, sizeof(CameraUBO));
+
+    auto perFrameWorker = PerFrameDataWorker::begin(
+        m_perFrameData,
+        PerFrameDataWorker::Dependencies{
+            .meshGeometryRegistry = &m_meshGeometryRegistry,
+            .materialResolver = &m_sceneMaterialResolver,
+            .bindlessRegistry = &m_bindlessRegistry,
+            .rayTracingScene = &m_rayTracingScene,
+            .rayTracingGeometryCache = &m_rayTracingGeometryCache,
+            .skinnedBlasBuilder = &m_skinnedBlasBuilder,
+            .lastFrustumPlanes = &m_lastFrustumPlanes,
+            .lastFrustumCullingEnabled = &m_lastFrustumCullingEnabled,
+            .currentFrame = m_currentFrame,
+            .enableCpuSmallFeatureCulling = m_enableCpuSmallFeatureCulling});
+    perFrameWorker.buildLightData(snapshot, camera.get());
+
+    void *mapped = nullptr;
+    m_lightSSBOs[m_currentFrame]->map(mapped);
+    LightSSBO *ssboData = static_cast<LightSSBO *>(mapped);
+    const auto &lights = perFrameWorker.getLightData();
+    ssboData->lightCount = static_cast<int>(lights.size());
+    if (!lights.empty())
+        std::memcpy(ssboData->lights, lights.data(), lights.size() * sizeof(RenderGraphLightData));
+    m_lightSSBOs[m_currentFrame]->unmap();
+    const auto &lightSpaceMatrixUBO = perFrameWorker.getLightSpaceMatrixUBO();
+    std::memcpy(m_lightMapped[m_currentFrame], &lightSpaceMatrixUBO, sizeof(RenderGraphLightSpaceMatrixUBO));
+
+    const bool enableCpuFrustumCulling = (camera != nullptr) && m_enableCpuFrustumCulling;
+    prepareFrameDataFromSnapshot(snapshot, cameraUBO.view, cameraUBO.projection, enableCpuFrustumCulling);
+
     m_bindlessRegistry.syncFrame(m_currentFrame);
     m_bindlessRegistry.uploadMaterialParams(m_currentFrame, m_bindlessRegistry.getRegisteredMaterialCount());
     m_perFrameData.bindlessDescriptorSet = m_bindlessRegistry.getBindlessSet(m_currentFrame);
@@ -905,7 +1230,7 @@ void RenderGraph::createDescriptorSetPool()
         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 100},
         {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 100}};
 
-    // Camera + preview camera + per-object + shadow-per-object descriptor sets per frame.
+
     static constexpr uint32_t kRenderGraphSetGroupsPerFrame = 4;
     const uint32_t maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * kRenderGraphSetGroupsPerFrame;
 
@@ -971,8 +1296,8 @@ bool RenderGraph::begin()
         return false;
     }
 
-    // Resize/fullscreen events can arrive while UI code is building a frame.
-    // Recreate swapchain only from here, after fence wait, to avoid re-entrant resize work.
+
+
     if (m_presentToSwapchain && m_swapchainResizeRequested.exchange(false, std::memory_order_relaxed))
         recreateSwapChain();
 
@@ -1003,8 +1328,8 @@ bool RenderGraph::begin()
     m_perFrameData.cameraDescriptorSet = m_cameraDescriptorSets[m_currentFrame];
     m_perFrameData.previewCameraDescriptorSet = m_previewCameraDescriptorSets[m_currentFrame];
 
-    // Resolve profiling for the previous use of this frame slot, then reset and seed
-    // current CPU stage timings (fence wait + resolve profiling).
+
+
     m_renderGraphProfiling->beginFrameCpuProfiling(m_currentFrame, currentFenceWaitMs);
 
     m_renderGraphProfiling->measureCpuStage(
@@ -1072,13 +1397,13 @@ bool RenderGraph::begin()
     for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
         renderGraphPass->prepareRecord(m_perFrameData, m_passContextData);
 
-    // Some passes may stream textures while recompiling / preparing (for example
-    // skyboxes or probe assets). Submit those queued uploads before we record
-    // this frame's draw work so the same-frame render submission sees them in
-    // queue order instead of sampling images that are still in UNDEFINED.
+
+
+
+
     utilities::AsyncGpuUpload::batchFlush(core::VulkanContext::getContext()->getGraphicsQueue());
 
-    // Ensure the cache is sized to match the current sorted pass list.
+
     if (m_passExecutionCache.size() != m_sortedRenderGraphPasses.size())
         m_passExecutionCache.resize(m_sortedRenderGraphPasses.size());
 
@@ -1223,8 +1548,8 @@ bool RenderGraph::begin()
 
     primaryCommandBuffer->begin();
 
-    // GPU frustum culling — zeroes instanceCount for batches outside the view frustum.
-    // Must run before any render pass that reads VkDrawIndexedIndirectCommand[].
+
+
     m_gpuCulling.dispatch(primaryCommandBuffer->vk(), m_currentFrame,
                           static_cast<uint32_t>(m_perFrameData.drawBatches.size()),
                           m_lastFrustumPlanes);
@@ -1399,6 +1724,17 @@ void RenderGraph::draw()
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
+std::vector<GraphicsPipelineKey> RenderGraph::collectPassPipelineKeys() const
+{
+    std::vector<GraphicsPipelineKey> keys;
+    for (const auto &[_, pass] : m_renderGraphPasses)
+    {
+        if (pass.enabled && pass.renderGraphPass)
+            pass.renderGraphPass->collectPipelineKeys(keys);
+    }
+    return keys;
+}
+
 void RenderGraph::setup()
 {
     std::vector<RenderGraphPassData *> setupOrder;
@@ -1419,8 +1755,8 @@ void RenderGraph::setup()
         }
 
         const std::string &debugName = passData->renderGraphPass->getDebugName();
-        VX_ENGINE_INFO_STREAM("[RenderGraph] Setup pass " << passData->id << ": "
-                                                         << (debugName.empty() ? "<unnamed>" : debugName) << '\n');
+
+
 
         m_renderGraphPassesBuilder.setCurrentPass(&passData->passInfo);
         passData->renderGraphPass->setup(m_renderGraphPassesBuilder);
@@ -1537,7 +1873,7 @@ void RenderGraph::sortRenderGraphPasses()
         }
 
         if (!renderGraphPass->enabled)
-            continue; // Skip permanently-disabled passes (VRAM freed via disablePass<T>())
+            continue;
 
         m_sortedRenderGraphPassIds.push_back(sortId);
         m_sortedRenderGraphPasses.push_back(renderGraphPass->renderGraphPass.get());
@@ -1545,8 +1881,8 @@ void RenderGraph::sortRenderGraphPasses()
 
     m_passExecutionCache.assign(m_sortedRenderGraphPasses.size(), CachedPassExecutionData{});
 
-    for (const auto &renderGraphPass : m_sortedRenderGraphPasses)
-        VX_ENGINE_INFO_STREAM("Node: " << renderGraphPass->getDebugName());
+
+
 }
 
 std::unordered_map<RGPResourceHandler, RGPResourceHandler> RenderGraph::buildAliasedTextureRoots()
@@ -1748,26 +2084,29 @@ bool RenderGraph::recompileDirtyPasses()
         return false;
 
     {
-        std::ostringstream stream;
-        stream << "Render graph recompiling dirty passes:";
-        for (const uint32_t dirtyPassId : dirtyPassIds)
-        {
-            if (auto *passData = findRenderGraphPassById(dirtyPassId); passData && passData->renderGraphPass)
-                stream << ' ' << '[' << passData->renderGraphPass->getDebugName() << ']';
-            else
-                stream << " [unknown]";
-        }
-        VX_ENGINE_INFO_STREAM(stream.str() << '\n');
+
+
+
+
+
+
+
+
+
+
     }
 
     vkDeviceWaitIdle(m_device);
-    compile(); // compile() clears all dirty flags on all passes
+    compile();
 
     return true;
 }
 
 void RenderGraph::compile()
 {
+
+    PipelinePreWarmer::waitAll();
+
     sortRenderGraphPasses();
 
     for (const auto &[_, renderPass] : m_renderGraphPasses)
@@ -1802,9 +2141,9 @@ void RenderGraph::compile()
         if (pass.enabled)
             pass.renderGraphPass->compile(m_renderGraphPassesStorage);
 
-    // A full compile incorporates all passes — nothing is dirty afterwards.
-    // Clear all flags so the first frame doesn't trigger a redundant recompile
-    // from dirty marks that were set before this compile() call.
+
+
+
     for (auto &[id, pass] : m_renderGraphPasses)
         pass.renderGraphPass->recompilationIsDone();
 
@@ -2044,7 +2383,7 @@ void RenderGraph::cleanResources()
     m_gpuCulling.cleanup(m_device);
     m_bindlessRegistry.cleanup(m_device);
 
-    // Sentinel: prevents ~RenderGraph() from calling cleanResources() a second time.
+
     m_device = VK_NULL_HANDLE;
 }
 
@@ -2053,16 +2392,16 @@ void RenderGraph::disablePassData(RenderGraphPassData &data)
     if (!data.enabled)
         return;
 
-    // GPU sync — ensure no in-flight work touches this pass's resources.
+
     {
         std::lock_guard<std::mutex> queueLock(core::helpers::queueHostSyncMutex());
         vkQueueWaitIdle(core::VulkanContext::getContext()->getGraphicsQueue());
     }
 
-    // Let the pass clean up its descriptor sets and cached RenderTarget* pointers.
+
     data.renderGraphPass->freeResources();
 
-    // Free the VRAM owned by this pass (its write-side resources).
+
     for (const auto &access : data.passInfo.writes)
     {
         const auto *desc = m_renderGraphPassesBuilder.getTextureDescription(access.resourceId);
@@ -2075,8 +2414,8 @@ void RenderGraph::disablePassData(RenderGraphPassData &data)
             m_renderGraphPassesStorage.removeTexture(access.resourceId);
     }
 
-    // Mark all downstream passes for recompile so they rebuild their descriptor sets
-    // (their bindings to this pass's output images are now stale).
+
+
     for (const uint32_t downstreamId : data.outgoing)
     {
         auto *downstream = findRenderGraphPassById(downstreamId);
@@ -2085,7 +2424,7 @@ void RenderGraph::disablePassData(RenderGraphPassData &data)
     }
 
     data.enabled = false;
-    sortRenderGraphPasses(); // Rebuild sorted list excluding this pass
+    sortRenderGraphPasses();
     invalidateAllExecutionCaches();
 }
 
@@ -2096,7 +2435,7 @@ void RenderGraph::enablePassData(RenderGraphPassData &data)
 
     data.enabled = true;
     data.renderGraphPass->requestRecompilation();
-    sortRenderGraphPasses(); // Rebuild sorted list including this pass again
+    sortRenderGraphPasses();
     invalidateAllExecutionCaches();
 }
 

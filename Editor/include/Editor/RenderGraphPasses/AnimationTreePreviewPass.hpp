@@ -60,7 +60,7 @@ private:
     core::PipelineLayout::SharedPtr m_pipelineLayout{nullptr};
     core::Sampler::SharedPtr m_sampler{nullptr};
 
-    // Per-frame camera UBOs so the panel can supply its own orbit view/proj.
+
     std::vector<core::Buffer::SharedPtr>          m_cameraUBOs;
     std::vector<VkDescriptorSet>                  m_cameraDescriptorSets;
     core::DescriptorSetLayout::SharedPtr          m_cameraDescriptorSetLayout;
@@ -75,4 +75,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ANIMATION_TREE_PREVIEW_PASS_HPP
+#endif

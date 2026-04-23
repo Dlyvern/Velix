@@ -1,6 +1,6 @@
 #version 450
 
-// Single-channel (R8) font atlas
+
 layout(set = 0, binding = 0) uniform sampler2D uAtlas;
 
 layout(location = 0) in vec2      vUV;

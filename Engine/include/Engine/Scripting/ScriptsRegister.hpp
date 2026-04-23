@@ -32,4 +32,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SCRIPTS_REGISTER_HPP
+#endif

@@ -22,7 +22,7 @@ namespace
         float blendAlpha;
         float enabled;
     };
-} // namespace
+}
 
 bool TAARenderGraphPass::isEnabled() const
 {
@@ -176,7 +176,7 @@ void TAARenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 }
 
 void TAARenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
-                                const RenderGraphPassPerFrameData & /*data*/,
+                                const RenderGraphPassPerFrameData & ,
                                 const RenderGraphPassContext &renderContext)
 {
     const auto &settings = RenderQualitySettings::getInstance();
@@ -212,7 +212,7 @@ void TAARenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
         pc.texelSize = {m_extent.width > 0 ? 1.0f / static_cast<float>(m_extent.width) : 0.0f,
                         m_extent.height > 0 ? 1.0f / static_cast<float>(m_extent.height) : 0.0f};
         pc.blendAlpha = taaActive ? 0.1f : 1.0f;
-        // Use passthrough when TAA is off OR when history isn't ready yet
+
         pc.enabled = (taaActive && m_historyInitialized) ? 1.0f : 0.0f;
 
         vkCmdPushConstants(commandBuffer->vk(), m_pipelineLayout,

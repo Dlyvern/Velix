@@ -12,7 +12,7 @@ ParticleEmitter::ParticleEmitter(const std::string &emitterName)
     m_particles.resize(MAX_PARTICLES);
     m_freeList.reserve(MAX_PARTICLES);
     for (uint32_t i = 0; i < MAX_PARTICLES; ++i)
-        m_freeList.push_back(MAX_PARTICLES - 1 - i); // fill in reverse so index 0 is first out
+        m_freeList.push_back(MAX_PARTICLES - 1 - i);
 }
 
 void ParticleEmitter::update(float deltaTime, const glm::vec3 &worldPosition)
@@ -70,7 +70,7 @@ void ParticleEmitter::update(float deltaTime, const glm::vec3 &worldPosition)
 
     const bool countChanged = (newAliveCount != m_aliveCount);
     m_aliveCount = newAliveCount;
-    m_dirty = countChanged || (m_aliveCount > 0); // mark dirty when there's anything to render
+    m_dirty = countChanged || (m_aliveCount > 0);
 
     if (spawn && !spawn->loop && m_time >= spawn->duration && m_aliveCount == 0)
         m_playing = false;
@@ -95,8 +95,8 @@ void ParticleEmitter::spawnParticleAt(const glm::vec3 &worldPos, uint32_t count)
         p.alive = true;
         p.age   = 0.0f;
 
-        // Apply spawn modules (sets velocity, color, lifetime, size etc.)
-        // then override position so shape doesn't overwrite our world pos.
+
+
         applySpawnModules(p, worldPos);
         p.position = worldPos;
 
@@ -135,7 +135,7 @@ void ParticleEmitter::reset()
 uint32_t ParticleEmitter::allocateParticle()
 {
     if (m_freeList.empty())
-        return UINT32_MAX; // pool full
+        return UINT32_MAX;
 
     const uint32_t idx = m_freeList.back();
     m_freeList.pop_back();
@@ -155,7 +155,7 @@ void ParticleEmitter::spawnParticle(const glm::vec3 &emitterPos)
         return;
 
     Particle &p = m_particles[idx];
-    p = Particle{}; // reset to defaults
+    p = Particle{};
     p.alive = true;
     p.age = 0.0f;
 

@@ -169,10 +169,10 @@ size_t ShaderCompiler::compileDirectoryToSpv(const std::filesystem::path &rootPa
         if (!isCompilableShaderSource(sourcePath))
             continue;
 
-        // VX_ENGINE_INFO_STREAM("Shader file: " << entry.path().filename());
 
-        // if (entry.path().filename() != "tonemap.frag")
-        //     continue;
+
+
+
 
         const std::filesystem::path spvPath = std::filesystem::path(sourcePath.string() + ".spv");
         if (std::filesystem::exists(spvPath) &&

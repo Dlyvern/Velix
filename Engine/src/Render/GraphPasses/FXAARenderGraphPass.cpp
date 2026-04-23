@@ -108,7 +108,7 @@ void FXAARenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 }
 
 void FXAARenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
-                                 const RenderGraphPassPerFrameData & /*data*/,
+                                 const RenderGraphPassPerFrameData & ,
                                  const RenderGraphPassContext &renderContext)
 {
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);

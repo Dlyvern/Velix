@@ -10,7 +10,7 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 void BindlessRegistry::initialize(VkDevice device, uint32_t framesInFlight)
 {
     if (EngineShaderFamilies::bindlessMaterialSetLayout == VK_NULL_HANDLE)
-        return; // ShaderFamily not initialised yet
+        return;
 
     m_device = device;
     const uint32_t setCount = std::max(1u, framesInFlight);
@@ -42,7 +42,7 @@ void BindlessRegistry::initialize(VkDevice device, uint32_t framesInFlight)
         vkAllocateDescriptorSets(device, &allocInfo, m_bindlessSets.data());
     }
 
-    // Material params SSBO (written CPU-side each frame, read GPU-side in shaders).
+
     const VkDeviceSize ssboSize =
         static_cast<VkDeviceSize>(EngineShaderFamilies::MAX_BINDLESS_MATERIALS) * sizeof(Material::GPUParams);
 

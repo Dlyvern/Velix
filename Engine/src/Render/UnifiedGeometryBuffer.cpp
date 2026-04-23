@@ -25,7 +25,7 @@ void UnifiedGeometryBuffer::init(uint32_t vertexStride, VkDeviceSize maxVertexBy
     constexpr VkBufferUsageFlags vertexUsage =
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
         VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT; // for future compute culling
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 
     constexpr VkBufferUsageFlags indexUsage =
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
@@ -52,7 +52,7 @@ bool UnifiedGeometryBuffer::registerMesh(const uint8_t *vertexData, VkDeviceSize
     if (!vertexData || vertexBytes == 0 || !indexData || indexCount == 0)
         return false;
     if (vertexBytes % m_vertexStride != 0)
-        return false; // stride mismatch
+        return false;
 
     const VkDeviceSize indexBytes = static_cast<VkDeviceSize>(indexCount) * sizeof(uint32_t);
 
@@ -80,7 +80,7 @@ bool UnifiedGeometryBuffer::registerMesh(const uint8_t *vertexData, VkDeviceSize
 
     lock.unlock();
 
-    // Upload vertex data via staging buffer
+
     {
         auto stagingVB = core::Buffer::createShared(vertexBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
         stagingVB->upload(vertexData, vertexBytes);
@@ -94,7 +94,7 @@ bool UnifiedGeometryBuffer::registerMesh(const uint8_t *vertexData, VkDeviceSize
         utilities::AsyncGpuUpload::submit(cmd, core::VulkanContext::getContext()->getGraphicsQueue(), {stagingVB});
     }
 
-    // Upload index data via staging buffer
+
     {
         auto stagingIB = core::Buffer::createShared(indexBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, core::memory::MemoryUsage::CPU_TO_GPU);
         stagingIB->upload(indexData, indexBytes);

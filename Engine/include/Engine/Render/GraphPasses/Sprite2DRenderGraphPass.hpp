@@ -28,12 +28,12 @@ class Sprite2DRenderGraphPass final : public IRenderGraphPass
 public:
     struct SpriteGPUData
     {
-        glm::vec4 positionAndRotation; // xyz = world pos, w = Z rotation (radians)
+        glm::vec4 positionAndRotation;
         glm::vec2 size;
         float     _pad0{0.f};
         float     _pad1{0.f};
         glm::vec4 color;
-        glm::vec4 uvRect;  // u0, v0, u1, v1
+        glm::vec4 uvRect;
         uint32_t  textureIndex{0};
         uint32_t  flipX{0};
         uint32_t  flipY{0};
@@ -126,4 +126,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SPRITE2D_RENDER_GRAPH_PASS_HPP
+#endif

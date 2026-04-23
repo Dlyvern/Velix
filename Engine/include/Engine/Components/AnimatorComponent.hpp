@@ -126,8 +126,8 @@ public:
     [[nodiscard]] float getCurrentStateNormalizedTime() const;
     [[nodiscard]] bool isInTransition() const;
 
-    // Post-animation hooks — called after bone matrices are fully written each frame.
-    // IK solvers and other post-process components register here via onOwnerAttached().
+
+
     using PostAnimHook = std::function<void(Skeleton &)>;
     void addPostAnimHook(const void *ownerKey, PostAnimHook fn);
     void removePostAnimHook(const void *ownerKey);
@@ -190,7 +190,7 @@ private:
     int m_selectedAnimationIndex{-1};
     Animation *m_currentAnimation{nullptr};
 
-    // Tree mode state
+
     std::optional<AnimationTree> m_tree;
     std::unordered_map<std::string, float> m_floats;
     std::unordered_map<std::string, bool> m_bools;
@@ -207,7 +207,7 @@ private:
     float m_blendDuration{0.3f};
     float m_transitionElapsed{0.0f};
 
-    // Cached clips referenced by the animation tree.
+
     std::unordered_map<std::string, std::vector<Animation>> m_treeClipAssets;
 
     struct PostAnimHookEntry { const void *key; PostAnimHook fn; };
@@ -218,4 +218,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ANIMATOR_COMPONENT_HPP
+#endif

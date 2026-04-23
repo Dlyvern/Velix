@@ -13,7 +13,7 @@ LibraryHandle PluginLoader::loadLibrary(const std::filesystem::path &libraryPath
     if (!lib)
     {
         const DWORD err = GetLastError();
-        // Format the Win32 error into a human-readable string
+
         LPWSTR msgBuf = nullptr;
         FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
                        FORMAT_MESSAGE_IGNORE_INSERTS,
@@ -22,7 +22,7 @@ LibraryHandle PluginLoader::loadLibrary(const std::filesystem::path &libraryPath
         std::string reason = "(unknown error)";
         if (msgBuf)
         {
-            // Convert wchar_t to UTF-8 for the logger
+
             const int len = WideCharToMultiByte(CP_UTF8, 0, msgBuf, -1, nullptr, 0, nullptr, nullptr);
             if (len > 0)
             {
@@ -31,7 +31,7 @@ LibraryHandle PluginLoader::loadLibrary(const std::filesystem::path &libraryPath
             }
             LocalFree(msgBuf);
         }
-        // Strip trailing whitespace/newline that FormatMessage adds
+
         while (!reason.empty() && (reason.back() == '\n' || reason.back() == '\r' || reason.back() == ' '))
             reason.pop_back();
 
@@ -41,8 +41,8 @@ LibraryHandle PluginLoader::loadLibrary(const std::filesystem::path &libraryPath
 
     return lib;
 #else
-    // RTLD_GLOBAL allows dependent symbols to be resolved across loaded modules.
-    // RTLD_NOW fails early if something is missing.
+
+
     void *handle = dlopen(libraryPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
 
     if (!handle)
@@ -63,7 +63,7 @@ void *PluginLoader::getFunction(const std::string &functionName, LibraryHandle l
     FARPROC function = GetProcAddress(library, functionName.c_str());
     return reinterpret_cast<void *>(function);
 #else
-    // Clear any prior error, then look up the symbol.
+
     dlerror();
     void *function = dlsym(library, functionName.c_str());
     return function;

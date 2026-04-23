@@ -2,28 +2,28 @@
 
 layout(local_size_x = 256) in;
 
-// Pass 2 — histogram reduction + exposure adaptation.
-// Single workgroup of 256 threads, one per histogram bin.
-// Computes the weighted-average log-luminance of the scene (ignoring the
-// darkest lowPercent and brightest highPercent of pixels), converts it to
-// a target exposure, then blends towards it with a time-based EMA.
-//
-// The resulting exposure value is written to uExposure.exposure and read
-// back on the CPU (GPU_TO_CPU / HOST_VISIBLE buffer) the following frame
-// by TonemapRenderGraphPass.
+
+
+
+
+
+
+
+
+
 
 layout(set = 0, binding = 0) buffer HistogramBuffer { uint bins[256]; } uHistogram;
 layout(set = 0, binding = 1) buffer ExposureBuffer  { float exposure;  } uExposure;
 
 layout(push_constant) uniform AveragePC
 {
-    float minLogLum;    // log2 luminance at EV min
-    float logLumRange;  // maxLogLum - minLogLum
+    float minLogLum;
+    float logLumRange;
     float deltaTime;
-    float speedUp;      // adaptation speed: dark scene → bright exposure  (e.g. 2.0)
-    float speedDown;    // adaptation speed: bright scene → dark exposure  (e.g. 3.0)
-    float lowPercent;   // fraction of darkest pixels to skip  (e.g. 0.1)
-    float highPercent;  // fraction of brightest pixels to skip (e.g. 0.1)
+    float speedUp;
+    float speedDown;
+    float lowPercent;
+    float highPercent;
     uint  pad;
 } pc;
 
@@ -31,19 +31,19 @@ shared uint s_hist[256];
 
 void main()
 {
-    uint idx = gl_LocalInvocationIndex; // 0..255
+    uint idx = gl_LocalInvocationIndex;
 
-    // Load histogram into shared memory and simultaneously clear global buffer
-    // for the next frame's histogram pass.
+
+
     s_hist[idx] = uHistogram.bins[idx];
     uHistogram.bins[idx] = 0u;
     barrier();
     memoryBarrierShared();
 
-    // All work done by thread 0 — 256 bins is tiny.
+
     if (idx == 0u)
     {
-        // Total pixel count.
+
         uint totalPixels = 0u;
         for (uint i = 0u; i < 256u; ++i)
             totalPixels += s_hist[i];
@@ -65,7 +65,7 @@ void main()
             uint accPrev = accumulated;
             accumulated += count;
 
-            // Overlap of this bin's cumulative range with [skipLow, validMax).
+
             uint lo = max(accPrev, skipLow);
             uint hi = min(accumulated, validMax);
             if (hi > lo)
@@ -79,14 +79,14 @@ void main()
         float avgLogLum       = (countedPixels > 0u) ? (weightedSum / float(countedPixels)) : pc.minLogLum;
         float targetLuminance = exp2(avgLogLum);
 
-        // Exposure: scale scene so that target luminance maps to 18% grey.
+
         float targetExposure  = 0.18 / max(targetLuminance, 0.00001);
         targetExposure        = clamp(targetExposure, 1.0 / 512.0, 64.0);
 
-        // Exponential moving average towards target.
+
         float prevExposure = uExposure.exposure;
         if (prevExposure <= 0.0)
-            prevExposure = targetExposure; // first frame: snap
+            prevExposure = targetExposure;
 
         float speed       = (targetExposure > prevExposure) ? pc.speedUp : pc.speedDown;
         float alpha       = 1.0 - exp(-speed * pc.deltaTime);

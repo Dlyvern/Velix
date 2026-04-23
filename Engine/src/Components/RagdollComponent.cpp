@@ -153,13 +153,39 @@ namespace
         return -1;
     }
 
+    int subtreeDepth(const Skeleton &skeleton, int boneId)
+    {
+        const auto *bone = skeleton.getBone(boneId);
+        if (!bone || bone->children.empty())
+            return 0;
+
+        int maxChildDepth = 0;
+        for (const int childId : bone->children)
+            maxChildDepth = std::max(maxChildDepth, subtreeDepth(skeleton, childId));
+        return 1 + maxChildDepth;
+    }
+
     int choosePrimaryChild(const Skeleton &skeleton, int boneId)
     {
         const auto *bone = skeleton.getBone(boneId);
         if (!bone || bone->children.empty())
             return -1;
 
-        return bone->children.front();
+        if (bone->children.size() == 1)
+            return bone->children.front();
+
+        int bestChild = bone->children.front();
+        int bestDepth = subtreeDepth(skeleton, bestChild);
+        for (size_t i = 1; i < bone->children.size(); ++i)
+        {
+            const int depth = subtreeDepth(skeleton, bone->children[i]);
+            if (depth > bestDepth)
+            {
+                bestDepth = depth;
+                bestChild = bone->children[i];
+            }
+        }
+        return bestChild;
     }
 
     template <typename Predicate>
@@ -286,7 +312,7 @@ void RagdollComponent::update(float deltaTime)
         m_recoveryElapsed = std::min(m_recoveryElapsed + deltaTime, m_recoveryDuration);
 }
 
-void RagdollComponent::postPhysicsUpdate(float /*deltaTime*/)
+void RagdollComponent::postPhysicsUpdate(float )
 {
     refreshDependencies();
 
@@ -836,7 +862,7 @@ bool RagdollComponent::createPhysicsObjectsFromPose(const std::vector<glm::mat4>
         shape->setSimulationFilterData(filterData);
         shape->setQueryFilterData(filterData);
 
-        shape->setLocalPose(toPxTransform(runtimeBody.shapeLocalPosition, runtimeBody.shapeLocalRotation));
+        shape->setLocalPose(toPxTransform(runtimeBody.shapeLocalPosition * bodyScale, runtimeBody.shapeLocalRotation));
         actor->attachShape(*shape);
         physx::PxRigidBodyExt::setMassAndUpdateInertia(*actor, std::max(bodyDesc.mass, 0.05f));
 

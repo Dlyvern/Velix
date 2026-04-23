@@ -96,7 +96,7 @@ namespace
             return;
 
         default:
-            // Safe fallback: make it explicit if you forgot to handle something
+
             throw std::runtime_error("chooseDstSync: unsupported initial layout");
         }
     }
@@ -315,7 +315,7 @@ std::vector<VkImageMemoryBarrier2> RGPResourcesCompiler::onSwapChainResized(RGPR
             if (textureDescription.getFinalLayout() == VK_IMAGE_LAYOUT_UNDEFINED && textureDescription.getInitialLayout() == VK_IMAGE_LAYOUT_UNDEFINED)
                 continue;
 
-            // Help to translate image from VK_IMAGE_LAYOUT_UNDEFINED
+
 
             VkImageSubresourceRange subresourceRange{};
             subresourceRange.aspectMask = utilities::ImageUtilities::getAspectBasedOnFormat(textureDescription.getFormat());

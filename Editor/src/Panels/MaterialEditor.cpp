@@ -872,7 +872,7 @@ bool MaterialEditor::reloadMaterialFromDisk(const std::filesystem::path &path)
     if (m_reloadMaterialFromDisk)
         return m_reloadMaterialFromDisk(path);
 
-    //! Maybe this is deadlock
+
     return false;
 }
 
@@ -881,7 +881,7 @@ bool MaterialEditor::saveMaterialToDisk(const std::filesystem::path &path, const
     if (m_saveMaterialToDisk)
         return m_saveMaterialToDisk(path, cpuMaterial);
 
-    //! Maybe this is deadlock
+
     return false;
 }
 
@@ -983,9 +983,9 @@ void MaterialEditor::draw()
                         notify(NotificationType::Error, "Failed to initialize material");
                 }
 
-                // ImGui::SameLine();
-                // if (ImGui::Button("Open As Text"))
-                //     openTextDocument(matEditor.path);
+
+
+
 
                 ImGui::End();
                 matEditor.open = keepOpen;
@@ -1076,7 +1076,7 @@ void MaterialEditor::draw()
                     }
                 };
 
-                // Compile the current custom expression + noise nodes into a cached .spv.
+
                 auto compileAndApply = [&](bool silent = false) -> bool
                 {
                     cpuMat.noiseNodes.clear();
@@ -1091,7 +1091,7 @@ void MaterialEditor::draw()
                     const std::string functions = ui.customFunctionsEditor.GetText();
                     const std::string handExpr  = ui.customExpressionEditor.GetText();
 
-                    // If nothing to compile, clear the custom shader
+
                     const bool hasColor = !colorPreamble.empty();
                     const bool hasNoise = !noisePreamble.empty();
                     const bool hasExpr  = !handExpr.empty() && handExpr != "\n";
@@ -1173,7 +1173,7 @@ void MaterialEditor::draw()
                     spvFile.write(reinterpret_cast<const char *>(spv.data()), spv.size() * sizeof(uint32_t));
                     spvFile.close();
 
-                    // Store hand-written part only (noise comes from noiseNodes on next compile)
+
                     cpuMat.customExpression = "// [FUNCTIONS]\n" + functions + "// [EXPRESSION]\n" + handExpr;
                     cpuMat.customShaderHash = hashStr;
                     gpuMat->setCustomFragPath(spvPath);
@@ -2556,7 +2556,7 @@ void MaterialEditor::draw()
     if (!keepOpen && matEditor.dirty)
     {
         matEditor.confirmCloseRequested = true;
-        keepOpen = true; // keep window alive
+        keepOpen = true;
     }
 
     matEditor.open = keepOpen;

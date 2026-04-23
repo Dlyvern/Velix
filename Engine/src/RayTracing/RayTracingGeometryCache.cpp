@@ -45,7 +45,7 @@ namespace
         entry.pendingScratchBuffer.reset();
         entry.blasPending = false;
     }
-} // namespace
+}
 
 const RayTracingGeometryCache::Entry *RayTracingGeometryCache::find(MeshGeometryHash geometryHash) const
 {
@@ -131,14 +131,14 @@ core::rtx::AccelerationStructure::SharedPtr RayTracingGeometryCache::getOrCreate
     auto &entry = m_entries[geometryHash];
     entry.geometryHash = geometryHash;
 
-    // Poll an in-flight async BLAS build.
+
     if (entry.blasPending && entry.pendingBlasFence != VK_NULL_HANDLE)
     {
         const VkResult status = vkGetFenceStatus(context->getDevice(), entry.pendingBlasFence);
         if (status == VK_NOT_READY)
-            return nullptr; // Still building — skip this instance for this frame.
+            return nullptr;
 
-        // Build complete (VK_SUCCESS) or failed — clean up regardless.
+
         destroyPendingBlasBuild(entry, false);
 
         if (status != VK_SUCCESS)
@@ -200,8 +200,8 @@ core::rtx::AccelerationStructure::SharedPtr RayTracingGeometryCache::getOrCreate
     if (!commandBuffer->end())
         return nullptr;
 
-    // Submit asynchronously — the scratch buffer is kept alive in the Entry until the
-    // fence signals (polled on the next call to getOrCreateBLAS for this hash).
+
+
     VkFence fence = utilities::AsyncGpuUpload::submitAsync(commandBuffer, context->getGraphicsQueue());
     if (fence == VK_NULL_HANDLE)
         return nullptr;
@@ -212,7 +212,7 @@ core::rtx::AccelerationStructure::SharedPtr RayTracingGeometryCache::getOrCreate
     entry.blasPending = true;
     entry.primitiveCount = geometryDesc.triangleCount;
     entry.dirty = false;
-    // Return nullptr this frame; the BLAS will be available next frame once the build completes.
+
     return nullptr;
 }
 

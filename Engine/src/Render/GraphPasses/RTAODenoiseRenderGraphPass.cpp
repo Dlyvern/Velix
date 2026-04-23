@@ -76,10 +76,10 @@ void RTAODenoiseRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(
         device,
         std::vector<VkDescriptorSetLayoutBinding>{
-            makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER), // AO input
-            makeBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER), // normals
-            makeBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER), // depth
-            makeBinding(3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)});        // AO output
+            makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+            makeBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+            makeBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+            makeBinding(3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)});
 
     m_pipelineLayout = core::PipelineLayout::createShared(
         device,
@@ -147,7 +147,7 @@ void RTAODenoiseRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBu
     if (!shouldDenoise())
     {
         VkClearColorValue clearColor{};
-        clearColor.float32[0] = 1.0f; // White = fully unoccluded when disabled
+        clearColor.float32[0] = 1.0f;
         VkImageSubresourceRange clearRange{};
         clearRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
         clearRange.baseMipLevel   = 0;
@@ -164,10 +164,10 @@ void RTAODenoiseRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBu
     pushConstants.params0 = glm::vec4(
         1.0f / static_cast<float>(m_extent.width),
         1.0f / static_cast<float>(m_extent.height),
-        1.0f,   // enabled
-        0.22f); // normalSigma
+        1.0f,
+        0.22f);
     pushConstants.params1 = glm::vec4(
-        0.75f,  // depthSigma
+        0.75f,
         0.0f, 0.0f, 0.0f);
 
     vkCmdBindPipeline(commandBuffer->vk(), VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline);

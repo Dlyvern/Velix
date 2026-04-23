@@ -10,8 +10,8 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-/// ECS component that drives a ParticleSystem.
-/// Registered as a multi-component so one entity can carry multiple effects.
+
+
 class ParticleSystemComponent final : public ECS
 {
 public:
@@ -42,4 +42,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PARTICLE_SYSTEM_COMPONENT_HPP
+#endif

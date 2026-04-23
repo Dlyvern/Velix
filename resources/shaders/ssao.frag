@@ -3,8 +3,8 @@
 layout(location = 0) in  vec2 vUV;
 layout(location = 0) out float outAO;
 
-layout(set = 0, binding = 0) uniform sampler2D uNormal; // encoded view normal
-layout(set = 0, binding = 1) uniform sampler2D uDepth;  // hardware depth [0,1]
+layout(set = 0, binding = 0) uniform sampler2D uNormal;
+layout(set = 0, binding = 1) uniform sampler2D uDepth;
 
 layout(set = 0, binding = 2) uniform KernelUBO
 {
@@ -15,9 +15,9 @@ layout(push_constant) uniform PC
 {
     mat4 projection;
     mat4 invProjection;
-    vec4 params0; // x=texelSize.x, y=texelSize.y, z=radius, w=bias
-    vec4 params1; // x=strength, y=enabled, z=samples, w=gtaoEnabled
-    vec4 params2; // x=gtaoDirections, y=gtaoSteps, z=reserved, w=reserved
+    vec4 params0;
+    vec4 params1;
+    vec4 params2;
 } pc;
 
 vec2 texelSize()

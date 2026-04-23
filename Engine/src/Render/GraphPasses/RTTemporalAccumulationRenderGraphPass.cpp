@@ -30,7 +30,7 @@ void RTTemporalAccumulationRenderGraphPass::setup(renderGraph::RGPResourcesBuild
         builder.read(m_inputHandlers[i], RGPTextureUsage::SAMPLED);
     builder.read(m_depthHandler, RGPTextureUsage::SAMPLED);
 
-    // Output: accumulated temporally-blended result (same format as input).
+
     RGPTextureDescription outDesc{m_format, RGPTextureUsage::COLOR_ATTACHMENT_STORAGE};
     outDesc.setInitialLayout(VK_IMAGE_LAYOUT_GENERAL);
     outDesc.setFinalLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -57,12 +57,12 @@ void RTTemporalAccumulationRenderGraphPass::setup(renderGraph::RGPResourcesBuild
         return b;
     };
 
-    // Set 0:
-    //   0 = uCurrentFrame  (sampler2D  — denoised RT input)
-    //   1 = uDepth         (sampler2D  — depth)
-    //   2 = uHistory       (sampler2D  — previous accumulated, ping-pong read)
-    //   3 = uOutput        (storage    — accumulated result for downstream)
-    //   4 = uHistoryOut    (storage    — write-back to history, ping-pong write)
+
+
+
+
+
+
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(
         device,
         std::vector<VkDescriptorSetLayoutBinding>{
@@ -94,9 +94,9 @@ void RTTemporalAccumulationRenderGraphPass::compile(renderGraph::RGPResourcesSto
     const auto  device      = core::VulkanContext::getContext()->getDevice();
     const auto  pool        = core::VulkanContext::getContext()->getPersistentDescriptorPool();
 
-    // History images are recreated whenever the extent changes.
+
     destroyHistoryImages();
-    createHistoryImages(); // also resets m_pingPong and m_historyLayout
+    createHistoryImages();
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
@@ -104,9 +104,9 @@ void RTTemporalAccumulationRenderGraphPass::compile(renderGraph::RGPResourcesSto
         const auto *outputTarget = storage.getTexture(m_outputHandlers[i]);
         m_outputRenderTargets[i] = outputTarget;
 
-        // Two descriptor sets per swapchain image — one per ping-pong state.
-        // State 0: read history[i][0], write history[i][1] + output[i]
-        // State 1: read history[i][1], write history[i][0] + output[i]
+
+
+
         for (uint32_t p = 0; p < 2; ++p)
         {
             uint32_t readIdx  = p;
@@ -163,23 +163,23 @@ void RTTemporalAccumulationRenderGraphPass::record(core::CommandBuffer::SharedPt
         return;
     }
 
-    const uint32_t p         = m_pingPong[idx];          // current ping-pong state
+    const uint32_t p         = m_pingPong[idx];
     const uint32_t readIdx   = p;
     const uint32_t writeIdx  = 1u - p;
 
     VkImage histReadImage  = m_historyPairs[idx].images[readIdx]->vk();
     VkImage histWriteImage = m_historyPairs[idx].images[writeIdx]->vk();
 
-    // ---- Prepare history layouts ------------------------------------------------
 
-    // If the read-history has never been written, clear it to black first so we
-    // don't blend against garbage on the first frame.
+
+
+
     auto &readLayout  = m_historyLayout[idx][readIdx];
     auto &writeLayout = m_historyLayout[idx][writeIdx];
 
     if (readLayout == VK_IMAGE_LAYOUT_UNDEFINED)
     {
-        // UNDEFINED → GENERAL → clear → SHADER_READ_ONLY
+
         transitionHistory(commandBuffer->vk(), histReadImage,
                           VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
         VkClearColorValue black{};
@@ -190,13 +190,13 @@ void RTTemporalAccumulationRenderGraphPass::record(core::CommandBuffer::SharedPt
                           VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         readLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
-    // Read-history is now guaranteed SHADER_READ_ONLY_OPTIMAL.
 
-    // Write-history: move to GENERAL for the compute dispatch.
+
+
     transitionHistory(commandBuffer->vk(), histWriteImage, writeLayout, VK_IMAGE_LAYOUT_GENERAL);
     writeLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    // ---- Build push constants ---------------------------------------------------
+
 
     const glm::mat4 currentVP   = data.projection * data.view;
     const glm::mat4 invViewProj = glm::inverse(currentVP);
@@ -205,7 +205,7 @@ void RTTemporalAccumulationRenderGraphPass::record(core::CommandBuffer::SharedPt
     pc.invViewProj        = invViewProj;
     pc.prevViewProjection = m_prevViewProjection;
 
-    // ---- Dispatch ---------------------------------------------------------------
+
 
     const uint32_t gx = (m_extent.width  + 7u) / 8u;
     const uint32_t gy = (m_extent.height + 7u) / 8u;
@@ -217,15 +217,15 @@ void RTTemporalAccumulationRenderGraphPass::record(core::CommandBuffer::SharedPt
                        VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vkCmdDispatch(commandBuffer->vk(), gx, gy, 1u);
 
-    // ---- Transition write-history to SHADER_READ_ONLY for the next frame ---------
+
     transitionHistory(commandBuffer->vk(), histWriteImage,
                       VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     writeLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    // ---- Flip ping-pong for this swapchain image --------------------------------
+
     m_pingPong[idx] = 1u - p;
 
-    // ---- Store current VP for next frame's reprojection -------------------------
+
     m_prevViewProjection = currentVP;
 }
 
@@ -248,7 +248,7 @@ void RTTemporalAccumulationRenderGraphPass::setExtent(VkExtent2D extent)
     if (m_extent.width == extent.width && m_extent.height == extent.height)
         return;
     m_extent             = extent;
-    m_prevViewProjection = glm::mat4{1.0f}; // invalidate history on resize
+    m_prevViewProjection = glm::mat4{1.0f};
     requestRecompilation();
 }
 
@@ -267,7 +267,7 @@ void RTTemporalAccumulationRenderGraphPass::freeResources()
     outputs.color.set(MultiHandle{});
 }
 
-// ---- Private helpers ---------------------------------------------------------
+
 
 void RTTemporalAccumulationRenderGraphPass::createHistoryImages()
 {
@@ -357,7 +357,7 @@ void RTTemporalAccumulationRenderGraphPass::transitionHistory(VkCommandBuffer cm
         barrier.srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         barrier.srcAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
         break;
-    default: // UNDEFINED or TRANSFER_DST
+    default:
         barrier.srcStageMask  = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
         barrier.srcAccessMask = 0;
         break;

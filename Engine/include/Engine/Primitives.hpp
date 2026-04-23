@@ -22,7 +22,7 @@ namespace triangle
     static const std::vector<uint32_t> indices =
         {
             0, 1, 2};
-} // namespace triangle
+}
 
 namespace quad
 {
@@ -38,7 +38,7 @@ namespace quad
             0, 1, 2,
             2, 3, 0};
 
-} // namespace quad
+}
 
 namespace cube
 {
@@ -84,7 +84,7 @@ namespace cube
             16, 17, 18, 18, 19, 16,
             20, 21, 22, 22, 23, 20};
 
-} // namespace cube
+}
 
 namespace circle
 {
@@ -149,4 +149,4 @@ namespace circle
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PRIMITIVES_HPP
+#endif

@@ -33,11 +33,11 @@ public:
 
     virtual ParticleModuleType getType() const = 0;
 
-    virtual void onParticleSpawn(Particle & /*particle*/) {}
+    virtual void onParticleSpawn(Particle & ) {}
 
-    virtual void onParticleUpdate(Particle & /*particle*/, float /*deltaTime*/) {}
+    virtual void onParticleUpdate(Particle & , float ) {}
 
-    virtual void setPhysicsScene(PhysicsScene * /*scene*/) {}
+    virtual void setPhysicsScene(PhysicsScene * ) {}
 
     bool isEnabled() const { return m_enabled; }
     void setEnabled(bool value) { m_enabled = value; }
@@ -48,4 +48,4 @@ protected:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_IPARTICLE_MODULE_HPP
+#endif

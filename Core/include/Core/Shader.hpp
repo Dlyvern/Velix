@@ -34,4 +34,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // SHADER_HPP
+#endif

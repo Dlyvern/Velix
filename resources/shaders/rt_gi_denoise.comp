@@ -2,11 +2,11 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-// À-Trous wavelet bilateral denoiser for RT GI irradiance.
-// stepWidth is 1, 2, or 4 — set via push constant.
-// Dispatch three times with increasing stepWidth (1→2→4).
 
-layout(set = 0, binding = 0) uniform sampler2D       uInput;        // raw GI or ping-pong
+
+
+
+layout(set = 0, binding = 0) uniform sampler2D       uInput;
 layout(set = 0, binding = 1) uniform sampler2D       uGBufferNormal;
 layout(set = 0, binding = 2) uniform sampler2D       uDepth;
 layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D uOutput;
@@ -15,10 +15,10 @@ layout(push_constant) uniform RTGIDenoisePC
 {
     float texelW;
     float texelH;
-    float normalSigma;  // default 0.1
-    float depthSigma;   // default 0.5
-    float stepWidth;    // 1.0, 2.0, 4.0
-    float enabled;      // 1.0 = run filter, 0.0 = pass-through
+    float normalSigma;
+    float depthSigma;
+    float stepWidth;
+    float enabled;
     vec2  _pad;
     mat4  invProjection;
 } pc;
@@ -37,7 +37,7 @@ vec3 reconstructViewPos(vec2 uv, float depth)
     return vp.xyz / max(vp.w, 0.000001);
 }
 
-// 4-tap À-Trous kernel weights (h[5] cross)
+
 const float h[3] = float[3](3.0/8.0, 1.0/4.0, 1.0/16.0);
 
 void main()
@@ -51,7 +51,7 @@ void main()
     vec2  uv           = (vec2(coord) + 0.5) * vec2(pc.texelW, pc.texelH);
     float centerDepth  = texture(uDepth, uv).r;
 
-    // Sky or pass-through
+
     if (pc.enabled < 0.5 || centerDepth >= 1.0)
     {
         imageStore(uOutput, coord, texelFetch(uInput, coord, 0));

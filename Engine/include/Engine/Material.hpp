@@ -41,23 +41,23 @@ public:
         EMATERIAL_FLAG_NONE = 0,
         EMATERIAL_FLAG_ALPHA_MASK = 1 << 0,
         EMATERIAL_FLAG_ALPHA_BLEND = 1 << 1,
-        // Legacy compatibility bit from old glass pipeline path.
-        // New shading flow maps this to ALPHA_BLEND during material sanitization.
+
+
         EMATERIAL_FLAG_LEGACY_GLASS = 1 << 2,
         EMATERIAL_FLAG_DOUBLE_SIDED = 1 << 3,
-        // Flip texture V coordinate (Blender/OpenGL-style UV orientation).
+
         EMATERIAL_FLAG_FLIP_V = 1 << 4,
-        // Flip texture U coordinate (horizontal mirror fix).
+
         EMATERIAL_FLAG_FLIP_U = 1 << 5,
-        // Clamp UV coordinates to [0..1] to avoid tiling/repeat.
+
         EMATERIAL_FLAG_CLAMP_UV = 1 << 6,
     };
 
     struct GPUParams
     {
-        glm::vec4 baseColorFactor{1.0f, 1.0f, 1.0f, 1.0f}; // rgba
-        glm::vec4 emissiveFactor{0.0f, 0.0f, 0.0f, 0.0f};  // rgb used
-        glm::vec4 uvTransform{1.0f, 1.0f, 0.0f, 0.0f};     // xy=scale, zw=offset
+        glm::vec4 baseColorFactor{1.0f, 1.0f, 1.0f, 1.0f};
+        glm::vec4 emissiveFactor{0.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec4 uvTransform{1.0f, 1.0f, 0.0f, 0.0f};
 
         float metallicFactor = 0.0f;
         float roughnessFactor = 1.0f;
@@ -66,23 +66,25 @@ public:
 
         uint32_t flags = MaterialFlags::EMATERIAL_FLAG_NONE;
         float alphaCutoff = 0.5f;
-        float uvRotation = 0.0f; // degrees
-        float ior = 1.5f;        // Index of Refraction (glass=1.5, water=1.33, diamond=2.4)
+        float uvRotation = 0.0f;
+        float ior = 1.5f;
 
-        // Bindless texture indices — filled by RenderGraph when registering the material.
+
         uint32_t albedoTexIdx{0};
         uint32_t normalTexIdx{0};
         uint32_t ormTexIdx{0};
         uint32_t emissiveTexIdx{0};
-        // Baked lightmap irradiance texture. 0xFFFFFFFF = no lightmap.
+
         uint32_t lightmapTexIdx{0xFFFFFFFFu};
-        uint32_t _lightmapPad{0};   // keep 16-byte struct alignment
+        uint32_t _lightmapPad{0};
+        uint32_t _pad0{0};
+        uint32_t _pad1{0};
     };
 
     Material(Texture::SharedPtr texture);
 
-    // Returns a per-frame descriptor set using the old per-material layout.
-    // Used by editor preview pass; GBuffer uses the bindless path instead.
+
+
     VkDescriptorSet getDescriptorSet(uint32_t frameIndex) const;
 
     void setAlbedoTexture(Texture::SharedPtr texture);
@@ -159,8 +161,8 @@ public:
     std::string normalTexture;
     std::string ormTexture;
     std::string emissiveTexture;
-    // Path to the baked lightmap .texture.elixasset for this mesh.
-    // Empty = no baked lightmap.
+
+
     std::string lightmapTexture;
     std::string name;
     MaterialDomain domain{MaterialDomain::Surface};
@@ -176,15 +178,15 @@ public:
 
     glm::vec2 uvScale{1.0f, 1.0f};
     glm::vec2 uvOffset{0.0f, 0.0f};
-    float uvRotation{0.0f}; // degrees
+    float uvRotation{0.0f};
 
-    // Custom shader expression — GLSL source written in the material editor.
-    // Empty means "use the default gbuffer_static pipeline".
+
+
     std::string customExpression;
-    // FNV-1a hex hash of customExpression+noiseNodes; used at runtime to locate the cached .spv.
+
     std::string customShaderHash;
 
-    // Procedural noise nodes defined in the material editor node graph.
+
     struct NoiseNodeParams
     {
         enum class Type : uint8_t { Value = 0, Gradient, FBM, Voronoi };
@@ -193,16 +195,16 @@ public:
         Type type = Type::FBM;
         BlendMode blendMode = BlendMode::Replace;
         float scale = 1.0f;
-        int octaves = 4;          // FBM types only
-        float persistence = 0.5f; // FBM types only
-        float lacunarity = 2.0f;  // FBM types only
-        bool worldSpace = false;  // use stable world-space position instead of UVs
+        int octaves = 4;
+        float persistence = 0.5f;
+        float lacunarity = 2.0f;
+        bool worldSpace = false;
         bool active = true;
 
-        // Target output slot: "albedo" | "emissive" | "roughness" | "metallic" | "ao" | "alpha"
+
         std::string targetSlot{"roughness"};
 
-        // Color ramp — only used when targetSlot is a color slot.
+
         glm::vec3 rampColorA{0.0f, 0.0f, 0.0f};
         glm::vec3 rampColorB{1.0f, 1.0f, 1.0f};
     };
@@ -217,7 +219,7 @@ public:
         float strength{1.0f};
         bool active = true;
 
-        // Target output slot: "albedo" | "emissive"
+
         std::string targetSlot{"albedo"};
     };
     std::vector<ColorNodeParams> colorNodes;
@@ -225,4 +227,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_MATERIAL_HPP
+#endif

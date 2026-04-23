@@ -39,7 +39,7 @@ namespace
 
         return normal / length;
     }
-} // namespace
+}
 
 std::vector<CPUMesh> TerrainMeshBuilder::buildChunkMeshes(const TerrainAsset &terrainAsset,
                                                           const TerrainMeshBuildSettings &settings)

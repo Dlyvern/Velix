@@ -29,7 +29,7 @@ namespace
         out.matrix[2][3] = matrix[3][2];
         return out;
     }
-} // namespace
+}
 
 RayTracingScene::RayTracingScene(uint32_t framesInFlight)
 {
@@ -73,7 +73,7 @@ bool RayTracingScene::update(uint32_t frameIndex,
                 hashing::hash(contentHash, std::hash<float>{}(instance.transform[column][row]));
     }
 
-    //*Frames are the same(Nothing has changed from last frame)
+
     if (frame.tlas && frame.instanceCount == instances.size() && frame.contentHash == contentHash)
         return true;
 
@@ -86,7 +86,7 @@ bool RayTracingScene::update(uint32_t frameIndex,
 
         if (instance.prebuiltBlas)
         {
-            // Skinned mesh: BLAS was already built by SkinnedBlasBuilder.
+
             blas = instance.prebuiltBlas;
         }
         else
@@ -185,11 +185,11 @@ bool RayTracingScene::update(uint32_t frameIndex,
     if (!commandBuffer->end())
         return false;
 
-    // Submit asynchronously. Keep both the scratch buffer and the uploaded instance
-    // buffer alive until the upload fence signals; the TLAS build command reads both.
-    // The completion semaphore is picked up by RenderGraph::end() and added as a wait
-    // semaphore for the frame submit, ensuring the TLAS build is complete before any
-    // RT pass reads the TLAS.
+
+
+
+
+
     if (!utilities::AsyncGpuUpload::submit(commandBuffer, context->getGraphicsQueue(),
                                            {scratchBuffer, frame.instanceBuffer}))
         return false;

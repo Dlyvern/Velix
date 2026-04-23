@@ -11,11 +11,11 @@ const float PI = 3.14159265359;
 
 struct Light
 {
-    vec4 position;      // xyz in view space
-    vec4 direction;     // xyz in view space
-    vec4 colorStrength; // rgb=color, a=intensity
-    vec4 parameters;    // x=inner, y=outer, z=radius, w=type
-    vec4 shadowInfo;    // x=castsShadow, y=shadowIndex, z=far/range, w=near
+    vec4 position;
+    vec4 direction;
+    vec4 colorStrength;
+    vec4 parameters;
+    vec4 shadowInfo;
 };
 
 layout(location = 0) in vec2 vUV;
@@ -61,26 +61,26 @@ layout(set = 1, binding = 12) uniform sampler2D     uGIIrradiance;
 layout(push_constant) uniform LightingPC
 {
     float shadowAmbientStrength;
-    float shadowMode;           // 0.0 = shadow maps, 1.0 = ray query inline (unused), 2.0 = precomputed RT shadow array
-    float rtShadowSamples;      // number of rays per light (1 = hard, 4-16 = soft)
-    float rtShadowPenumbraSize; // virtual light radius — larger = wider penumbra
-    vec4  probeWorldPos_radius; // xyz=probe world pos, w=radius (0=inactive)
+    float shadowMode;
+    float rtShadowSamples;
+    float rtShadowPenumbraSize;
+    vec4  probeWorldPos_radius;
     float probeIntensity;
-    float giEnabled;            // 1.0 when RT GI irradiance buffer is bound
-    float giStrength;           // indirect diffuse intensity multiplier
+    float giEnabled;
+    float giStrength;
     float _pad2;
 } pc;
 
-// ---------------------------------------------------------------------------
-// SINGLE shadow ray — binary occlusion test.
-//
-// Returns 1.0 if anything blocks the path (in shadow), 0.0 if clear (lit).
-//
-// Flags:
-//   TerminateOnFirstHit  — stop at first hit, we don't need the closest
-//   SkipClosestHitShader — no need to shade the hit, just detect it
-//   OpaqueEXT            — only test opaque geometry
-// ---------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
 float traceShadowRay(vec3 origin, vec3 direction, float tMax)
 {
     rayQueryEXT rq;
@@ -89,9 +89,9 @@ float traceShadowRay(vec3 origin, vec3 direction, float tMax)
         gl_RayFlagsTerminateOnFirstHitEXT |
         gl_RayFlagsSkipClosestHitShaderEXT |
         gl_RayFlagsOpaqueEXT,
-        0xFF,   // cullMask: all instances
+        0xFF,
         origin,
-        0.001,  // tMin: 1 mm offset, backup against self-intersection
+        0.001,
         direction,
         tMax);
 
@@ -101,13 +101,13 @@ float traceShadowRay(vec3 origin, vec3 direction, float tMax)
             gl_RayQueryCommittedIntersectionNoneEXT) ? 1.0 : 0.0;
 }
 
-// Concept: instead of 1 ray toward the exact light direction, fire N rays
-// spread across a virtual light disk.  The fraction that hit geometry is
-// the shadow value — partial hits give the penumbra.
+
+
+
 
 void buildOrthonormalBasis(vec3 n, out vec3 tangent, out vec3 bitangent)
 {
-    // Frisvad method: numerically stable for any normal direction.
+
     if (n.z < -0.9999)
     {
         tangent   = vec3( 0.0, -1.0, 0.0);
@@ -120,30 +120,30 @@ void buildOrthonormalBasis(vec3 n, out vec3 tangent, out vec3 bitangent)
     bitangent = vec3(b, 1.0 - n.y * n.y * a, -n.y);
 }
 
-// Interleaved Gradient Noise — returns [0, 1] per screen pixel.
-// Uses gl_FragCoord, so automatically pixel-unique.
+
+
 float interleavedGradientNoise()
 {
     vec2 p = gl_FragCoord.xy;
-    // Magic constants from Jorge Jimenez (2014).
+
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
-// Vogel disk: places `sampleIndex` of `samplesCount` uniformly in a unit disk.
-// `phi` rotates the whole pattern (use IGN so each pixel differs).
+
+
 vec2 vogelDiskSample(int sampleIndex, int samplesCount, float phi)
 {
-    // Golden angle in radians ≈ 2.399963.
-    // Consecutive samples are separated by exactly this angle → uniform spread.
+
+
     const float goldenAngle = 2.4;
     float r     = sqrt(float(sampleIndex) + 0.5) / sqrt(float(samplesCount));
     float theta = float(sampleIndex) * goldenAngle + phi;
     return vec2(r * cos(theta), r * sin(theta));
 }
 
-// Jitters the DIRECTION on a disk of angular radius `penumbraSize` (world
-// units at 1 m) perpendicular to `baseDir`.  Works well for sun-like lights
-// where the source is at infinity.
+
+
+
 float traceSoftShadowDir(vec3 origin, vec3 baseDir, float tMax,
                          float penumbraSize, int numSamples)
 {
@@ -158,9 +158,9 @@ float traceSoftShadowDir(vec3 origin, vec3 baseDir, float tMax,
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // Pick a point on the virtual light disk.
+
         vec2  disk       = vogelDiskSample(i, numSamples, phi) * penumbraSize;
-        // Offset the direction by that disk point, then re-normalise.
+
         vec3  jitteredDir = normalize(baseDir + tangent * disk.x + bitangent * disk.y);
         shadow += traceShadowRay(origin, jitteredDir, tMax);
     }
@@ -168,9 +168,9 @@ float traceSoftShadowDir(vec3 origin, vec3 baseDir, float tMax,
     return shadow / float(numSamples);
 }
 
-// Jitters the TARGET POINT on a disk centred on the light position.
-// Physically more accurate for local lights: the penumbra grows with
-// distance from the occluder.
+
+
+
 float traceSoftShadowPoint(vec3 origin, vec3 lightPosWorld,
                            float penumbraSize, int numSamples)
 {
@@ -189,7 +189,7 @@ float traceSoftShadowPoint(vec3 origin, vec3 lightPosWorld,
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // Sample a random point on the virtual light surface.
+
         vec2  disk           = vogelDiskSample(i, numSamples, phi) * penumbraSize;
         vec3  jitteredTarget = lightPosWorld + tangent * disk.x + bitangent * disk.y;
         vec3  jitteredDir    = jitteredTarget - origin;
@@ -360,6 +360,18 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(1.0 - clamp(cosTheta, 0.0, 1.0), 5.0);
 }
 
+
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - clamp(cosTheta, 0.0, 1.0), 5.0);
+}
+
+
+float specularOcclusion(float NdotV, float ao, float roughness)
+{
+    return clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+}
+
 vec3 evaluateBRDF(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughness)
 {
     float NdotL = max(dot(N, L), 0.0);
@@ -382,6 +394,12 @@ vec3 evaluateBRDF(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float rou
     vec3 kD = (1.0 - F) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
     vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
+
+
+    float Ess = 0.04 + (1.0 - 0.04) * (1.0 - roughness);
+    vec3 Favg = F0 + (1.0 - F0) * 0.047619;
+    vec3 Fms = Favg * Favg * (1.0 - Ess) / (1.0 - Favg * (1.0 - Ess));
+    specular *= (1.0 + Fms);
 
     return (diffuse + specular) * NdotL;
 }
@@ -418,6 +436,8 @@ void main()
     vec3 lighting = vec3(0.0);
     float directionalShadowMax = 0.0;
     bool hasDirectionalLight = false;
+    vec3 sunDirWorld = vec3(0.0, 1.0, 0.0);
+    vec3 sunColorIntensity = vec3(1.0);
 
     int count = min(lightData.lightCount, MAX_LIGHT_COUNT);
     for (int i = 0; i < count; ++i)
@@ -440,6 +460,8 @@ void main()
         {
             L = normalize(-light.direction.xyz);
             vec3 L_world = normalize((camera.invView * vec4(L, 0.0)).xyz);
+            sunDirWorld = L_world;
+            sunColorIntensity = light.colorStrength.rgb * light.colorStrength.a;
 
             if (castsShadow)
             {
@@ -461,7 +483,10 @@ void main()
             L = (distance > 0.0) ? toLight / distance : vec3(0.0, 0.0, 1.0);
 
             float radius = max(light.parameters.z, 0.0001);
-            float attenuation = clamp(1.0 - (distance / radius), 0.0, 1.0);
+            float distRatio = distance / radius;
+            float distRatio2 = distRatio * distRatio;
+            float distRatio4 = distRatio2 * distRatio2;
+            float attenuation = clamp(1.0 - distRatio4, 0.0, 1.0);
             attenuation *= attenuation;
             radiance *= attenuation;
 
@@ -485,7 +510,10 @@ void main()
             L = (distance > 0.0) ? toLight / distance : vec3(0.0, 0.0, 1.0);
 
             float radius = max(light.parameters.z, 0.0001);
-            float attenuation = clamp(1.0 - (distance / radius), 0.0, 1.0);
+            float distRatio = distance / radius;
+            float distRatio2 = distRatio * distRatio;
+            float distRatio4 = distRatio2 * distRatio2;
+            float attenuation = clamp(1.0 - distRatio4, 0.0, 1.0);
             attenuation *= attenuation;
 
             float theta = dot(L, normalize(-light.direction.xyz));
@@ -519,11 +547,31 @@ void main()
         lighting += evaluateBRDF(N_view, V, L, albedo, metallic, roughness) * radiance * (1.0 - shadow);
     }
 
-    float ambientFactor = hasDirectionalLight ? 0.03 : 0.0;
-    vec3 ambient = albedo * ambientFactor * ao;
-    ambient *= (1.0 - clamp(pc.shadowAmbientStrength, 0.0, 1.0) * directionalShadowMax);
 
-    // RT Global Illumination: replace flat ambient with sky-occlusion-based indirect diffuse.
+    float sunHeight = clamp(sunDirWorld.y, -1.0, 1.0);
+    float dayFactor = smoothstep(-0.1, 0.25, sunHeight);
+    float sunsetFactor = (1.0 - smoothstep(0.0, 0.40, sunHeight)) * smoothstep(-0.15, 0.02, sunHeight);
+
+    vec3 skyDay     = vec3(0.55, 0.70, 1.00);
+    vec3 skySunset  = vec3(0.95, 0.55, 0.45);
+    vec3 skyNight   = vec3(0.05, 0.07, 0.15);
+
+    vec3 skyAmbient = mix(skyNight, skyDay, dayFactor);
+    skyAmbient = mix(skyAmbient, skySunset, sunsetFactor);
+
+    vec3 sunLuminance = sunColorIntensity * max(dayFactor + sunsetFactor * 0.7, 0.05);
+    vec3 groundAmbient = mix(vec3(0.05, 0.05, 0.08), sunLuminance * vec3(0.35, 0.28, 0.22), dayFactor + sunsetFactor * 0.6);
+
+    float ambientBrightness = 0.50 * dayFactor + 0.35 * sunsetFactor + 0.12;
+
+    float hemiFactor = N_world.y * 0.5 + 0.5;
+    vec3 hemiColor = mix(groundAmbient, skyAmbient, hemiFactor) * ambientBrightness;
+
+    float ambientScale = hasDirectionalLight ? 1.0 : 0.7;
+    vec3 ambient = albedo * hemiColor * ambientScale * ao;
+    ambient *= (1.0 - clamp(pc.shadowAmbientStrength, 0.0, 1.0) * directionalShadowMax * 0.3);
+
+
     if (pc.giEnabled > 0.5)
     {
         vec2 vUV = gl_FragCoord.xy / vec2(textureSize(uGIIrradiance, 0));
@@ -545,10 +593,14 @@ void main()
             vec3 probeColor = textureLod(uProbeEnv, R_world, mipLevel).rgb;
 
             float NdotV = max(dot(N_world, V_world), 0.0);
-            vec3 F = fresnelSchlick(NdotV, mix(vec3(0.04), albedo, metallic));
-            float specMask = (1.0 - roughness * roughness);
+            vec3 F0 = mix(vec3(0.04), albedo, metallic);
+            vec3 F = fresnelSchlickRoughness(NdotV, F0, roughness);
+            vec2 envBRDF = vec2(max(1.0 - roughness, F0.r), roughness);
+            vec3 specWeight = F * envBRDF.x + envBRDF.y * 0.08;
 
-            color += probeColor * F * specMask * pc.probeIntensity * probeInfluence * ao;
+            float specAO = specularOcclusion(NdotV, ao, roughness);
+
+            color += probeColor * specWeight * pc.probeIntensity * probeInfluence * specAO;
         }
     }
 

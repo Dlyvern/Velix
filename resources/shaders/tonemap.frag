@@ -4,8 +4,8 @@ layout(set = 0, binding = 0) uniform sampler2D uHdrColor;
 
 layout(push_constant) uniform TonemapPC
 {
-    vec4 tonemapParams; // x=exposure, y=gamma, z=saturation, w=contrast
-    vec4 gradeParams;   // x=temperature, y=tint, z=colorGradingEnabled, w=unused
+    vec4 tonemapParams;
+    vec4 gradeParams;
 } pc;
 
 layout(location = 0) in vec2 vUV;
@@ -47,5 +47,5 @@ void main()
     }
 
     outColor = vec4(mapped, 1.0);
-    // outColor.rgb *= vec3(1.0, 0.3, 0.3);  
+
 }

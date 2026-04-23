@@ -3,7 +3,7 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-void ColorOverLifetimeModule::onParticleUpdate(Particle &particle, float /*deltaTime*/)
+void ColorOverLifetimeModule::onParticleUpdate(Particle &particle, float )
 {
     particle.color = evaluateGradient(gradient, particle.getNormalizedAge());
 }

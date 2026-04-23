@@ -19,11 +19,11 @@ public:
     static void copyBufferRegion(core::Buffer &srcBuffer, core::Buffer &dstBuffer, core::CommandBuffer &commandBuffer,
                                  VkDeviceSize size, VkDeviceSize srcOffset, VkDeviceSize dstOffset);
 
-    /// Returns the device address of a buffer, or 0 if device addresses are unsupported.
+
     static VkDeviceAddress getBufferDeviceAddress(const core::Buffer &buffer);
 };
 
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_BUFFER_UTILITIES_HPP
+#endif

@@ -36,4 +36,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_IASSET_LOADER_HPP
+#endif

@@ -9,7 +9,7 @@ enum class KeyCode : int16_t
 {
     UNKNOWN = -1,
 
-    // Printable
+
     SPACE = 32,
     APOSTROPHE = 39,
     COMMA = 44,
@@ -55,7 +55,7 @@ enum class KeyCode : int16_t
     Y = 89,
     Z = 90,
 
-    // Control
+
     ESCAPE      = 256,
     ENTER       = 257,
     TAB         = 258,
@@ -63,13 +63,13 @@ enum class KeyCode : int16_t
     INSERT      = 260,
     DEL         = 261,
 
-    // Arrow keys
+
     RIGHT = 262,
     LEFT  = 263,
     DOWN  = 264,
     UP    = 265,
 
-    // Function keys
+
     F1  = 290,
     F2  = 291,
     F3  = 292,
@@ -83,7 +83,7 @@ enum class KeyCode : int16_t
     F11 = 300,
     F12 = 301,
 
-    // Modifiers
+
     LEFT_SHIFT    = 340,
     LEFT_CONTROL  = 341,
     LEFT_ALT      = 342,
@@ -112,4 +112,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_KEYBOARD_HPP
+#endif

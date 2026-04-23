@@ -44,7 +44,10 @@ add_subdirectory(Editor)
 
 add_subdirectory(VelixSDK)
 
-add_subdirectory(Tools)
+option(VELIX_BUILD_TOOLS "Build standalone tools (texture importer, etc.)" OFF)
+if(VELIX_BUILD_TOOLS)
+    add_subdirectory(Tools)
+endif()
 
 option(VELIX_BUILD_ENGINE_PLUGINS "Build engine plugins from source (used by plugin CI)" OFF)
 if(VELIX_BUILD_ENGINE_PLUGINS AND EXISTS "${CMAKE_SOURCE_DIR}/resources/plugins/EnginePlugins/CMakeLists.txt")
@@ -100,6 +103,9 @@ if(EXISTS ${RESOURCE_DIR})
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/build_plugins.sh"
                 "${CMAKE_BINARY_DIR}/build_plugins.sh"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/build_tools.sh"
+                "${CMAKE_BINARY_DIR}/build_tools.sh"
         COMMENT "Copying resources to build directory"
     )
     message(STATUS "Resources will be copied to: ${OUTPUT_RESOURCE_DIR}")

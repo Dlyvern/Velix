@@ -60,4 +60,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_FBX_ASSET_LOADER_HPP
+#endif

@@ -33,8 +33,8 @@ public:
         bool buildPending{false};
     };
 
-    // key = combined hash of entity ptr + mesh index (caller's responsibility).
-    // Returns the ready BLAS, or nullptr on failure.
+
+
     core::rtx::AccelerationStructure::SharedPtr buildOrUpdate(
         uint64_t key,
         const CPUMesh &cpuMesh,
@@ -53,4 +53,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SKINNED_BLAS_BUILDER_HPP
+#endif

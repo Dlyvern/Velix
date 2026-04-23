@@ -18,4 +18,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_I_DETAILS_VIEW_HPP
+#endif

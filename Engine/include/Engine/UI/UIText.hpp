@@ -11,8 +11,8 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(ui)
 
-/// Screen-space text game object rendered by UIRenderGraphPass.
-/// Position is in normalised device coordinates: (-1,-1) = bottom-left, (1,1) = top-right.
+
+
 class UIText
 {
 public:
@@ -53,4 +53,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_UI_TEXT_HPP
+#endif

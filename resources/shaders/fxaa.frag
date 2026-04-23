@@ -1,15 +1,15 @@
 #version 450
 
-// FXAA 3.11 Quality implementation
-// Based on Timothy Lottes' FXAA algorithm (NVIDIA)
+
+
 
 layout(set = 0, binding = 0) uniform sampler2D uSceneColor;
 
 layout(push_constant) uniform FXAAPC
 {
-    vec2  texelSize; // 1.0 / resolution
+    vec2  texelSize;
     float enabled;
-    float subpixelQuality; // 0.75 is a good default
+    float subpixelQuality;
 } pc;
 
 layout(location = 0) in  vec2 vUV;
@@ -37,7 +37,7 @@ void main()
     vec2 uv  = vUV;
     vec2 ts  = pc.texelSize;
 
-    // Sample corners + center
+
     vec3 rgbNW = texture(uSceneColor, uv + vec2(-1.0, -1.0) * ts).rgb;
     vec3 rgbNE = texture(uSceneColor, uv + vec2( 1.0, -1.0) * ts).rgb;
     vec3 rgbSW = texture(uSceneColor, uv + vec2(-1.0,  1.0) * ts).rgb;
@@ -53,7 +53,7 @@ void main()
     float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
     float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
 
-    // Early-out on flat regions
+
     float lumaRange = lumaMax - lumaMin;
     if (lumaRange < max(FXAA_EDGE_THRESHOLD_MIN, lumaMax * FXAA_EDGE_THRESHOLD))
     {
@@ -61,7 +61,7 @@ void main()
         return;
     }
 
-    // Compute blend direction
+
     vec2 dir;
     dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));
     dir.y =  ((lumaNW + lumaSW) - (lumaNE + lumaSE));
@@ -70,7 +70,7 @@ void main()
     float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
     dir = clamp(dir * rcpDirMin, -FXAA_SPAN_MAX, FXAA_SPAN_MAX) * ts;
 
-    // Two sample points along the edge
+
     vec3 rgbA = 0.5 * (
         texture(uSceneColor, uv + dir * (1.0/3.0 - 0.5)).rgb +
         texture(uSceneColor, uv + dir * (2.0/3.0 - 0.5)).rgb);

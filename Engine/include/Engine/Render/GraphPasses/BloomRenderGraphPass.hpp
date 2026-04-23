@@ -14,8 +14,8 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-/// Reads HDR scene color (from SkyLight), extracts bright regions via a 13-tap
-/// filter and writes them to a half-resolution bloom texture.
+
+
 class BloomRenderGraphPass : public IRenderGraphPass
 {
 public:
@@ -57,8 +57,8 @@ private:
     std::vector<VkDescriptorSet> m_descriptorSets;
     bool                         m_descriptorSetsInitialized{false};
 
-    VkExtent2D m_extent;        // full-res extent (used to compute texel size)
-    VkExtent2D m_bloomExtent;   // half-res extent
+    VkExtent2D m_extent;
+    VkExtent2D m_bloomExtent;
     VkViewport m_viewport;
     VkRect2D   m_scissor;
 
@@ -68,4 +68,4 @@ private:
 ELIX_NESTED_NAMESPACE_END
 ELIX_CUSTOM_NAMESPACE_END
 
-#endif // ELIX_BLOOM_RENDER_GRAPH_PASS_HPP
+#endif

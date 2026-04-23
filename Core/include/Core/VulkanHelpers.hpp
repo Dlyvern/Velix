@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-//!!!! FOR PRODUCTION THIS FILE IS NOT SUITABLE. FIX IT
+
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
 
@@ -156,8 +156,8 @@ namespace helpers
         static std::mutex mutex;
         return mutex;
     }
-} // namespace helpers
+}
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_VULKAN_HELPERS_HPP
+#endif

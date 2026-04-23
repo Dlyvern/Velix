@@ -17,12 +17,12 @@ std::array<glm::vec4, 6> GpuCullingSystem::extractFrustumPlanes(const glm::mat4 
         return glm::vec4(viewProj[0][r], viewProj[1][r], viewProj[2][r], viewProj[3][r]);
     };
 
-    planes[0] = row(3) + row(0); // Left
-    planes[1] = row(3) - row(0); // Right
-    planes[2] = row(3) + row(1); // Bottom
-    planes[3] = row(3) - row(1); // Top
-    planes[4] = row(2);          // Near (Vulkan: z_clip >= 0)
-    planes[5] = row(3) - row(2); // Far
+    planes[0] = row(3) + row(0);
+    planes[1] = row(3) - row(0);
+    planes[2] = row(3) + row(1);
+    planes[3] = row(3) - row(1);
+    planes[4] = row(2);
+    planes[5] = row(3) - row(2);
 
     for (auto &p : planes)
     {
@@ -64,7 +64,7 @@ void GpuCullingSystem::initialize(VkDevice device, uint32_t framesInFlight)
             core::memory::MemoryUsage::CPU_TO_GPU));
     }
 
-    // Descriptor set layout: binding 0 = bounds SSBO, binding 1 = draw-command SSBO
+
     const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
@@ -175,8 +175,8 @@ void GpuCullingSystem::cleanup(VkDevice device)
 void GpuCullingSystem::dispatch(VkCommandBuffer cmd, uint32_t currentFrame, uint32_t batchCount,
                                 const std::array<glm::vec4, 6> &planes)
 {
-    // Disabled: GPU cull path causes transient batch disappearance (black frames).
-    // CPU-side sphere testing in prepareFrameDataFromScene still runs.
+
+
     (void)cmd;
     (void)currentFrame;
     (void)batchCount;

@@ -55,4 +55,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_TERRAIN_COMPONENT_HPP
+#endif

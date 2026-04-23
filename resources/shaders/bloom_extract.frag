@@ -1,15 +1,15 @@
 #version 450
 
-// Bloom bright-region extraction with 13-tap tent filter (Kawase-style)
-// Reads from HDR scene color, outputs bright regions at half resolution.
+
+
 
 layout(set = 0, binding = 0) uniform sampler2D uHDRColor;
 
 layout(push_constant) uniform BloomExtractPC
 {
-    vec2  texelSize;   // 1.0 / full-res resolution
-    float threshold;   // brightness threshold
-    float knee;        // soft knee width
+    vec2  texelSize;
+    float threshold;
+    float knee;
     float enabled;
 } pc;
 
@@ -21,7 +21,7 @@ float luma(vec3 c)
     return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
 
-// Soft-threshold curve from Kawase/Karis
+
 vec3 softThreshold(vec3 color)
 {
     float brightness = max(max(color.r, color.g), color.b);
@@ -41,7 +41,7 @@ void main()
 
     vec2 ts = pc.texelSize;
 
-    // 13-tap downsampling filter (Karis average / COD dual Kawase inspired)
+
     vec3 a = texture(uHDRColor, vUV + vec2(-2.0, -2.0) * ts).rgb;
     vec3 b = texture(uHDRColor, vUV + vec2( 0.0, -2.0) * ts).rgb;
     vec3 c = texture(uHDRColor, vUV + vec2( 2.0, -2.0) * ts).rgb;
@@ -59,7 +59,7 @@ void main()
     vec3 l = texture(uHDRColor, vUV + vec2(-1.0,  1.0) * ts).rgb;
     vec3 m = texture(uHDRColor, vUV + vec2( 1.0,  1.0) * ts).rgb;
 
-    // Weighted sum (centre 2x2 group weighted higher)
+
     vec3 col = e * 0.125;
     col += (a + c + g + i) * 0.03125;
     col += (b + d + f + h) * 0.0625;

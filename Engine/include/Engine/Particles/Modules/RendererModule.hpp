@@ -9,34 +9,34 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
 enum class ParticleBlendMode : uint8_t
 {
-    AlphaBlend = 0, // standard transparency
-    Additive,       // glow / fire / sparks
-    Premultiplied,  // pre-multiplied alpha
+    AlphaBlend = 0,
+    Additive,
+    Premultiplied,
 };
 
 enum class ParticleFacingMode : uint8_t
 {
-    CameraFacing = 0,   // always billboards toward the camera
-    VelocityAligned,    // long axis aligns with velocity (good for rain streaks)
-    WorldUp,            // locked to world Y-up
+    CameraFacing = 0,
+    VelocityAligned,
+    WorldUp,
 };
 
-/// Purely descriptive module — carries settings read by ParticleRenderGraphPass.
-/// Has no per-particle simulation logic.
+
+
 class RendererModule final : public IParticleModule
 {
 public:
     ParticleModuleType getType() const override { return ParticleModuleType::Renderer; }
 
-    std::string        texturePath{};                              // empty = solid colour quad
+    std::string        texturePath{};
     ParticleBlendMode  blendMode{ParticleBlendMode::AlphaBlend};
     ParticleFacingMode facingMode{ParticleFacingMode::CameraFacing};
 
     bool  castShadows{false};
-    bool  softParticles{false};       // depth-buffer soft-edge blending
-    float softParticleRange{1.0f};    // world-space soft-edge falloff distance
+    bool  softParticles{false};
+    float softParticleRange{1.0f};
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RENDERER_MODULE_HPP
+#endif

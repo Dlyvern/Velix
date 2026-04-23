@@ -17,6 +17,7 @@
 #include "Engine/Components/ReflectionProbeComponent.hpp"
 #include "Engine/Components/DecalComponent.hpp"
 #include "Engine/Components/RagdollComponent.hpp"
+#include "Engine/Assets/AssetManager.hpp"
 #include "Core/VulkanContext.hpp"
 
 #include "Engine/Particles/Modules/SpawnModule.hpp"
@@ -384,7 +385,7 @@ Scene::Scene() : m_physicsScene(PhysXCore::getInstance()->getPhysics()
 
 Scene::~Scene()
 {
-    // Ensure components are destroyed while physics scene/resources are still valid.
+
     m_entities.clear();
 }
 
@@ -492,6 +493,34 @@ const std::vector<std::unique_ptr<ui::Billboard>> &Scene::getBillboards() const 
 const std::vector<Entity::SharedPtr> &Scene::getEntities() const
 {
     return m_entities;
+}
+
+std::vector<std::string> Scene::collectCustomMaterialFragPaths() const
+{
+    std::unordered_set<std::string> uniquePaths;
+
+    for (const auto &entity : m_entities)
+    {
+        if (!entity)
+            continue;
+
+        auto collectFromComponent = [&](auto *meshComp)
+        {
+            if (!meshComp)
+                return;
+            for (size_t slot = 0; slot < meshComp->getMaterialSlotCount(); ++slot)
+            {
+                auto material = meshComp->getMaterialOverride(slot);
+                if (material && !material->getCustomFragPath().empty())
+                    uniquePaths.insert(material->getCustomFragPath());
+            }
+        };
+
+        collectFromComponent(entity->getComponent<StaticMeshComponent>());
+        collectFromComponent(entity->getComponent<SkeletalMeshComponent>());
+    }
+
+    return {uniquePaths.begin(), uniquePaths.end()};
 }
 
 Scene::SharedPtr Scene::copy()
@@ -854,7 +883,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
         }
     }
 
-    // Restore material override paths on a mesh component (GPU material loading is deferred to editor layer)
+
     auto restoreMaterialOverrides = [&](auto *meshComp, const nlohmann::json &overridesJson)
     {
         if (!meshComp || !overridesJson.is_array())
@@ -1022,7 +1051,7 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                 }
             }
 
-            // Determine if the JSON has an explicit mesh component
+
             bool hasMeshComponent = false;
             if (objectJson.contains("components") && objectJson["components"].is_array())
             {
@@ -1039,13 +1068,16 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                 }
             }
 
-            // Backward compat: old scenes with has_legacy_mesh but no explicit mesh component
+
             if (!hasMeshComponent && objectJson.value("has_legacy_mesh", false))
             {
-                CPUMesh mesh = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
-                mesh.name = "Cube";
-                LightmapUVGenerator::generate(mesh);
-                gameObject->addComponent<StaticMeshComponent>(std::vector<CPUMesh>{mesh});
+                static CPUMesh cachedLegacyCube = [] {
+                    auto m = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
+                    m.name = "Cube";
+                    LightmapUVGenerator::generate(m);
+                    return m;
+                }();
+                gameObject->addComponent<StaticMeshComponent>(std::vector<CPUMesh>{cachedLegacyCube});
             }
 
             if (!objectJson.contains("components"))
@@ -1068,20 +1100,26 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                         const std::string primType = componentJson.value("primitive_type", "Cube");
                         if (primType == "Sphere")
                         {
-                            std::vector<vertex::Vertex3D> verts;
-                            std::vector<uint32_t> inds;
-                            circle::genereteVerticesAndIndices(verts, inds);
-                            auto mesh = CPUMesh::build<vertex::Vertex3D>(verts, inds);
-                            mesh.name = "Sphere";
-                            LightmapUVGenerator::generate(mesh);
-                            meshes.push_back(mesh);
+                            static CPUMesh cachedSphere = [] {
+                                std::vector<vertex::Vertex3D> verts;
+                                std::vector<uint32_t> inds;
+                                circle::genereteVerticesAndIndices(verts, inds);
+                                auto m = CPUMesh::build<vertex::Vertex3D>(verts, inds);
+                                m.name = "Sphere";
+                                LightmapUVGenerator::generate(m);
+                                return m;
+                            }();
+                            meshes.push_back(cachedSphere);
                         }
                         else
                         {
-                            auto mesh = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
-                            mesh.name = "Cube";
-                            LightmapUVGenerator::generate(mesh);
-                            meshes.push_back(mesh);
+                            static CPUMesh cachedCube = [] {
+                                auto m = CPUMesh::build<vertex::Vertex3D>(cube::vertices, cube::indices);
+                                m.name = "Cube";
+                                LightmapUVGenerator::generate(m);
+                                return m;
+                            }();
+                            meshes.push_back(cachedCube);
                         }
                     }
                     else
@@ -1089,8 +1127,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                         assetPath = resolveScenePath(componentJson.value("asset_path", std::string{}));
                         if (!assetPath.empty())
                         {
-                            // Streaming path: create the component with a path-only handle.
-                            // AssetManager will load the model data asynchronously.
+
+
                             auto *sm = gameObject->addComponent<StaticMeshComponent>(assetPath);
                             sm->setVisible(componentJson.value("visible", true));
                             restoreMaterialOverrides(sm, componentJson.value("material_overrides", nlohmann::json::array()));
@@ -1130,8 +1168,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                     const std::string assetPath = resolveScenePath(componentJson.value("asset_path", std::string{}));
                     if (!assetPath.empty())
                     {
-                        // Streaming path: handle resolved asynchronously; AnimatorComponent
-                        // will be populated in PerFrameDataWorker once onModelLoaded() fires.
+
+
                         auto *skm = gameObject->addComponent<SkeletalMeshComponent>(assetPath);
                         skm->setVisible(componentJson.value("visible", true));
                         restoreMaterialOverrides(skm, componentJson.value("material_overrides", nlohmann::json::array()));
@@ -1195,8 +1233,8 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                         componentJson["position"].size() == 3)
                     {
                         const auto &position = componentJson["position"];
-                        // Backward compatibility for old scenes where camera position
-                        // lived in component data instead of entity transform.
+
+
                         if (!objectJson.contains("position"))
                             transformation->setPosition({position[0], position[1], position[2]});
                         else if (!hasExplicitOffset)
@@ -1650,6 +1688,15 @@ bool Scene::loadSceneFromFile(const std::string &filePath, const LoadStatusCallb
                     if (!hdrPath.empty())
                         probe->setHDRPath(hdrPath, core::VulkanContext::getContext()->getPersistentDescriptorPool());
                 }
+                else if (type == "lightmap")
+                {
+                    const std::string assetPath = resolveScenePath(componentJson.value("asset_path", std::string{}));
+                    if (!assetPath.empty())
+                    {
+                        auto *lmc = gameObject->addComponent<LightmapComponent>();
+                        lmc->loadFromPath(assetPath);
+                    }
+                }
             }
         }
 
@@ -1765,7 +1812,7 @@ std::vector<std::shared_ptr<BaseLight>> Scene::getLights()
     return lights;
 }
 
-void Scene::saveSceneToFile(const std::string &filePath)
+void Scene::saveSceneToFile(const std::string &filePath, bool quiet)
 {
     nlohmann::json json;
 
@@ -2372,7 +2419,8 @@ void Scene::saveSceneToFile(const std::string &filePath)
     {
         file << std::setw(4) << json << std::endl;
         file.close();
-        VX_ENGINE_INFO_STREAM("Saved scene in " << filePath << '\n');
+        if (!quiet)
+            VX_ENGINE_INFO_STREAM("Saved scene in " << filePath << '\n');
     }
     else
         VX_ENGINE_ERROR_STREAM("Failed to open file to save game objects: " << filePath << std::endl);
@@ -4081,8 +4129,8 @@ bool Scene::destroyEntity(Entity *entity)
 
 void Scene::update(float deltaTime)
 {
-    // Scripts can spawn/destroy entities during update.
-    // Iterate by index and copy shared_ptr to avoid iterator/reference invalidation.
+
+
     for (size_t index = 0; index < m_entities.size(); ++index)
     {
         auto entity = m_entities[index];
@@ -4110,6 +4158,177 @@ void Scene::update(float deltaTime)
         auto entity = m_entities[index];
         if (entity && entity->isEnabled())
             entity->postPhysicsUpdate(deltaTime);
+    }
+}
+
+void Scene::captureRenderSnapshot(RenderSceneSnapshot &snapshot, const glm::vec3 &cameraPosition)
+{
+    snapshot.entities.clear();
+    snapshot.entities.reserve(m_entities.size());
+    snapshot.lights.clear();
+    snapshot.skyboxHDRPath = getSkyboxHDRPath();
+    snapshot.fogSettings = getFogSettings();
+
+    constexpr float kLoadRadius = 200.0f;
+    constexpr float kUnloadRadius = 300.0f;
+
+    for (const auto &entity : m_entities)
+    {
+        if (!entity)
+            continue;
+
+        RenderEntitySnapshot entitySnap{};
+        entitySnap.entityRef = entity;
+        entitySnap.entityPtr = entity.get();
+        entitySnap.entityId = entity->getId();
+        entitySnap.enabled = entity->isEnabled();
+
+        if (!entitySnap.enabled)
+        {
+            snapshot.entities.push_back(std::move(entitySnap));
+            continue;
+        }
+
+
+        if (auto *transform = entity->getComponent<Transform3DComponent>())
+            entitySnap.worldTransform = transform->getMatrix();
+
+
+        auto *staticMesh = entity->getComponent<StaticMeshComponent>();
+        auto *skeletalMesh = entity->getComponent<SkeletalMeshComponent>();
+        auto *terrain = entity->getComponent<TerrainComponent>();
+
+
+
+
+        if (staticMesh || skeletalMesh)
+        {
+            const glm::vec3 entityPos = glm::vec3(entitySnap.worldTransform[3]);
+            const float dist = glm::distance(cameraPosition, entityPos);
+
+            if (staticMesh)
+            {
+                auto &handle = staticMesh->getModelHandle();
+                if (!handle.empty())
+                {
+                    if (dist <= kLoadRadius && handle.state() == AssetState::Unloaded)
+                        AssetManager::getInstance().requestLoad(handle);
+                    else if (dist > kUnloadRadius && handle.state() == AssetState::Ready)
+                    {
+                        staticMesh->clearMeshes();
+                        handle.reset();
+                    }
+                }
+                if (handle.ready() && staticMesh->getMeshes().empty())
+                    staticMesh->onModelLoaded();
+            }
+
+            if (skeletalMesh)
+            {
+                auto &handle = skeletalMesh->getModelHandle();
+                if (!handle.empty())
+                {
+                    if (dist <= kLoadRadius && handle.state() == AssetState::Unloaded)
+                        AssetManager::getInstance().requestLoad(handle);
+                    else if (dist > kUnloadRadius && handle.state() == AssetState::Ready)
+                    {
+                        skeletalMesh->clearMeshes();
+                        handle.reset();
+                    }
+                }
+                if (handle.ready() && skeletalMesh->getMeshes().empty())
+                    skeletalMesh->onModelLoaded();
+            }
+        }
+
+
+        if (terrain && terrain->isVisible())
+            terrain->ensureChunkMeshesBuilt();
+
+
+        if (staticMesh && staticMesh->isVisible() && staticMesh->isReady())
+        {
+            entitySnap.meshSource = SnapshotMeshSource::Static;
+            entitySnap.meshes = &staticMesh->getMeshes();
+            entitySnap.meshVisible = true;
+            entitySnap.meshReady = true;
+            entitySnap.staticMeshComponent = staticMesh;
+        }
+        else if (skeletalMesh && skeletalMesh->isVisible() && skeletalMesh->isReady())
+        {
+            entitySnap.meshSource = SnapshotMeshSource::Skeletal;
+            entitySnap.meshes = &skeletalMesh->getMeshes();
+            entitySnap.meshVisible = true;
+            entitySnap.meshReady = true;
+            entitySnap.skeletalMeshComponent = skeletalMesh;
+        }
+        else if (terrain && terrain->isVisible())
+        {
+            entitySnap.meshSource = SnapshotMeshSource::Terrain;
+            entitySnap.meshes = &terrain->getChunkMeshes();
+            entitySnap.meshVisible = true;
+            entitySnap.meshReady = true;
+            entitySnap.terrainComponent = terrain;
+        }
+
+
+        if (skeletalMesh)
+        {
+            entitySnap.skeletalMeshComponent = skeletalMesh;
+            auto &skeleton = skeletalMesh->getSkeleton();
+            auto *animator = entity->getComponent<AnimatorComponent>();
+            bool hasActiveDriver = (animator && animator->isAnimationPlaying());
+            if (!hasActiveDriver)
+            {
+                for (auto &[type, comp] : entity->getSingleComponents())
+                {
+                    if (comp->isSkeletonDriver())
+                    {
+                        hasActiveDriver = true;
+                        break;
+                    }
+                }
+            }
+            entitySnap.finalBones = hasActiveDriver ? skeleton.getFinalMatrices() : skeleton.getBindPoses();
+            entitySnap.hasSkeleton = true;
+        }
+
+
+        if (auto *lightComponent = entity->getComponent<LightComponent>())
+        {
+            lightComponent->syncFromOwnerTransform();
+            auto light = lightComponent->getLight();
+            if (light)
+            {
+                RenderLightSnapshot lightSnap{};
+                lightSnap.type = lightComponent->getLightType();
+                lightSnap.color = light->color;
+                lightSnap.position = light->position;
+                lightSnap.strength = light->strength;
+                lightSnap.castsShadows = light->castsShadows;
+
+                if (auto *directional = dynamic_cast<DirectionalLight *>(light.get()))
+                {
+                    lightSnap.direction = directional->direction;
+                    lightSnap.skyLightEnabled = directional->skyLightEnabled;
+                }
+                else if (auto *point = dynamic_cast<PointLight *>(light.get()))
+                {
+                    lightSnap.radius = point->radius;
+                }
+                else if (auto *spot = dynamic_cast<SpotLight *>(light.get()))
+                {
+                    lightSnap.direction = spot->direction;
+                    lightSnap.innerAngle = spot->innerAngle;
+                    lightSnap.outerAngle = spot->outerAngle;
+                    lightSnap.range = spot->range;
+                }
+
+                snapshot.lights.push_back(std::move(lightSnap));
+            }
+        }
+
+        snapshot.entities.push_back(std::move(entitySnap));
     }
 }
 

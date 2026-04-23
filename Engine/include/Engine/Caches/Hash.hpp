@@ -25,4 +25,4 @@ inline void hashCombine(std::size_t &seed, const T &value)
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_HASH_HPP
+#endif

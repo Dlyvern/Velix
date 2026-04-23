@@ -105,7 +105,7 @@ void Window::centerizedOnScreen()
     glfwGetWindowSize(m_window, &sx, &sy);
     glfwGetWindowPos(m_window, &px, &py);
 
-    // Iterate throug all monitors
+
     GLFWmonitor **m = glfwGetMonitors(&monitor_count);
     if (!m)
         return;
@@ -262,7 +262,7 @@ void Window::setFullscreen(bool enable)
 
     if (enable)
     {
-        // Save current windowed position + size
+
         glfwGetWindowPos(m_window, &m_windowedX, &m_windowedY);
         glfwGetWindowSize(m_window, &m_windowedW, &m_windowedH);
 

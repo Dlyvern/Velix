@@ -152,10 +152,9 @@ namespace
                 continue;
 
             forEachScriptComponent(scene, [](elix::engine::ScriptComponent *scriptComponent)
-            {
+                                   {
                 if (scriptComponent)
-                    scriptComponent->releaseScriptInstance();
-            });
+                    scriptComponent->releaseScriptInstance(); });
         }
     }
 
@@ -242,6 +241,11 @@ namespace
         return settings.enablePostProcessing && settings.enableSSR;
     }
 
+    bool renderGraphUsesSSGI(const elix::engine::RenderQualitySettings &settings)
+    {
+        return settings.enablePostProcessing && settings.enableSSGI;
+    }
+
     bool renderGraphUsesBloom(const elix::engine::RenderQualitySettings &settings)
     {
         return settings.enablePostProcessing && settings.enableBloom;
@@ -259,16 +263,16 @@ namespace
         return scene && scene->getFogSettings().enabled;
     }
 
-    // Returns false when RT shadows are fully active and volumetric fog is not in use,
-    // allowing the raster shadow pass to be skipped to save GPU work.
+
+
     bool renderGraphUsesRasterShadows(const elix::engine::RenderQualitySettings &settings,
                                       const std::shared_ptr<elix::core::VulkanContext> &context,
                                       const elix::engine::Scene *scene)
     {
-        // Volumetric fog reads cascade shadow maps directly — keep raster shadows alive.
+
         if (renderGraphUsesVolumetricFog(settings, scene))
             return true;
-        // RT shadows fully replace raster shadows.
+
         if (renderGraphUsesRTShadows(settings, context))
             return false;
         return true;
@@ -420,8 +424,8 @@ namespace
         const auto &settings = elix::engine::RenderQualitySettings::getInstance();
         const auto context = elix::core::VulkanContext::getContext();
         const VkSampleCountFlagBits effectiveMsaaSamples = context
-            ? context->getEffectiveMsaaSampleCount(settings.getRequestedMsaaSampleCount())
-            : VK_SAMPLE_COUNT_1_BIT;
+                                                               ? context->getEffectiveMsaaSampleCount(settings.getRequestedMsaaSampleCount())
+                                                               : VK_SAMPLE_COUNT_1_BIT;
 
         size_t seed = 0u;
         hashCombine(seed, renderGraphUsesSSAO(settings, context));
@@ -433,6 +437,7 @@ namespace
         hashCombine(seed, renderGraphUsesRTGI(settings, context) && settings.enableRTGIDenoiser);
         hashCombine(seed, renderGraphUsesRasterShadows(settings, context, scene));
         hashCombine(seed, renderGraphUsesSSR(settings));
+        hashCombine(seed, renderGraphUsesSSGI(settings));
         hashCombine(seed, renderGraphUsesVolumetricFog(settings, scene));
         hashCombine(seed, static_cast<uint32_t>(settings.volumetricFogQuality));
         hashCombine(seed, settings.overrideVolumetricFogSceneSetting);
@@ -587,7 +592,7 @@ namespace
         VX_EDITOR_INFO_STREAM("Loaded " << outScriptsRegister->getScripts().size() << " script(s) from " << outModulePath << '\n');
         return true;
     }
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -691,13 +696,13 @@ bool EditorRuntime::init()
         const std::filesystem::path execDir = engine::diagnostics::getExecutableDirectory();
         const std::filesystem::path projectDir = projectRoot;
         auto &pm = engine::PluginManager::instance();
-        // Engine plugins: always loaded, cannot be disabled by the user.
+
         pm.loadPluginsFromDirectory(execDir / "resources" / "plugins", engine::PluginManager::PluginCategory::Engine);
         pm.loadPluginsFromDirectory(execDir / "Plugins", engine::PluginManager::PluginCategory::Engine);
-        // Custom plugins: per-project, user can enable/disable via EngineConfig.
+
         pm.loadPluginsFromDirectory(projectDir / "Plugins", engine::PluginManager::PluginCategory::Custom);
 
-        // Register any loaded plugins that also implement IEditorPlugin.
+
         auto &epr = editor::EditorPluginRegistry::instance();
         epr.unregisterAll();
         const auto &loadedPlugins = pm.getLoadedPlugins();
@@ -712,7 +717,7 @@ bool EditorRuntime::init()
             else
             {
                 VX_EDITOR_INFO_STREAM("[EditorRuntime] Plugin '" << plugin->getName()
-                                      << "' is NOT an IEditorPlugin (dynamic_cast failed)\n");
+                                                                 << "' is NOT an IEditorPlugin (dynamic_cast failed)\n");
             }
         }
         VX_EDITOR_INFO_STREAM("[EditorRuntime] Editor plugins registered: "
@@ -761,16 +766,15 @@ bool EditorRuntime::init()
                                                     scenes.push_back(m_editorScene);
                                                 if (m_playScene)
                                                     scenes.push_back(m_playScene);
-                                                return scenes;
-                                            });
-    // Must be set BEFORE initEditorRenderGraph(), which triggers initStyle() → creates m_assetsWindow.
+                                                return scenes; });
+
     m_editor->setOnSceneOpenRequest([this](const std::filesystem::path &path)
                                     { openSceneFromFile(path); });
 
-    // Apply saved project render-quality settings BEFORE the render graph is
-    // compiled so that passes (SSAO, bloom, etc.) are set up with the correct
-    // quality values from the very first frame.  setProject() below will reload
-    // the same config, but by then the graph is already live.
+
+
+
+
     {
         engine::ProjectConfig preloadConfig;
         if (preloadConfig.load(projectRoot))
@@ -796,18 +800,15 @@ bool EditorRuntime::init()
     m_editor->addOnModeChangedCallback(std::bind(&EditorRuntime::onEditorModeChanged, this, std::placeholders::_1));
 
     m_editor->setProbeCaptureCallback([this](engine::Entity *entity)
-    {
-        m_pendingProbeCaptureEntity = entity;
-    });
+                                      { m_pendingProbeCaptureEntity = entity; });
 
-    // Lightmap baker
+
     m_lightmapBaker = std::make_unique<engine::LightmapBaker>();
     m_editor->setLightmapBakeProgress(&m_lightmapBakeProgress);
     m_editor->setLightmapBakeCallback([this](const engine::LightmapBakeSettings &settings)
-    {
+                                      {
         m_pendingLightmapBakeSettings = settings;
-        m_pendingLightmapBake         = true;
-    });
+        m_pendingLightmapBake         = true; });
 
     return true;
 }
@@ -868,6 +869,13 @@ void EditorRuntime::onEditorModeChanged(Editor::EditorMode mode)
                                    {
                                                                               if (scriptComponent)
                                                                                   scriptComponent->onDetach(); });
+
+
+
+
+
+            m_renderSnapshot.entities.clear();
+            m_renderSnapshot.lights.clear();
 
             m_playScene.reset();
             m_isPlaySessionActive = false;
@@ -969,10 +977,12 @@ void EditorRuntime::shutdownGameViewportRenderGraph()
     m_gameTonemapRenderGraphPass = nullptr;
     m_gameBloomCompositeRenderGraphPass = nullptr;
     m_gameFXAARenderGraphPass = nullptr;
+    m_gameFSR1RenderGraphPass = nullptr;
     m_gameSMAARenderGraphPass = nullptr;
     m_gameTAARenderGraphPass = nullptr;
     m_gameContactShadowRenderGraphPass = nullptr;
     m_gameSSRRenderGraphPass = nullptr;
+    m_gameSSGIRenderGraphPass = nullptr;
     m_gameVolumetricFogLightingRenderGraphPass = nullptr;
     m_gameVolumetricFogTemporalRenderGraphPass = nullptr;
     m_gameVolumetricFogCompositeRenderGraphPass = nullptr;
@@ -995,8 +1005,8 @@ void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewp
     if (m_renderGraph)
         m_renderGraph->cleanResources();
 
-    // Reset extent cache so applyEditorViewportExtent() always re-applies extents to
-    // newly created pass objects (they initialize from swapchain extent in their ctors).
+
+
     m_lastEditorRenderExtent = {};
     m_lastGameRenderExtent = {};
 
@@ -1014,6 +1024,7 @@ void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewp
     m_contactShadowRenderGraphPass = nullptr;
     m_skyLightRenderGraphPass = nullptr;
     m_ssrRenderGraphPass = nullptr;
+    m_ssgiRenderGraphPass = nullptr;
     m_volumetricFogLightingRenderGraphPass = nullptr;
     m_volumetricFogTemporalRenderGraphPass = nullptr;
     m_volumetricFogCompositeRenderGraphPass = nullptr;
@@ -1033,6 +1044,7 @@ void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewp
     m_tonemapRenderGraphPass = nullptr;
     m_bloomCompositeRenderGraphPass = nullptr;
     m_fxaaRenderGraphPass = nullptr;
+    m_fsr1RenderGraphPass = nullptr;
     m_smaaRenderGraphPass = nullptr;
     m_taaRenderGraphPass = nullptr;
     m_cinematicEffectsRenderGraphPass = nullptr;
@@ -1055,12 +1067,13 @@ void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewp
     const bool useContactShadows = renderGraphUsesContactShadows(settings);
     const bool useRTReflections = renderGraphUsesRTReflections(settings, context);
     const bool useRTGI = renderGraphUsesRTGI(settings, context);
-    const bool useSSR           = renderGraphUsesSSR(settings);
+    const bool useSSR = renderGraphUsesSSR(settings);
+    const bool useSSGI = renderGraphUsesSSGI(settings);
     const bool useVolumetricFog = renderGraphUsesVolumetricFog(settings, m_activeScene.get());
     const bool useBloom = renderGraphUsesBloom(settings);
     const auto aaMode = renderGraphAntiAliasingMode(settings);
     const bool useObjectIdResolve = context &&
-        context->getEffectiveMsaaSampleCount(settings.getRequestedMsaaSampleCount()) != VK_SAMPLE_COUNT_1_BIT;
+                                    context->getEffectiveMsaaSampleCount(settings.getRequestedMsaaSampleCount()) != VK_SAMPLE_COUNT_1_BIT;
     const bool useCinematicEffects = renderGraphUsesCinematicEffects(settings);
     const bool useMotionBlur = renderGraphUsesMotionBlur(settings);
     const bool useUI = renderGraphUsesUI(m_activeScene.get());
@@ -1110,8 +1123,8 @@ void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewp
 
     auto *rtShadowHandlers = m_rtShadowDenoiseRenderGraphPass ? &m_rtShadowDenoiseRenderGraphPass->getOutput() : nullptr;
     auto *aoHandlers = m_rtaoDenoiseRenderGraphPass ? &m_rtaoDenoiseRenderGraphPass->getOutput()
-                     : (m_rtaoRenderGraphPass       ? &m_rtaoRenderGraphPass->getAOHandlers()
-                     : (m_ssaoRenderGraphPass        ? &m_ssaoRenderGraphPass->getAOHandlers() : nullptr));
+                                                    : (m_rtaoRenderGraphPass ? &m_rtaoRenderGraphPass->getAOHandlers()
+                                                                             : (m_ssaoRenderGraphPass ? &m_ssaoRenderGraphPass->getAOHandlers() : nullptr));
 
     if (useRTGI)
     {
@@ -1171,6 +1184,18 @@ void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewp
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
     hdrSceneInput = &m_skyLightRenderGraphPass->getOutput();
+
+    if (useSSGI)
+    {
+        m_ssgiRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SSGIRenderGraphPass>(
+            *hdrSceneInput,
+            m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler(),
+            m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+            m_gBufferRenderGraphPass->getAlbedoTextureHandlers());
+        hdrSceneInput = &m_ssgiRenderGraphPass->getOutput();
+    }
+
     if (useSSR)
     {
         m_ssrRenderGraphPass = m_renderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
@@ -1259,6 +1284,12 @@ void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewp
         ldrSceneInput = &m_bloomCompositeRenderGraphPass->getHandlers();
     }
 
+    if (settings.upscalerMode == engine::RenderQualitySettings::UpscalerMode::FSR1)
+    {
+        m_fsr1RenderGraphPass = m_renderGraph->addPass<engine::renderGraph::FSR1RenderGraphPass>(*ldrSceneInput);
+        ldrSceneInput = &m_fsr1RenderGraphPass->getHandlers();
+    }
+
     switch (aaMode)
     {
     case engine::RenderQualitySettings::AntiAliasingMode::FXAA:
@@ -1336,20 +1367,20 @@ void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewp
         *editorSceneInput,
         m_gBufferRenderGraphPass->getObjectTextureHandler());
 
-    // Apply the viewport extent before setup() so compile() inside setup() uses the
-    // correct extents from the start. This prevents a dirty-pass recompile on the
-    // first frame caused by the extent mismatch between the swapchain default and the
-    // actual editor viewport panel size.
+
+
+
+
     applyEditorViewportExtent(viewportWidth, viewportHeight);
 
     m_renderGraph->setup();
     m_renderGraph->createRenderGraphResources();
     m_editorRenderGraphTopologyHash = editorRenderGraphTopologyHash(m_activeScene.get(), m_editor.get());
 
-    // Eagerly register / re-register the anim-tree preview image with ImGui.
-    // This must happen after createRenderGraphResources() (so compile() has run and
-    // m_colorTarget is valid) but also needs to handle re-initialization when the render
-    // graph is rebuilt due to a topology-hash change.
+
+
+
+
     if (m_animTreePreviewDescriptorSet != VK_NULL_HANDLE)
     {
         ImGui_ImplVulkan_RemoveTexture(m_animTreePreviewDescriptorSet);
@@ -1392,6 +1423,7 @@ void EditorRuntime::initGameViewportRenderGraph(uint32_t viewportWidth, uint32_t
     m_gameTonemapRenderGraphPass = nullptr;
     m_gameBloomCompositeRenderGraphPass = nullptr;
     m_gameFXAARenderGraphPass = nullptr;
+    m_gameFSR1RenderGraphPass = nullptr;
     m_gameSMAARenderGraphPass = nullptr;
     m_gameTAARenderGraphPass = nullptr;
     m_gameContactShadowRenderGraphPass = nullptr;
@@ -1419,7 +1451,8 @@ void EditorRuntime::initGameViewportRenderGraph(uint32_t viewportWidth, uint32_t
     const bool useContactShadows = renderGraphUsesContactShadows(settings);
     const bool useRTReflections = renderGraphUsesRTReflections(settings, context);
     const bool useRTGI = renderGraphUsesRTGI(settings, context);
-    const bool useSSR           = renderGraphUsesSSR(settings);
+    const bool useSSR = renderGraphUsesSSR(settings);
+    const bool useSSGI = renderGraphUsesSSGI(settings);
     const bool useVolumetricFog = renderGraphUsesVolumetricFog(settings, m_activeScene.get());
     const bool useBloom = renderGraphUsesBloom(settings);
     const auto aaMode = renderGraphAntiAliasingMode(settings);
@@ -1472,8 +1505,8 @@ void EditorRuntime::initGameViewportRenderGraph(uint32_t viewportWidth, uint32_t
 
     auto *gameRTShadowHandlers = m_gameRTShadowDenoiseRenderGraphPass ? &m_gameRTShadowDenoiseRenderGraphPass->getOutput() : nullptr;
     auto *gameAOHandlers = m_gameRtaoDenoiseRenderGraphPass ? &m_gameRtaoDenoiseRenderGraphPass->getOutput()
-                         : (m_gameRtaoRenderGraphPass        ? &m_gameRtaoRenderGraphPass->getAOHandlers()
-                         : (m_gameSSAORenderGraphPass         ? &m_gameSSAORenderGraphPass->getAOHandlers() : nullptr));
+                                                            : (m_gameRtaoRenderGraphPass ? &m_gameRtaoRenderGraphPass->getAOHandlers()
+                                                                                         : (m_gameSSAORenderGraphPass ? &m_gameSSAORenderGraphPass->getAOHandlers() : nullptr));
 
     if (useRTGI)
     {
@@ -1533,6 +1566,18 @@ void EditorRuntime::initGameViewportRenderGraph(uint32_t viewportWidth, uint32_t
         m_gameGBufferRenderGraphPass->getDepthTextureHandler());
 
     hdrSceneInput = &m_gameSkyLightRenderGraphPass->getOutput();
+
+    if (useSSGI)
+    {
+        m_gameSSGIRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SSGIRenderGraphPass>(
+            *hdrSceneInput,
+            m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_gameGBufferRenderGraphPass->getDepthTextureHandler(),
+            m_gameGBufferRenderGraphPass->getMaterialTextureHandlers(),
+            m_gameGBufferRenderGraphPass->getAlbedoTextureHandlers());
+        hdrSceneInput = &m_gameSSGIRenderGraphPass->getOutput();
+    }
+
     if (useSSR)
     {
         m_gameSSRRenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::SSRRenderGraphPass>(
@@ -1621,6 +1666,12 @@ void EditorRuntime::initGameViewportRenderGraph(uint32_t viewportWidth, uint32_t
         ldrSceneInput = &m_gameBloomCompositeRenderGraphPass->getHandlers();
     }
 
+    if (settings.upscalerMode == engine::RenderQualitySettings::UpscalerMode::FSR1)
+    {
+        m_gameFSR1RenderGraphPass = m_gameViewportRenderGraph->addPass<engine::renderGraph::FSR1RenderGraphPass>(*ldrSceneInput);
+        ldrSceneInput = &m_gameFSR1RenderGraphPass->getHandlers();
+    }
+
     switch (aaMode)
     {
     case engine::RenderQualitySettings::AntiAliasingMode::FXAA:
@@ -1667,9 +1718,9 @@ void EditorRuntime::initGameViewportRenderGraph(uint32_t viewportWidth, uint32_t
     }
     m_gameViewportOutputHandlers = ldrSceneInput;
 
-    // Apply the viewport extent before setup() so compile() inside setup() uses the
-    // correct extents from the start, eliminating the extra dirty-pass recompile on
-    // the first frame after the game viewport becomes visible.
+
+
+
     applyGameViewportExtent(viewportWidth, viewportHeight);
 
     m_gameViewportRenderGraph->setup();
@@ -1911,10 +1962,21 @@ void EditorRuntime::tick(float deltaTime)
     if (m_gameShadowRenderGraphPass)
         m_gameShadowRenderGraphPass->syncQualitySettings();
 
+
+
+
+    {
+        const glm::vec3 cameraPos = m_editorRenderCamera
+                                        ? glm::vec3(glm::inverse(m_editorRenderCamera->getViewMatrix())[3])
+                                        : glm::vec3(0.0f);
+        m_activeScene->captureRenderSnapshot(m_renderSnapshot, cameraPos);
+        m_renderSnapshot.deltaTime = deltaTime;
+    }
+
     if (m_gameViewportRenderGraph && m_gameRenderCamera && shouldRenderGameViewport)
     {
         syncNearestReflectionProbe(m_gameLightingRenderGraphPass, m_activeScene.get(), m_gameRenderCamera);
-        m_gameViewportRenderGraph->prepareFrame(m_gameRenderCamera, m_activeScene.get(), deltaTime);
+        m_gameViewportRenderGraph->prepareFrame(m_gameRenderCamera, m_renderSnapshot, deltaTime);
         m_gameViewportRenderGraph->draw();
 
         if (m_imGuiRenderGraphPass && m_gameViewportOutputHandlers)
@@ -1931,19 +1993,29 @@ void EditorRuntime::tick(float deltaTime)
     if (m_stillLoadingTheScene)
         addLoadingRenderToImGui();
 
-    // --- Reflection probe: capture first, then scan ---
-    // Capture runs before the probe scan so the scan picks up the freshly captured view.
-    // captureSceneProbe reuses the previous frame's drawBatches (still valid at this point).
+
+
+
     if (m_pendingProbeCaptureEntity)
     {
         captureReflectionProbe(m_pendingProbeCaptureEntity);
         m_pendingProbeCaptureEntity = nullptr;
     }
 
-    // --- Lightmap bake (synchronous GPU work, must run on main thread) ---
+    syncNearestReflectionProbe(m_lightingRenderGraphPass, m_activeScene.get(), m_editorRenderCamera);
+    syncNearestReflectionProbe(m_gameLightingRenderGraphPass, m_activeScene.get(), m_gameRenderCamera);
+
+    m_renderGraph->prepareFrame(m_editorRenderCamera, m_renderSnapshot, deltaTime);
+
+
+
+
     if (m_pendingLightmapBake && m_activeScene && m_shadowRenderGraphPass && m_renderGraph)
     {
         m_pendingLightmapBake = false;
+
+
+        m_renderGraph->draw();
 
         const std::string lightmapDir = m_projectPath + "/lightmaps";
         m_lightmapBaker->bake(m_activeScene.get(),
@@ -1953,16 +2025,14 @@ void EditorRuntime::tick(float deltaTime)
                               m_pendingLightmapBakeSettings,
                               m_lightmapBakeProgress);
 
-        // Rebuild the editor render graph so newly attached LightmapComponents
-        // are picked up (bindless texture slots re-registered).
+
+
         const VkExtent2D lastExtent = m_lastEditorRenderExtent;
         initEditorRenderGraph(lastExtent.width, lastExtent.height);
+
+
+        return;
     }
-
-    syncNearestReflectionProbe(m_lightingRenderGraphPass, m_activeScene.get(), m_editorRenderCamera);
-    syncNearestReflectionProbe(m_gameLightingRenderGraphPass, m_activeScene.get(), m_gameRenderCamera);
-
-    m_renderGraph->prepareFrame(m_editorRenderCamera, m_activeScene.get(), deltaTime);
 
     m_editor->setRenderGraphProfilingData(m_renderGraph->getLastFrameBenchmarkData());
     m_renderGraph->draw();
@@ -1976,7 +2046,7 @@ void EditorRuntime::captureReflectionProbe(engine::Entity *entity)
     if (!entity || !m_renderGraph)
         return;
 
-    auto *probe     = entity->getComponent<engine::ReflectionProbeComponent>();
+    auto *probe = entity->getComponent<engine::ReflectionProbeComponent>();
     auto *transform = entity->getComponent<engine::Transform3DComponent>();
     if (!probe || !transform)
         return;
@@ -2004,88 +2074,97 @@ void EditorRuntime::applyEditorViewportExtent(uint32_t width, uint32_t height)
     if (width == 0u || height == 0u)
         return;
 
-    const VkExtent2D extent = makeScaledRenderExtent(width, height);
-    if (extent.width == m_lastEditorRenderExtent.width && extent.height == m_lastEditorRenderExtent.height)
+    const VkExtent2D renderExtent = makeScaledRenderExtent(width, height);
+    const auto &qs = engine::RenderQualitySettings::getInstance();
+    const bool upscalerActive = qs.upscalerMode == engine::RenderQualitySettings::UpscalerMode::FSR1;
+    const VkExtent2D displayExtent = upscalerActive
+                                         ? VkExtent2D{std::max(width, 1u), std::max(height, 1u)}
+                                         : renderExtent;
+
+    if (renderExtent.width == m_lastEditorRenderExtent.width && renderExtent.height == m_lastEditorRenderExtent.height)
         return;
 
-    VX_EDITOR_INFO_STREAM("Editor viewport extent changed: panel="
-                          << width << 'x' << height
-                          << ", scaled="
-                          << extent.width << 'x' << extent.height
-                          << '\n');
 
     if (m_gBufferRenderGraphPass)
-        m_gBufferRenderGraphPass->setExtent(extent);
+        m_gBufferRenderGraphPass->setExtent(renderExtent);
     if (m_rtShadowsRenderGraphPass)
-        m_rtShadowsRenderGraphPass->setExtent(extent);
+        m_rtShadowsRenderGraphPass->setExtent(renderExtent);
     if (m_rtShadowDenoiseRenderGraphPass)
-        m_rtShadowDenoiseRenderGraphPass->setExtent(extent);
+        m_rtShadowDenoiseRenderGraphPass->setExtent(renderExtent);
     if (m_ssaoRenderGraphPass)
-        m_ssaoRenderGraphPass->setExtent(extent);
+        m_ssaoRenderGraphPass->setExtent(renderExtent);
     if (m_lightingRenderGraphPass)
-        m_lightingRenderGraphPass->setExtent(extent);
+        m_lightingRenderGraphPass->setExtent(renderExtent);
     if (m_ssrRenderGraphPass)
-        m_ssrRenderGraphPass->setExtent(extent);
+        m_ssrRenderGraphPass->setExtent(renderExtent);
+    if (m_ssgiRenderGraphPass)
+        m_ssgiRenderGraphPass->setExtent(renderExtent);
     if (m_volumetricFogLightingRenderGraphPass)
-        m_volumetricFogLightingRenderGraphPass->setExtent(extent);
+        m_volumetricFogLightingRenderGraphPass->setExtent(renderExtent);
     if (m_volumetricFogTemporalRenderGraphPass)
-        m_volumetricFogTemporalRenderGraphPass->setExtent(extent);
+        m_volumetricFogTemporalRenderGraphPass->setExtent(renderExtent);
     if (m_volumetricFogCompositeRenderGraphPass)
-        m_volumetricFogCompositeRenderGraphPass->setExtent(extent);
+        m_volumetricFogCompositeRenderGraphPass->setExtent(renderExtent);
     if (m_rtReflectionsRenderGraphPass)
-        m_rtReflectionsRenderGraphPass->setExtent(extent);
+        m_rtReflectionsRenderGraphPass->setExtent(renderExtent);
     if (m_rtaoRenderGraphPass)
-        m_rtaoRenderGraphPass->setExtent(extent);
+        m_rtaoRenderGraphPass->setExtent(renderExtent);
     if (m_rtaoDenoiseRenderGraphPass)
-        m_rtaoDenoiseRenderGraphPass->setExtent(extent);
+        m_rtaoDenoiseRenderGraphPass->setExtent(renderExtent);
     if (m_rtReflectionDenoiseRenderGraphPass)
-        m_rtReflectionDenoiseRenderGraphPass->setExtent(extent);
+        m_rtReflectionDenoiseRenderGraphPass->setExtent(renderExtent);
     if (m_rtReflectionTemporalRenderGraphPass)
-        m_rtReflectionTemporalRenderGraphPass->setExtent(extent);
+        m_rtReflectionTemporalRenderGraphPass->setExtent(renderExtent);
     if (m_rtGIRenderGraphPass)
-        m_rtGIRenderGraphPass->setExtent(extent);
+        m_rtGIRenderGraphPass->setExtent(renderExtent);
     if (m_rtGIDenoiseRenderGraphPass)
-        m_rtGIDenoiseRenderGraphPass->setExtent(extent);
+        m_rtGIDenoiseRenderGraphPass->setExtent(renderExtent);
     if (m_rtGITemporalRenderGraphPass)
-        m_rtGITemporalRenderGraphPass->setExtent(extent);
+        m_rtGITemporalRenderGraphPass->setExtent(renderExtent);
     if (m_skyLightRenderGraphPass)
-        m_skyLightRenderGraphPass->setExtent(extent);
+        m_skyLightRenderGraphPass->setExtent(renderExtent);
     if (m_bloomRenderGraphPass)
-        m_bloomRenderGraphPass->setExtent(extent);
+        m_bloomRenderGraphPass->setExtent(renderExtent);
     if (m_autoExposureRenderGraphPass)
-        m_autoExposureRenderGraphPass->setExtent(extent);
+        m_autoExposureRenderGraphPass->setExtent(renderExtent);
     if (m_tonemapRenderGraphPass)
-        m_tonemapRenderGraphPass->setExtent(extent);
+        m_tonemapRenderGraphPass->setExtent(renderExtent);
     if (m_bloomCompositeRenderGraphPass)
-        m_bloomCompositeRenderGraphPass->setExtent(extent);
-    if (m_fxaaRenderGraphPass)
-        m_fxaaRenderGraphPass->setExtent(extent);
-    if (m_smaaRenderGraphPass)
-        m_smaaRenderGraphPass->setExtent(extent);
-    if (m_taaRenderGraphPass)
-        m_taaRenderGraphPass->setExtent(extent);
+        m_bloomCompositeRenderGraphPass->setExtent(renderExtent);
     if (m_contactShadowRenderGraphPass)
-        m_contactShadowRenderGraphPass->setExtent(extent);
-    if (m_cinematicEffectsRenderGraphPass)
-        m_cinematicEffectsRenderGraphPass->setExtent(extent);
-    if (m_motionBlurRenderGraphPass)
-        m_motionBlurRenderGraphPass->setExtent(extent);
-    if (m_objectIdResolveRenderGraphPass)
-        m_objectIdResolveRenderGraphPass->setExtent(extent);
-    if (m_selectionOverlayRenderGraphPass)
-        m_selectionOverlayRenderGraphPass->setExtent(extent);
-    if (m_debugOverlayRenderGraphPass)
-        m_debugOverlayRenderGraphPass->setExtent(extent);
-    if (m_uiRenderGraphPass)
-        m_uiRenderGraphPass->setExtent(extent);
-    if (m_editorBillboardRenderGraphPass)
-        m_editorBillboardRenderGraphPass->setExtent(extent);
+        m_contactShadowRenderGraphPass->setExtent(renderExtent);
     if (m_particleRenderGraphPass)
-        m_particleRenderGraphPass->setExtent(extent);
+        m_particleRenderGraphPass->setExtent(renderExtent);
     if (m_sprite2DRenderGraphPass)
-        m_sprite2DRenderGraphPass->setExtent(extent);
+        m_sprite2DRenderGraphPass->setExtent(renderExtent);
 
-    m_lastEditorRenderExtent = extent;
+
+    if (m_fsr1RenderGraphPass)
+        m_fsr1RenderGraphPass->setExtents(renderExtent, displayExtent);
+
+
+    if (m_fxaaRenderGraphPass)
+        m_fxaaRenderGraphPass->setExtent(displayExtent);
+    if (m_smaaRenderGraphPass)
+        m_smaaRenderGraphPass->setExtent(displayExtent);
+    if (m_taaRenderGraphPass)
+        m_taaRenderGraphPass->setExtent(displayExtent);
+    if (m_cinematicEffectsRenderGraphPass)
+        m_cinematicEffectsRenderGraphPass->setExtent(displayExtent);
+    if (m_motionBlurRenderGraphPass)
+        m_motionBlurRenderGraphPass->setExtent(displayExtent);
+    if (m_objectIdResolveRenderGraphPass)
+        m_objectIdResolveRenderGraphPass->setExtent(renderExtent);
+    if (m_selectionOverlayRenderGraphPass)
+        m_selectionOverlayRenderGraphPass->setExtent(displayExtent);
+    if (m_debugOverlayRenderGraphPass)
+        m_debugOverlayRenderGraphPass->setExtent(displayExtent);
+    if (m_uiRenderGraphPass)
+        m_uiRenderGraphPass->setExtent(displayExtent);
+    if (m_editorBillboardRenderGraphPass)
+        m_editorBillboardRenderGraphPass->setExtent(displayExtent);
+
+    m_lastEditorRenderExtent = renderExtent;
 }
 
 void EditorRuntime::applyGameViewportExtent(uint32_t width, uint32_t height)
@@ -2095,82 +2174,91 @@ void EditorRuntime::applyGameViewportExtent(uint32_t width, uint32_t height)
     if (width == 0u || height == 0u)
         return;
 
-    const VkExtent2D extent = makeScaledRenderExtent(width, height);
-    if (extent.width == m_lastGameRenderExtent.width && extent.height == m_lastGameRenderExtent.height)
+    const VkExtent2D renderExtent = makeScaledRenderExtent(width, height);
+    const auto &qs = engine::RenderQualitySettings::getInstance();
+    const bool upscalerActive = qs.upscalerMode == engine::RenderQualitySettings::UpscalerMode::FSR1;
+    const VkExtent2D displayExtent = upscalerActive
+                                         ? VkExtent2D{std::max(width, 1u), std::max(height, 1u)}
+                                         : renderExtent;
+
+    if (renderExtent.width == m_lastGameRenderExtent.width && renderExtent.height == m_lastGameRenderExtent.height)
         return;
 
-    VX_EDITOR_INFO_STREAM("Game viewport extent changed: panel="
-                          << width << 'x' << height
-                          << ", scaled="
-                          << extent.width << 'x' << extent.height
-                          << '\n');
 
     if (m_gameGBufferRenderGraphPass)
-        m_gameGBufferRenderGraphPass->setExtent(extent);
+        m_gameGBufferRenderGraphPass->setExtent(renderExtent);
     if (m_gameRTShadowsRenderGraphPass)
-        m_gameRTShadowsRenderGraphPass->setExtent(extent);
+        m_gameRTShadowsRenderGraphPass->setExtent(renderExtent);
     if (m_gameRTShadowDenoiseRenderGraphPass)
-        m_gameRTShadowDenoiseRenderGraphPass->setExtent(extent);
+        m_gameRTShadowDenoiseRenderGraphPass->setExtent(renderExtent);
     if (m_gameSSAORenderGraphPass)
-        m_gameSSAORenderGraphPass->setExtent(extent);
+        m_gameSSAORenderGraphPass->setExtent(renderExtent);
     if (m_gameLightingRenderGraphPass)
-        m_gameLightingRenderGraphPass->setExtent(extent);
+        m_gameLightingRenderGraphPass->setExtent(renderExtent);
     if (m_gameSSRRenderGraphPass)
-        m_gameSSRRenderGraphPass->setExtent(extent);
+        m_gameSSRRenderGraphPass->setExtent(renderExtent);
+    if (m_gameSSGIRenderGraphPass)
+        m_gameSSGIRenderGraphPass->setExtent(renderExtent);
     if (m_gameVolumetricFogLightingRenderGraphPass)
-        m_gameVolumetricFogLightingRenderGraphPass->setExtent(extent);
+        m_gameVolumetricFogLightingRenderGraphPass->setExtent(renderExtent);
     if (m_gameVolumetricFogTemporalRenderGraphPass)
-        m_gameVolumetricFogTemporalRenderGraphPass->setExtent(extent);
+        m_gameVolumetricFogTemporalRenderGraphPass->setExtent(renderExtent);
     if (m_gameVolumetricFogCompositeRenderGraphPass)
-        m_gameVolumetricFogCompositeRenderGraphPass->setExtent(extent);
+        m_gameVolumetricFogCompositeRenderGraphPass->setExtent(renderExtent);
     if (m_gameRTReflectionsRenderGraphPass)
-        m_gameRTReflectionsRenderGraphPass->setExtent(extent);
+        m_gameRTReflectionsRenderGraphPass->setExtent(renderExtent);
     if (m_gameRtaoRenderGraphPass)
-        m_gameRtaoRenderGraphPass->setExtent(extent);
+        m_gameRtaoRenderGraphPass->setExtent(renderExtent);
     if (m_gameRtaoDenoiseRenderGraphPass)
-        m_gameRtaoDenoiseRenderGraphPass->setExtent(extent);
+        m_gameRtaoDenoiseRenderGraphPass->setExtent(renderExtent);
     if (m_gameRtReflectionDenoiseRenderGraphPass)
-        m_gameRtReflectionDenoiseRenderGraphPass->setExtent(extent);
+        m_gameRtReflectionDenoiseRenderGraphPass->setExtent(renderExtent);
     if (m_gameRTGIRenderGraphPass)
-        m_gameRTGIRenderGraphPass->setExtent(extent);
+        m_gameRTGIRenderGraphPass->setExtent(renderExtent);
     if (m_gameRTGIDenoiseRenderGraphPass)
-        m_gameRTGIDenoiseRenderGraphPass->setExtent(extent);
+        m_gameRTGIDenoiseRenderGraphPass->setExtent(renderExtent);
     if (m_gameRTGITemporalRenderGraphPass)
-        m_gameRTGITemporalRenderGraphPass->setExtent(extent);
+        m_gameRTGITemporalRenderGraphPass->setExtent(renderExtent);
     if (m_gameRTReflectionTemporalRenderGraphPass)
-        m_gameRTReflectionTemporalRenderGraphPass->setExtent(extent);
+        m_gameRTReflectionTemporalRenderGraphPass->setExtent(renderExtent);
     if (m_gameSkyLightRenderGraphPass)
-        m_gameSkyLightRenderGraphPass->setExtent(extent);
+        m_gameSkyLightRenderGraphPass->setExtent(renderExtent);
     if (m_gameBloomRenderGraphPass)
-        m_gameBloomRenderGraphPass->setExtent(extent);
+        m_gameBloomRenderGraphPass->setExtent(renderExtent);
     if (m_gameTonemapRenderGraphPass)
-        m_gameTonemapRenderGraphPass->setExtent(extent);
+        m_gameTonemapRenderGraphPass->setExtent(renderExtent);
     if (m_gameBloomCompositeRenderGraphPass)
-        m_gameBloomCompositeRenderGraphPass->setExtent(extent);
-    if (m_gameFXAARenderGraphPass)
-        m_gameFXAARenderGraphPass->setExtent(extent);
-    if (m_gameSMAARenderGraphPass)
-        m_gameSMAARenderGraphPass->setExtent(extent);
-    if (m_gameTAARenderGraphPass)
-        m_gameTAARenderGraphPass->setExtent(extent);
+        m_gameBloomCompositeRenderGraphPass->setExtent(renderExtent);
     if (m_gameContactShadowRenderGraphPass)
-        m_gameContactShadowRenderGraphPass->setExtent(extent);
-    if (m_gameCinematicEffectsRenderGraphPass)
-        m_gameCinematicEffectsRenderGraphPass->setExtent(extent);
-    if (m_gameMotionBlurRenderGraphPass)
-        m_gameMotionBlurRenderGraphPass->setExtent(extent);
-    if (m_gameDebugOverlayRenderGraphPass)
-        m_gameDebugOverlayRenderGraphPass->setExtent(extent);
-    if (m_gameUIRenderGraphPass)
-        m_gameUIRenderGraphPass->setExtent(extent);
+        m_gameContactShadowRenderGraphPass->setExtent(renderExtent);
     if (m_gameParticleRenderGraphPass)
-        m_gameParticleRenderGraphPass->setExtent(extent);
+        m_gameParticleRenderGraphPass->setExtent(renderExtent);
     if (m_gameAutoExposureRenderGraphPass)
-        m_gameAutoExposureRenderGraphPass->setExtent(extent);
+        m_gameAutoExposureRenderGraphPass->setExtent(renderExtent);
     if (m_gameSprite2DRenderGraphPass)
-        m_gameSprite2DRenderGraphPass->setExtent(extent);
+        m_gameSprite2DRenderGraphPass->setExtent(renderExtent);
 
-    m_lastGameRenderExtent = extent;
+
+    if (m_gameFSR1RenderGraphPass)
+        m_gameFSR1RenderGraphPass->setExtents(renderExtent, displayExtent);
+
+
+    if (m_gameFXAARenderGraphPass)
+        m_gameFXAARenderGraphPass->setExtent(displayExtent);
+    if (m_gameSMAARenderGraphPass)
+        m_gameSMAARenderGraphPass->setExtent(displayExtent);
+    if (m_gameTAARenderGraphPass)
+        m_gameTAARenderGraphPass->setExtent(displayExtent);
+    if (m_gameCinematicEffectsRenderGraphPass)
+        m_gameCinematicEffectsRenderGraphPass->setExtent(displayExtent);
+    if (m_gameMotionBlurRenderGraphPass)
+        m_gameMotionBlurRenderGraphPass->setExtent(displayExtent);
+    if (m_gameDebugOverlayRenderGraphPass)
+        m_gameDebugOverlayRenderGraphPass->setExtent(displayExtent);
+    if (m_gameUIRenderGraphPass)
+        m_gameUIRenderGraphPass->setExtent(displayExtent);
+
+    m_lastGameRenderExtent = renderExtent;
 }
 
 void EditorRuntime::shutdown()

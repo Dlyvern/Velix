@@ -16,11 +16,11 @@ ELIX_NESTED_NAMESPACE_BEGIN(engine)
 class StaticMeshComponent : public ECS
 {
 public:
-    // Legacy constructor: meshes already loaded (editor drag-drop, primitives, etc.)
+
     explicit StaticMeshComponent(const std::vector<CPUMesh> &meshes);
 
-    // Streaming constructor: store path only, no disk I/O.
-    // AssetManager::requestLoad() resolves the handle asynchronously.
+
+
     explicit StaticMeshComponent(const std::string &assetPath);
 
     const std::vector<CPUMesh> &getMeshes() const;
@@ -75,20 +75,20 @@ public:
     void setVisible(bool visible) { m_visible = visible; }
     [[nodiscard]] bool isVisible() const { return m_visible; }
 
-    // ---- On-demand streaming ----
 
-    // Returns the handle used for async loading.
+
+
     AssetHandle<ModelAsset>       &getModelHandle()       { return m_modelHandle; }
     const AssetHandle<ModelAsset> &getModelHandle() const { return m_modelHandle; }
 
-    // True if either the handle is Ready OR meshes were set via legacy constructor.
+
     bool isReady() const;
 
-    // Called by PerFrameDataWorker when handle transitions Ready → meshes populated.
+
     void onModelLoaded();
     void applyMaterialOverrideCpuDataToMeshes();
 
-    // Called on unload — clears CPU mesh data so it can be GC'd.
+
     void clearMeshes() { m_meshes.clear(); m_perMeshMaterialOverrides.clear(); }
 
 private:
@@ -102,4 +102,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_STATIC_MESH_COMPONENT_HPP
+#endif

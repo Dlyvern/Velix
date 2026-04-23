@@ -109,7 +109,7 @@ namespace
 
         return result;
     }
-} // namespace
+}
 
 void setActiveScene(Scene *scene)
 {

@@ -20,7 +20,7 @@ layout(set = 1, binding = 4) uniform MaterialParams
 {
     vec4 baseColorFactor;
     vec4 emissiveFactor;
-    vec4 uvTransform; // xy scale, zw offset
+    vec4 uvTransform;
 
     float metallicFactor;
     float roughnessFactor;
@@ -29,7 +29,7 @@ layout(set = 1, binding = 4) uniform MaterialParams
 
     uint flags;
     float alphaCutoff;
-    float uvRotation; // degrees
+    float uvRotation;
     float ior;
 } material;
 

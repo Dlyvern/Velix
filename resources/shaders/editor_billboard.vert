@@ -1,16 +1,16 @@
 #version 450
 
-// Push constants: 128 bytes total (guaranteed minimum)
+
 layout(push_constant) uniform PC
 {
-    mat4  viewProj;   // 64 bytes
-    vec3  right;      // 12 bytes
-    float size;       // 4  bytes  -> 80
-    vec3  up;         // 12 bytes
-    float pad0;       // 4  bytes  -> 96
-    vec3  worldPos;   // 12 bytes
-    int   iconType;   // 4  bytes  -> 112
-    vec4  color;      // 16 bytes  -> 128
+    mat4  viewProj;
+    vec3  right;
+    float size;
+    vec3  up;
+    float pad0;
+    vec3  worldPos;
+    int   iconType;
+    vec4  color;
 } pc;
 
 layout(location = 0) out vec2 vUV;

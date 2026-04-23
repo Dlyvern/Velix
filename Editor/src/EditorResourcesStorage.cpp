@@ -93,7 +93,7 @@ VkDescriptorSet EditorResourcesStorage::getTextureDescriptorSet(const std::strin
         if (it->second.descriptorSet != VK_NULL_HANDLE)
             return it->second.descriptorSet;
 
-        // Entry exists but descriptor is null — retry AddTexture (e.g. backend wasn't ready during initial load)
+
         if (it->second.texture)
         {
             it->second.descriptorSet = ImGui_ImplVulkan_AddTexture(
@@ -106,18 +106,18 @@ VkDescriptorSet EditorResourcesStorage::getTextureDescriptorSet(const std::strin
         return VK_NULL_HANDLE;
     };
 
-    // Direct lookup by exact path (handles "./resources/..." keys from loadNeededResources)
+
     if (const VkDescriptorSet descriptorSet = tryRefreshEntry(filePath); descriptorSet != VK_NULL_HANDLE)
         return descriptorSet;
 
     const std::string assetPath = toTextureAssetPath(filePath);
     if (!assetPath.empty())
     {
-        // Lookup by normalized path (no leading ./)
+
         if (const VkDescriptorSet descriptorSet = tryRefreshEntry(assetPath); descriptorSet != VK_NULL_HANDLE)
             return descriptorSet;
 
-        // Last resort: try to load on demand
+
         if (tryLoadTextureResource(assetPath, assetPath))
         {
             if (const VkDescriptorSet descriptorSet = tryRefreshEntry(assetPath); descriptorSet != VK_NULL_HANDLE)
@@ -204,7 +204,7 @@ bool EditorResourcesStorage::tryLoadTextureResource(const std::string &assetPath
     if (descriptorSet == VK_NULL_HANDLE)
     {
         VX_EDITOR_WARNING_STREAM("Failed to create ImGui descriptor set for editor texture asset: " << assetPath << '\n');
-        // Store texture with null descriptor so retry is possible on next getTextureDescriptorSet call
+
         m_textures[key] = TextureResource{.texture = std::move(texture), .descriptorSet = VK_NULL_HANDLE};
         return false;
     }

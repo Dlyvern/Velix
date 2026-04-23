@@ -39,4 +39,4 @@ struct SpotLight : BaseLight
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_LIGHTS_HPP
+#endif

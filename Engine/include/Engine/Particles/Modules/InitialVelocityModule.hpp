@@ -8,8 +8,8 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-/// Assigns an initial velocity to each newly spawned particle.
-/// Final velocity = baseVelocity + random in [-randomness*0.5, +randomness*0.5] per axis.
+
+
 class InitialVelocityModule final : public IParticleModule
 {
 public:
@@ -17,8 +17,8 @@ public:
 
     void onParticleSpawn(Particle &particle) override;
 
-    glm::vec3 baseVelocity{0.0f, -10.0f, 0.0f};   // m/s
-    glm::vec3 randomness{1.0f, 0.5f, 1.0f};        // random offset range per axis
+    glm::vec3 baseVelocity{0.0f, -10.0f, 0.0f};
+    glm::vec3 randomness{1.0f, 0.5f, 1.0f};
 
 private:
     mutable std::mt19937 m_rng{std::random_device{}()};
@@ -26,4 +26,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_INITIAL_VELOCITY_MODULE_HPP
+#endif

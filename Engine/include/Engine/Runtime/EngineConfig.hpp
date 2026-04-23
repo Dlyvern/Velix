@@ -89,9 +89,9 @@ public:
     float getSSRRoughnessCutoff() const;
     void setSSRRoughnessCutoff(float cutoff);
 
-    // ── Plugin enable/disable state ─────────────────────────────────────────
-    // pluginStem = filename without extension (e.g. "TerrainPlugin").
-    // Returns true by default for unknown plugins (new plugins start enabled).
+
+
+
     bool isPluginEnabled(const std::string &pluginStem) const;
     void setPluginEnabled(const std::string &pluginStem, bool enabled);
     const std::unordered_map<std::string, bool> &getPluginEnabledStates() const;
@@ -136,4 +136,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ENGINE_CONFIG_HPP
+#endif

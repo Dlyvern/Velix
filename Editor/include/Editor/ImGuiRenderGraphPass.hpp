@@ -19,7 +19,7 @@ class ImGuiRenderGraphPass : public engine::renderGraph::IRenderGraphPass
 public:
     using SharedPtr = std::shared_ptr<ImGuiRenderGraphPass>;
 
-    //! Maybe this is not a good idea
+
     ImGuiRenderGraphPass(std::shared_ptr<Editor> editor, std::vector<engine::renderGraph::RGPResourceHandler> &offscreenTexture,
                          engine::renderGraph::RGPResourceHandler &objectIdTextureHandler);
 
@@ -66,4 +66,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // IMGUI_RENDER_GRAPH_PASS_HPPs
+#endif

@@ -39,6 +39,8 @@ struct MaterialParams
     uint  emissiveTexIdx;
     uint  lightmapTexIdx;
     uint  _lightmapPad;
+    uint  _pad0;
+    uint  _pad1;
 };
 
 struct GIInstance

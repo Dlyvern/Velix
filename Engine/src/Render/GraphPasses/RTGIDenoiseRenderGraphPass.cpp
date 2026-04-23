@@ -62,7 +62,7 @@ void RTGIDenoiseRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder
         return b;
     };
 
-    // Set 0: b0=input, b1=gbuf normal, b2=depth, b3=output storage image
+
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(
         device,
         std::vector<VkDescriptorSetLayoutBinding>{
@@ -93,7 +93,7 @@ void RTGIDenoiseRenderGraphPass::compile(renderGraph::RGPResourcesStorage &stora
     const auto device = core::VulkanContext::getContext()->getDevice();
     const auto pool   = core::VulkanContext::getContext()->getPersistentDescriptorPool();
 
-    // Recreate ping-pong images whenever compile() runs (extent may have changed).
+
     destroyPingPongImages();
     createPingPongImages();
 
@@ -109,7 +109,7 @@ void RTGIDenoiseRenderGraphPass::compile(renderGraph::RGPResourcesStorage &stora
 
         if (!m_descriptorSetsInitialized)
         {
-            // pass0: rawGI → ping
+
             m_descriptorSets[i][0] = DescriptorSetBuilder::begin()
                 .addImage(giTarget->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
                 .addImage(normalTarget->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
@@ -117,7 +117,7 @@ void RTGIDenoiseRenderGraphPass::compile(renderGraph::RGPResourcesStorage &stora
                 .addStorageImage(pingView, VK_IMAGE_LAYOUT_GENERAL, 3)
                 .build(device, pool, m_descriptorSetLayout);
 
-            // pass1: ping → pong
+
             m_descriptorSets[i][1] = DescriptorSetBuilder::begin()
                 .addImage(pingView, m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
                 .addImage(normalTarget->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
@@ -125,7 +125,7 @@ void RTGIDenoiseRenderGraphPass::compile(renderGraph::RGPResourcesStorage &stora
                 .addStorageImage(pongView, VK_IMAGE_LAYOUT_GENERAL, 3)
                 .build(device, pool, m_descriptorSetLayout);
 
-            // pass2: pong → final output (graph resource)
+
             m_descriptorSets[i][2] = DescriptorSetBuilder::begin()
                 .addImage(pongView, m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0)
                 .addImage(normalTarget->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1)
@@ -189,8 +189,8 @@ void RTGIDenoiseRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBu
     RTGIDenoisePC pc{};
     pc.texelW       = 1.0f / static_cast<float>(m_extent.width);
     pc.texelH       = 1.0f / static_cast<float>(m_extent.height);
-    pc.normalSigma  = 0.08f;  // tighter: colored radiance needs sharper edge preservation
-    pc.depthSigma   = 0.3f;   // tighter: prevent color bleeding across depth discontinuities
+    pc.normalSigma  = 0.08f;
+    pc.depthSigma   = 0.3f;
     pc.enabled      = denoiseEnabled ? 1.0f : 0.0f;
     pc.invProjection = glm::inverse(data.projection);
 
@@ -206,23 +206,23 @@ void RTGIDenoiseRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBu
 
         if (pass > 0)
         {
-            // Barrier: wait for previous write, then transition ping or pong from GENERAL→SHADER_READ
+
             VkImage srcImage = (pass == 1) ? m_pingPong[idx].pingImage->vk()
                                            : m_pingPong[idx].pongImage->vk();
             transitionPingPong(commandBuffer->vk(), srcImage,
                                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-            // Transition the write target back to GENERAL
+
             VkImage dstImage = (pass == 1) ? m_pingPong[idx].pongImage->vk()
                                            : outputTarget->getImage()->vk();
             if (pass == 1)
                 transitionPingPong(commandBuffer->vk(), dstImage,
                                    VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-            // pass 2 writes the graph output — the render graph already put it in GENERAL
+
         }
         else
         {
-            // Transition both ping and pong to GENERAL before first pass
+
             transitionPingPong(commandBuffer->vk(), m_pingPong[idx].pingImage->vk(),
                                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
             transitionPingPong(commandBuffer->vk(), m_pingPong[idx].pongImage->vk(),
@@ -237,7 +237,7 @@ void RTGIDenoiseRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBu
         vkCmdDispatch(commandBuffer->vk(), gx, gy, 1u);
     }
 
-    // Transition ping and pong back to undefined so future compiles start clean
+
     transitionPingPong(commandBuffer->vk(), m_pingPong[idx].pongImage->vk(),
                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_UNDEFINED);
     transitionPingPong(commandBuffer->vk(), m_pingPong[idx].pingImage->vk(),

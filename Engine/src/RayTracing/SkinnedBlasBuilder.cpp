@@ -29,7 +29,7 @@ namespace
         entry.pendingScratchBuffer.reset();
         entry.buildPending = false;
     }
-} // namespace
+}
 
 core::rtx::AccelerationStructure::SharedPtr SkinnedBlasBuilder::buildOrUpdate(
     uint64_t key,
@@ -195,7 +195,7 @@ core::rtx::AccelerationStructure::SharedPtr SkinnedBlasBuilder::buildOrUpdate(
     if (!entry.blas)
         return nullptr;
 
-    // ----- Build / update -----
+
     const bool isUpdate = !entry.firstBuild;
     const VkDeviceSize scratchSize = isUpdate ? entry.updateScratchSize : entry.buildScratchSize;
 

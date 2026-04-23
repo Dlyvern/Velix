@@ -10,12 +10,12 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(ui)
 
 bool FontAtlas::build(const Font &font)
 {
-    // --- Pass 1: measure atlas dimensions ----------------------------------
+
     int totalWidth  = 0;
     int maxHeight   = 0;
-    const int padding = 2; // pixels between glyphs
+    const int padding = 2;
 
-    // We iterate ASCII printable range matching Font::load()
+
     for (unsigned char c = 32; c < 127; ++c)
     {
         const Glyph *g = font.getGlyph(static_cast<char>(c));
@@ -35,9 +35,9 @@ bool FontAtlas::build(const Font &font)
     m_atlasWidth  = totalWidth;
     m_atlasHeight = maxHeight;
 
-    // --- Pass 2: fill RGBA8 atlas buffer -----------------------------------
-    // R channel = glyph coverage; G, B, A = 255 so sampling as RGBA still
-    // gives correct results when the shader reads .r
+
+
+
     const size_t bufSize = static_cast<size_t>(m_atlasWidth) * static_cast<size_t>(m_atlasHeight) * 4u;
     std::vector<uint8_t> buffer(bufSize, 0u);
 
@@ -51,7 +51,7 @@ bool FontAtlas::build(const Font &font)
         const int gw = static_cast<int>(g->bitmapWidth);
         const int gh = static_cast<int>(g->bitmapRows);
 
-        // Copy glyph bitmap into atlas row by row
+
         for (int row = 0; row < gh; ++row)
         {
             for (int col = 0; col < gw; ++col)
@@ -62,14 +62,14 @@ bool FontAtlas::build(const Font &font)
                 const size_t dstIdx = (dstY * static_cast<size_t>(m_atlasWidth) + dstX) * 4u;
 
                 uint8_t coverage = (srcIdx < g->bitmapData.size()) ? g->bitmapData[srcIdx] : 0u;
-                buffer[dstIdx + 0] = coverage; // R
-                buffer[dstIdx + 1] = coverage; // G
-                buffer[dstIdx + 2] = coverage; // B
-                buffer[dstIdx + 3] = coverage; // A
+                buffer[dstIdx + 0] = coverage;
+                buffer[dstIdx + 1] = coverage;
+                buffer[dstIdx + 2] = coverage;
+                buffer[dstIdx + 3] = coverage;
             }
         }
 
-        // Record UV rect for this glyph
+
         GlyphUV uv{};
         uv.u0 = static_cast<float>(penX)      / static_cast<float>(m_atlasWidth);
         uv.u1 = static_cast<float>(penX + gw) / static_cast<float>(m_atlasWidth);
@@ -80,7 +80,7 @@ bool FontAtlas::build(const Font &font)
         penX += gw + padding;
     }
 
-    // --- Pass 3: upload to GPU --------------------------------------------
+
     m_texture = std::make_shared<Texture>();
     if (!m_texture->createFromMemory(buffer.data(), bufSize,
                                      static_cast<uint32_t>(m_atlasWidth),

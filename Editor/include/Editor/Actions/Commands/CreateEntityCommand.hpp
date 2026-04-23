@@ -34,7 +34,7 @@ namespace actions
         uint32_t m_rootEntityId{0u};
         std::string m_label;
     };
-} // namespace actions
+}
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_EDITOR_ACTIONS_COMMANDS_CREATE_ENTITY_COMMAND_HPP
+#endif

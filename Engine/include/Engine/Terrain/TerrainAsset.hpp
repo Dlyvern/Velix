@@ -30,15 +30,15 @@ public:
     std::string name{"Terrain"};
     uint32_t version{CURRENT_VERSION};
 
-    // Heightmap resolution in samples. Valid data requires width/height >= 2.
+
     uint32_t width{0};
     uint32_t height{0};
 
-    // World extents in meters.
+
     float worldSizeX{100.0f};
     float worldSizeZ{100.0f};
 
-    // Height scale in meters for normalized [0..1] sampled height.
+
     float heightScale{25.0f};
 
     std::string sourceHeightmapPath{};
@@ -77,4 +77,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_TERRAIN_ASSET_HPP
+#endif

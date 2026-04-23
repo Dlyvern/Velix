@@ -5,10 +5,10 @@ layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform SkyUBO
 {
-    vec4 sunDirection_time;    // xyz = sun direction (TO sun), w = time
-    vec4 sunColor_intensity;   // rgb = sun color, w = sun intensity
-    vec4 skyParams;            // x=cloudSpeed, y=cloudCoverage, z=cloudDensity, w=exposure
-    vec4 lightParams;          // x=dirLightStrength, y=starIntensity, z=starDensity, w=reserved
+    vec4 sunDirection_time;
+    vec4 sunColor_intensity;
+    vec4 skyParams;
+    vec4 lightParams;
 } ubo;
 
 #define SUN_DIR        normalize(ubo.sunDirection_time.xyz)
@@ -24,9 +24,11 @@ layout(set = 0, binding = 0) uniform SkyUBO
 #define STAR_INTENSITY      (ubo.lightParams.y)
 #define STAR_DENSITY        (ubo.lightParams.z)
 
-// ---------------------------------------------------------------------------
-// Hash / noise helpers
-// ---------------------------------------------------------------------------
+const float PI = 3.14159265359;
+
+
+
+
 
 float hash(vec2 p)
 {
@@ -58,12 +60,6 @@ float fbm(vec2 p)
     }
     return value;
 }
-
-// ---------------------------------------------------------------------------
-// 3-D noise — used for seamless cloud sampling on the sky sphere.
-// The old 2-D flat-plate projection (dir.xz / denom) had discontinuities
-// at the 6 cube-face boundaries, producing visible rectangular seams.
-// ---------------------------------------------------------------------------
 
 float hash3(vec3 p)
 {
@@ -114,142 +110,255 @@ vec2 hash22(vec2 p)
     return fract((p3.xx + p3.yz) * p3.zy);
 }
 
-// ---------------------------------------------------------------------------
-// Sky gradient — multi-layer palette
-// ---------------------------------------------------------------------------
 
-float getSunHeight(vec3 sunDir)
-{
-    return clamp(dot(normalize(sunDir), vec3(0.0, 1.0, 0.0)), -1.0, 1.0);
-}
+
+
+
 
 vec3 getSkyGradient(vec3 dir, vec3 sunDir, float sunHeight)
 {
-    // Day colours
-    vec3 zenithDay     = vec3(0.10, 0.32, 0.85);
-    vec3 horizonDay    = vec3(0.65, 0.82, 1.00);
+    float mu = dot(dir, sunDir);
+    float y  = max(dir.y, 0.001);
 
-    // Golden hour (sun 0..20 deg)
-    vec3 zenithGolden  = vec3(0.20, 0.12, 0.27);
-    vec3 horizonGolden = vec3(1.00, 0.44, 0.12);
 
-    // Dusk (sun just below horizon, -12..0 deg)
-    vec3 zenithDusk    = vec3(0.08, 0.04, 0.14);
-    vec3 horizonDusk   = vec3(0.92, 0.24, 0.06);
+    float opticalDepth = exp(-y * 3.0) + 0.03;
 
-    // Deep night
-    vec3 zenithNight   = vec3(0.004, 0.006, 0.020);
-    vec3 horizonNight  = vec3(0.010, 0.012, 0.030);
 
-    float dayFactor    = smoothstep(0.08, 0.28, sunHeight);
-    float goldenFactor = 1.0 - smoothstep(-0.04, 0.22, abs(sunHeight - 0.07));
-    float duskFactor   = 1.0 - smoothstep(-0.18, 0.02, abs(sunHeight + 0.06));
-    float nightFactor  = smoothstep(-0.04, -0.22, sunHeight);
+    vec3 betaR = vec3(5.8e-3, 13.5e-3, 33.1e-3);
+    float betaM = 8.0e-3;
 
-    float h = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
-    h = pow(h, 0.38);
 
-    // Layer from night up through golden/dusk to day
-    vec3 zenith  = mix(zenithNight,  zenithDusk,   duskFactor);
-    vec3 horizon = mix(horizonNight, horizonDusk,  duskFactor);
+    float phaseR = 0.75 * (1.0 + mu * mu);
 
-    zenith  = mix(zenith,  zenithGolden,  goldenFactor);
-    horizon = mix(horizon, horizonGolden, goldenFactor);
+    float g = 0.76;
+    float phaseM = (1.0 - g*g) / (4.0 * PI * pow(1.0 + g*g - 2.0*g*mu, 1.5));
 
-    zenith  = mix(zenith,  zenithDay,  dayFactor);
-    horizon = mix(horizon, horizonDay, dayFactor);
 
-    vec3 sky = mix(horizon, zenith, h);
 
-    float transitionVis = max(goldenFactor, duskFactor);
-    float sunForward    = max(dot(normalize(dir), normalize(sunDir)), 0.0);
+    float sunOpticalDepth = exp(-sunHeight * 3.5) + 0.08;
+    vec3 sunTransmittance = exp(-betaR * sunOpticalDepth * 8.0);
 
-    // Warm orange glow arc near horizon on sun side
-    float horizonBand = exp(-abs(dir.y) * 8.0);
-    sky += vec3(1.00, 0.42, 0.10) * horizonBand * transitionVis * 0.85;
 
-    // Broad forward luminance
-    sky += vec3(1.00, 0.44, 0.12) * pow(sunForward, 3.6) * transitionVis * 0.72;
-    // Tight directional core
-    sky += vec3(1.00, 0.46, 0.14) * pow(sunForward, 14.0) * transitionVis * 0.55;
+    vec3 extinction = exp(-(betaR + betaM) * opticalDepth * 4.0);
 
-    // Extra low-angle warm scattering for stronger sunsets.
-    float lowSun = 1.0 - smoothstep(0.06, 0.34, sunHeight);
-    float warmScatteringBand = exp(-abs(dir.y) * 6.0);
-    sky += vec3(1.00, 0.34, 0.08) * warmScatteringBand * pow(sunForward, 1.45) * lowSun * 0.65;
 
-    // Purple/violet belt opposite the sun (the anti-crepuscular arch)
-    float counterForward = max(dot(normalize(dir), -normalize(sunDir)), 0.0);
-    float counterBand    = exp(-abs(dir.y) * 11.0) * pow(counterForward, 1.8);
-    sky += vec3(0.33, 0.14, 0.44) * counterBand * transitionVis * 0.24;
+    vec3 rayleigh = betaR * phaseR;
+    vec3 mie      = vec3(betaM) * phaseM;
 
-    // Pink/lilac zenith tint at golden hour
-    sky += vec3(0.32, 0.14, 0.28) * goldenFactor * clamp(dir.y, 0.0, 1.0) * 0.14;
 
-    // Blue zenith boost during day
-    sky += vec3(0.02, 0.04, 0.10) * dayFactor * clamp(dir.y, 0.0, 1.0);
+    float scatterFade = smoothstep(-0.15, 0.05, sunHeight);
+    vec3 inscatter = (rayleigh + mie) * sunTransmittance * (1.0 - extinction) * scatterFade;
+
+    vec3 sky = inscatter * 32.0;
+
+
+    sky += vec3(0.03, 0.06, 0.16) * smoothstep(0.0, 0.7, y) * clamp(sunHeight + 0.1, 0.0, 1.0);
+
+
+    float horizonHaze = exp(-abs(dir.y) * 4.0);
+    vec3 hazeColor = mix(vec3(0.70, 0.75, 0.85), sunTransmittance * 1.5 + vec3(0.15, 0.08, 0.03), 0.5);
+    sky += hazeColor * horizonHaze * 0.12 * clamp(sunHeight + 0.15, 0.0, 1.0);
+
+
+    float minBrightness = clamp(sunHeight * 0.5 + 0.12, 0.02, 0.2);
+    vec3 minSky = vec3(0.04, 0.05, 0.08) * minBrightness;
+    sky = max(sky, minSky);
+
+
+    if (dir.y < 0.0)
+    {
+        float belowFade = smoothstep(-0.35, 0.0, dir.y);
+        vec3 horizonColor = sky;
+        vec3 groundColor = mix(vec3(0.01, 0.012, 0.025), horizonColor, belowFade * belowFade);
+        sky = groundColor;
+    }
 
     return sky;
 }
 
-// ---------------------------------------------------------------------------
-// Clouds
-// ---------------------------------------------------------------------------
 
-float cloudMask(vec3 dir)
+
+
+
+vec3 sunsetEnhancements(vec3 sky, vec3 dir, vec3 sunDir, float sunHeight)
 {
-    // Sample directly on the unit-sphere direction — no cube-face seams.
-    // Wind offset applied in world-space X/Z so clouds drift horizontally.
+    float sunForward = max(dot(dir, sunDir), 0.0);
+    float goldenFactor = 1.0 - smoothstep(-0.04, 0.22, abs(sunHeight - 0.07));
+    float lowSun = 1.0 - smoothstep(0.06, 0.34, sunHeight);
+    float transitionVis = max(goldenFactor, smoothstep(-0.12, 0.0, sunHeight) * lowSun);
+
+
+    float horizonBand = exp(-abs(dir.y) * 8.0);
+    sky += vec3(1.00, 0.42, 0.10) * horizonBand * transitionVis * 0.45;
+
+
+    sky += vec3(1.00, 0.44, 0.12) * pow(sunForward, 3.6) * transitionVis * 0.40;
+
+    sky += vec3(1.00, 0.46, 0.14) * pow(sunForward, 14.0) * transitionVis * 0.30;
+
+
+    float warmBand = exp(-abs(dir.y) * 6.0);
+    sky += vec3(1.00, 0.34, 0.08) * warmBand * pow(sunForward, 1.45) * lowSun * 0.35;
+
+
+    float counterForward = max(dot(dir, -sunDir), 0.0);
+    float counterBand    = exp(-abs(dir.y) * 11.0) * pow(counterForward, 1.8);
+    sky += vec3(0.33, 0.14, 0.44) * counterBand * transitionVis * 0.18;
+
+
+    sky += vec3(0.32, 0.14, 0.28) * goldenFactor * clamp(dir.y, 0.0, 1.0) * 0.10;
+
+    return sky;
+}
+
+
+
+
+
+float worley3(vec3 p)
+{
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+
+    float minDist = 1.0;
+
+    for (int x = -1; x <= 1; x++)
+    for (int y = -1; y <= 1; y++)
+    for (int z = -1; z <= 1; z++)
+    {
+        vec3 neighbor = vec3(float(x), float(y), float(z));
+
+        vec3 cellPos = vec3(
+            hash3(i + neighbor),
+            hash3(i + neighbor + 31.17),
+            hash3(i + neighbor + 67.31)
+        );
+        vec3 diff = neighbor + cellPos - f;
+        float dist = dot(diff, diff);
+        minDist = min(minDist, dist);
+    }
+
+    return sqrt(minDist);
+}
+
+
+
+
+
+vec3 cloudUV(vec3 dir)
+{
     vec3 uv = normalize(dir);
+
+
     uv.x += TIME_SECONDS * CLOUD_SPEED * 0.01;
     uv.z += TIME_SECONDS * CLOUD_SPEED * 0.005;
 
-    float c = 0.0;
-    c += fbm3(uv * 3.50) * 0.55;
-    c += fbm3(uv * 7.50) * 0.30;
-    c += fbm3(uv * 16.0) * 0.15;
 
-    c = c * 0.5 + 0.5;
-    float threshold = mix(0.78, 0.38, CLOUD_COVERAGE);
-    float softness  = mix(0.18, 0.06, CLOUD_DENSITY);
-    c = smoothstep(threshold - softness, threshold + softness, c);
-    c *= smoothstep(-0.05, 0.22, dir.y);
+    uv.y *= 3.0;
+
+
+    float warpX = noise3(uv * 2.8 + vec3(17.1, 0.0, 0.0));
+    float warpZ = noise3(uv * 2.8 + vec3(0.0, 0.0, 43.2));
+    uv.x += warpX * 0.30;
+    uv.z += warpZ * 0.30;
+
+    return uv;
+}
+
+float cloudMask(vec3 dir)
+{
+    vec3 uv = cloudUV(dir);
+
+
+    float cells = 1.0 - worley3(uv * 4.0);
+    float cells2 = 1.0 - worley3(uv * 8.0);
+    float shape = cells * 0.55 + cells2 * 0.45;
+
+
+    float erosion1 = fbm3(uv * 6.0);
+    float erosion2 = fbm3(uv * 14.0);
+
+    float c = shape - erosion1 * 0.42 - erosion2 * 0.22;
+
+
+    float threshold = mix(0.38, 0.14, CLOUD_COVERAGE);
+    float softness  = mix(0.16, 0.08, CLOUD_DENSITY);
+    c = smoothstep(threshold, threshold + softness, c);
+
+
+    c *= smoothstep(-0.05, 0.18, dir.y);
+
+
+    float internalVariation = noise3(uv * 18.0) * 0.30 + 0.70;
+    c *= internalVariation;
 
     return clamp(c, 0.0, 1.0);
 }
 
-vec3 cloudLighting(vec3 dir, vec3 sunDir, vec3 sunColor, float sunHeight, float nightFactor)
-{
-    float sunDot      = max(dot(normalize(dir), normalize(sunDir)), 0.0);
-    float goldenFactor = 1.0 - smoothstep(-0.04, 0.22, abs(sunHeight - 0.07));
 
-    vec3 dayBase    = vec3(0.82, 0.86, 0.92);
-    vec3 goldenBase = vec3(0.98, 0.58, 0.26);
-    vec3 nightBase  = vec3(0.05, 0.07, 0.12);
+float cloudShadow(vec3 dir, vec3 sunDir)
+{
+
+    vec3 shadowDir = normalize(dir + sunDir * 0.1);
+    vec3 uv = normalize(shadowDir);
+    uv.x += TIME_SECONDS * CLOUD_SPEED * 0.01;
+    uv.z += TIME_SECONDS * CLOUD_SPEED * 0.005;
+    uv.y *= 3.0;
+
+    float cells = 1.0 - worley3(uv * 4.0);
+    float erosion = noise3(uv * 6.0) * 0.5 + 0.5;
+    float shadow = cells - erosion * 0.3;
+
+    return clamp(shadow, 0.0, 1.0);
+}
+
+vec3 cloudLighting(vec3 dir, vec3 sunDir, vec3 sunColor, float sunHeight, float nightFactor, float selfShadow, float density)
+{
+    float sunDot       = max(dot(normalize(dir), normalize(sunDir)), 0.0);
+    float goldenFactor = 1.0 - smoothstep(-0.04, 0.22, abs(sunHeight - 0.07));
+    float lowSun       = 1.0 - smoothstep(0.08, 0.35, sunHeight);
+
+
+    vec3 dayBase    = vec3(0.82, 0.85, 0.92);
+    vec3 goldenBase = vec3(0.95, 0.55, 0.25);
+    vec3 nightBase  = vec3(0.04, 0.05, 0.09);
 
     vec3 base = mix(dayBase, goldenBase, goldenFactor);
     base = mix(base, nightBase, nightFactor);
 
-    // Directional highlight
-    vec3 lit = mix(base, sunColor * 1.1, pow(sunDot, 6.0) * (1.0 - nightFactor));
-    lit += sunColor * pow(sunDot, 28.0) * 0.50 * (1.0 - nightFactor);
 
-    // Golden silver lining
-    lit += vec3(1.0, 0.76, 0.40) * pow(sunDot, 48.0) * goldenFactor * 0.88;
+    float shadowFactor = mix(0.4, 1.0, selfShadow);
+    base *= shadowFactor;
 
-    float lowSun = 1.0 - smoothstep(0.08, 0.35, sunHeight);
-    lit += vec3(0.98, 0.36, 0.12) * pow(sunDot, 3.2) * lowSun * (1.0 - nightFactor) * 0.55;
 
-    // Moon-lit silver on night clouds
-    float moonDir = dot(normalize(dir), normalize(-sunDir + vec3(0.0, 0.3, 0.0)));
-    lit += vec3(0.70, 0.78, 0.90) * max(moonDir, 0.0) * nightFactor * 0.18;
+    base *= mix(0.55, 1.0, density);
+
+
+    vec3 lit = base;
+    lit += sunColor * 0.25 * pow(sunDot, 4.0) * (1.0 - nightFactor);
+
+
+    float edgeFactor = 1.0 - density;
+    lit += vec3(1.0, 0.97, 0.90) * pow(sunDot, 8.0) * 0.4 * (1.0 - nightFactor) * edgeFactor;
+
+
+    lit += vec3(1.0, 0.76, 0.40) * pow(sunDot, 32.0) * goldenFactor * 0.6;
+
+
+    lit += vec3(0.95, 0.36, 0.12) * pow(sunDot, 3.0) * lowSun * (1.0 - nightFactor) * 0.4;
+    float bottomTint = smoothstep(0.25, 0.05, dir.y);
+    lit += vec3(0.9, 0.38, 0.14) * bottomTint * lowSun * (1.0 - nightFactor) * 0.25;
+
+
+    float moonDot = dot(normalize(dir), normalize(-sunDir + vec3(0.0, 0.3, 0.0)));
+    lit += vec3(0.60, 0.68, 0.82) * max(moonDot, 0.0) * nightFactor * 0.15;
 
     return lit;
 }
 
-// ---------------------------------------------------------------------------
-// Sun disk + corona
-// ---------------------------------------------------------------------------
+
+
+
 
 float sunDiskAndGlow(vec3 dir, vec3 sunDir, float lightStrength)
 {
@@ -268,9 +377,9 @@ float sunDiskAndGlow(vec3 dir, vec3 sunDir, float lightStrength)
     return disk * sunVis + (corona1 + corona2) * (0.18 + 0.22 * sunVis);
 }
 
-// ---------------------------------------------------------------------------
-// Moon
-// ---------------------------------------------------------------------------
+
+
+
 
 float moonDisk(vec3 dir, vec3 moonDir, float nightFactor)
 {
@@ -287,9 +396,9 @@ float moonDisk(vec3 dir, vec3 moonDir, float nightFactor)
     return (disk * 0.92 + glow) * nightFactor;
 }
 
-// ---------------------------------------------------------------------------
-// Stars
-// ---------------------------------------------------------------------------
+
+
+
 
 vec3 stars(vec3 dir, float nightFactor)
 {
@@ -342,9 +451,9 @@ vec3 stars(vec3 dir, float nightFactor)
     return starAccum * horizonFade * STAR_INTENSITY * nightFactor;
 }
 
-// ---------------------------------------------------------------------------
-// Milky Way band
-// ---------------------------------------------------------------------------
+
+
+
 
 vec3 milkyWay(vec3 dir, float nightFactor)
 {
@@ -352,7 +461,6 @@ vec3 milkyWay(vec3 dir, float nightFactor)
         return vec3(0.0);
 
     vec3  n    = normalize(dir);
-    // Galactic plane approximation — tilted band
     float band = n.x * 0.58 + n.y * 0.30 + n.z * 0.76;
     float glow = pow(smoothstep(0.55, 0.0, abs(band)), 1.6);
 
@@ -364,69 +472,69 @@ vec3 milkyWay(vec3 dir, float nightFactor)
     return vec3(0.12, 0.16, 0.26) * glow * detail * 0.55 * nightFactor * horizonFade;
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
+
+
+
 
 void main()
 {
     vec3  dir    = normalize(inWorldPos);
     vec3  sunDir = normalize(SUN_DIR);
 
-    float sunHeight = getSunHeight(sunDir);
+    float sunHeight = clamp(dot(sunDir, vec3(0.0, 1.0, 0.0)), -1.0, 1.0);
 
     float lightStrength  = clamp(DIR_LIGHT_STRENGTH, 0.0, 1.0);
     float forcedNight    = 1.0 - step(0.001, DIR_LIGHT_STRENGTH);
 
-    // Natural twilight / night — sun below horizon
     float naturalNight   = smoothstep(-0.04, -0.24, sunHeight);
-    // twilight peak right at horizon crossing
     float twilightFactor = 1.0 - smoothstep(0.03, 0.25, abs(sunHeight));
+    float nightFactor    = clamp(max(naturalNight, forcedNight * (1.0 - twilightFactor * 0.40)), 0.0, 1.0);
 
-    // Keep some twilight colouring even when the light is "off" so it doesn't
-    // look artificial — forcedNight is reduced during the transition window.
-    float nightFactor = clamp(max(naturalNight, forcedNight * (1.0 - twilightFactor * 0.40)), 0.0, 1.0);
 
-    // ---- Sky gradient ----
     vec3 color = getSkyGradient(dir, sunDir, sunHeight);
 
-    // ---- Night darkening (don't obliterate sunset colours) ----
+
+    color = sunsetEnhancements(color, dir, sunDir, sunHeight);
+
+
     vec3 nightTint = vec3(0.006, 0.009, 0.026);
     float nightBlend = nightFactor * mix(0.82, 0.52, twilightFactor);
     color = mix(color, nightTint, nightBlend);
     color *= mix(1.0, mix(0.10, 0.28, twilightFactor), nightFactor);
 
-    // ---- Force-off darkness (keep slight twilight glow) ----
+
     color *= mix(1.0, 0.04, forcedNight * (1.0 - twilightFactor * 0.45));
 
-    // ---- Sun disk ----
-    float sunShape = sunDiskAndGlow(dir, sunDir, lightStrength);
+
+    float sunHorizonFade = smoothstep(-0.05, 0.02, sunHeight);
+    float sunShape = sunDiskAndGlow(dir, sunDir, lightStrength * sunHorizonFade);
     float sunNearHorizon = 1.0 - smoothstep(0.0, 0.25, sunHeight);
     vec3  sunCol = mix(SUN_COLOR, vec3(1.00, 0.28, 0.05), sunNearHorizon * 0.92);
     sunCol *= mix(1.0, 1.15, sunNearHorizon);
-    color += sunCol * sunShape * SUN_INTENSITY;
+    color += sunCol * sunShape * SUN_INTENSITY * sunHorizonFade;
 
-    // ---- Moon (opposite-ish the sun, offset elevation) ----
+
     vec3  moonDir   = normalize(-sunDir + vec3(0.0, 0.28, 0.0));
     float moonShape = moonDisk(dir, moonDir, nightFactor);
     color += vec3(0.92, 0.96, 1.00) * moonShape * 3.0;
 
-    // ---- Milky Way ----
+
     color += milkyWay(dir, nightFactor);
 
-    // ---- Clouds ----
+
     float c    = cloudMask(dir);
-    vec3  cCol = cloudLighting(dir, sunDir, sunCol, sunHeight, nightFactor);
+    float shadow = cloudShadow(dir, sunDir);
+    vec3  cCol = cloudLighting(dir, sunDir, sunCol, sunHeight, nightFactor, shadow, c);
 
     float sunForward = max(dot(dir, sunDir), 0.0);
     cCol += vec3(1.0, 0.34, 0.09) * pow(sunForward, 3.2) * twilightFactor * 0.78 * lightStrength;
 
     color = mix(color, cCol, c * mix(0.42, 0.88, 1.0 - nightFactor * 0.72));
 
-    // ---- Stars (dimmed behind clouds) ----
+
     color += stars(dir, nightFactor) * (1.0 - c * 0.85);
 
-    // ---- Exposure ----
+
     color *= EXPOSURE;
 
     outColor = vec4(color, 1.0);

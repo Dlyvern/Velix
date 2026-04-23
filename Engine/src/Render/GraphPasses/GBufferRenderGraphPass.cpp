@@ -87,9 +87,10 @@ GBufferRenderGraphPass::GBufferRenderGraphPass(bool enableObjectId)
     m_clearValues[1].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
     m_clearValues[2].color = {{1.0f, 1.0f, 0.0f, 0.0f}};
     m_clearValues[3].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-    m_clearValues[4].color = {{0.0f, 0.0f, 0.0f, 0.0f}}; // bakedIrradiance
-    m_clearValues[5].color = {{0.0f, 0.0f, 0.0f, 0.0f}}; // objectId
-    m_clearValues[6].depthStencil = {1.0f, 0};
+    m_clearValues[4].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    m_clearValues[5].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    m_clearValues[6].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    m_clearValues[7].depthStencil = {1.0f, 0};
 
     setDebugName("GBuffer render graph pass");
     outputs.normals.setOwner(this);
@@ -97,6 +98,7 @@ GBufferRenderGraphPass::GBufferRenderGraphPass(bool enableObjectId)
     outputs.material.setOwner(this);
     outputs.emissive.setOwner(this);
     outputs.bakedIrradiance.setOwner(this);
+    outputs.motionVector.setOwner(this);
     outputs.depth.setOwner(this);
     outputs.objectId.setOwner(this);
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
@@ -114,13 +116,13 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
         if (batches.empty())
             return;
 
-        // Bindless GBuffer pipeline layout (Set 1 = bindless texture array + material SSBO).
+
         const auto pipelineLayout = EngineShaderFamilies::bindlessMeshPipelineLayout
                                         ? EngineShaderFamilies::bindlessMeshPipelineLayout
                                         : static_cast<VkPipelineLayout>(
                                               EngineShaderFamilies::meshShaderFamily.pipelineLayout);
 
-        // Bind the global bindless descriptor set once at Set 1 — never rebind per batch.
+
         if (data.bindlessDescriptorSet != VK_NULL_HANDLE)
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
                                     1, 1, &data.bindlessDescriptorSet, 0, nullptr);
@@ -136,11 +138,11 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
             key.pipelineLayout = pipelineLayout;
 
-            // When a depth prepass has already written depth for fully-opaque objects,
-            // use LESS_OR_EQUAL + no write to eliminate overdraw while tolerating the tiny
-            // floating-point precision delta between two vertex-shader runs (EQUAL causes
-            // holes in curved surfaces like spheres where depth values differ by 1 ULP).
-            // Alpha-blend and alpha-masked objects skip the depth prepass and still use LESS.
+
+
+
+
+
             const bool depthPrepassCovered = m_hasExternalDepth && !alphaBlend && !alphaMask;
             key.depthWrite   = !alphaBlend && !depthPrepassCovered;
             key.depthCompare = depthPrepassCovered ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
@@ -183,9 +185,9 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             return vkPipeline;
         };
 
-        // If the unified static geometry buffer is available and all static batches are
-        // registered in it, bind the unified VB/IB once before the loop to avoid per-batch
-        // vertex/index buffer rebinds (the biggest source of CPU draw overhead).
+
+
+
         const bool hasUnifiedGeometry =
             data.unifiedStaticVertexBuffer != VK_NULL_HANDLE &&
             data.unifiedStaticIndexBuffer  != VK_NULL_HANDLE;
@@ -198,7 +200,7 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
         VkBuffer boundIndexBuffer = VK_NULL_HANDLE;
         VkBuffer boundLightmapUVBuffer = VK_NULL_HANDLE;
 
-        // Always ensure binding 1 has a valid buffer — bind dummy initially.
+
         {
             const VkBuffer dummyBuf = m_dummyLightmapUVBuffer ? static_cast<VkBuffer>(*m_dummyLightmapUVBuffer) : VK_NULL_HANDLE;
             if (dummyBuf != VK_NULL_HANDLE)
@@ -221,7 +223,7 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
 
             const VkPipeline batchPipeline = getPipelineForBatch(batch);
             if (batchPipeline == VK_NULL_HANDLE)
-                continue; // pipeline creation failed (e.g. unsupported GPU feature) — skip silently
+                continue;
             if (batchPipeline != boundPipeline)
             {
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, batchPipeline);
@@ -230,14 +232,14 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
                 vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
                                         2, 1, &data.perObjectDescriptorSet, 0, nullptr);
                 boundPipeline = batchPipeline;
-                // Pipeline change resets the active VB/IB tracking so we rebind below.
+
                 boundVertexBuffer = VK_NULL_HANDLE;
                 boundIndexBuffer  = VK_NULL_HANDLE;
                 boundUnifiedVB    = VK_NULL_HANDLE;
                 boundUnifiedIB    = VK_NULL_HANDLE;
             }
 
-            // Use the unified buffer path for static meshes that were registered in it.
+
             const bool useUnified = hasUnifiedGeometry && !batch.skinned && batch.mesh->inUnifiedBuffer;
 
             if (useUnified)
@@ -247,7 +249,7 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
                     const VkDeviceSize offset = 0;
                     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &data.unifiedStaticVertexBuffer, &offset);
                     boundUnifiedVB    = data.unifiedStaticVertexBuffer;
-                    boundVertexBuffer = VK_NULL_HANDLE; // invalidate per-mesh tracking
+                    boundVertexBuffer = VK_NULL_HANDLE;
                 }
                 if (data.unifiedStaticIndexBuffer != boundUnifiedIB)
                 {
@@ -258,10 +260,10 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
             }
             else
             {
-                // Per-mesh fallback path (skinned, or not yet in unified buffer).
+
                 if (boundUnifiedVB != VK_NULL_HANDLE || boundUnifiedIB != VK_NULL_HANDLE)
                 {
-                    // Switched from unified → per-mesh; force rebind.
+
                     boundVertexBuffer = VK_NULL_HANDLE;
                     boundIndexBuffer  = VK_NULL_HANDLE;
                     boundUnifiedVB    = VK_NULL_HANDLE;
@@ -284,7 +286,7 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
                 }
             }
 
-            // Bind lightmap UV buffer at vertex binding 1 (or keep dummy if none).
+
             {
                 const VkBuffer lmBuf = (batch.mesh->lightmapUVBuffer)
                                            ? static_cast<VkBuffer>(*batch.mesh->lightmapUVBuffer)
@@ -297,22 +299,22 @@ void GBufferRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer
                 }
             }
 
-            // Per-batch material bind eliminated — the bindless descriptor set at Set 1
-            // covers all materials; shaders index via fragMaterialIndex from instance data.
+
+
 
             const ModelPushConstant pushConstant{.baseInstance = batch.firstInstance, .padding = {0,0,0}, .time = data.elapsedTime};
             vkCmdPushConstants(commandBuffer, pipelineLayout,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, sizeof(ModelPushConstant), &pushConstant);
 
-            // When using the unified buffer, supply each mesh's stored vertex/index offsets
-            // so the GPU reads from the correct region of the shared buffer.
+
+
             const uint32_t firstIndex   = useUnified ? batch.mesh->unifiedFirstIndex   : 0u;
             const int32_t  vertexOffset = useUnified ? batch.mesh->unifiedVertexOffset : 0;
 
-            // GPU-driven path: use the indirect buffer written by the compute culling pass.
-            // The GPU may have zeroed instanceCount for culled batches, so this also
-            // implicitly handles frustum culling without CPU readback.
+
+
+
             const bool useIndirect = useUnified && hasIndirectBuffer;
             if (useIndirect)
             {
@@ -408,23 +410,34 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     bakedIrradianceColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     bakedIrradianceColor.clearValue = m_clearValues[4];
 
+    VkRenderingAttachmentInfo motionVectorColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    motionVectorColor.imageView = (msaaEnabled ? m_msaaMotionVectorRenderTargets[renderContext.currentImageIndex]
+                                               : m_motionVectorRenderTargets[renderContext.currentImageIndex])->vkImageView();
+    motionVectorColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    motionVectorColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    motionVectorColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    motionVectorColor.clearValue = m_clearValues[5];
+    if (msaaEnabled)
+    {
+        motionVectorColor.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+        motionVectorColor.resolveImageView = m_motionVectorRenderTargets[renderContext.currentImageIndex]->vkImageView();
+        motionVectorColor.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+
     VkRenderingAttachmentInfo objectColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     const auto *objectAttachmentTarget = msaaEnabled ? m_msaaObjectIdRenderTarget : m_objectIdRenderTarget;
     objectColor.imageView = objectAttachmentTarget ? objectAttachmentTarget->vkImageView() : VK_NULL_HANDLE;
     objectColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     objectColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     objectColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    objectColor.clearValue = m_clearValues[5];
+    objectColor.clearValue = m_clearValues[6];
 
     VkRenderingAttachmentInfo depthAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     depthAttachment.imageView = (msaaEnabled ? m_msaaDepthRenderTarget : m_depthRenderTarget)->vkImageView();
     depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    // When using a depth prepass the buffer is already filled — load it.
-    // Opaque objects use EQUAL test + no write, so STORE is still needed
-    // (alpha-masked/transparent objects still write depth with LESS).
     depthAttachment.loadOp = m_hasExternalDepth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depthAttachment.clearValue = m_clearValues[6];
+    depthAttachment.clearValue = m_clearValues[7];
     if (msaaEnabled)
     {
         depthAttachment.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
@@ -432,8 +445,8 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
         depthAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
 
-    // loc 0=normal, 1=albedo, 2=material, 3=emissive, 4=bakedIrradiance, [5=objectId]
-    execution.colorsRenderingItems = {normalColor, albedoColor, materialColor, emissiveColor, bakedIrradianceColor};
+
+    execution.colorsRenderingItems = {normalColor, albedoColor, materialColor, emissiveColor, bakedIrradianceColor, motionVectorColor};
     if (m_enableObjectId && objectAttachmentTarget)
         execution.colorsRenderingItems.push_back(objectColor);
     execution.depthRenderingItem = depthAttachment;
@@ -443,12 +456,14 @@ std::vector<IRenderGraphPass::RenderPassExecution> GBufferRenderGraphPass::getRe
     execution.targets[m_materialTextureHandlers[renderContext.currentImageIndex]] = m_materialRenderTargets[renderContext.currentImageIndex];
     execution.targets[m_emissiveTextureHandlers[renderContext.currentImageIndex]] = m_emissiveRenderTargets[renderContext.currentImageIndex];
     execution.targets[m_bakedIrradianceTextureHandlers[renderContext.currentImageIndex]] = m_bakedIrradianceRenderTargets[renderContext.currentImageIndex];
+    execution.targets[m_motionVectorTextureHandlers[renderContext.currentImageIndex]] = m_motionVectorRenderTargets[renderContext.currentImageIndex];
     if (msaaEnabled)
     {
         execution.targets[m_msaaNormalTextureHandlers[renderContext.currentImageIndex]] = m_msaaNormalRenderTargets[renderContext.currentImageIndex];
         execution.targets[m_msaaAlbedoTextureHandlers[renderContext.currentImageIndex]] = m_msaaAlbedoRenderTargets[renderContext.currentImageIndex];
         execution.targets[m_msaaMaterialTextureHandlers[renderContext.currentImageIndex]] = m_msaaMaterialRenderTargets[renderContext.currentImageIndex];
         execution.targets[m_msaaEmissiveTextureHandlers[renderContext.currentImageIndex]] = m_msaaEmissiveRenderTargets[renderContext.currentImageIndex];
+        execution.targets[m_msaaMotionVectorTextureHandlers[renderContext.currentImageIndex]] = m_msaaMotionVectorRenderTargets[renderContext.currentImageIndex];
         execution.targets[m_msaaDepthTextureHandler] = m_msaaDepthRenderTarget;
     }
 
@@ -489,6 +504,8 @@ void GBufferRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
     m_emissiveRenderTargets.resize(imageCount);
     m_msaaEmissiveRenderTargets.resize(imageCount);
     m_bakedIrradianceRenderTargets.resize(imageCount);
+    m_motionVectorRenderTargets.resize(imageCount);
+    m_msaaMotionVectorRenderTargets.resize(imageCount);
 
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
     {
@@ -501,9 +518,11 @@ void GBufferRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         m_emissiveRenderTargets[imageIndex] = storage.getTexture(m_emissiveTextureHandlers[imageIndex]);
         m_msaaEmissiveRenderTargets[imageIndex] = m_msaaEmissiveTextureHandlers.empty() ? nullptr : storage.getTexture(m_msaaEmissiveTextureHandlers[imageIndex]);
         m_bakedIrradianceRenderTargets[imageIndex] = storage.getTexture(m_bakedIrradianceTextureHandlers[imageIndex]);
+        m_motionVectorRenderTargets[imageIndex] = storage.getTexture(m_motionVectorTextureHandlers[imageIndex]);
+        m_msaaMotionVectorRenderTargets[imageIndex] = m_msaaMotionVectorTextureHandlers.empty() ? nullptr : storage.getTexture(m_msaaMotionVectorTextureHandlers[imageIndex]);
     }
 
-    // Create 1-element dummy lightmap UV VBO (vec2(0,0)) for meshes without baked UVs.
+
     if (!m_dummyLightmapUVBuffer)
     {
         const glm::vec2 zeroUV{0.0f, 0.0f};
@@ -535,6 +554,8 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     m_emissiveTextureHandlers.clear();
     m_msaaEmissiveTextureHandlers.clear();
     m_bakedIrradianceTextureHandlers.clear();
+    m_motionVectorTextureHandlers.clear();
+    m_msaaMotionVectorTextureHandlers.clear();
     m_colorFormats.clear();
     m_msaaDepthTextureHandler = {};
     m_objectIdTextureHandler = {};
@@ -555,8 +576,11 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     const VkFormat materialFormat = VK_FORMAT_R8G8B8A8_UNORM;
     const VkFormat emissiveFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     const VkFormat bakedIrradianceFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-    // loc 0=normal, 1=albedo, 2=material, 3=emissive, 4=bakedIrradiance, [5=objectId]
-    m_colorFormats = {normalFormat, albedoFormat, materialFormat, emissiveFormat, bakedIrradianceFormat};
+
+
+    const VkFormat motionVectorFormat = VK_FORMAT_R16G16_SFLOAT;
+
+    m_colorFormats = {normalFormat, albedoFormat, materialFormat, emissiveFormat, bakedIrradianceFormat, motionVectorFormat};
     if (m_enableObjectId)
         m_colorFormats.push_back(VK_FORMAT_R32_UINT);
     m_depthFormat = core::helpers::findDepthFormat(core::VulkanContext::getContext()->getPhysicalDevice());
@@ -566,12 +590,14 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     RGPTextureDescription materialTextureDescription{materialFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription emissiveTextureDescription{emissiveFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription bakedIrradianceTextureDescription{bakedIrradianceFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    RGPTextureDescription motionVectorTextureDescription{motionVectorFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription objectIdTextureDescription{VK_FORMAT_R32_UINT, RGPTextureUsage::COLOR_ATTACHMENT_TRANSFER_SRC, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription depthTextureDescription{m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
     RGPTextureDescription msaaNormalTextureDescription{normalFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     RGPTextureDescription msaaAlbedoTextureDescription{albedoFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     RGPTextureDescription msaaMaterialTextureDescription{materialFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     RGPTextureDescription msaaEmissiveTextureDescription{emissiveFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    RGPTextureDescription msaaMotionVectorTextureDescription{motionVectorFormat, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     RGPTextureDescription msaaObjectIdTextureDescription{VK_FORMAT_R32_UINT, RGPTextureUsage::COLOR_ATTACHMENT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     RGPTextureDescription msaaDepthTextureDescription{m_depthFormat, RGPTextureUsage::DEPTH_STENCIL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
@@ -585,6 +611,8 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
                                                        { return m_extent; });
     bakedIrradianceTextureDescription.setCustomExtentFunction([this]
                                                               { return m_extent; });
+    motionVectorTextureDescription.setCustomExtentFunction([this]
+                                                           { return m_extent; });
     objectIdTextureDescription.setCustomExtentFunction([this]
                                                        { return m_extent; });
     depthTextureDescription.setCustomExtentFunction([this]
@@ -597,6 +625,8 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
                                                            { return m_extent; });
     msaaEmissiveTextureDescription.setCustomExtentFunction([this]
                                                            { return m_extent; });
+    msaaMotionVectorTextureDescription.setCustomExtentFunction([this]
+                                                               { return m_extent; });
     msaaObjectIdTextureDescription.setCustomExtentFunction([this]
                                                            { return m_extent; });
     msaaDepthTextureDescription.setCustomExtentFunction([this]
@@ -606,6 +636,7 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     msaaAlbedoTextureDescription.setSampleCount(m_rasterizationSamples);
     msaaMaterialTextureDescription.setSampleCount(m_rasterizationSamples);
     msaaEmissiveTextureDescription.setSampleCount(m_rasterizationSamples);
+    msaaMotionVectorTextureDescription.setSampleCount(m_rasterizationSamples);
     msaaObjectIdTextureDescription.setSampleCount(m_rasterizationSamples);
     msaaDepthTextureDescription.setSampleCount(m_rasterizationSamples);
 
@@ -639,9 +670,9 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         }
         else
         {
-            // Dereference the live pointer — by the time GBuffer's setup() runs,
-            // the depth prepass (added earlier, lower id) has already assigned its
-            // handler ID via builder.createTexture().
+
+
+
             m_depthTextureHandler = *m_externalDepthHandlerPtr;
             builder.read(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
             builder.write(m_depthTextureHandler, RGPTextureUsage::DEPTH_STENCIL);
@@ -674,6 +705,8 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     m_emissiveTextureHandlers.reserve(imageCount);
     m_msaaEmissiveTextureHandlers.reserve(imageCount);
     m_bakedIrradianceTextureHandlers.reserve(imageCount);
+    m_motionVectorTextureHandlers.reserve(imageCount);
+    m_msaaMotionVectorTextureHandlers.reserve(imageCount);
 
     for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
     {
@@ -682,24 +715,28 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         materialTextureDescription.setDebugName("__ELIX_MATERIAL_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         emissiveTextureDescription.setDebugName("__ELIX_EMISSIVE_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
         bakedIrradianceTextureDescription.setDebugName("__ELIX_BAKED_IRRADIANCE_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
+        motionVectorTextureDescription.setDebugName("__ELIX_MOTION_VECTOR_GBUFFER_TEXTURE_" + std::to_string(imageIndex) + "__");
 
         const auto normalTexture = builder.createTexture(normalTextureDescription);
         const auto albedoTexture = builder.createTexture(albedoTextureDescription);
         const auto materialTexture = builder.createTexture(materialTextureDescription);
         const auto emissiveTexture = builder.createTexture(emissiveTextureDescription);
         const auto bakedIrradianceTexture = builder.createTexture(bakedIrradianceTextureDescription);
+        const auto motionVectorTexture = builder.createTexture(motionVectorTextureDescription);
 
         m_normalTextureHandlers.push_back(normalTexture);
         m_albedoTextureHandlers.push_back(albedoTexture);
         m_materialTextureHandlers.push_back(materialTexture);
         m_emissiveTextureHandlers.push_back(emissiveTexture);
         m_bakedIrradianceTextureHandlers.push_back(bakedIrradianceTexture);
+        m_motionVectorTextureHandlers.push_back(motionVectorTexture);
 
         builder.write(normalTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(albedoTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(materialTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(emissiveTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         builder.write(bakedIrradianceTexture, RGPTextureUsage::COLOR_ATTACHMENT);
+        builder.write(motionVectorTexture, RGPTextureUsage::COLOR_ATTACHMENT);
 
         if (msaaEnabled)
         {
@@ -707,21 +744,25 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
             msaaAlbedoTextureDescription.setDebugName("__ELIX_ALBEDO_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
             msaaMaterialTextureDescription.setDebugName("__ELIX_MATERIAL_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
             msaaEmissiveTextureDescription.setDebugName("__ELIX_EMISSIVE_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
+            msaaMotionVectorTextureDescription.setDebugName("__ELIX_MOTION_VECTOR_GBUFFER_MSAA_TEXTURE_" + std::to_string(imageIndex) + "__");
 
             const auto msaaNormalTexture = builder.createTexture(msaaNormalTextureDescription);
             const auto msaaAlbedoTexture = builder.createTexture(msaaAlbedoTextureDescription);
             const auto msaaMaterialTexture = builder.createTexture(msaaMaterialTextureDescription);
             const auto msaaEmissiveTexture = builder.createTexture(msaaEmissiveTextureDescription);
+            const auto msaaMotionVectorTexture = builder.createTexture(msaaMotionVectorTextureDescription);
 
             m_msaaNormalTextureHandlers.push_back(msaaNormalTexture);
             m_msaaAlbedoTextureHandlers.push_back(msaaAlbedoTexture);
             m_msaaMaterialTextureHandlers.push_back(msaaMaterialTexture);
             m_msaaEmissiveTextureHandlers.push_back(msaaEmissiveTexture);
+            m_msaaMotionVectorTextureHandlers.push_back(msaaMotionVectorTexture);
 
             builder.write(msaaNormalTexture, RGPTextureUsage::COLOR_ATTACHMENT);
             builder.write(msaaAlbedoTexture, RGPTextureUsage::COLOR_ATTACHMENT);
             builder.write(msaaMaterialTexture, RGPTextureUsage::COLOR_ATTACHMENT);
             builder.write(msaaEmissiveTexture, RGPTextureUsage::COLOR_ATTACHMENT);
+            builder.write(msaaMotionVectorTexture, RGPTextureUsage::COLOR_ATTACHMENT);
         }
     }
 
@@ -730,8 +771,84 @@ void GBufferRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     outputs.material.set(m_materialTextureHandlers);
     outputs.emissive.set(m_emissiveTextureHandlers);
     outputs.bakedIrradiance.set(m_bakedIrradianceTextureHandlers);
+    outputs.motionVector.set(m_motionVectorTextureHandlers);
     outputs.depth.set(m_depthTextureHandler);
     outputs.objectId.set(m_objectIdTextureHandler);
+}
+
+void GBufferRenderGraphPass::collectPipelineKeys(std::vector<GraphicsPipelineKey> &outKeys) const
+{
+    if (m_colorFormats.empty())
+        return;
+
+    const auto pipelineLayout = EngineShaderFamilies::bindlessMeshPipelineLayout
+                                    ? EngineShaderFamilies::bindlessMeshPipelineLayout
+                                    : static_cast<VkPipelineLayout>(
+                                          EngineShaderFamilies::meshShaderFamily.pipelineLayout);
+
+    auto makeKey = [&](ShaderId shader, BlendMode blend, CullMode cull) -> GraphicsPipelineKey
+    {
+        GraphicsPipelineKey key{};
+        key.shader = shader;
+        key.blend = blend;
+        key.cull = cull;
+        key.depthTest = true;
+        key.depthWrite = (blend != BlendMode::AlphaBlend);
+        key.depthCompare = VK_COMPARE_OP_LESS;
+        key.polygonMode = VK_POLYGON_MODE_FILL;
+        key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        key.pipelineLayout = pipelineLayout;
+        key.rasterizationSamples = m_rasterizationSamples;
+        key.gbufferOutputMode = GBufferOutputMode::Full;
+        key.colorFormats = m_colorFormats;
+        key.depthFormat = m_depthFormat;
+        return key;
+    };
+
+
+    for (auto shader : {ShaderId::GBufferStatic, ShaderId::GBufferSkinned})
+        for (auto blend : {BlendMode::None, BlendMode::AlphaBlend})
+            for (auto cull : {CullMode::Back, CullMode::None})
+                outKeys.push_back(makeKey(shader, blend, cull));
+}
+
+void GBufferRenderGraphPass::collectCustomMaterialPipelineKeys(const std::vector<std::string> &customFragPaths,
+                                                               std::vector<GraphicsPipelineKey> &outKeys) const
+{
+    if (m_colorFormats.empty() || customFragPaths.empty())
+        return;
+
+    const auto pipelineLayout = EngineShaderFamilies::bindlessMeshPipelineLayout
+                                    ? EngineShaderFamilies::bindlessMeshPipelineLayout
+                                    : static_cast<VkPipelineLayout>(
+                                          EngineShaderFamilies::meshShaderFamily.pipelineLayout);
+
+    for (const auto &fragPath : customFragPaths)
+    {
+
+        for (auto blend : {BlendMode::None, BlendMode::AlphaBlend})
+        {
+            for (auto cull : {CullMode::Back, CullMode::None})
+            {
+                GraphicsPipelineKey key{};
+                key.shader = ShaderId::GBufferStatic;
+                key.blend = blend;
+                key.cull = cull;
+                key.depthTest = true;
+                key.depthWrite = (blend != BlendMode::AlphaBlend);
+                key.depthCompare = VK_COMPARE_OP_LESS;
+                key.polygonMode = VK_POLYGON_MODE_FILL;
+                key.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+                key.pipelineLayout = pipelineLayout;
+                key.rasterizationSamples = m_rasterizationSamples;
+                key.gbufferOutputMode = GBufferOutputMode::Full;
+                key.colorFormats = m_colorFormats;
+                key.depthFormat = m_depthFormat;
+                key.customFragSpvPath = fragPath;
+                outKeys.push_back(key);
+            }
+        }
+    }
 }
 
 ELIX_CUSTOM_NAMESPACE_END

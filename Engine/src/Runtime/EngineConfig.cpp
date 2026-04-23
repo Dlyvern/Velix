@@ -645,7 +645,7 @@ bool EngineConfig::isKnownIdeId(const std::string &ideId) const
 bool EngineConfig::isPluginEnabled(const std::string &pluginStem) const
 {
     auto it = m_pluginEnabledStates.find(pluginStem);
-    // Unknown plugins default to enabled.
+
     return it == m_pluginEnabledStates.end() ? true : it->second;
 }
 

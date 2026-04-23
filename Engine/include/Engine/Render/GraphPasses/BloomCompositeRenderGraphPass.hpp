@@ -14,8 +14,8 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-/// Upsamples the half-res bloom texture and additively blends it onto the
-/// tonemapped (LDR) scene output.
+
+
 class BloomCompositeRenderGraphPass : public IRenderGraphPass
 {
 public:
@@ -69,4 +69,4 @@ private:
 ELIX_NESTED_NAMESPACE_END
 ELIX_CUSTOM_NAMESPACE_END
 
-#endif // ELIX_BLOOM_COMPOSITE_RENDER_GRAPH_PASS_HPP
+#endif

@@ -9,13 +9,17 @@ layout(location = 4) in vec3 fragBitangentView;
 layout(location = 5) in flat uint fragObjectId;
 layout(location = 6) in flat uint fragMaterialIndex;
 layout(location = 7) in vec2 fragLightmapUV;
+layout(location = 8) in flat uint fragLightmapTexIdx;
+layout(location = 9)  in vec4 fragCurrClipPos;
+layout(location = 10) in vec4 fragPrevClipPos;
 
-layout(location = 0) out vec4 outGBufferNormal;      // normal (encoded)
-layout(location = 1) out vec4 outGBufferAlbedo;      // albedo + alpha
-layout(location = 2) out vec4 outGBufferMaterial;    // ao, roughness, metallic, reserved
-layout(location = 3) out vec4 outGBufferEmissive;    // emissive rgb
-layout(location = 4) out vec4 outBakedIrradiance;    // pre-baked irradiance (0=dynamic lighting)
-layout(location = 5) out uint outObjectId;
+layout(location = 0) out vec4 outGBufferNormal;
+layout(location = 1) out vec4 outGBufferAlbedo;
+layout(location = 2) out vec4 outGBufferMaterial;
+layout(location = 3) out vec4 outGBufferEmissive;
+layout(location = 4) out vec4 outBakedIrradiance;
+layout(location = 5) out vec2 outMotionVector;
+layout(location = 6) out uint outObjectId;
 
 layout(set = 0, binding = 0) uniform CameraUniformObject
 {
@@ -23,31 +27,36 @@ layout(set = 0, binding = 0) uniform CameraUniformObject
     mat4 projection;
     mat4 invView;
     mat4 invProjection;
+    mat4 prevView;
+    mat4 prevProjection;
+    vec4 jitter;
 } cameraUniformObject;
 
-// Bindless texture array — all engine textures are registered here.
+
 layout(set = 1, binding = 0) uniform sampler2D allTextures[];
 
-// Material params SSBO — one entry per registered material.
+
 struct MaterialGPUParams
 {
     vec4  baseColorFactor;
     vec4  emissiveFactor;
-    vec4  uvTransform;   // xy = scale, zw = offset
+    vec4  uvTransform;
     float metallicFactor;
     float roughnessFactor;
     float normalScale;
     float aoStrength;
     uint  flags;
     float alphaCutoff;
-    float uvRotation;    // degrees
+    float uvRotation;
     float ior;
     uint  albedoTexIdx;
     uint  normalTexIdx;
     uint  ormTexIdx;
     uint  emissiveTexIdx;
-    uint  lightmapTexIdx;  // 0xFFFFFFFF = no lightmap
+    uint  lightmapTexIdx;
     uint  _lightmapPad;
+    uint  _pad0;
+    uint  _pad1;
 };
 
 layout(set = 1, binding = 1, std430) readonly buffer MaterialBuffer
@@ -61,7 +70,7 @@ layout(push_constant) uniform GBufferPC
     uint  _pad0;
     uint  _pad1;
     uint  _pad2;
-    float time; // seconds since engine start
+    float time;
 } pc;
 
 const uint MATERIAL_FLAG_ALPHA_MASK = 1u << 0;
@@ -154,8 +163,15 @@ void main()
     outGBufferMaterial = vec4(ao, roughness, metallic, 0.0);
     outGBufferEmissive = vec4(emissive, 1.0);
 
-    if (mat.lightmapTexIdx != 0xFFFFFFFFu)
-        outBakedIrradiance = texture(allTextures[nonuniformEXT(mat.lightmapTexIdx)], fragLightmapUV);
+    if (fragLightmapTexIdx != 0xFFFFFFFFu)
+        outBakedIrradiance = texture(allTextures[nonuniformEXT(fragLightmapTexIdx)], fragLightmapUV);
     else
         outBakedIrradiance = vec4(0.0);
+
+
+
+    vec2 currNDC = fragCurrClipPos.xy / max(fragCurrClipPos.w, 1e-6);
+    vec2 prevNDC = fragPrevClipPos.xy / max(fragPrevClipPos.w, 1e-6);
+    vec2 jitterDelta = cameraUniformObject.jitter.xy - cameraUniformObject.jitter.zw;
+    outMotionVector = (currNDC - prevNDC) * 0.5 - jitterDelta * 0.5;
 }

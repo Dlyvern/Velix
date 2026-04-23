@@ -32,13 +32,13 @@ public:
     AssetManager(const AssetManager &) = delete;
     AssetManager &operator=(const AssetManager &) = delete;
 
-    // Post an async load for the handle.
-    // No-op if the handle is already Loading, Ready, or empty.
+
+
     void requestLoad(AssetHandle<ModelAsset> &handle);
     void requestLoad(AssetHandle<TextureAsset> &handle);
     void requestLoad(AssetHandle<MaterialAsset> &handle);
 
-    // Reset handle back to Unloaded. CPU data is freed when the last shared_ptr is released.
+
     template <typename T>
     void unload(AssetHandle<T> &handle)
     {
@@ -49,7 +49,7 @@ public:
         handle.reset();
     }
 
-    // Cheap O(N) scan over live handles. Call at most once per frame.
+
     AssetStats getStats() const;
 
     void shutdown();
@@ -57,11 +57,11 @@ public:
 private:
     AssetManager();
 
-    // Shared deduplication entry (type-erased).
+
     struct LiveEntry
     {
         AssetState state{AssetState::Unloaded};
-        std::weak_ptr<void> data; // weak ref to the shared asset data
+        std::weak_ptr<void> data;
         Asset::AssetType type{Asset::AssetType::NONE};
         size_t sizeBytes{0};
     };
@@ -76,4 +76,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ASSET_MANAGER_HPP
+#endif

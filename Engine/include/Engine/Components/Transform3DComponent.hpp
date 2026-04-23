@@ -46,4 +46,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif //ELIX_TRANSFORM_3D_HPP
+#endif

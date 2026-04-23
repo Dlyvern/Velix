@@ -35,4 +35,4 @@ inline uint32_t decodeMeshEncoded(uint32_t encodedObjectId)
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_OBJECT_ID_ENCODING_HPP
+#endif

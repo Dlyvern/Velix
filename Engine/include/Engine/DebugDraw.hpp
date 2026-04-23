@@ -17,8 +17,8 @@ class DebugDraw
 public:
     struct Vertex
     {
-        float x, y, z;    // world-space position
-        float r, g, b, a; // linear colour
+        float x, y, z;
+        float r, g, b, a;
     };
 
     static void line(glm::vec3 a, glm::vec3 b,
@@ -97,8 +97,8 @@ private:
         };
 
         std::vector<Vertex> vertices;
-        float lifetime; // remaining seconds; 0 = this-frame-only
-        bool depthTest; // stored for potential future multi-pipeline support
+        float lifetime;
+        bool depthTest;
         Primitive primitive{Primitive::LineList};
         bool newlySubmitted{true};
     };
@@ -108,11 +108,11 @@ private:
 
     static void pushShape(std::vector<Vertex> verts, float lifetime, bool depthTest, Shape::Primitive primitive);
 
-    // Helpers
+
     static Vertex makeVertex(glm::vec3 p, glm::vec4 c);
     static void addLine(std::vector<Vertex> &v, glm::vec3 a, glm::vec3 b, glm::vec4 c);
 };
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_DEBUG_DRAW_HPP
+#endif

@@ -346,7 +346,7 @@ namespace
 
         return texture;
     }
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(editor)
 
@@ -508,7 +508,7 @@ void EditorBillboardRenderGraphPass::record(core::CommandBuffer::SharedPtr comma
     if (passthroughDescriptorSet == VK_NULL_HANDLE)
         return;
 
-    // Pass-through current frame input into this pass output.
+
     engine::GraphicsPipelineKey passthroughKey{};
     passthroughKey.shader = engine::ShaderId::Present;
     passthroughKey.blend = engine::BlendMode::None;
@@ -563,7 +563,7 @@ void EditorBillboardRenderGraphPass::record(core::CommandBuffer::SharedPtr comma
         const glm::vec3 worldPos = transform->getWorldPosition();
         auto *cameraComponent = entity->getComponent<engine::CameraComponent>();
 
-        // Collect all icon types this entity needs
+
         IconDef icons[3];
         int iconCount = 0;
 

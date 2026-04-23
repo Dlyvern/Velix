@@ -42,8 +42,8 @@ private:
     struct RTReflectionDenoisePC
     {
         glm::mat4 invProjection{1.0f};
-        glm::vec4 params0{0.0f}; // x=texelSize.x, y=texelSize.y, z=enabled, w=normalSigma
-        glm::vec4 params1{0.0f}; // x=depthSigma
+        glm::vec4 params0{0.0f};
+        glm::vec4 params1{0.0f};
     };
 
     void createComputePipeline();
@@ -75,4 +75,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_RT_REFLECTION_DENOISE_RENDER_GRAPH_PASS_HPP
+#endif

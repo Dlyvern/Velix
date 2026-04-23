@@ -26,8 +26,8 @@ void main()
     vec4 texColor = texture(particleTextures[nonuniformEXT(vTextureIndex)], vUV);
     outColor = texColor * vColor;
 
-    // For untextured particles (slot 0 = default white texture) apply a soft
-    // circular shape so they don't render as hard-edged rectangles.
+
+
     if (vTextureIndex == 0u)
     {
         vec2  uv    = vUV * 2.0 - 1.0;
@@ -35,7 +35,7 @@ void main()
         outColor.a *= smoothstep(1.0, 0.75, dist);
     }
 
-    // Soft particles: fade alpha based on depth intersection with scene geometry.
+
     if (softEnabled > 0.5 && softParticleRange > 0.0)
     {
         ivec2 depthSize = textureSize(uSceneDepth, 0);

@@ -19,4 +19,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SPRITE_MESH_COMPONENT_HPP
+#endif

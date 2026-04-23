@@ -141,6 +141,11 @@ namespace
         return settings.enablePostProcessing && settings.enableSSR;
     }
 
+    bool renderGraphUsesSSGI(const elix::engine::RenderQualitySettings &settings)
+    {
+        return settings.enablePostProcessing && settings.enableSSGI;
+    }
+
     void syncNearestReflectionProbe(elix::engine::renderGraph::LightingRenderGraphPass *lightingPass,
                                     const elix::engine::Scene *scene,
                                     const std::shared_ptr<elix::engine::Camera> &camera)
@@ -227,6 +232,7 @@ namespace
         hashCombine(seed, static_cast<uint32_t>(effectiveMsaaSamples));
         hashCombine(seed, static_cast<uint32_t>(renderGraphAntiAliasingMode(settings)));
         hashCombine(seed, renderGraphUsesSSR(settings));
+        hashCombine(seed, renderGraphUsesSSGI(settings));
         hashCombine(seed, renderGraphUsesVolumetricFog(settings, scene));
         hashCombine(seed, static_cast<uint32_t>(settings.volumetricFogQuality));
         hashCombine(seed, settings.overrideVolumetricFogSceneSetting);
@@ -235,7 +241,7 @@ namespace
         hashCombine(seed, renderGraphUsesUI(scene));
         return seed;
     }
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -324,6 +330,21 @@ bool GameRuntime::init()
     m_scriptsAttached = true;
     m_initialized = true;
 
+    m_framePipeline.start([this](const RenderSceneSnapshot &snapshot)
+                          {
+
+
+                              if (m_renderCamera && glm::length(snapshot.cameraVelocity) > 0.001f)
+                              {
+                                  const glm::vec3 extrapolated = m_renderCamera->getPosition()
+                                                                 + snapshot.cameraVelocity * snapshot.deltaTime;
+                                  m_renderCamera->setPosition(extrapolated);
+                              }
+
+                              m_renderGraph->prepareFrame(m_renderCamera, snapshot, snapshot.deltaTime);
+                              m_renderGraph->draw();
+                          });
+
     VX_ENGINE_INFO_STREAM("Game runtime initialized from packet: " << m_packetPath << '\n');
     return true;
 }
@@ -342,7 +363,7 @@ void GameRuntime::tick(float deltaTime)
                                    if (scriptComponent)
                                        scriptComponent->onDetach(); });
 
-        SceneManager::instance().processRequests(m_scene, [this](std::shared_ptr<Scene> /*newScene*/)
+        SceneManager::instance().processRequests(m_scene, [this](std::shared_ptr<Scene> )
                                                  { bindSceneToPasses(); });
 
         forEachScriptComponent([](ScriptComponent *scriptComponent)
@@ -369,8 +390,21 @@ void GameRuntime::tick(float deltaTime)
 
     syncNearestReflectionProbe(m_lightingRenderGraphPass, m_scene.get(), m_renderCamera);
 
-    m_renderGraph->prepareFrame(m_renderCamera, m_scene.get(), deltaTime);
-    m_renderGraph->draw();
+    const glm::vec3 cameraPos = m_renderCamera
+                                    ? glm::vec3(glm::inverse(m_renderCamera->getViewMatrix())[3])
+                                    : glm::vec3(0.0f);
+
+
+    if (m_hasPreviousCameraPosition && deltaTime > 0.0f)
+        m_renderSnapshot.cameraVelocity = (cameraPos - m_lastCameraPosition) / deltaTime;
+    else
+        m_renderSnapshot.cameraVelocity = glm::vec3(0.0f);
+    m_lastCameraPosition = cameraPos;
+    m_hasPreviousCameraPosition = true;
+
+    m_scene->captureRenderSnapshot(m_renderSnapshot, cameraPos);
+    m_renderSnapshot.deltaTime = deltaTime;
+    m_framePipeline.submitSnapshot(m_renderSnapshot);
 }
 
 void GameRuntime::initRenderGraph()
@@ -392,6 +426,7 @@ void GameRuntime::initRenderGraph()
     m_lightingRenderGraphPass = nullptr;
     m_contactShadowRenderGraphPass = nullptr;
     m_ssrRenderGraphPass = nullptr;
+    m_ssgiRenderGraphPass = nullptr;
     m_volumetricFogLightingRenderGraphPass = nullptr;
     m_volumetricFogTemporalRenderGraphPass = nullptr;
     m_volumetricFogCompositeRenderGraphPass = nullptr;
@@ -417,6 +452,7 @@ void GameRuntime::initRenderGraph()
     const bool useRTAO = settings.enableRayTracing && settings.enableRTAO && supportsRayQuery;
     const bool useRTReflections = settings.enableRayTracing && settings.enableRTReflections && supportsAnyRT;
     const bool useSSR = renderGraphUsesSSR(settings);
+    const bool useSSGI = renderGraphUsesSSGI(settings);
     const bool useVolumetricFog = renderGraphUsesVolumetricFog(settings, m_scene.get());
     const bool useParticles = renderGraphUsesParticles(m_scene.get());
     const bool useUI = renderGraphUsesUI(m_scene.get());
@@ -488,6 +524,18 @@ void GameRuntime::initRenderGraph()
         m_gBufferRenderGraphPass->getDepthTextureHandler());
 
     auto *sceneColorInput = &m_skyLightRenderGraphPass->getOutput();
+
+    if (useSSGI)
+    {
+        m_ssgiRenderGraphPass = m_renderGraph->addPass<renderGraph::SSGIRenderGraphPass>(
+            *sceneColorInput,
+            m_gBufferRenderGraphPass->getNormalTextureHandlers(),
+            m_gBufferRenderGraphPass->getDepthTextureHandler(),
+            m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+            m_gBufferRenderGraphPass->getAlbedoTextureHandlers());
+        sceneColorInput = &m_ssgiRenderGraphPass->getOutput();
+    }
+
     if (useSSR)
     {
         m_ssrRenderGraphPass = m_renderGraph->addPass<renderGraph::SSRRenderGraphPass>(
@@ -594,6 +642,8 @@ void GameRuntime::initRenderGraph()
 
 void GameRuntime::shutdown()
 {
+    m_framePipeline.shutdown();
+
     ScriptsRegister::setActiveRegister(nullptr);
 
     PluginManager::instance().unloadAll();
@@ -856,6 +906,8 @@ void GameRuntime::syncViewportExtent()
         m_contactShadowRenderGraphPass->setExtent(extent);
     if (m_ssrRenderGraphPass)
         m_ssrRenderGraphPass->setExtent(extent);
+    if (m_ssgiRenderGraphPass)
+        m_ssgiRenderGraphPass->setExtent(extent);
     if (m_volumetricFogLightingRenderGraphPass)
         m_volumetricFogLightingRenderGraphPass->setExtent(extent);
     if (m_volumetricFogTemporalRenderGraphPass)

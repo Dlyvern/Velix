@@ -12,7 +12,7 @@ enum class MemoryUsage
     CPU_TO_GPU,
     GPU_TO_CPU,
     CPU_ONLY,
-    AUTO // ONLY WITH VMA ALLOCATOR
+    AUTO
 };
 
 inline bool isMemoryMappable(MemoryUsage memoryUsage)
@@ -25,4 +25,4 @@ inline bool isMemoryMappable(MemoryUsage memoryUsage)
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_MEMORY_FLAGS_HPP
+#endif

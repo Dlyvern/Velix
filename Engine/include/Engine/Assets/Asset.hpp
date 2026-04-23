@@ -40,7 +40,7 @@ public:
         RGBA8 = 0,
         RGBA32F = 1,
         COMPRESSED_GPU = 2,
-        RGBA16F = 3   // R16G16B16A16_SFLOAT — 8 bytes/pixel (half-float)
+        RGBA16F = 3
     };
 
     std::string name;
@@ -140,4 +140,4 @@ public:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_ASSET_HPP
+#endif

@@ -28,8 +28,8 @@ public:
     void syncQualitySettings();
     void syncActiveShadowCounts(uint32_t activeSpotCount, uint32_t activePointCount);
 
-    // When true, record() skips all draw calls and the shadow maps are cleared to
-    // depth=1.0 (no shadow). Use when RT shadows fully replace raster shadows.
+
+
     void setSkipRendering(bool skip) { m_skipRendering = skip; }
 
     RGPResourceHandler &getDirectionalShadowHandler()
@@ -47,7 +47,7 @@ public:
         return m_depthCubeTextureHandler;
     }
 
-    // Compiled shadow map views — valid after compile(), used by LightmapBaker.
+
     VkImageView getDirectionalShadowImageView() const { return m_renderTarget ? m_renderTarget->vkImageView() : VK_NULL_HANDLE; }
     VkImageView getSpotShadowImageView()        const { return m_arrayRenderTarget ? m_arrayRenderTarget->vkImageView() : VK_NULL_HANDLE; }
     VkImageView getCubeShadowImageView()        const { return m_cubeRenderTarget ? m_cubeRenderTarget->vkImageView() : VK_NULL_HANDLE; }
@@ -113,4 +113,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_SHADOW_RENDER_GRAPH_PASS_HPP
+#endif

@@ -22,9 +22,9 @@ namespace
         glm::mat4 projection;
         glm::mat4 invProjection;
         glm::mat4 invView;
-        glm::vec4 params0; // xy=texelSize, z=maxDistance, w=thickness
-        glm::vec4 params1; // x=steps, y=strength, z=roughnessCutoff, w=enabled
-        glm::vec4 environmentInfo; // x = hasEnvironmentMap
+        glm::vec4 params0;
+        glm::vec4 params1;
+        glm::vec4 environmentInfo;
     };
 }
 

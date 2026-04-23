@@ -39,14 +39,14 @@ namespace
 
     bool isReservedLibraryName(const std::string &filename)
     {
-        // Never load the SDK or game module as a plugin — they are managed separately.
+
         const std::vector<std::string> reserved = {"VelixSDK", "GameModule", "libGameModule"};
         for (const auto &name : reserved)
             if (filename.find(name) != std::string::npos)
                 return true;
         return false;
     }
-} // namespace
+}
 
 PluginManager &PluginManager::instance()
 {
@@ -89,7 +89,7 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
         if (isReservedLibraryName(filename))
             continue;
 
-        // Skip already-loaded filenames (project tier wins by loading last, same name skipped)
+
         const bool alreadyLoaded = std::any_of(m_plugins.begin(), m_plugins.end(),
                                                [&filename](const PluginEntry &e)
                                                { return e.filename == filename; });
@@ -114,7 +114,7 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
         const std::string filename = path.filename().string();
         const std::string stem = path.stem().string();
 
-        // Check whether the user has disabled this plugin (applies to all categories).
+
         if (!config.isPluginEnabled(stem))
         {
             VX_ENGINE_INFO_STREAM("[PluginManager] Skipping disabled plugin: " << filename << '\n');
@@ -140,7 +140,7 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
             continue;
         }
 
-        // Merge any scripts the plugin exports into the main ScriptsRegister.
+
         using GetScriptsRegisterFn = ScriptsRegister &(*)();
         auto getRegisterFn = PluginLoader::getFunction<GetScriptsRegisterFn>("getScriptsRegister", handle);
         if (getRegisterFn)
@@ -154,7 +154,7 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
                                                             << " script(s) from plugin: " << filename << '\n');
         }
 
-        // Lifecycle hooks (optional).
+
         using CreateFn = IPlugin *(*)();
         using DestroyFn = void (*)(IPlugin *);
 
@@ -175,7 +175,7 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
 
         if (plugin)
         {
-            // Check dependencies before calling onLoad().
+
             const auto deps = plugin->getDependencies();
             std::vector<std::string> missing;
             for (const auto &depName : deps)
@@ -224,13 +224,13 @@ void PluginManager::loadPluginsFromDirectory(const std::filesystem::path &plugin
 
 void PluginManager::unloadAll()
 {
-    // Clear registered component lambdas before any dlclose() so their destructors
-    // run while the plugin .so files are still mapped. Without this, the static
-    // ComponentRegistry destructor fires after dlclose() and calls into unmapped
-    // plugin code, causing a segfault.
+
+
+
+
     ComponentRegistry::instance().clear();
 
-    // Unload in reverse load order.
+
     for (auto it = m_plugins.rbegin(); it != m_plugins.rend(); ++it)
     {
         PluginEntry &entry = *it;

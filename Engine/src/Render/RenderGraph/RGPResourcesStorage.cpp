@@ -6,7 +6,7 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
 void RGPResourcesStorage::addTexture(const RGPResourceHandler &handler, const std::shared_ptr<RenderTarget> &texture)
 {
-    // m_textures.emplace(handler, std::move(texture));
+
     m_textures[handler] = std::move(texture);
 }
 
@@ -14,7 +14,7 @@ void RGPResourcesStorage::addSwapChainTexture(const RGPResourceHandler &handler,
 {
     if (index == -1)
     {
-        // m_swapChainTextures.emplace(handler, std::move(texture));
+
         m_swapChainTextures[handler].push_back(std::move(texture));
         return;
     }
@@ -51,7 +51,7 @@ RenderTarget *RGPResourcesStorage::getSwapChainTexture(const RGPResourceHandler 
     if (imageIndex < 0 || static_cast<size_t>(imageIndex) >= vec.size())
         return nullptr;
 
-    // return &vec[imageIndex];
+
     return vec[imageIndex].get();
 }
 
@@ -59,7 +59,7 @@ RenderTarget *RGPResourcesStorage::getTexture(const RGPResourceHandler &handler)
 {
     auto it = m_textures.find(handler);
 
-    // return it == m_textures.end() ? nullptr : &(it->second);
+
     return it == m_textures.end() ? nullptr : it->second.get();
 }
 
@@ -75,7 +75,7 @@ const RenderTarget *RGPResourcesStorage::getSwapChainTexture(const RGPResourceHa
     if (imageIndex < 0 || static_cast<size_t>(imageIndex) >= vec.size())
         return nullptr;
 
-    // return &vec[imageIndex];
+
     return vec[imageIndex].get();
 }
 
@@ -83,7 +83,7 @@ const RenderTarget *RGPResourcesStorage::getTexture(const RGPResourceHandler &ha
 {
     auto it = m_textures.find(handler);
 
-    // return it == m_textures.end() ? nullptr : &(it->second);
+
     return it == m_textures.end() ? nullptr : it->second.get();
 }
 

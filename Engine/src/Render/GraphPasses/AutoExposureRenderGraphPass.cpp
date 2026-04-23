@@ -14,14 +14,14 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 namespace
 {
 constexpr uint32_t kHistogramBins  = 256u;
-constexpr uint32_t kHistogramBytes = kHistogramBins * sizeof(uint32_t); // 1 KiB
+constexpr uint32_t kHistogramBytes = kHistogramBins * sizeof(uint32_t);
 
-// Luminance range (log2 EV) over which bins are distributed.
-// EV -8 → very dark scene, EV +8 → very bright scene.
+
+
 constexpr float kMinLogLum    = -8.0f;
 constexpr float kMaxLogLum    =  8.0f;
 constexpr float kLogLumRange  = kMaxLogLum - kMinLogLum;
-} // namespace
+}
 
 AutoExposureRenderGraphPass::AutoExposureRenderGraphPass(std::vector<RGPResourceHandler> &hdrHandlers)
     : m_hdrHandlers(hdrHandlers)
@@ -49,14 +49,14 @@ void AutoExposureRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builde
         return b;
     };
 
-    // Histogram pass: binding 0 = HDR sampler, binding 1 = histogram SSBO (write)
+
     m_histDescriptorSetLayout = core::DescriptorSetLayout::createShared(
         device,
         std::vector<VkDescriptorSetLayoutBinding>{
             makeBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
             makeBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)});
 
-    // Average pass: binding 0 = histogram SSBO (read), binding 1 = exposure SSBO (r/w)
+
     m_avgDescriptorSetLayout = core::DescriptorSetLayout::createShared(
         device,
         std::vector<VkDescriptorSetLayoutBinding>{
@@ -76,7 +76,7 @@ void AutoExposureRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builde
     m_sampler = core::Sampler::createShared(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                                             VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 
-    // Pre-allocate persistent GPU buffers.
+
     m_histogramBuffers.resize(imageCount);
     m_exposureBuffers.resize(imageCount);
     m_exposureMapped.resize(imageCount, nullptr);
@@ -93,11 +93,11 @@ void AutoExposureRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builde
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             core::memory::MemoryUsage::GPU_TO_CPU);
 
-        // Initialise exposure to 1.0 so the first frame doesn't flash.
+
         m_exposureBuffers[i]->map(m_exposureMapped[i]);
         float init = 1.0f;
         std::memcpy(m_exposureMapped[i], &init, sizeof(float));
-        // Keep persistently mapped — GPU_TO_CPU memory allows this.
+
     }
 
     createPipelines();
@@ -160,7 +160,7 @@ void AutoExposureRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
 
     const auto &settings = RenderQualitySettings::getInstance();
 
-    // ── Pass 1: build luminance histogram ──────────────────────────────────
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_histPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                             m_histPipelineLayout, 0, 1, &m_histDescriptorSets[idx], 0, nullptr);
@@ -176,7 +176,7 @@ void AutoExposureRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
     const uint32_t gy = (m_extent.height + 15u) / 16u;
     vkCmdDispatch(cmd, gx, gy, 1u);
 
-    // Barrier: histogram write → average read.
+
     VkBufferMemoryBarrier2 histBarrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
     histBarrier.srcStageMask        = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     histBarrier.srcAccessMask       = VK_ACCESS_2_SHADER_WRITE_BIT;
@@ -193,7 +193,7 @@ void AutoExposureRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
     dep.pBufferMemoryBarriers    = &histBarrier;
     vkCmdPipelineBarrier2(cmd, &dep);
 
-    // ── Pass 2: reduce histogram → adapted exposure ────────────────────────
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_avgPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                             m_avgPipelineLayout, 0, 1, &m_avgDescriptorSets[idx], 0, nullptr);
@@ -209,10 +209,10 @@ void AutoExposureRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
     apc.pad         = 0u;
     vkCmdPushConstants(cmd, m_avgPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(apc), &apc);
 
-    // Single workgroup of 256 threads covers all 256 bins.
+
     vkCmdDispatch(cmd, 1u, 1u, 1u);
 
-    // Barrier: exposure write (GPU) → host read (CPU next frame).
+
     VkBufferMemoryBarrier2 expBarrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
     expBarrier.srcStageMask        = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     expBarrier.srcAccessMask       = VK_ACCESS_2_SHADER_WRITE_BIT;
@@ -263,7 +263,7 @@ void AutoExposureRenderGraphPass::cleanup()
 {
     destroyPipelines();
 
-    // Unmap and release exposure buffers.
+
     for (uint32_t i = 0; i < static_cast<uint32_t>(m_exposureBuffers.size()); ++i)
     {
         if (m_exposureMapped[i] && m_exposureBuffers[i])

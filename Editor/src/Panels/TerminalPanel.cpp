@@ -51,7 +51,7 @@ namespace
         return normalized;
     }
 
-} // namespace
+}
 
 void TerminalPanel::addFunction(const std::string &command, const std::function<void()> &function)
 {

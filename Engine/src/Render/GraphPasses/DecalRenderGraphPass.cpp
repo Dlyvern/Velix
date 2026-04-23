@@ -21,13 +21,13 @@ namespace
 {
     struct DecalPC
     {
-        glm::mat4 worldViewProj; // 64 bytes
-        glm::mat4 worldToLocal;  // 64 bytes
-        glm::vec4 params;        // x=opacity, y=invW, z=invH, w=blendMode – 16 bytes
+        glm::mat4 worldViewProj;
+        glm::mat4 worldToLocal;
+        glm::vec4 params;
     };
     static_assert(sizeof(DecalPC) == 144, "DecalPC must be 144 bytes");
 
-    // Unit cube: [-0.5, 0.5]^3, position-only vertices (vec3)
+
     static const float s_cubeVerts[24] = {
         -0.5f,
         -0.5f,
@@ -55,44 +55,44 @@ namespace
         0.5f,
     };
 
-    // 12 triangles (36 indices), CCW winding when viewed from outside
+
     static const uint32_t s_cubeIndices[36] = {
         0,
         2,
         1,
         0,
         3,
-        2, // -Z
+        2,
         4,
         5,
         6,
         4,
         6,
-        7, // +Z
+        7,
         0,
         4,
         7,
         0,
         7,
-        3, // -X
+        3,
         1,
         2,
         6,
         1,
         6,
-        5, // +X
+        5,
         0,
         1,
         5,
         0,
         5,
-        4, // -Y
+        4,
         3,
         7,
         6,
         3,
         6,
-        2, // +Y
+        2,
     };
 }
 
@@ -118,10 +118,10 @@ void DecalRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 
     const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
 
-    // Read depth for world-position reconstruction
+
     builder.read(m_depthHandler, RGPTextureUsage::SAMPLED);
 
-    // Write to GBuffer channels (LOAD_OP_LOAD to preserve existing content)
+
     for (uint32_t i = 0; i < imageCount; ++i)
     {
         builder.write(m_albedoHandlers[i], RGPTextureUsage::COLOR_ATTACHMENT);
@@ -132,7 +132,7 @@ void DecalRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
-    // Set 1 layout: just the depth sampler
+
     auto makeBinding = [](uint32_t binding, VkDescriptorType type) -> VkDescriptorSetLayoutBinding
     {
         VkDescriptorSetLayoutBinding b{};
@@ -184,7 +184,7 @@ void DecalRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
     else if (m_depthTarget)
         m_extent = m_depthTarget->getExtent();
 
-    // Build per-frame depth descriptor sets
+
     m_depthDescriptorSets.resize(imageCount, VK_NULL_HANDLE);
     if (!m_descriptorSetsInitialized)
     {
@@ -210,7 +210,7 @@ void DecalRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         }
     }
 
-    // Unit cube vertex + index buffers (created once)
+
     if (!m_cubeVB)
     {
         m_cubeVB = core::Buffer::createShared(
@@ -238,7 +238,7 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
 
     VkCommandBuffer cmd = commandBuffer->vk();
 
-    // Collect and sort decal entities
+
     struct DecalEntry
     {
         DecalComponent *component;
@@ -269,7 +269,7 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
                      [](const DecalEntry &a, const DecalEntry &b)
                      { return a.sortOrder < b.sortOrder; });
 
-    // RENDER_GRAPH_DRAW_PROFILE(cmd, "Decals");
+
 
     const uint32_t frame = renderContext.currentFrame;
     const uint32_t imgIdx = renderContext.currentImageIndex;
@@ -277,15 +277,15 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     const float invW = 1.0f / static_cast<float>(std::max(m_extent.width, 1u));
     const float invH = 1.0f / static_cast<float>(std::max(m_extent.height, 1u));
 
-    // Bind camera descriptor set (set 0)
+
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout->vk(),
                             0, 1, &data.cameraDescriptorSet, 0, nullptr);
 
-    // Bind depth descriptor set (set 1) — same for all decals
+
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout->vk(),
                             1, 1, &m_depthDescriptorSets[imgIdx], 0, nullptr);
 
-    // Cube VB/IB
+
     VkDeviceSize zero = 0;
     VkBuffer vb = m_cubeVB->vk();
     vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &zero);
@@ -295,7 +295,7 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     {
         auto *decal = entry.component;
 
-        // Pipeline
+
         GraphicsPipelineKey key{};
         key.shader = ShaderId::Decal;
         key.blend = BlendMode::AlphaBlend;
@@ -304,10 +304,10 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
         key.depthWrite = false;
         key.pipelineLayout = m_pipelineLayout->vk();
         key.colorFormats = {
-            VK_FORMAT_R16G16B16A16_SFLOAT, // normal
-            VK_FORMAT_R8G8B8A8_UNORM,      // albedo
-            VK_FORMAT_R8G8B8A8_UNORM,      // material
-            VK_FORMAT_R16G16B16A16_SFLOAT, // emissive
+            VK_FORMAT_R16G16B16A16_SFLOAT,
+            VK_FORMAT_R8G8B8A8_UNORM,
+            VK_FORMAT_R8G8B8A8_UNORM,
+            VK_FORMAT_R16G16B16A16_SFLOAT,
         };
         key.depthFormat = VK_FORMAT_UNDEFINED;
 
@@ -316,18 +316,18 @@ void DecalRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
             continue;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->vk());
 
-        // Set 2: material textures
+
         VkDescriptorSet matSet = decal->material->getDescriptorSet(frame);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout->vk(),
                                 2, 1, &matSet, 0, nullptr);
 
-        // Viewport/scissor
+
         VkViewport vp{0, 0, (float)m_extent.width, (float)m_extent.height, 0.0f, 1.0f};
         VkRect2D sc{{0, 0}, m_extent};
         vkCmdSetViewport(cmd, 0, 1, &vp);
         vkCmdSetScissor(cmd, 0, 1, &sc);
 
-        // Push constants
+
         DecalPC pc{};
         pc.worldViewProj = data.projection * data.view * entry.worldMatrix;
         pc.worldToLocal = glm::affineInverse(entry.worldMatrix);
@@ -364,7 +364,7 @@ std::vector<IRenderGraphPass::RenderPassExecution> DecalRenderGraphPass::getRend
     exec.renderArea.extent = m_extent;
     exec.useDepth = false;
 
-    // GBuffer attachment order: normal(0), albedo(1), material(2), emissive(3)
+
     exec.colorsRenderingItems = {
         makeLoadAttachment(m_normalTargets[imgIdx]->vkImageView()),
         makeLoadAttachment(m_albedoTargets[imgIdx]->vkImageView()),
@@ -372,20 +372,20 @@ std::vector<IRenderGraphPass::RenderPassExecution> DecalRenderGraphPass::getRend
         makeLoadAttachment(m_emissiveTargets[imgIdx]->vkImageView()),
     };
     exec.colorFormats = {
-        VK_FORMAT_R16G16B16A16_SFLOAT, // normal
-        VK_FORMAT_R8G8B8A8_UNORM,      // albedo
-        VK_FORMAT_R8G8B8A8_UNORM,      // material
-        VK_FORMAT_R16G16B16A16_SFLOAT, // emissive
+        VK_FORMAT_R16G16B16A16_SFLOAT,
+        VK_FORMAT_R8G8B8A8_UNORM,
+        VK_FORMAT_R8G8B8A8_UNORM,
+        VK_FORMAT_R16G16B16A16_SFLOAT,
     };
 
     exec.targets[m_normalHandlers[imgIdx]] = m_normalTargets[imgIdx];
     exec.targets[m_albedoHandlers[imgIdx]] = m_albedoTargets[imgIdx];
     exec.targets[m_materialHandlers[imgIdx]] = m_materialTargets[imgIdx];
     exec.targets[m_emissiveHandlers[imgIdx]] = m_emissiveTargets[imgIdx];
-    // Depth is sampled by the decal shader but never attached for this pass.
-    // Listing it as an execution target makes the render graph transition it
-    // back to DEPTH_STENCIL_ATTACHMENT_OPTIMAL, which conflicts with the
-    // descriptor set expecting DEPTH_STENCIL_READ_ONLY_OPTIMAL.
+
+
+
+
 
     return {exec};
 }

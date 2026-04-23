@@ -58,9 +58,9 @@ private:
     {
         glm::mat4 viewProj;
         glm::vec3 right;
-        float softParticleRange;    // 0 = hard cutoff; > 0 enables soft blending
+        float softParticleRange;
         glm::vec3 up;
-        float softEnabled;          // 0.0 = disabled, 1.0 = enabled
+        float softEnabled;
     };
     static_assert(sizeof(ParticlePC) == 96);
 
@@ -116,4 +116,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_PARTICLE_RENDER_GRAPH_PASS_HPP
+#endif

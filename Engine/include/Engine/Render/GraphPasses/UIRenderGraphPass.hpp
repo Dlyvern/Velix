@@ -18,12 +18,12 @@
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 ELIX_CUSTOM_NAMESPACE_BEGIN(renderGraph)
 
-/// Renders all in-scene UI game objects (Billboard, UIText, UIButton).
-/// Must be inserted in the render graph AFTER the scene colour output is ready and
-/// BEFORE the ImGui (or Present) pass.
-///
-/// The render graph orchestrator is responsible for collecting ui::UIRenderData
-/// from the scene each frame and calling setRenderData() before record() runs.
+
+
+
+
+
+
 class UIRenderGraphPass : public IRenderGraphPass
 {
 public:
@@ -43,7 +43,7 @@ public:
 
     void setExtent(VkExtent2D extent);
 
-    /// Called by the render graph orchestrator each frame before record().
+
     void setRenderData(const ui::UIRenderData &data);
 
     std::vector<RGPResourceHandler> &getHandlers() { return m_outputHandlers; }
@@ -52,29 +52,29 @@ public:
 private:
     struct BillboardPC
     {
-        glm::mat4 viewProj;   // 64
-        glm::vec3 right;      // 12
-        float     size;       // 4  -> 80
-        glm::vec3 up;         // 12
-        float     pad0;       // 4  -> 96
-        glm::vec3 worldPos;   // 12
-        int       pad1;       // 4  -> 112
-        glm::vec4 color;      // 16 -> 128
+        glm::mat4 viewProj;
+        glm::vec3 right;
+        float     size;
+        glm::vec3 up;
+        float     pad0;
+        glm::vec3 worldPos;
+        int       pad1;
+        glm::vec4 color;
     };
 
     struct UITextPC
     {
-        glm::vec4 color;      // 16
+        glm::vec4 color;
     };
 
     struct UIQuadPC
     {
-        glm::vec4 color;        // 16
-        glm::vec4 borderColor;  // 32
-        float     borderWidth;  // 36
-        float     cornerRadius; // 40
-        float     pad0;         // 44
-        float     pad1;         // 48
+        glm::vec4 color;
+        glm::vec4 borderColor;
+        float     borderWidth;
+        float     cornerRadius;
+        float     pad0;
+        float     pad1;
     };
 
     void recordPassthrough(core::CommandBuffer::SharedPtr commandBuffer, uint32_t frameIndex);
@@ -132,7 +132,7 @@ private:
     core::PipelineLayout::SharedPtr m_textPipelineLayout{nullptr};
     core::PipelineLayout::SharedPtr m_quadPipelineLayout{nullptr};
 
-    // Per-frame descriptor sets that bind the input (scene colour) texture for passthrough
+
     std::vector<VkDescriptorSet> m_passthroughDescriptorSets;
     bool                         m_passthroughSetsBuilt{false};
 
@@ -152,4 +152,4 @@ private:
 ELIX_CUSTOM_NAMESPACE_END
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_UI_RENDER_GRAPH_PASS_HPP
+#endif

@@ -26,8 +26,8 @@ namespace
     {
         glm::vec2 texelSize;
         float enabled;
-        float edgeThreshold;  // default: 0.1
-        float maxSearchSteps; // default: 16
+        float edgeThreshold;
+        float maxSearchSteps;
         float _pad0;
         float _pad1;
         float _pad2;
@@ -119,7 +119,7 @@ void SMAAPassRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 }
 
 void SMAAPassRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
-                                     const RenderGraphPassPerFrameData & /*data*/,
+                                     const RenderGraphPassPerFrameData & ,
                                      const RenderGraphPassContext &renderContext)
 {
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);

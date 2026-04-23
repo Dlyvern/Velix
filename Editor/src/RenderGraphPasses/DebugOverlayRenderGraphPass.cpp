@@ -22,11 +22,11 @@ void DebugOverlayRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder
 {
     m_format = core::VulkanContext::getContext()->getSwapchain()->getImageFormat();
 
-    // Read input color as sampled (used for the blit)
+
     for (const auto &h : m_inputHandlers)
         builder.read(h, engine::renderGraph::RGPTextureUsage::SAMPLED);
 
-    // Create output textures (same format, one per swapchain image)
+
     engine::renderGraph::RGPTextureDescription desc{m_format, engine::renderGraph::RGPTextureUsage::COLOR_ATTACHMENT};
     desc.setInitialLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     desc.setFinalLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -45,7 +45,7 @@ void DebugOverlayRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
-    // ── Blit pipeline layout ─────────────────────────────────────────────────
+
     VkDescriptorSetLayoutBinding blitBinding{};
     blitBinding.binding         = 0;
     blitBinding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -64,8 +64,8 @@ void DebugOverlayRenderGraphPass::setup(engine::renderGraph::RGPResourcesBuilder
                                             VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                                             VK_BORDER_COLOR_INT_OPAQUE_BLACK);
 
-    // ── Overlay pipeline layout ──────────────────────────────────────────────
-    // set 0 = camera UBO (shared cameraDescriptorSetLayout)
+
+
     m_overlayPipelineLayout = core::PipelineLayout::createShared(
         device,
         std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{
@@ -104,7 +104,7 @@ void DebugOverlayRenderGraphPass::compile(engine::renderGraph::RGPResourcesStora
     }
     m_descriptorSetsBuilt = true;
 
-    // Per-frame host-visible vertex buffers for debug geometry
+
     if (m_lineVertexBuffers.empty())
     {
         m_lineVertexBuffers.resize(imageCount);
@@ -141,7 +141,7 @@ void DebugOverlayRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
     vkCmdSetViewport(commandBuffer->vk(), 0, 1, &m_viewport);
     vkCmdSetScissor(commandBuffer->vk(), 0, 1, &m_scissor);
 
-    // ── 1. Blit: copy input to output with a fullscreen triangle ─────────────
+
     engine::GraphicsPipelineKey blitKey{};
     blitKey.shader        = engine::ShaderId::DebugBlit;
     blitKey.cull          = engine::CullMode::None;
@@ -160,7 +160,7 @@ void DebugOverlayRenderGraphPass::record(core::CommandBuffer::SharedPtr commandB
                             &m_blitDescriptorSets[renderContext.currentImageIndex], 0, nullptr);
     engine::renderGraph::profiling::cmdDraw(commandBuffer, 3, 1, 0, 0);
 
-    // ── 2. Debug triangles and lines ─────────────────────────────────────────
+
     static thread_local std::vector<engine::DebugDraw::Vertex> lineVertices;
     static thread_local std::vector<engine::DebugDraw::Vertex> triangleVertices;
     lineVertices.clear();

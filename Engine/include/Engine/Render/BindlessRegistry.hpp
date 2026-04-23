@@ -20,18 +20,18 @@ public:
     void initialize(VkDevice device, uint32_t framesInFlight);
     void cleanup(VkDevice device);
 
-    /// Returns the bindless slot for a texture, registering it on first call.
-    /// Falls back to the white-texture slot if tex is null.
+
+
     uint32_t getOrRegisterTexture(Texture *tex);
 
-    /// Returns the material index for a material, registering it on first call.
+
     uint32_t getOrRegisterMaterial(Material *mat);
 
-    /// Flushes accumulated material params to the GPU SSBO.
+
     void uploadMaterialParams(uint32_t frameIndex, uint32_t usedMaterialSlots);
 
-    /// Synchronizes newly-registered textures into the descriptor set for a
-    /// frame slot that has already been fenced by the caller.
+
+
     void syncFrame(uint32_t frameIndex);
 
     VkDescriptorSet getBindlessSet(uint32_t frameIndex) const
@@ -70,4 +70,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_BINDLESS_REGISTRY_HPP
+#endif

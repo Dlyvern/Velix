@@ -1,17 +1,17 @@
 #version 450
 
-// Vertex2D: vec3 position (xy in NDC), vec2 uv (unused for solid quads)
+
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec2 inTexCoords;
 
 layout(push_constant) uniform PC
 {
-    vec4 color;         // 16 bytes
-    vec4 borderColor;   // 16 bytes
-    float borderWidth;  // 4 bytes
-    float cornerRadius; // 4 bytes (unused for now)
+    vec4 color;
+    vec4 borderColor;
+    float borderWidth;
+    float cornerRadius;
     float pad0;
-    float pad1;         // -> 48 bytes total
+    float pad1;
 } pc;
 
 layout(location = 0) out flat vec4  vColor;

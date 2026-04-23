@@ -3,7 +3,7 @@
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 const int MAX_LIGHT_COUNT = 16;
-const int KERNEL_RADIUS    = 3;   // 7×7 — sufficient quality, no spill with single-pass design
+const int KERNEL_RADIUS    = 3;
 
 layout(set = 0, binding = 0) uniform sampler2DArray uShadowInput;
 layout(set = 0, binding = 1) uniform sampler2D      uGBufferNormal;
@@ -13,8 +13,8 @@ layout(set = 0, binding = 3, r16f) uniform writeonly image2DArray uShadowOutput;
 layout(push_constant) uniform RTShadowDenoisePC
 {
     mat4 invProjection;
-    vec4 params0; // x=texelSize.x, y=texelSize.y, z=enabled, w=normalSigma
-    vec4 params1; // x=depthSigma, y=unused, z=activeRTShadowLayerCount
+    vec4 params0;
+    vec4 params1;
 } pc;
 
 vec3 decodeNormal(vec3 enc)
@@ -42,7 +42,7 @@ void main()
     if (layerCount <= 0)
         return;
 
-    // Pass-through when denoising is disabled.
+
     if (pc.params0.z < 0.5)
     {
         for (int layer = 0; layer < layerCount; ++layer)
@@ -66,7 +66,7 @@ void main()
     vec3 centerNormal  = decodeNormal(texture(uGBufferNormal, centerUV).rgb);
     vec3 centerViewPos = reconstructViewPos(centerUV, centerDepth);
 
-    // Single-pass bilateral filter.
+
     for (int layer = 0; layer < layerCount; ++layer)
     {
         float accum     = 0.0;

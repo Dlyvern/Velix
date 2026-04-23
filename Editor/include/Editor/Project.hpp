@@ -215,4 +215,4 @@ inline std::filesystem::path resolveProjectRootPath(const Project &project)
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // PROJECT_HPP
+#endif

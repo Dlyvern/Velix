@@ -72,7 +72,7 @@ void Sprite2DRenderGraphPass::setup(RGPResourcesBuilder &builder)
 
     auto device = core::VulkanContext::getContext()->getDevice();
 
-    // Passthrough: blit input into output
+
     VkDescriptorSetLayoutBinding passthroughBinding{};
     passthroughBinding.binding         = 0;
     passthroughBinding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -87,7 +87,7 @@ void Sprite2DRenderGraphPass::setup(RGPResourcesBuilder &builder)
         std::vector<std::reference_wrapper<const core::DescriptorSetLayout>>{*m_passthroughDescriptorSetLayout},
         std::vector<VkPushConstantRange>{});
 
-    // SSBO set (set 0)
+
     VkDescriptorSetLayoutBinding ssboBinding{};
     ssboBinding.binding         = 0;
     ssboBinding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -97,7 +97,7 @@ void Sprite2DRenderGraphPass::setup(RGPResourcesBuilder &builder)
     m_ssboDescriptorSetLayout = core::DescriptorSetLayout::createShared(
         device, std::vector<VkDescriptorSetLayoutBinding>{ssboBinding});
 
-    // Texture array (set 1)
+
     VkDescriptorSetLayoutBinding texArrayBinding{};
     texArrayBinding.binding         = 0;
     texArrayBinding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -188,7 +188,7 @@ void Sprite2DRenderGraphPass::compile(RGPResourcesStorage &storage)
             }
         }
 
-        // Pre-fill texture array with the default white texture
+
         {
             std::array<VkDescriptorImageInfo, MAX_SPRITE_TEXTURES> imageInfos{};
             for (uint32_t slot = 0; slot < MAX_SPRITE_TEXTURES; ++slot)
@@ -242,10 +242,10 @@ void Sprite2DRenderGraphPass::prepareRecord(const RenderGraphPassPerFrameData &d
     if (gpuSprites.empty())
         return;
 
-    // Sort by sortLayer (ascending) — we don't have per-GPU-data sortLayer here;
-    // sorting is done on CPU before upload (collectSpriteData already fills in order)
 
-    // Update texture descriptor array
+
+
+
     auto device = core::VulkanContext::getContext()->getDevice();
 
     std::array<VkDescriptorImageInfo, MAX_SPRITE_TEXTURES> imageInfos{};
@@ -357,11 +357,11 @@ void Sprite2DRenderGraphPass::collectSpriteData(std::vector<SpriteGPUData> &out,
         return;
 
     outTextureSlots.clear();
-    outTextureSlots.push_back(""); // slot 0 = default white
+    outTextureSlots.push_back("");
 
     std::unordered_map<std::string, uint32_t> textureToSlot;
 
-    // Collect sprites into a temporary buffer so we can sort by sortLayer
+
     struct SortEntry
     {
         SpriteGPUData gpu;
@@ -410,7 +410,7 @@ void Sprite2DRenderGraphPass::collectSpriteData(std::vector<SpriteGPUData> &out,
         entries.push_back({gpu, sprite->sortLayer});
     }
 
-    // Sort by sortLayer ascending
+
     std::stable_sort(entries.begin(), entries.end(), [](const SortEntry &a, const SortEntry &b)
     {
         return a.sortLayer < b.sortLayer;

@@ -251,8 +251,8 @@ void ShadowRenderGraphPass::rebuildLayerViews()
 void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer, const RenderGraphPassPerFrameData &data,
                                    const RenderGraphPassContext &renderContext)
 {
-    // When RT shadows are active, skip all draws — the render graph's vkCmdBeginRendering
-    // with loadOp=CLEAR already clears shadow maps to depth=1.0 (no shadow).
+
+
     if (m_skipRendering)
         return;
 
@@ -307,7 +307,7 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     const VkDescriptorSet perObjectSet = data.shadowPerObjectDescriptorSet ? data.shadowPerObjectDescriptorSet : data.perObjectDescriptorSet;
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &perObjectSet, 0, nullptr);
 
-    // Resolve both pipeline variants once — avoids re-hashing the key per draw.
+
     auto makeKey = [&](bool skinned) -> GraphicsPipelineKey
     {
         GraphicsPipelineKey k{};
@@ -329,8 +329,8 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
     VkBuffer   boundVertexBuffer = VK_NULL_HANDLE;
     VkBuffer   boundIndexBuffer  = VK_NULL_HANDLE;
 
-    // The light-space matrix is constant for the whole cascade — push it once.
-    // Per draw we only need to update baseInstance (offset 64, 4 bytes).
+
+
     {
         LightSpaceMatrixPushConstant initial{.lightSpaceMatrix = activeLightSpaceMatrix, .baseInstance = 0};
         vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
@@ -364,7 +364,7 @@ void ShadowRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
             boundIndexBuffer = ib;
         }
 
-        // Only update the per-draw baseInstance (offset 64, 4 bytes).
+
         vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
                            offsetof(LightSpaceMatrixPushConstant, baseInstance), sizeof(uint32_t),
                            &batch.firstInstance);

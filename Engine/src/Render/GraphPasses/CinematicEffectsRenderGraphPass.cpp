@@ -110,7 +110,7 @@ void CinematicEffectsRenderGraphPass::compile(renderGraph::RGPResourcesStorage &
 }
 
 void CinematicEffectsRenderGraphPass::record(core::CommandBuffer::SharedPtr commandBuffer,
-                                             const RenderGraphPassPerFrameData & /*data*/,
+                                             const RenderGraphPassPerFrameData & ,
                                              const RenderGraphPassContext &renderContext)
 {
     m_time += 1.0f / 60.0f;

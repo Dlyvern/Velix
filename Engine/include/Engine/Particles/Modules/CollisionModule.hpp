@@ -10,11 +10,11 @@
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
-/// Kills particles on physics collision and records hit positions for splash spawning.
-/// Usage:
-///   1. Add CollisionModule to a rain/snow emitter.
-///   2. Set splashEmitterName to the name of the splash emitter in the same ParticleSystem.
-///   3. The ParticleSystem::update() loop automatically feeds hit positions to the splash emitter.
+
+
+
+
+
 class CollisionModule : public IParticleModule
 {
 public:
@@ -40,4 +40,4 @@ private:
 
 ELIX_NESTED_NAMESPACE_END
 
-#endif // ELIX_COLLISION_MODULE_HPP
+#endif

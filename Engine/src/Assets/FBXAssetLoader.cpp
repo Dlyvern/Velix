@@ -136,8 +136,8 @@ namespace
         if (texturePath.is_absolute() && std::filesystem::exists(texturePath, errorCode) && !errorCode)
             return texturePath.lexically_normal().string();
 
-        // FBX can contain authoring-machine absolute paths (Windows or Linux).
-        // Try local alternatives before keeping original unresolved path.
+
+
         if (texturePath.is_absolute() || looksLikeWindowsAbsolutePath(portablePath))
         {
             const std::filesystem::path fileName = texturePath.filename();
@@ -165,7 +165,7 @@ namespace
 
         return texturePath.lexically_normal().string();
     }
-} // namespace
+}
 
 ELIX_NESTED_NAMESPACE_BEGIN(engine)
 
@@ -258,7 +258,7 @@ namespace
         std::vector<FbxNode *> chain;
         for (auto *current = boneNode; current; current = current->GetParent())
         {
-            // Mesh nodes are never proper skeleton bones — skip them in the chain.
+
             if (!isMeshNode(current))
                 chain.push_back(current);
         }
@@ -308,13 +308,13 @@ namespace
             if (isIdentityMatrix(targetBone->localBindTransform) && !isIdentityMatrix(sourceBone->localBindTransform))
                 targetBone->localBindTransform = sourceBone->localBindTransform;
 
-            // Always prefer skin-cluster globalBindTransform (from GetTransformLinkMatrix) over
-            // EvaluateGlobalTransform data so that globalBindTransform and offsetMatrix use the
-            // same bind-pose reference, avoiding vertex misplacement for rigidly-weighted meshes.
+
+
+
             if (!isIdentityMatrix(sourceBone->globalBindTransform))
                 targetBone->globalBindTransform = sourceBone->globalBindTransform;
 
-            // Preserve the first valid inverse bind matrix to keep a stable global palette.
+
             if (isIdentityMatrix(targetBone->offsetMatrix) && !isIdentityMatrix(sourceBone->offsetMatrix))
                 targetBone->offsetMatrix = sourceBone->offsetMatrix;
         }
@@ -338,7 +338,7 @@ namespace
             if (boneId >= 0)
                 return boneId;
 
-            // Not yet in skeleton — add it (it's a helper/null/skeleton node).
+
             addBoneChainToSkeleton(current, skeleton);
 
             boneId = skeleton.getBoneId(nodeName);
@@ -348,7 +348,7 @@ namespace
 
         return -1;
     }
-} // namespace
+}
 
 void buildSkeletonHierarchy(FbxNode *node, Skeleton &skeleton, int parentId = -1)
 {
@@ -406,7 +406,7 @@ std::shared_ptr<IAsset> FBXAssetLoader::loadInternal(const std::string &filePath
 
     if (m_fbxIOSettings)
     {
-        // Keep material/texture link metadata for path extraction, but skip optional payloads.
+
         m_fbxIOSettings->SetBoolProp(IMP_FBX_MATERIAL, true);
         m_fbxIOSettings->SetBoolProp(IMP_FBX_TEXTURE, true);
         m_fbxIOSettings->SetBoolProp(IMP_FBX_LINK, true);
@@ -416,8 +416,8 @@ std::shared_ptr<IAsset> FBXAssetLoader::loadInternal(const std::string &filePath
         m_fbxIOSettings->SetBoolProp(IMP_FBX_ANIMATION, true);
         m_fbxIOSettings->SetBoolProp(IMP_FBX_GLOBAL_SETTINGS, true);
         m_fbxIOSettings->SetBoolProp(IMP_FBX_EXTRACT_EMBEDDED_DATA, false);
-        // Some assets trigger Autodesk awTess assertions during importer-side triangulation/cleanup.
-        // Keep those paths off and rely on our own mesh sanitization + fan triangulation.
+
+
         m_fbxIOSettings->SetBoolProp(IMP_GEOMETRY "|" IOSN_TRIANGULATE, false);
         m_fbxIOSettings->SetBoolProp(IMP_REMOVEBADPOLYSFROMMESH, false);
     }
@@ -449,10 +449,10 @@ std::shared_ptr<IAsset> FBXAssetLoader::loadInternal(const std::string &filePath
 
     importer->Destroy();
 
-    // Avoid FBX SDK global triangulation here.
-    // Some Blender-exported ngons can trigger asserts in Autodesk's awTess
-    // path (inside Triangulate). We triangulate safely in processMesh() by
-    // fan-splitting polygons and filtering degenerate triangles.
+
+
+
+
 
     FbxNode *rootNode = scene->GetRootNode();
 
@@ -621,7 +621,7 @@ void FBXAssetLoader::processNodeAttribute(FbxNodeAttribute *nodeAttribute, FbxNo
     }
     default:
     {
-        // Ignore unsupported node attribute types (camera/light/etc.) while importing meshes.
+
         break;
     }
     }
@@ -651,11 +651,11 @@ void FBXAssetLoader::processFbxSkeleton(FbxNode *node, FbxSkeleton *skeleton, Pr
 
     switch (skeleton->GetSkeletonType())
     {
-    case FbxSkeleton::eRoot: // one per skeleton
+    case FbxSkeleton::eRoot:
         return;
-    case FbxSkeleton::eLimb: // bone
+    case FbxSkeleton::eLimb:
         return;
-    case FbxSkeleton::eLimbNode: // end bone
+    case FbxSkeleton::eLimbNode:
         return;
     }
 }
@@ -665,9 +665,9 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
     if (!node || !mesh)
         return;
 
-    // NOTE: avoid mesh->RemoveBadPolygons() because on some malformed ngons it enters
-    // the same awTess path that can assert-abort. We sanitize and skip bad triangles
-    // below during import.
+
+
+
 
     struct SubmeshBuildData
     {
@@ -1186,8 +1186,8 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
         submeshesByMaterial.emplace(0, SubmeshBuildData{});
     }
 
-    // We flatten FBX hierarchy into per-mesh transforms on one engine entity.
-    // Use transform relative to FBX scene root so parent node transforms are preserved.
+
+
     FbxAMatrix meshNodeTransform = node->EvaluateGlobalTransform();
     if (auto *scene = node->GetScene())
     {
@@ -1402,8 +1402,8 @@ void FBXAssetLoader::processMesh(FbxNode *node, FbxMesh *mesh, ProceedingMeshDat
             continue;
         }
 
-        // Generate lightmap UVs for static meshes using xatlas.
-        // Skinned meshes are excluded: lightmaps are baked onto static geometry only.
+
+
         if (!isSkinnedMesh)
             engine::LightmapUVGenerator::generate(cpuMesh);
 

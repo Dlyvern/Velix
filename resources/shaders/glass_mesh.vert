@@ -23,7 +23,8 @@ layout(set = 0, binding = 0) uniform CameraUBO
 struct InstanceData
 {
     mat4  model;
-    uvec4 objectInfo; // x = objectId
+    uvec4 objectInfo;
+    mat4  prevModel;
 };
 
 layout(std430, set = 2, binding = 1) readonly buffer InstanceDataSSBO
@@ -40,7 +41,7 @@ layout(location = 4) in vec3 inTangent;
 layout(location = 0) out vec2  vUV;
 layout(location = 1) out vec3  vNormalView;
 layout(location = 2) out vec3  vViewPos;
-layout(location = 3) out vec4  vClipPos;   // for screen-UV derivation in fragment
+layout(location = 3) out vec4  vClipPos;
 
 void main()
 {
