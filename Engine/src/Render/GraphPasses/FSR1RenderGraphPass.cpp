@@ -2,6 +2,7 @@
 
 #include "Core/VulkanContext.hpp"
 
+#include <algorithm>
 #include <glm/glm.hpp>
 
 #include "Engine/Builders/DescriptorSetBuilder.hpp"
