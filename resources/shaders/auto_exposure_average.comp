@@ -59,7 +59,7 @@ void main()
         float weightedSum   = 0.0;
         uint  countedPixels = 0u;
 
-        for (uint i = 0u; i < 256u; ++i)
+        for (uint i = 1u; i < 256u; ++i)
         {
             uint count   = s_hist[i];
             uint accPrev = accumulated;
@@ -80,8 +80,8 @@ void main()
         float targetLuminance = exp2(avgLogLum);
 
 
-        float targetExposure  = 0.18 / max(targetLuminance, 0.00001);
-        targetExposure        = clamp(targetExposure, 1.0 / 512.0, 64.0);
+        float targetExposure  = 0.10 / max(targetLuminance, 0.00001);
+        targetExposure        = clamp(targetExposure, 1.0 / 16.0, 8.0);
 
 
         float prevExposure = uExposure.exposure;

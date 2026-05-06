@@ -207,7 +207,7 @@ public:
     float giStrength{1.0f};
 
 
-    bool  enableAutoExposure{false};
+    bool  enableAutoExposure{true};
     float autoExposureSpeedUp{3.0f};
     float autoExposureSpeedDown{1.5f};
     float autoExposureLowPercent{0.10f};

@@ -82,6 +82,9 @@ private:                                                        \
 
 #define DECLARE_VK_SMART_PTRS(ClassName, HandleType)             \
 public:                                                          \
+    ClassName(const ClassName &) = delete;                       \
+    ClassName &operator=(const ClassName &) = delete;            \
+                                                                 \
     class SPtr : public std::shared_ptr<ClassName>               \
     {                                                            \
     public:                                                      \

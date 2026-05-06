@@ -25,6 +25,9 @@ public:
                             const std::vector<uint32_t> &hitGroups,
                             const std::vector<uint32_t> &callableGroups = {});
 
+    ShaderBindingTable(const ShaderBindingTable &) = delete;
+    ShaderBindingTable &operator=(const ShaderBindingTable &) = delete;
+
     ~ShaderBindingTable();
 
     const core::Buffer::SharedPtr &buffer() const

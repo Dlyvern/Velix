@@ -23,7 +23,8 @@ public:
     SSRRenderGraphPass(std::vector<RGPResourceHandler> &litColorHandlers,
                        std::vector<RGPResourceHandler> &normalHandlers,
                        RGPResourceHandler &depthHandler,
-                       std::vector<RGPResourceHandler> &materialHandlers);
+                       std::vector<RGPResourceHandler> &materialHandlers,
+                       std::vector<RGPResourceHandler> *aoHandlers = nullptr);
 
     void prepareRecord(const RenderGraphPassPerFrameData &data,
                        const RenderGraphPassContext &renderContext) override;
@@ -53,6 +54,9 @@ private:
     std::vector<RGPResourceHandler> &m_normalHandlers;
     RGPResourceHandler &m_depthHandler;
     std::vector<RGPResourceHandler> &m_materialHandlers;
+    std::vector<RGPResourceHandler> *m_aoHandlers{nullptr};
+
+    Texture::SharedPtr m_defaultWhiteTexture{nullptr};
 
     std::vector<RGPResourceHandler> m_outputHandlers;
     std::vector<const RenderTarget *> m_outputTargets;

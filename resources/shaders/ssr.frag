@@ -8,6 +8,7 @@ layout(set = 0, binding = 1) uniform sampler2D uDepth;
 layout(set = 0, binding = 2) uniform sampler2D uMaterial;
 layout(set = 0, binding = 3) uniform sampler2D uLitColor;
 layout(set = 0, binding = 4) uniform samplerCube uEnvironmentMap;
+layout(set = 0, binding = 5) uniform sampler2D   uAO;
 
 layout(push_constant) uniform PC
 {
@@ -197,7 +198,13 @@ void main()
 
     float roughnessAtten = 1.0 - (roughness / roughnessCutoff);
     roughnessAtten       = roughnessAtten * roughnessAtten;
-    float reflectionWeight = clamp(F * roughnessAtten * pc.params1.y, 0.0, 1.0);
+
+    float NdotV   = max(dot(N, V), 0.0);
+    float aoDyn   = clamp(texture(uAO, vUV).r, 0.0, 1.0);
+    float aoMat   = clamp(orm.r * aoDyn, 0.0, 1.0);
+    float specAO  = clamp(pow(NdotV + aoMat, exp2(-16.0 * roughness - 1.0)) - 1.0 + aoMat, 0.0, 1.0);
+
+    float reflectionWeight = clamp(F * roughnessAtten * pc.params1.y * specAO, 0.0, 1.0);
 
     vec3 reflectionColor = envColor;
     float hitConfidence = 0.0;

@@ -13,17 +13,17 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(rtx)
 
 class AccelerationStructure
 {
+    DECLARE_VK_HANDLE_METHODS(VkAccelerationStructureKHR)
+    ELIX_DECLARE_VK_LIFECYCLE()
 public:
     using SharedPtr = std::shared_ptr<AccelerationStructure>;
 
     static SharedPtr create(VkAccelerationStructureTypeKHR type, VkDeviceSize size);
 
-    ~AccelerationStructure();
+    AccelerationStructure(const AccelerationStructure &) = delete;
+    AccelerationStructure &operator=(const AccelerationStructure &) = delete;
 
-    VkAccelerationStructureKHR vk() const
-    {
-        return m_handle;
-    }
+    ~AccelerationStructure();
 
     VkDeviceAddress deviceAddress() const
     {
@@ -45,13 +45,6 @@ public:
         return m_buffer;
     }
 
-    bool isValid() const
-    {
-        return m_handle != VK_NULL_HANDLE;
-    }
-
-    void destroy();
-
 private:
     AccelerationStructure() = default;
 
@@ -59,7 +52,6 @@ private:
     void refreshDeviceAddress();
 
     VkDevice m_device{VK_NULL_HANDLE};
-    VkAccelerationStructureKHR m_handle{VK_NULL_HANDLE};
     core::Buffer::SharedPtr m_buffer{nullptr};
     VkDeviceAddress m_deviceAddress{0u};
     VkAccelerationStructureTypeKHR m_type{VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR};

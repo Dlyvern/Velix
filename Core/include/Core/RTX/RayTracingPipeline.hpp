@@ -14,6 +14,8 @@ ELIX_CUSTOM_NAMESPACE_BEGIN(rtx)
 
 class RayTracingPipeline
 {
+    DECLARE_VK_HANDLE_METHODS(VkPipeline)
+    ELIX_DECLARE_VK_LIFECYCLE()
 public:
     using SharedPtr = std::shared_ptr<RayTracingPipeline>;
 
@@ -22,24 +24,15 @@ public:
                             VkPipelineLayout layout,
                             uint32_t maxRayRecursionDepth);
 
+    RayTracingPipeline(const RayTracingPipeline &) = delete;
+    RayTracingPipeline &operator=(const RayTracingPipeline &) = delete;
+
     ~RayTracingPipeline();
-
-    VkPipeline vk() const
-    {
-        return m_handle;
-    }
-
-    bool isValid() const
-    {
-        return m_handle != VK_NULL_HANDLE;
-    }
 
     uint32_t groupCount() const
     {
         return m_groupCount;
     }
-
-    void destroy();
 
 private:
     RayTracingPipeline() = default;
@@ -50,7 +43,6 @@ private:
                         uint32_t maxRayRecursionDepth);
 
     VkDevice m_device{VK_NULL_HANDLE};
-    VkPipeline m_handle{VK_NULL_HANDLE};
     uint32_t m_groupCount{0u};
 };
 

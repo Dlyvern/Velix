@@ -14,12 +14,40 @@
 #include <string>
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 
 ELIX_NESTED_NAMESPACE_BEGIN(core)
+
+enum class VulkanFeature : uint32_t
+{
+    Swapchain,
+    DynamicRendering,
+    Synchronization2,
+    SamplerAnisotropy,
+    ImageCubeArray,
+    BufferDeviceAddress,
+    TimelineSemaphore,
+    DepthClamp,
+    AccelerationStructure,
+    RayTracingPipeline,
+    RayQuery,
+    DeferredHostOperations,
+    DescriptorIndexing,
+};
+
+enum class FeatureRequirement : uint8_t
+{
+    Disabled,
+    Optional,
+    Preferred,
+    Required,
+};
 
 class VulkanContext
 {
 public:
+    class Builder;
+
     VulkanContext(const VulkanContext &) = delete;
     VulkanContext &operator=(const VulkanContext &) = delete;
 
@@ -46,13 +74,20 @@ public:
     CommandPool::SharedPtr getGraphicsCommandPool() const;
 
     DescriptorPool::SharedPtr getPersistentDescriptorPool() const;
-    bool hasBufferDeviceAddressSupport() const;
-    bool hasAccelerationStructureSupport() const;
-    bool hasDepthClampSupport() const;
-    bool hasRayQuerySupport() const;
-    bool hasRayTracingPipelineSupport() const;
-    bool hasRayTracingDeviceFeaturesEnabled() const;
-    bool hasTimelineSemaphoreSupport() const;
+
+    bool hasFeature(VulkanFeature feature) const;
+
+    bool hasBufferDeviceAddressSupport() const { return hasFeature(VulkanFeature::BufferDeviceAddress); }
+    bool hasAccelerationStructureSupport() const { return hasFeature(VulkanFeature::AccelerationStructure); }
+    bool hasDepthClampSupport() const { return hasFeature(VulkanFeature::DepthClamp); }
+    bool hasRayQuerySupport() const { return hasFeature(VulkanFeature::RayQuery); }
+    bool hasRayTracingPipelineSupport() const { return hasFeature(VulkanFeature::RayTracingPipeline); }
+    bool hasRayTracingDeviceFeaturesEnabled() const
+    {
+        return hasFeature(VulkanFeature::RayTracingPipeline) || hasFeature(VulkanFeature::RayQuery);
+    }
+    bool hasTimelineSemaphoreSupport() const { return hasFeature(VulkanFeature::TimelineSemaphore); }
+
     VkSampleCountFlagBits getMaxUsableSampleCount() const;
     VkSampleCountFlagBits clampSupportedSampleCount(VkSampleCountFlagBits requested) const;
     VkSampleCountFlagBits getEffectiveMsaaSampleCount(VkSampleCountFlagBits requested) const;
@@ -64,6 +99,14 @@ public:
     explicit VulkanContext(platform::Window &window);
 
     ~VulkanContext();
+
+private:
+    struct BuilderKey
+    {
+    };
+
+public:
+    VulkanContext(BuilderKey, platform::Window &window);
 
 private:
     static inline std::shared_ptr<VulkanContext> s_vulkanContext{nullptr};
@@ -108,9 +151,8 @@ private:
 
     uint32_t m_graphicsQueueFamilyIndex{0};
 
-    const std::vector<const char *> m_validationLayers{"VK_LAYER_KHRONOS_validation"};
-    const std::vector<const char *> m_deviceExtensions{
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    std::vector<const char *> m_validationLayers{"VK_LAYER_KHRONOS_validation"};
+    std::vector<const char *> m_deviceExtensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
     VkInstance m_instance{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
@@ -163,6 +205,17 @@ private:
     bool m_timelineSemaphoreSupported{false};
     VkSampleCountFlagBits m_maxUsableSampleCount{VK_SAMPLE_COUNT_1_BIT};
     bool m_sampleZeroDepthResolveSupported{false};
+
+    std::unordered_map<VulkanFeature, FeatureRequirement> m_featureRequests;
+    std::unordered_map<VulkanFeature, bool> m_featureEnabled;
+    std::string m_applicationName{"VelixCore"};
+    std::string m_engineName{"VelixEngine"};
+    uint32_t m_applicationVersion{VK_MAKE_VERSION(0, 0, 1)};
+    uint32_t m_engineVersion{VK_MAKE_VERSION(0, 0, 1)};
+    uint32_t m_apiVersion{VK_API_VERSION_1_3};
+    std::vector<const char *> m_extraInstanceExtensions;
+    VkPhysicalDeviceType m_preferredDeviceType{VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU};
+    VkSampleCountFlagBits m_maxRequestedSampleCount{VK_SAMPLE_COUNT_64_BIT};
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rayTracingPipelineProperties{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
     VkPhysicalDeviceAccelerationStructurePropertiesKHR m_accelerationStructureProperties{

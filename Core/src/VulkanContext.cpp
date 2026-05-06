@@ -15,6 +15,8 @@
 #include <array>
 
 #include "Core/Memory/VMAAllocator.hpp"
+#include "Core/Vulkan/FeatureRegistry.hpp"
+#include "Core/Vulkan/VulkanContextBuilder.hpp"
 #include "Core/VulkanHelpers.hpp"
 
 #include "Core/Logger.hpp"
@@ -65,9 +67,11 @@ std::shared_ptr<VulkanContext> VulkanContext::create(platform::Window &window)
     if (s_vulkanContext)
         return s_vulkanContext;
 
-    s_vulkanContext = std::make_shared<VulkanContext>(window);
-
-    return s_vulkanContext;
+    return Builder(window)
+        .useEngineDefaults()
+        .request(VulkanFeature::RayTracingPipeline, FeatureRequirement::Optional)
+        .request(VulkanFeature::RayQuery, FeatureRequirement::Optional)
+        .build();
 }
 
 std::shared_ptr<VulkanContext> VulkanContext::getContext()
@@ -83,11 +87,21 @@ VulkanContext::VulkanContext(platform::Window &window)
 #ifdef DEBUG_BUILD
     m_isValidationLayersEnabled = true;
 #else
-
     m_isValidationLayersEnabled = false;
 #endif
 
     initVulkan(window);
+}
+
+VulkanContext::VulkanContext(BuilderKey, platform::Window &window)
+    : m_window(&window)
+{
+}
+
+bool VulkanContext::hasFeature(VulkanFeature feature) const
+{
+    auto it = m_featureEnabled.find(feature);
+    return it != m_featureEnabled.end() && it->second;
 }
 
 VulkanContext::~VulkanContext()
@@ -122,43 +136,15 @@ void VulkanContext::initVulkan(platform::Window &window)
 
 void VulkanContext::createLogicalDevice()
 {
-    VkPhysicalDeviceAccelerationStructureFeaturesKHR supportedAS{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-    VkPhysicalDeviceRayTracingPipelineFeaturesKHR supportedRTP{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-    VkPhysicalDeviceRayQueryFeaturesKHR supportedRQ{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-    VkPhysicalDeviceVulkan12Features supportedV12{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-    VkPhysicalDeviceVulkan13Features supportedV13{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-    VkPhysicalDeviceFeatures2 supportedFeatures2{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    FeatureRegistry registry(m_featureRequests);
+    registry.probe(m_physicalDevice);
 
-    supportedFeatures2.pNext = &supportedV12;
-    supportedV12.pNext = &supportedV13;
-    supportedV13.pNext = &supportedAS;
-    supportedAS.pNext = &supportedRTP;
-    supportedRTP.pNext = &supportedRQ;
-    supportedRQ.pNext = nullptr;
+    const auto &supportedV12 = registry.supportedV12();
+    const auto &supportedV13 = registry.supportedV13();
 
-    vkGetPhysicalDeviceFeatures2(m_physicalDevice, &supportedFeatures2);
-
-    if (!supportedFeatures2.features.samplerAnisotropy)
-        throw std::runtime_error("Selected GPU does not support samplerAnisotropy");
-
-    if (!supportedFeatures2.features.imageCubeArray)
-        throw std::runtime_error("Selected GPU does not support imageCubeArray");
-
-    m_bufferDeviceAddressSupported = supportedV12.bufferDeviceAddress == VK_TRUE;
-    m_depthClampSupported = supportedFeatures2.features.depthClamp == VK_TRUE;
-    m_timelineSemaphoreSupported = supportedV12.timelineSemaphore == VK_TRUE;
-
-    if (!supportedV13.dynamicRendering)
-        throw std::runtime_error("Selected GPU does not support dynamicRendering");
-
-    if (!supportedV13.synchronization2)
-        throw std::runtime_error("Selected GPU does not support synchronization2");
+    m_bufferDeviceAddressSupported = registry.isSupported(VulkanFeature::BufferDeviceAddress);
+    m_depthClampSupported = registry.isSupported(VulkanFeature::DepthClamp);
+    m_timelineSemaphoreSupported = registry.isSupported(VulkanFeature::TimelineSemaphore);
 
     m_queueFamilyIndices = findQueueFamilies(m_physicalDevice, m_surface);
 
@@ -192,62 +178,18 @@ void VulkanContext::createLogicalDevice()
     }
 
     std::vector<const char *> enabledExtensions = m_deviceExtensions;
-    auto addExtensionIfMissing = [&enabledExtensions](const char *extensionName)
+    VkPhysicalDeviceFeatures2 *enableFeatures2Chain = nullptr;
+    registry.buildEnableChain(enabledExtensions, enableFeatures2Chain);
+
+    if (registry.isEnabled(VulkanFeature::RayTracingPipeline))
     {
-        if (!extensionName)
-            return;
-
-        if (std::find_if(enabledExtensions.begin(), enabledExtensions.end(), [extensionName](const char *existing)
-                         { return std::strcmp(existing, extensionName) == 0; }) == enabledExtensions.end())
-            enabledExtensions.push_back(extensionName);
-    };
-
-    auto availableExtensions = enumerateDeviceExtensions(m_physicalDevice);
-
-    const bool hasAS = hasExtension(availableExtensions, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
-    const bool hasRTP = hasExtension(availableExtensions, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
-    const bool hasRQ = hasExtension(availableExtensions, VK_KHR_RAY_QUERY_EXTENSION_NAME);
-    const bool hasDHO = hasExtension(availableExtensions, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
-
-    m_rayTracingSupport = {};
-
-    if (m_bufferDeviceAddressSupported &&
-        hasAS && hasRTP && hasDHO &&
-        supportedAS.accelerationStructure &&
-        supportedRTP.rayTracingPipeline)
-    {
-        m_rayTracingSupport.rayTracingPipeline = true;
-        m_rayTracingMode = RayTracingMode::Pipeline;
-
-        addExtensionIfMissing(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
-        addExtensionIfMissing(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
-        addExtensionIfMissing(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
-
-
-
-        if (hasRQ && supportedRQ.rayQuery)
-        {
-            m_rayTracingSupport.rayQuery = true;
-            addExtensionIfMissing(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        if (registry.isEnabled(VulkanFeature::RayQuery))
             VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: Pipeline + RayQuery");
-        }
         else
             VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: Pipeline");
     }
-    else if (m_bufferDeviceAddressSupported &&
-             hasAS && hasRQ && hasDHO &&
-             supportedAS.accelerationStructure &&
-             supportedRQ.rayQuery)
-    {
-        m_rayTracingSupport.rayQuery = true;
-        m_rayTracingMode = RayTracingMode::RayQuery;
-
-        addExtensionIfMissing(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
-        addExtensionIfMissing(VK_KHR_RAY_QUERY_EXTENSION_NAME);
-        addExtensionIfMissing(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
-
+    else if (registry.isEnabled(VulkanFeature::RayQuery))
         VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: RayQuery");
-    }
     else
         VX_CORE_INFO_STREAM("[Vulkan] Ray tracing mode: None");
 
@@ -261,6 +203,8 @@ void VulkanContext::createLogicalDevice()
     m_rayTracingPipelineProperties.pNext = nullptr;
     m_accelerationStructureProperties.pNext = nullptr;
 
+    const bool hasRTP = registry.isSupported(VulkanFeature::RayTracingPipeline);
+    const bool hasAS = registry.isSupported(VulkanFeature::AccelerationStructure);
     if (hasRTP)
     {
         depthStencilResolveProperties.pNext = &m_rayTracingPipelineProperties;
@@ -268,9 +212,7 @@ void VulkanContext::createLogicalDevice()
             m_rayTracingPipelineProperties.pNext = &m_accelerationStructureProperties;
     }
     else if (hasAS)
-    {
         depthStencilResolveProperties.pNext = &m_accelerationStructureProperties;
-    }
     else
         depthStencilResolveProperties.pNext = nullptr;
 
@@ -308,69 +250,11 @@ void VulkanContext::createLogicalDevice()
         physicalDeviceProperties.limits.framebufferColorSampleCounts &
         physicalDeviceProperties.limits.framebufferDepthSampleCounts;
     m_maxUsableSampleCount = highestSupportedSampleCount(commonSampleCounts);
+    if (m_maxUsableSampleCount > m_maxRequestedSampleCount)
+        m_maxUsableSampleCount = m_maxRequestedSampleCount;
     m_sampleZeroDepthResolveSupported =
         depthStencilResolveProperties.supportedDepthResolveModes != VK_RESOLVE_MODE_NONE &&
         (depthStencilResolveProperties.supportedDepthResolveModes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT) != 0u;
-
-    VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtpFeatures{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-    VkPhysicalDeviceRayQueryFeaturesKHR rqFeatures{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-
-    VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-    features2.features.samplerAnisotropy = VK_TRUE;
-    features2.features.imageCubeArray = VK_TRUE;
-    features2.features.depthClamp = m_depthClampSupported ? VK_TRUE : VK_FALSE;
-    features2.features.shaderInt64 = supportedFeatures2.features.shaderInt64;
-
-    features2.features.fillModeNonSolid = supportedFeatures2.features.fillModeNonSolid;
-    features2.features.independentBlend = supportedFeatures2.features.independentBlend;
-
-    VkPhysicalDeviceVulkan12Features v12{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-    v12.bufferDeviceAddress = m_bufferDeviceAddressSupported ? VK_TRUE : VK_FALSE;
-    v12.timelineSemaphore = m_timelineSemaphoreSupported ? VK_TRUE : VK_FALSE;
-    v12.descriptorBindingPartiallyBound = supportedV12.descriptorBindingPartiallyBound;
-    v12.runtimeDescriptorArray = supportedV12.runtimeDescriptorArray;
-    v12.shaderSampledImageArrayNonUniformIndexing = supportedV12.shaderSampledImageArrayNonUniformIndexing;
-
-    VkPhysicalDeviceVulkan13Features v13{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-    v13.dynamicRendering = VK_TRUE;
-    v13.synchronization2 = VK_TRUE;
-
-    features2.pNext = &v12;
-    v12.pNext = &v13;
-    v13.pNext = nullptr;
-
-    if (m_rayTracingMode == RayTracingMode::Pipeline)
-    {
-        asFeatures.accelerationStructure = VK_TRUE;
-        rtpFeatures.rayTracingPipeline = VK_TRUE;
-
-        v13.pNext = &asFeatures;
-        asFeatures.pNext = &rtpFeatures;
-
-        if (m_rayTracingSupport.rayQuery)
-        {
-            rqFeatures.rayQuery = VK_TRUE;
-            rtpFeatures.pNext = &rqFeatures;
-            rqFeatures.pNext = nullptr;
-        }
-        else
-            rtpFeatures.pNext = nullptr;
-    }
-    else if (m_rayTracingMode == RayTracingMode::RayQuery)
-    {
-        asFeatures.accelerationStructure = VK_TRUE;
-        rqFeatures.rayQuery = VK_TRUE;
-
-        v13.pNext = &asFeatures;
-        asFeatures.pNext = &rqFeatures;
-        rqFeatures.pNext = nullptr;
-    }
 
     VkDeviceCreateInfo createInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
@@ -379,7 +263,7 @@ void VulkanContext::createLogicalDevice()
     createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
     createInfo.ppEnabledExtensionNames = enabledExtensions.data();
     createInfo.enabledLayerCount = 0;
-    createInfo.pNext = &features2;
+    createInfo.pNext = enableFeatures2Chain;
 
     if (m_isValidationLayersEnabled)
     {
@@ -388,32 +272,41 @@ void VulkanContext::createLogicalDevice()
     }
 
     VkResult createDeviceResult = vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_vkDevice);
-    if (createDeviceResult != VK_SUCCESS && m_rayTracingMode != static_cast<RayTracingMode>(0))
+    if (createDeviceResult != VK_SUCCESS && registry.isEnabled(VulkanFeature::AccelerationStructure))
     {
-        VX_CORE_WARNING_STREAM("[Vulkan] vkCreateDevice failed with ray tracing enabled ("
+        VX_CORE_WARNING_STREAM("[Vulkan] vkCreateDevice failed with optional features enabled ("
                                << core::helpers::vulkanResultToString(createDeviceResult)
-                               << "). Retrying without ray tracing extensions/features.\n");
+                               << "). Retrying with all Optional features disabled.\n");
 
-        m_rayTracingMode = static_cast<RayTracingMode>(0);
-        m_rayTracingSupport = {};
+        registry.disableAllOptional();
 
         enabledExtensions = m_deviceExtensions;
+        registry.buildEnableChain(enabledExtensions, enableFeatures2Chain);
+
         createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
         createInfo.ppEnabledExtensionNames = enabledExtensions.data();
-
-        v13.pNext = nullptr;
-        asFeatures.pNext = nullptr;
-        rtpFeatures.pNext = nullptr;
-        rqFeatures.pNext = nullptr;
-        asFeatures.accelerationStructure = VK_FALSE;
-        rtpFeatures.rayTracingPipeline = VK_FALSE;
-        rqFeatures.rayQuery = VK_FALSE;
+        createInfo.pNext = enableFeatures2Chain;
 
         createDeviceResult = vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_vkDevice);
     }
 
     if (createDeviceResult != VK_SUCCESS)
         throw std::runtime_error("Failed to create logical device: " + core::helpers::vulkanResultToString(createDeviceResult));
+
+    m_featureEnabled = registry.enabledMap();
+    m_bufferDeviceAddressSupported = registry.isEnabled(VulkanFeature::BufferDeviceAddress);
+    m_depthClampSupported = registry.isEnabled(VulkanFeature::DepthClamp);
+    m_timelineSemaphoreSupported = registry.isEnabled(VulkanFeature::TimelineSemaphore);
+
+    if (registry.isEnabled(VulkanFeature::RayTracingPipeline))
+        m_rayTracingMode = RayTracingMode::Pipeline;
+    else if (registry.isEnabled(VulkanFeature::RayQuery))
+        m_rayTracingMode = RayTracingMode::RayQuery;
+    else
+        m_rayTracingMode = RayTracingMode::Disabled;
+
+    m_rayTracingSupport.rayTracingPipeline = registry.isEnabled(VulkanFeature::RayTracingPipeline);
+    m_rayTracingSupport.rayQuery = registry.isEnabled(VulkanFeature::RayQuery);
 
     vkGetDeviceQueue(m_vkDevice, m_queueFamilyIndices.graphicsFamily.value(), 0, &m_graphicsQueue);
     vkGetDeviceQueue(m_vkDevice, m_queueFamilyIndices.presentFamily.value(), 0, &m_presentQueue);
@@ -471,36 +364,6 @@ DescriptorPool::SharedPtr VulkanContext::getPersistentDescriptorPool() const
     return m_descriptorPool;
 }
 
-bool VulkanContext::hasBufferDeviceAddressSupport() const
-{
-    return m_bufferDeviceAddressSupported;
-}
-
-bool VulkanContext::hasAccelerationStructureSupport() const
-{
-    return m_rayTracingMode != RayTracingMode::Disabled;
-}
-
-bool VulkanContext::hasDepthClampSupport() const
-{
-    return m_depthClampSupported;
-}
-
-bool VulkanContext::hasRayQuerySupport() const
-{
-    return m_rayTracingSupport.rayQuery;
-}
-
-bool VulkanContext::hasRayTracingPipelineSupport() const
-{
-    return m_rayTracingSupport.rayTracingPipeline;
-}
-
-bool VulkanContext::hasTimelineSemaphoreSupport() const
-{
-    return m_timelineSemaphoreSupported;
-}
-
 VkSampleCountFlagBits VulkanContext::getMaxUsableSampleCount() const
 {
     return m_maxUsableSampleCount;
@@ -529,11 +392,6 @@ VkSampleCountFlagBits VulkanContext::getEffectiveMsaaSampleCount(VkSampleCountFl
 bool VulkanContext::supportsSampleZeroDepthResolve() const
 {
     return m_sampleZeroDepthResolveSupported;
-}
-
-bool VulkanContext::hasRayTracingDeviceFeaturesEnabled() const
-{
-    return m_rayTracingMode != RayTracingMode::Disabled;
 }
 
 const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &VulkanContext::getRayTracingPipelineProperties() const
@@ -826,8 +684,10 @@ void VulkanContext::pickPhysicalDevice()
         }
 
         int score = 0;
-        if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+        if (props.deviceType == m_preferredDeviceType)
             score += 1000;
+        else if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+            score += 700;
         else if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
             score += 500;
         else
@@ -927,11 +787,11 @@ void VulkanContext::createSurface(platform::Window &window)
 void VulkanContext::createInstance()
 {
     VkApplicationInfo applicationInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    applicationInfo.pApplicationName = "VelixCore";
-    applicationInfo.pEngineName = "VelixEngine";
-    applicationInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 1);
-    applicationInfo.engineVersion = VK_MAKE_VERSION(0, 0, 1);
-    applicationInfo.apiVersion = VK_API_VERSION_1_3;
+    applicationInfo.pApplicationName = m_applicationName.c_str();
+    applicationInfo.pEngineName = m_engineName.c_str();
+    applicationInfo.applicationVersion = m_applicationVersion;
+    applicationInfo.engineVersion = m_engineVersion;
+    applicationInfo.apiVersion = m_apiVersion;
 
     uint32_t glfwExtensionCount{0};
 
@@ -1052,6 +912,14 @@ std::vector<const char *> VulkanContext::getRequiredExtensions()
 
     if (m_isValidationLayersEnabled)
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+    for (const char *extra : m_extraInstanceExtensions)
+    {
+        const bool already = std::any_of(extensions.begin(), extensions.end(),
+                                         [extra](const char *e) { return std::strcmp(e, extra) == 0; });
+        if (!already)
+            extensions.push_back(extra);
+    }
 
     return extensions;
 }

@@ -33,6 +33,8 @@ public:
     };
 
     Window(uint32_t width, uint32_t height, const std::string &title, uint8_t windowFlags = EWINDOW_FLAGS_DEFAULT);
+    Window(const Window &) = delete;
+    Window &operator=(const Window &) = delete;
     static SharedPtr create(uint32_t width, uint32_t height, const std::string &title, uint8_t windowFlags = EWINDOW_FLAGS_DEFAULT);
 
     void pollEvents();

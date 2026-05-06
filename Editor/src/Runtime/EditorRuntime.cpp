@@ -1202,7 +1202,8 @@ void EditorRuntime::initEditorRenderGraph(uint32_t viewportWidth, uint32_t viewp
             *hdrSceneInput,
             m_gBufferRenderGraphPass->getNormalTextureHandlers(),
             m_gBufferRenderGraphPass->getDepthTextureHandler(),
-            m_gBufferRenderGraphPass->getMaterialTextureHandlers());
+            m_gBufferRenderGraphPass->getMaterialTextureHandlers(),
+            aoHandlers);
         hdrSceneInput = &m_ssrRenderGraphPass->getOutput();
     }
 
@@ -1584,7 +1585,8 @@ void EditorRuntime::initGameViewportRenderGraph(uint32_t viewportWidth, uint32_t
             *hdrSceneInput,
             m_gameGBufferRenderGraphPass->getNormalTextureHandlers(),
             m_gameGBufferRenderGraphPass->getDepthTextureHandler(),
-            m_gameGBufferRenderGraphPass->getMaterialTextureHandlers());
+            m_gameGBufferRenderGraphPass->getMaterialTextureHandlers(),
+            gameAOHandlers);
         hdrSceneInput = &m_gameSSRRenderGraphPass->getOutput();
     }
 

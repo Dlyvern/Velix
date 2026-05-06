@@ -16,6 +16,9 @@ AccelerationStructure::SharedPtr AccelerationStructure::create(VkAccelerationStr
 
 bool AccelerationStructure::createInternal(VkAccelerationStructureTypeKHR type, VkDeviceSize size)
 {
+    if (m_created)
+        return true;
+
     auto context = core::VulkanContext::getContext();
     if (!context || !context->hasAccelerationStructureSupport() || size == 0u)
         return false;
@@ -47,7 +50,16 @@ bool AccelerationStructure::createInternal(VkAccelerationStructureTypeKHR type, 
     }
 
     refreshDeviceAddress();
-    return m_deviceAddress != 0u;
+    if (m_deviceAddress == 0u)
+    {
+        vkDestroyAccelerationStructureKHR(m_device, m_handle, nullptr);
+        m_handle = VK_NULL_HANDLE;
+        m_buffer.reset();
+        return false;
+    }
+
+    ELIX_VK_CREATE_GUARD_DONE()
+    return true;
 }
 
 void AccelerationStructure::refreshDeviceAddress()
@@ -64,7 +76,7 @@ void AccelerationStructure::refreshDeviceAddress()
     m_deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(m_device, &addressInfo);
 }
 
-void AccelerationStructure::destroy()
+void AccelerationStructure::destroyVkImpl()
 {
     if (m_handle != VK_NULL_HANDLE && m_device != VK_NULL_HANDLE)
         vkDestroyAccelerationStructureKHR(m_device, m_handle, nullptr);
@@ -78,7 +90,7 @@ void AccelerationStructure::destroy()
 
 AccelerationStructure::~AccelerationStructure()
 {
-    destroy();
+    destroyVk();
 }
 
 ELIX_CUSTOM_NAMESPACE_END

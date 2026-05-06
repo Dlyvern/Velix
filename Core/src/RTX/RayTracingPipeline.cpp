@@ -24,6 +24,9 @@ bool RayTracingPipeline::createInternal(
     VkPipelineLayout layout,
     uint32_t maxRayRecursionDepth)
 {
+    if (m_created)
+        return true;
+
     auto context = core::VulkanContext::getContext();
     if (!context || !context->hasRayTracingPipelineSupport() || layout == VK_NULL_HANDLE ||
         shaderStages.empty() || shaderGroups.empty())
@@ -43,10 +46,12 @@ bool RayTracingPipeline::createInternal(
         return false;
 
     m_groupCount = createInfo.groupCount;
+
+    ELIX_VK_CREATE_GUARD_DONE()
     return true;
 }
 
-void RayTracingPipeline::destroy()
+void RayTracingPipeline::destroyVkImpl()
 {
     if (m_handle != VK_NULL_HANDLE && m_device != VK_NULL_HANDLE)
         vkDestroyPipeline(m_device, m_handle, nullptr);
@@ -58,7 +63,7 @@ void RayTracingPipeline::destroy()
 
 RayTracingPipeline::~RayTracingPipeline()
 {
-    destroy();
+    destroyVk();
 }
 
 ELIX_CUSTOM_NAMESPACE_END

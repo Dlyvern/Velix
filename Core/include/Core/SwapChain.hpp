@@ -19,6 +19,8 @@ public:
     using SharedPtr = std::shared_ptr<SwapChain>;
 
     SwapChain(platform::Window &window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
+    SwapChain(const SwapChain &) = delete;
+    SwapChain &operator=(const SwapChain &) = delete;
     static SharedPtr create(platform::Window &window, VkSurfaceKHR surface, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t graphicsFamily, uint32_t presentFamily);
 
     VkSwapchainKHR vk() const;

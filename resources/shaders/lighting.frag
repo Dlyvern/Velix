@@ -278,13 +278,10 @@ vec3 evaluateBRDF(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float rou
     vec3 diffuse = kD * albedo / PI;
     vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
 
-
-
-
-    float Ess = 0.04 + (1.0 - 0.04) * (1.0 - roughness);
-    vec3 Favg = F0 + (1.0 - F0) * 0.047619;
-    vec3 Fms = Favg * Favg * (1.0 - Ess) / (1.0 - Favg * (1.0 - Ess));
-    specular *= (1.0 + Fms);
+    vec3  Favg = F0 + (vec3(1.0) - F0) / 21.0;
+    float Ess  = mix(1.0, 0.45, roughness);
+    vec3  Fms  = Favg * (1.0 - Ess) / max(vec3(1.0) - Favg * (1.0 - Ess), vec3(1e-4));
+    specular  *= 1.0 + Fms;
 
     return (diffuse + specular) * NdotL;
 }
@@ -505,7 +502,9 @@ void main()
 
 
         float effectiveShadow = hasBakedIrradiance ? 0.0 : shadow;
-        lighting += evaluateBRDF(N_view, V, L, albedo, metallic, roughness) * radiance * (1.0 - effectiveShadow);
+        float aperture = 2.0 * ao * ao;
+        float microShadow = clamp(NdotL + aperture - 1.0, 0.0, 1.0);
+        lighting += evaluateBRDF(N_view, V, L, albedo, metallic, roughness) * radiance * (1.0 - effectiveShadow) * microShadow;
     }
 
 

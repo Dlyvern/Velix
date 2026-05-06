@@ -26,9 +26,6 @@ public:
 
     Image(VkImage image);
 
-    Image(const Image &) = delete;
-    Image &operator=(const Image &) = delete;
-
     void bind(VkDeviceSize memoryOffset = 0);
 
     void createVk(VkExtent2D extent, VkImageUsageFlags usage,

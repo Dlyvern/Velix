@@ -31,8 +31,9 @@ namespace
 SSRRenderGraphPass::SSRRenderGraphPass(std::vector<RGPResourceHandler> &litColorHandlers,
                                        std::vector<RGPResourceHandler> &normalHandlers,
                                        RGPResourceHandler &depthHandler,
-                                       std::vector<RGPResourceHandler> &materialHandlers)
-    : m_litColorHandlers(litColorHandlers), m_normalHandlers(normalHandlers), m_depthHandler(depthHandler), m_materialHandlers(materialHandlers)
+                                       std::vector<RGPResourceHandler> &materialHandlers,
+                                       std::vector<RGPResourceHandler> *aoHandlers)
+    : m_litColorHandlers(litColorHandlers), m_normalHandlers(normalHandlers), m_depthHandler(depthHandler), m_materialHandlers(materialHandlers), m_aoHandlers(aoHandlers)
 {
     setDebugName("SSR render graph pass");
     setExtent(core::VulkanContext::getContext()->getSwapchain()->getExtent());
@@ -75,6 +76,8 @@ void SSRRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
         builder.read(m_litColorHandlers[i], RGPTextureUsage::SAMPLED);
         builder.read(m_normalHandlers[i], RGPTextureUsage::SAMPLED);
         builder.read(m_materialHandlers[i], RGPTextureUsage::SAMPLED);
+        if (m_aoHandlers && i < m_aoHandlers->size())
+            builder.read((*m_aoHandlers)[i], RGPTextureUsage::SAMPLED);
 
         outDesc.setDebugName("__ELIX_SSR_" + std::to_string(i) + "__");
         auto h = builder.createTexture(outDesc);
@@ -115,8 +118,14 @@ void SSRRenderGraphPass::setup(renderGraph::RGPResourcesBuilder &builder)
     environmentBinding.descriptorCount = 1;
     environmentBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    VkDescriptorSetLayoutBinding aoBinding{};
+    aoBinding.binding = 5;
+    aoBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    aoBinding.descriptorCount = 1;
+    aoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     m_descriptorSetLayout = core::DescriptorSetLayout::createShared(
-        device, std::vector<VkDescriptorSetLayoutBinding>{normalBinding, depthBinding, materialBinding, litColorBinding, environmentBinding});
+        device, std::vector<VkDescriptorSetLayoutBinding>{normalBinding, depthBinding, materialBinding, litColorBinding, environmentBinding, aoBinding});
 
     m_pipelineLayout = core::PipelineLayout::createShared(
         device,
@@ -133,6 +142,9 @@ void SSRRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
 {
     ensureFallbackEnvironmentTexture();
     updateEnvironmentSkybox();
+
+    if (!m_defaultWhiteTexture)
+        m_defaultWhiteTexture = Texture::getDefaultWhiteTexture();
 
     const uint32_t imageCount = core::VulkanContext::getContext()->getSwapchain()->getImageCount();
     m_outputTargets.resize(imageCount);
@@ -156,6 +168,19 @@ void SSRRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
         auto materialTex = storage.getTexture(m_materialHandlers[i]);
         auto litColorTex = storage.getTexture(m_litColorHandlers[i]);
 
+        VkImageView aoImageView = VK_NULL_HANDLE;
+        VkSampler   aoSampler   = m_sampler;
+        if (m_aoHandlers && i < m_aoHandlers->size())
+        {
+            if (auto aoTex = storage.getTexture((*m_aoHandlers)[i]))
+                aoImageView = aoTex->vkImageView();
+        }
+        if (aoImageView == VK_NULL_HANDLE && m_defaultWhiteTexture)
+        {
+            aoImageView = m_defaultWhiteTexture->vkImageView();
+            aoSampler   = m_defaultWhiteTexture->vkSampler();
+        }
+
         if (!m_descriptorSetsInitialized)
         {
             m_descriptorSets[i] = DescriptorSetBuilder::begin()
@@ -164,6 +189,7 @@ void SSRRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
                 .addImage(materialTex->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
                 .addImage(litColorTex->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 3)
                 .addImage(environmentImageView, environmentSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 4)
+                .addImage(aoImageView, aoSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 5)
                 .build(core::VulkanContext::getContext()->getDevice(),
                        core::VulkanContext::getContext()->getPersistentDescriptorPool(),
                        m_descriptorSetLayout);
@@ -176,6 +202,7 @@ void SSRRenderGraphPass::compile(renderGraph::RGPResourcesStorage &storage)
                 .addImage(materialTex->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 2)
                 .addImage(litColorTex->vkImageView(), m_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 3)
                 .addImage(environmentImageView, environmentSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 4)
+                .addImage(aoImageView, aoSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 5)
                 .update(core::VulkanContext::getContext()->getDevice(), m_descriptorSets[i]);
         }
     }
